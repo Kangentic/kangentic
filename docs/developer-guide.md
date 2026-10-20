@@ -259,8 +259,9 @@ moves the base path; the GitHub Pages deploy (`.github/workflows/deploy-demo.yml
 the release graph after `publish-release`) builds with `--base=/kangentic/`. `demo/README.md`
 documents the URL contract, the scenes, the numbers, and the Electron-only surfaces that stay
 inert in a browser. `npm run demo:serve` serves the build for a manual look (open
-`/demo/stage.html`), and `npm run demo:measure` reports its weight and boot timings (both run
-`demo/measure.mjs`).
+`/demo/stage.html`), and `npm run demo:measure` reports its weight, its boot timings, the cost of
+hosting 1, 4 and 8 frames on one page, and the JS heap after a forced GC (`node demo/measure.mjs
+--heap` narrows that to the cases the site budgets). Both run `demo/measure.mjs`.
 
 The scene registry (`tests/captures/scenes.ts`) has a second consumer: `npm run capture` builds
 the demo, then `tests/captures/features/scenes.capture.ts` opens every scene in it by URL and
@@ -478,7 +479,7 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 
 - **TypeScript strict mode** -- `noImplicitAny` enabled
 - **No `any` types** -- use proper types from `src/shared/types.ts`, `unknown` with type guards, or generic constraints
-- **Icons** -- Lucide React only, no inline SVGs
+- **Icons** -- Lucide React only, no inline SVGs. A persisted icon name renders through `RegistryIcon`, `ColumnGlyph` or `SwimlaneIcon` (`src/renderer/utils/swimlane-icons.tsx`). Never import lucide's `icons` map: only `src/renderer/utils/icon-catalog.ts` does, behind a dynamic import (see `src/renderer/utils/icon-registry.ts`).
 - **Test selectors** -- `data-testid` and `data-swimlane-name` attributes
 - **Escape key** -- all dialogs use global `useEffect` listener
 - **IPC channels** -- `src/shared/ipc-channels.ts` is the single source of truth

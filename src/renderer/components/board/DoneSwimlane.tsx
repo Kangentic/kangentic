@@ -5,7 +5,7 @@ import { Pencil, ArrowDownToLine, Maximize2, ClipboardList, Workflow as Workflow
 import { TaskCard } from './TaskCard';
 import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
-import { getSwimlaneIcon } from '../../utils/swimlane-icons';
+import { SwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { ARCHIVED_PREVIEW_LIMIT } from '../../stores/board-store/archived-tasks-slice';
 import { useConfigStore } from '../../stores/config-store';
@@ -112,17 +112,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
       {/* The column's description, when it has one, is the whole strip's tip. */}
       <Tooltip label={swimlane.description ?? ''}>
         <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left">
-          {(() => {
-            const Icon = getSwimlaneIcon(swimlane);
-            return Icon ? (
-              <span style={{ color: swimlane.color }}><Icon size={14} strokeWidth={1.75} /></span>
-            ) : (
-              <div
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: swimlane.color }}
-              />
-            );
-          })()}
+          <SwimlaneIcon swimlane={swimlane} size={14} dotClassName="w-2.5 h-2.5 rounded-full flex-shrink-0" />
 
           <button
             type="button"

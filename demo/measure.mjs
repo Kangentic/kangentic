@@ -2,7 +2,19 @@
  * Measure the web build the way a page that embeds it would feel it.
  *
  *   node demo/measure.mjs            build sizes, per-scene boot timings, the egress check, and
- *                                    the cost of hosting 1, 4, and 8 frames on one page
+ *                                    the cost of hosting 1, 4, and 8 frames on one page, with the
+ *                                    JS heap read after a forced GC (demo/heap.mjs)
+ *   node demo/measure.mjs --heap     the GC'd heap of the cases the site budgets (board still and
+ *                                    looping, 1 and 4 frames, task-mcp, changes), the median of
+ *                                    --runs=N fresh pages (3); --scenes=a,b keeps only those scenes,
+ *                                    --dwell=ms overrides how long a looping frame plays first
+ *   node demo/measure.mjs --heap-snapshot=board[,loop] [--out=dir]
+ *                                    one frame's heap snapshot, written to --out, summarized by
+ *                                    node type and constructor with the largest strings; with two
+ *                                    builds, as the difference between them
+ *   --dist=path[,label=path]         measure another build, or several (--heap and
+ *                                    --heap-snapshot interleave them, so they run back to back);
+ *                                    a build is labelled by its app version unless one is given
  *   node demo/measure.mjs --serve    only serve dist/demo and stay up for a manual look
  *   node demo/measure.mjs --geometry the grid each terminal surface fits at the 1600 by 1000
  *                                    frame, at device scale 1 and 2, against the capture
@@ -18,17 +30,36 @@
  * `demo` Playwright tier asserts the invariants, this script reports the magnitudes.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { startDemoServer } from './static-server.mjs';
+import { HEAP_LAUNCH_ARGS, HOST_VIEWPORT, LOOP_DWELL_MS, SITE_FRAME, STILL_DWELL_MS, bootFrames, measureFramesHeap, readGcHeap } from './heap.mjs';
+import { argValue as readArgValue, numberArg, parseBuildEntries } from './measure-args.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('@playwright/test');
 
 const demoDir = path.dirname(fileURLToPath(import.meta.url));
-const distDir = path.resolve(demoDir, '..', 'dist', 'demo');
+
+function argValue(name) {
+  return readArgValue(process.argv, name);
+}
+
+/** The app version a build stamps into its scenes.json, which names it in a report. */
+function readBuildVersion(dir) {
+  try {
+    return `v${JSON.parse(fs.readFileSync(path.join(dir, 'scenes.json'), 'utf8')).version}`;
+  } catch {
+    return path.basename(dir);
+  }
+}
+
+/** `--dist=path[,label=path]`: the builds to measure, the default `dist/demo` when none is named. */
+const BUILDS = parseBuildEntries(argValue('dist'), path.resolve(demoDir, '..', 'dist', 'demo'), readBuildVersion);
+const distDir = BUILDS[0].dir;
 const manifestPath = path.resolve(demoDir, '..', 'tests', 'captures', 'fixtures', 'demo', 'manifest.json');
 const SCENES = ['board', 'task', 'changes', 'monitor'];
 const FRAME_COUNTS = [1, 4, 8];
@@ -137,19 +168,6 @@ function eagerAssets() {
   });
 }
 
-function framesPage(origin, base, count, scene) {
-  const frames = Array.from({ length: count }, (_, index) =>
-    `<iframe id="f${index}" src="${base}?view=${scene}&embed=1&still=1" style="width:800px;height:500px;border:1px solid #444"></iframe>`).join('\n');
-  return `<!doctype html><html><body style="background:#111;margin:0;display:grid;grid-template-columns:repeat(2,800px);gap:8px">
-    ${frames}
-    <script>
-      window.__ready = []; window.__readyAt = {};
-      addEventListener('message', (event) => {
-        if (event.data && event.data.type === 'kangentic-demo-ready') { window.__ready.push(event.source); window.__readyAt[window.__ready.length] = performance.now(); }
-      });
-    </script></body></html>`;
-}
-
 async function measureScene(browser, server, scene) {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
   const requests = [];
@@ -175,27 +193,237 @@ async function measureScene(browser, server, scene) {
 }
 
 async function measureFrames(browser, server, count) {
-  const route = `/bench-${count}.html`;
-  server.routes[route] = { body: framesPage(server.origin, server.base, count, 'board') };
-  const page = await browser.newPage({ viewport: { width: 1640, height: 1100 } });
-  const client = await page.context().newCDPSession(page);
+  const context = await browser.newContext({ viewport: HOST_VIEWPORT });
+  const page = await context.newPage();
+  const client = await context.newCDPSession(page);
   await client.send('Performance.enable');
-  const started = Date.now();
-  await page.goto(`${server.origin}${route}`);
-  await page.waitForFunction((expected) => window.__ready.length >= expected, count, { timeout: 60000 });
-  const allReadyMs = Date.now() - started;
+  const frameSet = { scene: 'board', mode: /** @type {const} */ ('still'), count };
+  const { readyMs } = await bootFrames(page, server, frameSet);
   const metrics = await client.send('Performance.getMetrics');
   const metric = (name) => metrics.metrics.find((entry) => entry.name === name)?.value ?? 0;
-  const result = {
+  // The heap is read after the same wait a still frame gets in --heap, so the two reports agree.
+  await new Promise((resolve) => setTimeout(resolve, STILL_DWELL_MS));
+  const { heapMb } = await readGcHeap(page, client);
+  await context.close();
+  return {
     frames: count,
-    allReadyMs,
+    allReadyMs: readyMs,
     scriptMs: Math.round(metric('ScriptDuration') * 1000),
     layoutMs: Math.round(metric('LayoutDuration') * 1000),
     taskMs: Math.round(metric('TaskDuration') * 1000),
-    jsHeapMb: Math.round(metric('JSHeapUsedSize') / 1048576),
+    jsHeapMb: heapMb,
   };
-  await page.close();
-  return result;
+}
+
+/**
+ * The cases kangentic.com budgets: the board as the hero and most figures show it, still and
+ * looping, alone and four to a page; the MCP scene a tour slot shows; and a Changes scene, the
+ * heaviest docs figure. The two 800 by 500 rows line up with the numbers measured before this
+ * harness existed (#848), which laid frames out at that size.
+ */
+const HEAP_CASES = [
+  { scene: 'board', mode: 'still', count: 1 },
+  { scene: 'board', mode: 'still', count: 4 },
+  { scene: 'board', mode: 'still', count: 1, width: 800, height: 500 },
+  { scene: 'board', mode: 'still', count: 4, width: 800, height: 500 },
+  { scene: 'board', mode: 'loop', count: 1 },
+  { scene: 'board', mode: 'loop', count: 4 },
+  { scene: 'task-mcp', mode: 'loop', count: 1 },
+  { scene: 'changes', mode: 'loop', count: 1 },
+];
+
+function heapCaseLabel(heapCase) {
+  const size = heapCase.width ? `, ${heapCase.width}x${heapCase.height}` : '';
+  return `${heapCase.scene} ${heapCase.mode} x${heapCase.count}${size}`;
+}
+
+function listedScenes(dir) {
+  return new Set(JSON.parse(fs.readFileSync(path.join(dir, 'scenes.json'), 'utf8')).scenes.map((scene) => scene.name));
+}
+
+function median(values) {
+  const sorted = [...values].sort((first, second) => first - second);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+/**
+ * Every case on every build, `--runs` times, interleaved: run by run, case by case, build by build,
+ * so a drift in the machine lands on every build alike. Each read is a fresh browser context, so no
+ * frame inherits another's renderer process.
+ */
+async function measureHeap(builds) {
+  const runs = numberArg(process.argv, 'runs', { fallback: 3, min: 1, integer: true });
+  const loopDwellMs = numberArg(process.argv, 'dwell', { fallback: null, min: 0 });
+  const sceneFilter = argValue('scenes');
+  const cases = sceneFilter ? HEAP_CASES.filter((heapCase) => sceneFilter.split(',').includes(heapCase.scene)) : HEAP_CASES;
+  const servers = await Promise.all(builds.map((build) => startDemoServer({ distDir: build.dir, port: 0 })));
+  const scenesByBuild = builds.map((build) => listedScenes(build.dir));
+  /** @type {Map<string, Map<string, Array<{ heapMb: number; usedMb: number; backingMb: number }>>>} */
+  const results = new Map(cases.map((heapCase) => [heapCaseLabel(heapCase), new Map()]));
+  const browser = await chromium.launch({ headless: true, args: HEAP_LAUNCH_ARGS });
+  try {
+    for (let run = 1; run <= runs; run++) {
+      for (const heapCase of cases) {
+        for (const [index, build] of builds.entries()) {
+          if (!scenesByBuild[index].has(heapCase.scene)) continue;
+          const context = await browser.newContext({ viewport: HOST_VIEWPORT });
+          const page = await context.newPage();
+          const client = await context.newCDPSession(page);
+          try {
+            const dwellMs = heapCase.mode === 'loop' && loopDwellMs !== null ? loopDwellMs : undefined;
+            const { heapMb, usedMb, backingMb } = await measureFramesHeap(page, client, servers[index], heapCase, { dwellMs });
+            const reads = results.get(heapCaseLabel(heapCase));
+            reads.set(build.label, [...(reads.get(build.label) ?? []), { heapMb, usedMb, backingMb }]);
+            console.error(`run ${run}/${runs}  ${build.label.padEnd(14)} ${heapCaseLabel(heapCase).padEnd(34)} ${heapMb.toFixed(1)} MB (${usedMb.toFixed(1)} heap + ${backingMb.toFixed(1)} buffers)`);
+          } catch (error) {
+            console.error(`run ${run}/${runs}  ${build.label.padEnd(14)} ${heapCaseLabel(heapCase).padEnd(34)} failed: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+          } finally {
+            await context.close();
+          }
+        }
+      }
+    }
+  } finally {
+    await browser.close();
+    await Promise.all(servers.map((server) => server.close()));
+  }
+  return { cases, results, runs, loopDwellMs: loopDwellMs ?? LOOP_DWELL_MS };
+}
+
+function reportHeap(builds, { cases, results, runs, loopDwellMs }) {
+  const lines = [];
+  lines.push(`### JS heap after a forced GC, MB (median of ${runs}, range, then V8 heap + array buffers)`);
+  lines.push('');
+  lines.push(`Frames at ${SITE_FRAME.width}x${SITE_FRAME.height} unless named, same-origin on one page; a looping frame is read ${loopDwellMs} ms after ready.`);
+  lines.push('');
+  lines.push(`| Case | ${builds.map((build) => build.label).join(' | ')} |`);
+  lines.push(`|---|${builds.map(() => '---').join('|')}|`);
+  for (const heapCase of cases) {
+    const reads = results.get(heapCaseLabel(heapCase));
+    const cells = builds.map((build) => {
+      const values = reads.get(build.label);
+      if (!values || values.length === 0) return 'n/a';
+      const totals = values.map((value) => value.heapMb);
+      const parts = `${median(values.map((value) => value.usedMb)).toFixed(1)} + ${median(values.map((value) => value.backingMb)).toFixed(1)}`;
+      return `${median(totals).toFixed(1)} (${Math.min(...totals).toFixed(1)} to ${Math.max(...totals).toFixed(1)}) = ${parts}`;
+    });
+    lines.push(`| ${heapCaseLabel(heapCase)} | ${cells.join(' | ')} |`);
+  }
+  console.log(lines.join('\n'));
+}
+
+/** Streams a heap snapshot over CDP into one string. */
+async function takeHeapSnapshot(client) {
+  const chunks = [];
+  const onChunk = (event) => chunks.push(event.chunk);
+  client.on('HeapProfiler.addHeapSnapshotChunk', onChunk);
+  await client.send('HeapProfiler.enable');
+  await client.send('HeapProfiler.takeHeapSnapshot', { reportProgress: false });
+  client.off('HeapProfiler.addHeapSnapshotChunk', onChunk);
+  return chunks.join('');
+}
+
+/** Node types whose name is a value rather than a kind, so each is one group. */
+const VALUE_NAMED_TYPES = new Set(['string', 'concatenated string', 'sliced string', 'number', 'bigint', 'regexp']);
+const STRING_TYPES = new Set(['string', 'concatenated string', 'sliced string']);
+
+/**
+ * Self size by node type, and by type and name (an object's constructor, a closure's function, a
+ * code object's kind), plus the largest strings. Self size, not retained: it says where the bytes
+ * sit, and a candidate it names is confirmed by taking it out and reading the heap again.
+ */
+function summarizeHeapSnapshot(json) {
+  const snapshot = JSON.parse(json);
+  const fields = snapshot.snapshot.meta.node_fields;
+  const typeNames = snapshot.snapshot.meta.node_types[0];
+  const width = fields.length;
+  const typeOffset = fields.indexOf('type');
+  const nameOffset = fields.indexOf('name');
+  const sizeOffset = fields.indexOf('self_size');
+  const byType = new Map();
+  const byGroup = new Map();
+  const strings = [];
+  for (let offset = 0; offset < snapshot.nodes.length; offset += width) {
+    const type = typeNames[snapshot.nodes[offset + typeOffset]];
+    const name = snapshot.strings[snapshot.nodes[offset + nameOffset]];
+    const size = snapshot.nodes[offset + sizeOffset];
+    byType.set(type, (byType.get(type) ?? 0) + size);
+    const group = VALUE_NAMED_TYPES.has(type) ? type : `${type}: ${name.slice(0, 60)}`;
+    const entry = byGroup.get(group) ?? { size: 0, count: 0 };
+    entry.size += size;
+    entry.count += 1;
+    byGroup.set(group, entry);
+    if (STRING_TYPES.has(type)) strings.push({ size, text: name.slice(0, 80).replace(/\s+/g, ' ') });
+  }
+  strings.sort((first, second) => second.size - first.size);
+  return { byType, byGroup, strings: strings.slice(0, 15) };
+}
+
+function mbOf(bytes) {
+  return (bytes / 1048576).toFixed(2);
+}
+
+async function heapSnapshots(builds) {
+  const [scene, modeArgument] = argValue('heap-snapshot').split(',');
+  const mode = modeArgument === 'loop' ? 'loop' : 'still';
+  const outDir = path.resolve(argValue('out') ?? path.join(os.tmpdir(), 'kangentic-heap-snapshots'));
+  fs.mkdirSync(outDir, { recursive: true });
+  const summaries = [];
+  const browser = await chromium.launch({ headless: true, args: HEAP_LAUNCH_ARGS });
+  try {
+    for (const [index, build] of builds.entries()) {
+      const server = await startDemoServer({ distDir: build.dir, port: 0 });
+      const context = await browser.newContext({ viewport: HOST_VIEWPORT });
+      try {
+        const page = await context.newPage();
+        const client = await context.newCDPSession(page);
+        const { heapMb, usedMb, backingMb } = await measureFramesHeap(page, client, server, { scene, mode, count: 1 });
+        const json = await takeHeapSnapshot(client);
+        // The position leads the name: two labels can sanitize to one, and the second would overwrite.
+        const file = path.join(outDir, `${index + 1}-${build.label.replace(/[^\w.-]+/g, '_')}-${scene}-${mode}.heapsnapshot`);
+        fs.writeFileSync(file, json);
+        console.error(`${build.label}: ${heapMb.toFixed(1)} MB after GC (${usedMb.toFixed(1)} heap + ${backingMb.toFixed(1)} buffers), snapshot ${file}`);
+        summaries.push({ build, heapMb, ...summarizeHeapSnapshot(json) });
+      } finally {
+        await context.close();
+        await server.close();
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  const lines = [];
+  lines.push(`### Heap snapshot of one ${scene} frame (${mode}), self size in MB`);
+  lines.push('');
+  lines.push(`| Node type | ${summaries.map((summary) => `${summary.build.label} (${summary.heapMb.toFixed(1)} MB used)`).join(' | ')} |`);
+  lines.push(`|---|${summaries.map(() => '---').join('|')}|`);
+  const types = [...new Set(summaries.flatMap((summary) => [...summary.byType.keys()]))]
+    .sort((first, second) => (summaries[0].byType.get(second) ?? 0) - (summaries[0].byType.get(first) ?? 0));
+  for (const type of types) lines.push(`| ${type} | ${summaries.map((summary) => mbOf(summary.byType.get(type) ?? 0)).join(' | ')} |`);
+  lines.push('');
+  // With two builds, the groups that moved most between the first and the last; with one, the largest.
+  const first = summaries[0];
+  const last = summaries[summaries.length - 1];
+  const groups = [...new Set(summaries.flatMap((summary) => [...summary.byGroup.keys()]))];
+  const weight = (group) => (summaries.length > 1
+    ? Math.abs((last.byGroup.get(group)?.size ?? 0) - (first.byGroup.get(group)?.size ?? 0))
+    : first.byGroup.get(group)?.size ?? 0);
+  groups.sort((one, other) => weight(other) - weight(one));
+  lines.push(`| Type: name (${summaries.length > 1 ? 'largest change' : 'largest'}) | ${summaries.map((summary) => `${summary.build.label} MB (count)`).join(' | ')} |`);
+  lines.push(`|---|${summaries.map(() => '---').join('|')}|`);
+  for (const group of groups.slice(0, 30)) {
+    lines.push(`| ${group.replace(/\|/g, '/')} | ${summaries.map((summary) => {
+      const entry = summary.byGroup.get(group);
+      return entry ? `${mbOf(entry.size)} (${entry.count})` : '0';
+    }).join(' | ')} |`);
+  }
+  for (const summary of summaries) {
+    lines.push('');
+    lines.push(`Largest strings, ${summary.build.label}:`);
+    for (const entry of summary.strings) lines.push(`- ${mbOf(entry.size)} MB \`${entry.text.replace(/`/g, "'")}\``);
+  }
+  console.log(lines.join('\n'));
 }
 
 /**
@@ -425,6 +653,14 @@ async function main() {
   if (!fs.existsSync(path.join(distDir, 'index.html'))) {
     throw new Error(`No web build at ${distDir}. Run "npm run build:demo" first.`);
   }
+  if (process.argv.includes('--heap')) {
+    reportHeap(BUILDS, await measureHeap(BUILDS));
+    return;
+  }
+  if (argValue('heap-snapshot') !== null) {
+    await heapSnapshots(BUILDS);
+    return;
+  }
   const server = await startDemoServer({ distDir, port: 0 });
   if (process.argv.includes('--serve')) {
     console.log(`Serving ${server.url}?view=board&embed=1&still=1 (Ctrl+C to stop)`);
@@ -456,7 +692,7 @@ async function main() {
   const everything = fs.readdirSync(path.join(distDir, 'assets')).map((name) => path.join(distDir, 'assets', name));
   const totalRaw = everything.reduce((sum, filePath) => sum + fs.statSync(filePath).size, 0);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: HEAP_LAUNCH_ARGS });
   const scenes = [];
   for (const scene of SCENES) scenes.push(await measureScene(browser, server, scene));
   const frames = [];
@@ -481,12 +717,12 @@ async function main() {
     lines.push(`| ${scene.scene} | ${scene.requests} | ${scene.offOrigin.length} | ${scene.firstPaint} ms | ${scene.firstContentfulPaint} ms | ${scene.load} ms | ${scene.readyMs} ms |`);
   }
   lines.push('');
-  lines.push('### Frames per page (board scene, 800x500 iframes)');
+  lines.push(`### Frames per page (board scene, still, ${SITE_FRAME.width}x${SITE_FRAME.height} frames)`);
   lines.push('');
-  lines.push('| Frames | All ready | Script time | Layout time | Task time | JS heap |');
+  lines.push('| Frames | All ready | Script time | Layout time | Task time | JS heap after GC |');
   lines.push('|---|---|---|---|---|---|');
   for (const frame of frames) {
-    lines.push(`| ${frame.frames} | ${frame.allReadyMs} ms | ${frame.scriptMs} ms | ${frame.layoutMs} ms | ${frame.taskMs} ms | ${frame.jsHeapMb} MB |`);
+    lines.push(`| ${frame.frames} | ${frame.allReadyMs} ms | ${frame.scriptMs} ms | ${frame.layoutMs} ms | ${frame.taskMs} ms | ${frame.jsHeapMb.toFixed(1)} MB |`);
   }
   console.log(lines.join('\n'));
 }

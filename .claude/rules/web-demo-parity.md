@@ -374,6 +374,12 @@ three things staying in step, and each is enforced rather than remembered.
   board, and a frame whose row script fails to load shows the error card naming the row. The tier
   runs as the `demo` job in `.github/workflows/ci.yml` and again inside
   `.github/workflows/deploy-demo.yml` before the Pages deploy.
+- **Test (behavior, CI):** `tests/demo/heap-budget.spec.ts` boots one board frame, still and
+  looping, on a host page and fails when its JS heap after a forced GC passes a stated budget, the
+  number kangentic.com caps its figures by. It reads through `demo/heap.mjs`, the same read
+  `node demo/measure.mjs --heap` reports, and the measured values and their causes are in
+  `demo/README.md` ("JS heap after a forced GC"). `static-demo.spec.ts` holds lucide's whole icon
+  map to a lazy chunk that no board or MCP frame fetches.
 - **Type system (mechanical, CI):** `npm run typecheck` runs `tsconfig.demo.json`
   (`npm run typecheck:demo`, its own step in CI's `checks` job) over `tests/demo/`,
   `tests/captures/`, and `demo/*.ts`, none of which the root `tsconfig.json` covers. That program

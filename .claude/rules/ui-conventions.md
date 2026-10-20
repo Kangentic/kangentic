@@ -19,6 +19,12 @@ chrome unless these are stated.
   four linked cards: its curves are a diagram, not an icon, so no lucide glyph can draw them. It
   paints only theme tokens and never moves. Each exempt file carries a comment naming this rule.
   Adding a fifth needs the same justification, not a silent inline `<svg>`.
+- **An icon stored by name resolves through the icon registry.** Column and shortcut icons are
+  persisted kebab-case names, rendered with `RegistryIcon`, `ColumnGlyph` or `SwimlaneIcon`
+  (`utils/swimlane-icons.tsx`). Never import lucide's `icons` map: only `utils/icon-catalog.ts`
+  does, behind a dynamic import, since eager it cost every web demo frame 2.3 MB of heap. An icon
+  a stock board names belongs in `CORE_ICONS` (`utils/icon-registry.ts`). The scan in
+  `tests/unit/swimlane-icons.test.ts` and `assertVendorChunksLazy` in `scripts/build.js` enforce it.
 - **List keys:** every JSX element rendered from `.map()` (or any array) carries a stable `key`.
   This is review-only. `react/jsx-key` used to enforce it, but that rule ships with
   `eslint-plugin-react`, which has no ESLint 10 release (its peer range stops at ESLint 9), so

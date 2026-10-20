@@ -19,6 +19,11 @@ npm run build:demo                    # dist/demo/, base path /demo/
 npm run build:demo -- --base=/kangentic/   # what the GitHub Pages deploy runs
 npm run test:demo                     # the demo smoke tier against dist/demo/
 npm run demo:measure                  # bundle weight, boot timings, frames-per-page cost
+node demo/measure.mjs --heap          # the JS heap after a forced GC for the cases the site budgets
+                                      # (--dist=pathA,labelB=pathB compares builds back to back, --runs=N,
+                                      # --scenes=a,b, --dwell=ms)
+node demo/measure.mjs --heap-snapshot=board,loop   # one frame's heap snapshot, summed by constructor;
+                                      # two builds through --dist print what moved (--out=dir)
 node demo/measure.mjs --geometry      # the grid each terminal surface fits, at device scale 1 and 2,
                                       # against the capture matrix's manifest (--check fails on a drift)
 node demo/measure.mjs --motion        # every scene under loop=1, sampled for 16 s: moves, marks, or still
@@ -1739,27 +1744,27 @@ an emulated scale alone is the bug above. WebGL stays on.
 ## What the page ships, and what it costs
 
 Measured with `npm run demo:measure`, headless Chromium, a plain static server on localhost, warm
-disk. The weight table is from the build of 2026-10-19, after the classic scripts were minified.
-The cold boot table is from the build of 2026-10-16, after the scene-only row left the seed. The
-frames-per-page table is from the build of 2026-09-23, and the observations for #632 below read
-its numbers.
+disk. The weight, cold boot and frames-per-page tables are from the build of 2026-10-20, after
+lucide's icon map left the startup path. The heap table is from that build and three before it,
+measured back to back on one machine.
 
 ### Before first paint (gzipped)
 
 | File | Raw | Gzip |
 |---|---|---|
-| index (the renderer) | 1043 KB | 294 KB |
-| WorkflowDialogs chunk (583 KB of it is lucide-react's whole icon map, below) | 819 KB | 217 KB |
-| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 1003 KB | 151 KB |
+| index (the renderer) | 1062 KB | 300 KB |
+| WorkflowDialogs chunk | 235 KB | 67 KB |
+| demo-seed.js (the sample install: opening and final frames, tiled frames, diffs, peek timelines, message trails, the cell-width table) | 1006 KB | 152 KB |
 | xterm + xterm-unicode11 | 460 KB | 119 KB |
-| Pill, shared, datetime, useValuePulse and PrLink chunks | 234 KB | 75 KB |
+| Pill, shared, datetime, useValuePulse, PrLink and icon-registry chunks | 233 KB | 75 KB |
+| nine one-icon chunks (zap, search, plus, chevron-down and the rest, below) | 16 KB | 7 KB |
 | react-vendor | 215 KB | 66 KB |
-| KebabMenu chunk | 157 KB | 47 KB |
+| KebabMenu chunk | 153 KB | 45 KB |
 | mock-electron-api.js (the bridge) | 131 KB | 32 KB |
-| demo-boot.js + demo-scenes.js + demo-webview.js | 164 KB | 36 KB |
+| demo-boot.js + demo-scenes.js + demo-webview.js | 165 KB | 37 KB |
 | index.css + xterm.css + WorkflowDialogs.css | 144 KB | 23 KB |
 | rolldown-runtime + preload-helper | 2 KB | 1 KB |
-| **Eager total** | | **1062 KB** |
+| **Eager total** | | **925 KB** |
 
 The five classic scripts `demo/vite.config.mts` injects ahead of the bundle, and each scene-only
 row's script, are minified at build time (`minifyClassicScript`). Vite never sees them, so they
@@ -1771,16 +1776,26 @@ The demo tier minifies each shipped script again and fails if that gains more th
 script added to the head unminified fails there. This is download size only. The JS heap after a
 forced GC, which is what the site's figure budget is about, did not move: one board frame is 16.3
 MB and four are 38.0 MB, minified or not (same-origin frames on one page, measured back to back).
-Script source is held outside the heap that number reads.
+Those two numbers match CDP's V8-only `JSHeapUsedSize` with Playwright's own 0.3 MB scripts in it,
+so that is most likely how they were read; the table in JS heap after a forced GC, below, is the
+read to compare against. A script the page loads over the network keeps its source outside the heap
+that number reads.
 
-The largest single cost left is lucide-react's whole icon map. `src/renderer/utils/swimlane-icons.tsx`
-imports it (`icons`, about 1,500 glyphs) so a column's persisted kebab-case icon name can render
-any glyph and the Column Manager can offer all of them. It is 690 KB raw and 162 KB gzipped
-measured alone, against 2 KB for two named icons, and it ships in the desktop renderer too. It
-costs heap as well: a build with only two icons measured 14.0 MB for one board frame against 16.3
-MB, and 33.2 MB for four against 38.0 MB. The first frame pays about 2.3 MB and each further frame
-on the page about 0.8 MB, since same-process frames share compiled code. Trimming it changes how
-the renderer resolves a column's icon, so it is not a demo build change.
+lucide-react's whole icon map was the largest single cost on that list, and it no longer loads at
+startup. A column's icon (and a command shortcut's) is persisted as a kebab-case name, so any glyph
+can come back by name, which is why the map was imported whole. `src/renderer/utils/icon-registry.ts`
+now resolves the 13 icons the default board, the shortcut presets and the sample install name
+from named imports, and loads the map (`icon-catalog-<hash>.js`, 563 KB raw, 150 KB gzipped)
+only when the icon picker opens or a column names an icon outside that set. `loadBoard` waits for
+it before it paints such a column, so a project switch still paints every icon on its first frame.
+No scene opens the picker or names another icon, and the demo tier holds a board frame and
+`task-mcp` to no request for the chunk. The WorkflowDialogs chunk it lived in went from 819 to 235
+KB raw and the eager total from 1,063 to 925 KB gzipped, both builds back to back. The split left
+the icon-registry chunk and nine one-icon chunks that the startup path shares with the map, each
+under 14 KB, which add ten requests to a frame's boot (Cold boot per scene, below) and no heap
+anyone can measure. The desktop
+renderer gets the same split; `assertVendorChunksLazy` in `scripts/build.js` fails a build that
+puts the map back on the startup path.
 
 The whole `dist/demo/assets` is 18.1 MB raw, almost all of it monaco's lazy language and worker
 chunks, which only load when a Changes panel opens (the `changes` scene adds 6 requests).
@@ -1831,14 +1846,107 @@ than its recording's. The choreography player is a 9 KB chunk (4 KB gzipped), fe
 frame that plays a choreography: a live frame under `loop=1`, or a still with a pose. The one transcript under `transcripts/` is 32 KB raw and 8 KB gzipped,
 fetched only when a conversation viewer opens.
 
+### JS heap after a forced GC
+
+kangentic.com budgets its figures by the JS heap a page holds after a forced GC, not by bytes, and
+caps them per page by it. `node demo/measure.mjs --heap` reads that number the way the site does:
+
+- Frames are same-origin iframes on one host page, laid out at the site's 1600 by 1000 and scaled
+  into an 800 by 500 cell (the scale changes nothing measured). Frames on one page share a renderer
+  process and one V8 isolate, so the page's number is the read, never a sum of frames.
+- A still frame is read 1 s after ready, a looping one 15 s after, the site's own wait.
+- The page's own `gc()` runs twice (Chromium launched with `--js-flags=--expose-gc`), and 800 ms
+  later `Runtime.getHeapUsage` gives the V8 heap and the array buffers held outside it. Their sum
+  is what `performance.memory.usedJSHeapSize` reads with `--enable-precise-memory-info`, the site's
+  number.
+- Each cell is the median of three fresh browser contexts, with the builds interleaved run by run,
+  so a drift in the machine lands on every build alike.
+
+`demo/heap.mjs` holds the read, and the guard below uses the same one. Four builds, back to back on
+2026-10-20, in MB (V8 heap + array buffers). Before is the build of 2026-10-19 (minified head
+scripts); after is the same tree with lucide's icon map off the startup path.
+
+| Case | v0.46.0 | v0.47.0 | Before | After |
+|---|---|---|---|---|
+| board, still, 1 frame | 21.1 (15.7 + 5.5) | 21.4 (15.8 + 5.6) | 21.1 (15.8 + 5.3) | 18.3 (13.6 + 4.7) |
+| board, still, 4 frames | 44.5 | 44.8 | 44.5 | 39.4 |
+| board, still, 1 frame at 800x500 | 21.1 | 21.3 | 21.0 | 18.3 |
+| board, still, 4 frames at 800x500 | 44.1 | 44.3 | 44.1 | 38.9 |
+| board, looping, 1 frame | 27.3 (21.4 + 5.9) | 27.7 (21.6 + 6.1) | 27.3 (21.6 + 5.7) | 24.5 (19.3 + 5.2) |
+| board, looping, 4 frames | 68.6 | 69.8 | 69.5 | 64.3 |
+| task-mcp, looping | not in the build | 38.6 (25.5 + 13.0) | 38.4 (25.7 + 12.7) | 35.5 (23.4 + 12.1) |
+| changes, looping | 46.9 (35.7 + 11.2) | 49.1 (37.7 + 11.4) | 49.0 (38.0 + 11.0) | 46.2 (35.7 + 10.5) |
+
+v0.47.0 did not double the heap. Held to one scene, one mode and one harness, it added 0.3 MB to a
+still board frame, 0.4 MB to a looping one, 1.2 MB to four looping boards and 2.2 MB to a looping
+`changes` frame. The `changes` growth is its new choreography running: a heap snapshot of one frame
+against v0.46.0 puts it in compiled code (machine code up 0.8 MB, with its feedback) and style data,
+and taking the player's `:hover` mirror out of a scratch build moved nothing (45.8 against 46.0 MB).
+`task-mcp` is new in v0.47.0 and holds 11 MB more than a looping board. 4.1 MB of that is V8 heap,
+mostly compiled code for the maximized task window, its header and its context bar. 6.9 MB is array
+buffers held by its larger terminal (the snapshot counts 1,184 buffers against the board's 94).
+Cutting the replay emulator's 5,000-row scrollback to 200 saved 1.4 MB of that and nothing on a
+board, so it stays.
+
+The site's 17.4 to 36 MB for the landing hero compares two different reads, not two apps. On
+production on 2026-10-20 the landing page alone, with the demo frame's origin blocked, held 12.1 MB,
+and with the hero booted 36.2 MB, so the hero frame is the other 24.1 MB, about what a looping board
+frame holds on any of the three builds. This harness reads a v0.46.0 board frame alone at 21.1 MB
+still and 27.3 MB looping, so 17.4 MB is below any full read of a page that holds one. It does match
+the V8 heap alone of a looping v0.46.0 board frame after CDP's collection (17.4 MB, with its 5.8 MB
+of array buffers left out), which suggests the 2026-10-16 number was a narrower read. It cannot be
+reproduced from here. The "about 8 MB a frame" from the same day is the cost of a frame after the
+first. Frames on one page share compiled code, so a page's first board frame holds 18.3 MB and each
+one after it 7.0 MB (Frames per page, below).
+
+Three things in a harness move this number with the app standing still:
+
+- `performance.memory.usedJSHeapSize` counts ArrayBuffer backing stores (xterm's buffer lines, a
+  WebGL glyph atlas) and CDP's `Performance.getMetrics` `JSHeapUsedSize` does not. On one build a
+  still board frame reads 21.0 MB by the first and 15.8 MB by the second, `task-mcp` 38.1 against
+  25.5.
+- CDP's `HeapProfiler.collectGarbage` runs a memory-reducing collection a tab never sees. On a
+  looping board frame it read 4.2 MB less V8 heap than the page's own `gc()` (14.7 against 18.9
+  MB). A still frame reads the same either way.
+- Playwright's `waitForFunction`, `expect(locator)` and `evaluateAll` inject its InjectedScript into
+  each world of the page they touch, a 0.31 MB source string the heap then holds once per world.
+  That is the string #848 found held twice, starting `(() => { const module = {}; var __commonJS`;
+  it was never the demo's. The harness polls a host-side message listener with `page.evaluate`,
+  which loads only Playwright's small utility script.
+
+The cut is lucide's whole icon map (Before first paint, above). Every case lost 2.7 to 5.2 MB:
+2.8 MB on a page's first board frame and 0.8 MB on each frame after it, since frames on a page share
+compiled code.
+
+`tests/demo/heap-budget.spec.ts` holds one board frame to 21 MB still and 29 MB looping, through
+`demo/heap.mjs`. That is about 15 percent over what it reads: 18.3 and 24.5 MB here, and 18.2 and
+23.9 to 24.4 MB on Ubuntu 24.04 with the same Chromium build (Playwright 1.63's headless shell,
+run under WSL, three runs each). Repeated reads agree to 0.1 MB still and 0.6 MB looping, so the
+headroom is for creep rather than noise, and the `demo` job logs CI's own reading on every run. It
+also fails when the frame's terminal draws without WebGL: headless Chromium has WebGL on both
+platforms, as a visitor's browser does, and a runner without it would measure the DOM renderer,
+which no visitor's tab runs. The icon map coming back reads 21.1 MB, right at the still budget, so
+the tier also holds a board frame to no request for its chunk, which catches it exactly.
+
+To find what grew, `node demo/measure.mjs --heap-snapshot=<scene>[,loop]` writes one frame's heap
+snapshot and prints self size by node type and by constructor, with the largest strings. Given two
+builds through `--dist`, it prints the groups that moved most between them. A snapshot also counts
+script source and other external strings that the heap read does not, so confirm a candidate it
+names by taking it out of a scratch build and reading again, as the emulator and `:hover` checks
+above were.
+
 ### Cold boot per scene
 
 | Scene | Requests | Off-origin | First contentful paint | Ready |
 |---|---|---|---|---|
-| board | 22 | 0 | 260 ms | 343 ms |
-| task | 22 | 0 | 100 ms | 385 ms |
-| changes | 28 | 0 | 104 ms | 532 ms |
-| monitor | 26 | 0 | (paint inside the veil) | 408 ms |
+| board | 32 | 0 | 224 ms | 303 ms |
+| task | 32 | 0 | 224 ms | 355 ms |
+| changes | 40 | 0 | 80 ms | 510 ms |
+| monitor | 38 | 0 | (paint inside the veil) | 380 ms |
+
+Each scene makes ten more requests than the build of 2026-10-19 (22 on board), the icon-registry
+chunk and the nine one-icon chunks the icon map's split left (Before first paint, above). Ready
+moved by less than its run-to-run noise (board 330 against 303 ms, the two builds back to back).
 
 Zero off-origin requests on every scene: the renderer's Sentry SDK has no network path of its
 own and never initializes under the mock, analytics go through the bridge the mock stubs, and the
@@ -1847,17 +1955,20 @@ so the site's privacy page needs no line for the frame.
 
 ### Frames per page
 
-| Frames | All ready | Script time | JS heap |
+Board frames, still, at 1600 by 1000, with the heap read as in JS heap after a forced GC above.
+
+| Frames | All ready | Script time | JS heap after GC |
 |---|---|---|---|
-| 1 | 310 ms | 171 ms | 16 MB |
-| 4 | 725 ms | 380 ms | 34 MB |
-| 8 | 1321 ms | 695 ms | 66 MB |
+| 1 | 313 ms | 168 ms | 18.3 MB |
+| 4 | 774 ms | 385 ms | 39.4 MB |
+| 8 | 1546 ms | 731 ms | 67.5 MB |
 
 The bundle downloads once and caches; each frame parses and executes it again for roughly 70 ms of
-script and 5 to 10 MB of heap. Eight live frames on one docs page cost about 1.3 seconds on a
-desktop machine, which is the number the docs-visuals decision (#632, site #78 and #79) was
-waiting for. This does not decide live frames against stills; it says the ceiling is well above
-what a docs page would use.
+script. Frames on one page share compiled code, so the first frame holds 18.3 MB and each one after
+it 7.0 MB. Eight live frames on one docs page cost about 1.5 seconds on a desktop machine, which is
+the number the docs-visuals decision (#632, site #78 and #79) was waiting for. This does not decide
+live frames against stills; it says the ceiling is well above what a docs page would use. The same
+table on the build of 2026-10-19 read 21.1, 44.5 and 75.7 MB.
 
 ## Electron-only surfaces in a browser
 
@@ -1898,8 +2009,8 @@ Two things stay out of reach of a live frame: the Browser pane's REAL guest (a p
   measurement runs without a miss. The boot steps still carry no timing. Motion came later and
   separately (Choreography and timelines below): pacing there is data on a step, every effect a
   step depends on is still a selector waited for, and it plays only under `loop=1`.
-- **Per-frame boot cost** is in the table above: about 70 ms of script and under 10 MB per extra
-  frame after the first, one second for eight.
+- **Per-frame boot cost** is in the table above: about 70 ms of script and 7 MB of heap per frame
+  after the first, a second and a half for eight.
 
 ## Layout of `dist/demo/`
 

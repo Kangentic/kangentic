@@ -50,7 +50,8 @@ import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
 import { ColumnsOverview, type OverviewRow, type OverviewValue } from './board-manager/ColumnsOverview';
 import { Pill } from '../Pill';
-import { RegistryIcon, getSwimlaneIconName, getUsedIcons } from '../../utils/swimlane-icons';
+import { RegistryIcon, SwimlaneIcon, getUsedIcons, useSwimlaneIconName } from '../../utils/swimlane-icons';
+import { warmIconCatalog } from '../../utils/icon-registry';
 import { ToggleCard } from '../ToggleCard';
 import { ChoiceCard } from '../ChoiceCard';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
@@ -606,7 +607,7 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
    */
   profileName?: string | null;
 }) {
-  const iconName = getSwimlaneIconName(draft);
+  const iconName = useSwimlaneIconName(draft);
   // Identity only: small tinted icon + name + role badge + position + the
   // active profile. Removal is the dialog footer's leading control, so the
   // header carries no action and stays a plain statement of what is open.
@@ -648,7 +649,7 @@ function RemoveColumnTarget({ column, position, total }: {
   position: number;
   total: number;
 }) {
-  const iconName = getSwimlaneIconName(column);
+  const iconName = useSwimlaneIconName(column);
   const name = column.name.trim() || 'Untitled';
   return (
     <div className="flex items-center gap-2.5 rounded bg-surface px-3 py-2 text-sm font-medium text-fg">
@@ -2152,24 +2153,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   <button
                     type="button"
                     onClick={() => setShowIconPicker(true)}
+                    onPointerEnter={warmIconCatalog}
+                    onFocus={warmIconCatalog}
                     data-testid="board-manager-icon"
                     aria-label={`Choose icon${draft.icon ? `: ${draft.icon}` : ''}`}
                     className="w-full flex items-center gap-2.5 bg-surface-control border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
                   >
                     <div className="flex-shrink-0">
-                      {/* getSwimlaneIconName resolves the custom icon, then the role
-                          default, and returns null rather than the undefined a two-key
-                          Record<SwimlaneRole, ...> yields for a role outside the union.
-                          Rendering that undefined is React error #130, which the root
-                          ErrorBoundary turns into a blank board. */}
-                      {getSwimlaneIconName(draft) ? (
-                        <RegistryIcon name={getSwimlaneIconName(draft)} size={14} strokeWidth={1.75} style={{ color: draft.color }} />
-                      ) : (
-                        <div
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: draft.color }}
-                        />
-                      )}
+                      {/* SwimlaneIcon resolves the custom icon, then the role default,
+                          then a dot, as the board's column header does. It never hands
+                          createElement the undefined a two-key Record<SwimlaneRole, ...>
+                          yields for a role outside the union, which is React error #130
+                          and a blank board through the root ErrorBoundary. */}
+                      <SwimlaneIcon swimlane={draft} size={14} dotClassName="w-2.5 h-2.5 rounded-full" />
                     </div>
                     <span className="text-xs text-fg-tertiary flex-1 text-left truncate">
                       {draft.icon ?? (draft.role ? `Default (${draft.role})` : 'None')}

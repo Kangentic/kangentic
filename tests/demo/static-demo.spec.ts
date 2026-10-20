@@ -16,6 +16,7 @@
  */
 import { test, expect, chromium, type Browser, type Frame, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
+import { readdirSync } from 'node:fs';
 import { transformSync } from 'esbuild';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
@@ -1886,6 +1887,31 @@ test('a scene-only row\'s recorded sessions are loaded once, by a frame that nam
   await SCENE_MARKERS['task-mcp'](page);
   expect(rowRequests).toHaveLength(1);
   expect(rowRequests[0]).toMatch(new RegExp(`/scene-rows/${TASK_VALIDATE}-[0-9a-f]{8}\\.js$`));
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('lucide\'s whole icon map is a lazy chunk that no board or MCP frame fetches, and the icon picker does', async ({ page }) => {
+  // The map loads only when the icon picker opens or a column names an icon outside the core set
+  // (src/renderer/utils/icon-registry.ts). Eager, it was 2.3 MB of a page's first frame and 0.8 MB of
+  // each frame after it. The sample install names only core icons, so no scene but a picker needs it.
+  const catalogChunks = readdirSync(path.join(DIST_DIR, 'assets')).filter((name) => /^icon-catalog-[\w-]+\.js$/.test(name));
+  expect(catalogChunks, 'the build emits the icon map as one chunk of its own').toHaveLength(1);
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const catalogRequests: string[] = [];
+  page.on('request', (request) => { if (/\/icon-catalog-[^/]*\.js$/.test(new URL(request.url()).pathname)) catalogRequests.push(request.url()); });
+  await gotoScene(page, { view: 'board', embed: '1', still: '1' });
+  await SCENE_MARKERS.board(page);
+  await gotoScene(page, { view: 'board', embed: '1', loop: '1' });
+  await SCENE_MARKERS.board(page);
+  await gotoScene(page, { view: 'task-mcp', embed: '1', still: '1' });
+  await SCENE_MARKERS['task-mcp'](page);
+  expect(catalogRequests).toEqual([]);
+
+  // The positive half, so the match above cannot pass by never matching: the picker fetches it once.
+  await gotoScene(page, { view: 'edit-columns', embed: '1', still: '1' });
+  await page.locator('[data-testid="board-manager-icon"]').click();
+  await expect(page.getByRole('button', { name: 'Ferris Wheel' })).toBeVisible();
+  expect(catalogRequests).toHaveLength(1);
   expect(getUnexpectedErrors()).toEqual([]);
 });
 

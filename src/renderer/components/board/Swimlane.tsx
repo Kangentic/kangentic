@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { GripVertical, Pencil, ClipboardPlus } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
-import { getSwimlaneIcon } from '../../utils/swimlane-icons';
+import { SwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
@@ -102,17 +102,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             )}
 
             {/* Role icon or color dot */}
-            {(() => {
-              const Icon = getSwimlaneIcon(swimlane);
-              return Icon ? (
-                <span style={{ color: swimlane.color }}><Icon size={16} strokeWidth={1.75} /></span>
-              ) : (
-                <div
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: swimlane.color }}
-                />
-              );
-            })()}
+            <SwimlaneIcon swimlane={swimlane} size={16} dotClassName="w-2.5 h-2.5 rounded-full flex-shrink-0" />
 
             {/* Column name */}
             <span className={`text-sm font-medium truncate flex-1 min-w-0 ${

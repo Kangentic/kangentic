@@ -395,14 +395,59 @@ function assertVendorChunksLazy(rendererOutDir) {
     );
   }
 
+  // Every startup-path candidate's source, read once for the two marker scans below.
+  const chunkSources = new Map(
+    assetFiles
+      .filter((name) => name.endsWith('.js') && !name.includes('worker'))
+      .map((name) => [name, fs.readFileSync(path.join(assetsDir, name), 'utf8')]),
+  );
+
+  // lucide's whole icon map (about 1,800 glyphs, 2.3 MB of a web demo frame's heap) loads only
+  // through the dynamic import in src/renderer/utils/icon-registry.ts, when the icon picker opens
+  // or a column names an icon outside the core set. The marker is an icon no renderer file imports
+  // by name (tests/unit/swimlane-icons.test.ts pins that), so finding it in a static-closure chunk
+  // means some import pulled the whole map back onto the startup path.
+  const ICON_MAP_MARKER = 'ferris-wheel';
+  const iconCatalogChunk = assetFiles.find((name) => name.startsWith('icon-catalog-') && name.endsWith('.js'));
+  if (!iconCatalogChunk) {
+    throw new Error(
+      '[build] No icon-catalog-*.js chunk in the renderer output. Either src/renderer/utils/icon-catalog.ts '
+      + 'was renamed or it is now imported statically and merged into another chunk; the lazy icon map '
+      + 'assertion cannot run.',
+    );
+  }
+  if (staticFiles.has(`assets/${iconCatalogChunk}`)) {
+    throw new Error(
+      `[build] ${iconCatalogChunk} is in the entry's STATIC import closure. Load the icon map only through `
+      + 'loadIconCatalog() in src/renderer/utils/icon-registry.ts, never by a static import.',
+    );
+  }
+  let iconMarkerSeenSomewhere = false;
+  for (const [chunkFile, source] of chunkSources) {
+    if (!source.includes(ICON_MAP_MARKER)) continue;
+    iconMarkerSeenSomewhere = true;
+    if (staticFiles.has(`assets/${chunkFile}`)) {
+      throw new Error(
+        `[build] ${chunkFile} is in the entry's STATIC import closure but holds lucide's whole icon map `
+        + `(it names "${ICON_MAP_MARKER}"). Something imports lucide-react's \`icons\` (or a namespace or `
+        + 'dynamic-icons entry) on the startup path; only src/renderer/utils/icon-catalog.ts may.',
+      );
+    }
+  }
+  if (!iconMarkerSeenSomewhere) {
+    throw new Error(
+      `[build] No chunk names the icon "${ICON_MAP_MARKER}" - the lazy icon map assertion has gone blind `
+      + '(the marker icon was renamed in a lucide upgrade?). Pick another icon no renderer file imports '
+      + 'by name and update ICON_MAP_MARKER here and in tests/unit/swimlane-icons.test.ts.',
+    );
+  }
+
   // Monaco: marker-string scan. These literals appear in monaco's editor
   // sources and nowhere in first-party code; web workers are separate
   // entries loaded inside worker contexts, not part of the startup path.
   const MONACO_MARKERS = ['editorViewZones', 'monaco-editor'];
-  const chunkFiles = assetFiles.filter((name) => name.endsWith('.js') && !name.includes('worker'));
   let monacoSeenSomewhere = false;
-  for (const chunkFile of chunkFiles) {
-    const source = fs.readFileSync(path.join(assetsDir, chunkFile), 'utf8');
+  for (const [chunkFile, source] of chunkSources) {
     const containsMonaco = MONACO_MARKERS.some((marker) => source.includes(marker));
     if (!containsMonaco) continue;
     monacoSeenSomewhere = true;
@@ -421,7 +466,7 @@ function assertVendorChunksLazy(rendererOutDir) {
       + 'blind (markers rotted on a monaco upgrade?). Update MONACO_MARKERS in scripts/build.js.',
     );
   }
-  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk}, ${xyflowChunk} and all monaco chunks are reachable only via dynamic import`);
+  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk}, ${xyflowChunk}, ${iconCatalogChunk} and all monaco chunks are reachable only via dynamic import`);
 }
 
 const esbuildCommon = {

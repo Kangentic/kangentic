@@ -1,47 +1,14 @@
-import React from 'react';
-import {
-  Layers, CircleCheckBig,
-  icons,
-} from 'lucide-react';
+/**
+ * React bindings over `icon-registry.ts` for any icon persisted by name: a column's icon and a
+ * command shortcut's. The registry decides how a name resolves; this module renders it.
+ */
+import React, { useEffect, useSyncExternalStore } from 'react';
+import { Layers, CircleCheckBig, Zap } from 'lucide-react';
 import type { Swimlane, SwimlaneRole } from '../../shared/types';
-
-/** Generic icon component type -- not tied to any icon library. */
-export type IconComponent = React.ComponentType<{
-  size?: number;
-  strokeWidth?: number;
-  className?: string;
-  style?: React.CSSProperties;
-}>;
-
-export interface IconEntry {
-  name: string;
-  component: IconComponent;
-  label: string;
-}
-
-/** Convert PascalCase to kebab-case (e.g. GitBranch → git-branch). */
-function toKebabCase(s: string): string {
-  return s.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
-}
-
-/** Convert PascalCase to spaced display label (e.g. GitBranch → Git Branch). */
-function toDisplayLabel(s: string): string {
-  return s.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-}
-
-/** Full icon list from lucide-react (~1,500 icons). */
-export const ALL_ICONS: IconEntry[] = Object.entries(icons).map(
-  ([key, component]) => ({
-    name: toKebabCase(key),
-    component: component as IconComponent,
-    label: toDisplayLabel(key),
-  }),
-);
-
-/** O(1) name → component lookup. */
-export const ICON_REGISTRY = new Map<string, IconComponent>(
-  ALL_ICONS.map((entry) => [entry.name, entry.component]),
-);
+import {
+  getIconCatalogVersion, isIconPending, resolveIcon, subscribeIconCatalog, warmIconCatalog,
+  type IconComponent,
+} from './icon-registry';
 
 /** Default icons for system swimlane roles. */
 export const ROLE_DEFAULTS: Record<SwimlaneRole, IconComponent> = {
@@ -79,26 +46,50 @@ export function getUsedIcons(swimlanes: Swimlane[], excludeId?: string): Set<str
 
 /**
  * Resolve the icon NAME for a swimlane, for a `RegistryIcon` render.
- * Priority: user-set icon (when registered) → role default → null (color dot).
+ * Priority: user-set icon (when it resolves) → role default → null (color dot).
+ *
+ * Pure: it answers from what is loaded now, so a custom icon outside the core set reads as its
+ * role default until the full map lands. A component reads it through `useSwimlaneIconName`, which
+ * starts that load and re-renders when it lands.
  */
 export function getSwimlaneIconName(swimlane: Pick<Swimlane, 'icon' | 'role'>): string | null {
-  if (swimlane.icon && ICON_REGISTRY.has(swimlane.icon)) return swimlane.icon;
+  if (swimlane.icon && resolveIcon(swimlane.icon)) return swimlane.icon;
   if (swimlane.role) return ROLE_DEFAULT_NAMES[swimlane.role] ?? null;
   return null;
+}
+
+/**
+ * The component for a persisted icon name, or undefined while it is pending or when it is
+ * unknown. A pending name starts the full map's load, and the caller re-renders when it lands.
+ */
+export function useRegistryIcon(name: string | null | undefined): IconComponent | undefined {
+  // Subscribed for the re-render alone: the version changes once, when the full map lands.
+  useSyncExternalStore(subscribeIconCatalog, getIconCatalogVersion, getIconCatalogVersion);
+  const pending = isIconPending(name);
+  useEffect(() => {
+    if (pending) warmIconCatalog();
+  }, [pending]);
+  return resolveIcon(name);
+}
+
+/** `getSwimlaneIconName` for a component: starts the map's load for a pending custom icon. */
+export function useSwimlaneIconName(swimlane: Pick<Swimlane, 'icon' | 'role'> | null | undefined): string | null {
+  useRegistryIcon(swimlane?.icon);
+  return swimlane ? getSwimlaneIconName(swimlane) : null;
 }
 
 /**
  * Render a registry icon by name.
  *
  * The lookup lives in one component and goes through `createElement` on
- * purpose. React's compiler rules read `const Icon = ICON_REGISTRY.get(name)`
+ * purpose. React's compiler rules read `const Icon = resolveIcon(name)`
  * followed by `<Icon />` as a component created during render, which they
  * forbid because a component created per render remounts on every render.
  * The registry holds module-level lucide components, so the identity is in
- * fact stable, but the rule cannot see through a `Map.get`. Routing every
+ * fact stable, but the rule cannot see through the lookup. Routing every
  * call site through here keeps that reasoning in one place.
  *
- * Renders nothing when the name is unknown and no fallback is given.
+ * Renders nothing when the name is unknown (or still loading) and no fallback is given.
  */
 export function RegistryIcon({
   name,
@@ -106,15 +97,51 @@ export function RegistryIcon({
   ...iconProps
 }: {
   name: string | null | undefined;
-  /** Rendered when `name` is empty or unregistered. */
+  /** Rendered when `name` is empty or does not resolve. */
   fallback?: IconComponent | null;
   size?: number;
   strokeWidth?: number;
   className?: string;
   style?: React.CSSProperties;
 }): React.ReactElement | null {
-  const component = (name ? ICON_REGISTRY.get(name) : undefined) ?? fallback;
+  const component = useRegistryIcon(name) ?? fallback;
   return component ? React.createElement(component, iconProps) : null;
+}
+
+/**
+ * A command shortcut's icon by its persisted name. Zap stands in for a shortcut with no icon or one
+ * that does not resolve, so this is the one place that default lives.
+ */
+export function ShortcutGlyph({
+  name,
+  ...iconProps
+}: {
+  name: string | null | undefined;
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+  style?: React.CSSProperties;
+}): React.ReactElement | null {
+  return <RegistryIcon name={name || 'zap'} fallback={Zap} {...iconProps} />;
+}
+
+// hmr-safe: a memo of stateless wrappers; a refreshed module builds its own
+const SHORTCUT_ICONS = new Map<string, IconComponent>();
+
+/**
+ * `ShortcutGlyph` as a component type, for a control that takes one (the header pills'
+ * `HeaderActionButton`). Memoized per name, so a pill keeps one component identity across renders.
+ */
+export function shortcutIcon(name: string | null | undefined): IconComponent {
+  const key = name || 'zap';
+  let component = SHORTCUT_ICONS.get(key);
+  if (!component) {
+    const ShortcutIcon: IconComponent = (props) => <ShortcutGlyph name={key} {...props} />;
+    ShortcutIcon.displayName = `ShortcutIcon(${key})`;
+    component = ShortcutIcon;
+    SHORTCUT_ICONS.set(key, component);
+  }
+  return component;
 }
 
 /**
@@ -136,7 +163,7 @@ export function ColumnGlyph({
   strokeWidth?: number;
   color?: string | null;
 }): React.ReactElement {
-  const iconName = getSwimlaneIconName(column);
+  const iconName = useSwimlaneIconName(column);
   if (iconName) {
     return <RegistryIcon name={iconName} size={size} strokeWidth={strokeWidth} style={{ color: color ?? undefined }} />;
   }
@@ -149,16 +176,21 @@ export function ColumnGlyph({
 }
 
 /**
- * Resolve the icon for a swimlane.
- * Priority: user-set icon → role default → null (color dot fallback).
+ * A column's icon in the column's color, or a dot in its color: the board's column headers and a
+ * task's Move to menu. The caller sizes the dot, since each surface draws it differently.
  */
-export function getSwimlaneIcon(swimlane: Swimlane): IconComponent | null {
-  if (swimlane.icon) {
-    const custom = ICON_REGISTRY.get(swimlane.icon);
-    if (custom) return custom;
+export function SwimlaneIcon({
+  swimlane,
+  size,
+  dotClassName,
+}: {
+  swimlane: Pick<Swimlane, 'icon' | 'role' | 'color'>;
+  size: number;
+  dotClassName: string;
+}): React.ReactElement {
+  const iconName = useSwimlaneIconName(swimlane);
+  if (iconName) {
+    return <span style={{ color: swimlane.color }}><RegistryIcon name={iconName} size={size} strokeWidth={1.75} /></span>;
   }
-  if (swimlane.role) {
-    return ROLE_DEFAULTS[swimlane.role] ?? null;
-  }
-  return null;
+  return <div className={dotClassName} style={{ backgroundColor: swimlane.color }} />;
 }
