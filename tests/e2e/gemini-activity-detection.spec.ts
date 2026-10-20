@@ -6,7 +6,8 @@
  * hooks) with PTY silence as a fallback. This spec verifies, in a single
  * self-contained test, that:
  *  - The merged `.gemini/settings.json` is written with Kangentic
- *    event-bridge hooks pointing at a session-scoped events.jsonl
+ *    event-bridge hooks that name the session's events.jsonl through the
+ *    `KANGENTIC_EVENTS_PATH` environment variable
  *  - Writing a tool_start event to that file transitions activity to
  *    'thinking' (hook primary path)
  *  - Writing an idle event transitions back to 'idle'
@@ -55,22 +56,27 @@ function readGeminiSettings(): GeminiSettingsFile | null {
 }
 
 /**
- * Extract the events.jsonl path from any Kangentic hook command in the
- * merged settings. Gemini hooks always use the nested
- * `entry.hooks[].command` shape (see gemini/hook-manager.ts).
+ * The session's events.jsonl. The folder-shared settings file names no
+ * session's path (task #859): its hook commands say `env:KANGENTIC_EVENTS_PATH`
+ * and each session spawn sets that variable, so the file is found under
+ * `<project>/.kangentic/sessions/<id>/`, the newest one.
  */
 function findEventsOutputPath(): string | null {
-  const settings = readGeminiSettings();
-  if (!settings?.hooks) return null;
-  for (const entries of Object.values(settings.hooks)) {
-    for (const entry of entries) {
-      for (const hook of entry.hooks) {
-        const match = hook.command.match(/["']([^"']+events\.jsonl)["']/);
-        if (match) return match[1].replace(/\//g, path.sep);
-      }
-    }
-  }
-  return null;
+  const sessionsDir = path.join(tmpDir, '.kangentic', 'sessions');
+  if (!fs.existsSync(sessionsDir)) return null;
+  const candidates = fs.readdirSync(sessionsDir)
+    .map((sessionId) => path.join(sessionsDir, sessionId, 'events.jsonl'))
+    .filter((eventsPath) => fs.existsSync(eventsPath))
+    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs);
+  return candidates[0] ?? null;
+}
+
+/** Every event-bridge hook command in the merged settings names the events file through the environment. */
+function hookCommandsUseEnvironmentEventsPath(settings: GeminiSettingsFile): boolean {
+  const commands = Object.values(settings.hooks ?? {})
+    .flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)))
+    .filter((command) => command.includes('event-bridge') && !command.includes('background-shell-hint-bridge'));
+  return commands.length > 0 && commands.every((command) => command.includes('env:KANGENTIC_EVENTS_PATH'));
 }
 
 test.beforeAll(async () => {
@@ -113,11 +119,13 @@ test.describe('Gemini Agent -- Activity Detection (hooks + PTY)', () => {
     await moveTaskIpc(page, taskId, swimlaneIds.planning);
     await waitForScrollback(page, 'MOCK_GEMINI_SESSION:');
 
-    // Verify the merged settings file was written and references a real
-    // events.jsonl path inside .kangentic/sessions/<id>/.
+    // Verify the merged settings file was written, its hooks route events
+    // through the session environment, and the session's events.jsonl exists
+    // inside .kangentic/sessions/<id>/.
     const settings = readGeminiSettings();
     expect(settings).toBeTruthy();
     expect(settings!.hooks).toBeTruthy();
+    expect(hookCommandsUseEnvironmentEventsPath(settings!)).toBe(true);
 
     const eventsPath = findEventsOutputPath();
     expect(eventsPath).toBeTruthy();
