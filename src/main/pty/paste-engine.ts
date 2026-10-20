@@ -91,7 +91,7 @@ const BRACKETED_PASTE_MODE_OFF = '\x1b[?2004l';
 const PASTE_CHUNK_SIZE = 1024;
 /** Quiet window after first data byte. 250ms covers slow renders / bigger
  *  React trees without noticeably delaying the happy path. */
-const OUTPUT_SETTLE_IDLE_MS = 250;
+export const OUTPUT_SETTLE_IDLE_MS = 250;
 /** React commit floor: total paste-to-Enter wait is never below this,
  *  regardless of how fast output settles. Prevents the usePaste/useInput
  *  batching race when the TUI emits its redraw faster than React commits.
@@ -100,17 +100,17 @@ const OUTPUT_SETTLE_IDLE_MS = 250;
  *  of sessionManager.write. Switching \r to the queue path was the primary
  *  fix; this larger floor is defensive headroom. Don't shrink this without
  *  also revisiting the queue routing decision below. */
-const MIN_GAP_MS = 1000;
+export const MIN_GAP_MS = 1000;
 /** Floor for the cap; the per-byte multiplier extends this for large payloads. */
-const SETTLE_CAP_MIN_MS = 1000;
-const SETTLE_CAP_PER_BYTE_MS = 0.5;
+export const SETTLE_CAP_MIN_MS = 1000;
+export const SETTLE_CAP_PER_BYTE_MS = 0.5;
 /** How long to wait after \r for proof the agent moved (activity event or
  *  output bytes). Tuned so a busy session has time to transition to
  *  'thinking' but a stuck \r is caught quickly enough to retry. */
-const EVIDENCE_FIRST_WAIT_MS = 3000;
+export const EVIDENCE_FIRST_WAIT_MS = 3000;
 /** Shorter retry window: if the first \r got swallowed, the second one
  *  should be processed faster (no paste-commit race). */
-const EVIDENCE_RETRY_WAIT_MS = 2000;
+export const EVIDENCE_RETRY_WAIT_MS = 2000;
 /* Worst-case end-to-end budget = MIN_GAP_MS + capMs + EVIDENCE_FIRST_WAIT_MS
  * + EVIDENCE_RETRY_WAIT_MS ~= 7s for a small payload, more for large pastes
  * (capMs scales with packet length). Keep `timeoutMs` (default 15000ms in
@@ -207,7 +207,7 @@ type EvidenceResult = 'verifier' | 'activity' | 'data' | 'timeout';
  * produces false positives. 50 bytes empirically clears the blip without
  * blocking any real response prefix.
  */
-const POST_ENTER_DATA_FLOOR_BYTES = 50;
+export const POST_ENTER_DATA_FLOOR_BYTES = 50;
 
 /**
  * Wait for proof the agent processed our `\r`. Resolves on the first

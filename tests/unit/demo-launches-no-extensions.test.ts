@@ -18,12 +18,17 @@ const SCAN_DIRS = ['demo', 'tests/captures', 'tests/demo', 'scripts'];
 const CODE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs']);
 const SKIP_DIRECTORY_NAMES = new Set(['node_modules']);
 
-/** The launches that exist today. Each must be found and must pass, so the scan cannot pass on nothing. */
+/**
+ * The launches that exist today. Each must be found and must pass, so the scan cannot pass on
+ * nothing, and a new one has to be added here, so the list stays the whole set.
+ */
 const KNOWN_LAUNCH_SITES = [
   'tests/captures/helpers/capture-page.ts',
   'tests/captures/features/walkthrough.capture.ts',
   'demo/measure.mjs',
   'tests/demo/static-demo.spec.ts',
+  'scripts/capture-demo-sessions.mjs',
+  'scripts/hmr-guest-probe.mjs',
 ];
 
 const IMPORTS_PLAYWRIGHT = /(?:from\s+|require\(\s*)['"](?:@playwright\/test|playwright(?:-core)?)['"]/;
@@ -101,30 +106,29 @@ describe('the demo captures and tiers run no browser extension', () => {
     ).toEqual([]);
   });
 
-  it('finds the launches that exist today', () => {
-    const scanned = new Set(collectScannedFiles().map(relativePosixPath));
+  it('finds the launches that exist today, and no others', () => {
+    const scanned = collectScannedFiles().map(relativePosixPath);
     for (const site of KNOWN_LAUNCH_SITES) {
-      expect(scanned.has(site), `${site} is no longer scanned`).toBe(true);
+      expect(scanned.includes(site), `${site} is no longer scanned`).toBe(true);
       expect(fs.readFileSync(path.join(REPO_ROOT, site), 'utf-8'), `${site} no longer launches Chromium; update KNOWN_LAUNCH_SITES`).toMatch(/chromium\.launch\(/);
     }
+    const launching = scanned.filter((site) => /chromium\.launch\(/.test(fs.readFileSync(path.join(REPO_ROOT, site), 'utf-8')));
+    expect(launching.sort(), 'a launch site KNOWN_LAUNCH_SITES does not name').toEqual([...KNOWN_LAUNCH_SITES].sort());
   });
 
   it('Playwright still launches Chromium with --disable-extensions', () => {
     // The whole guarantee rests on this default. Read it from the installed package, so an upgrade
-    // that drops it fails here rather than letting an extension into the next poster set.
+    // that drops it fails here rather than letting an extension into the next poster set. Only the
+    // Chromium launcher's list counts: playwright-core keeps a second copy for its Electron loader
+    // (lib/server/electron/), which chromium.launch never reads and which would pass on its own.
     const packageDir = path.dirname(require.resolve('playwright-core/package.json'));
-    const libFiles = collectCodeFiles(path.join(packageDir, 'lib'));
-    const switchLists = libFiles
-      .map((filePath) => fs.readFileSync(filePath, 'utf-8'))
-      .map((source) => {
-        const start = source.indexOf('chromiumSwitches = ');
-        if (start === -1) return null;
-        const end = source.indexOf('];', start);
-        return end === -1 ? null : source.slice(start, end);
-      })
-      .filter((list): list is string => list !== null);
+    const libDir = path.join(packageDir, 'lib');
+    const electronDir = `${path.join(libDir, 'server', 'electron')}${path.sep}`;
+    const switchLists = collectCodeFiles(libDir)
+      .filter((filePath) => !filePath.startsWith(electronDir))
+      .flatMap((filePath) => [...fs.readFileSync(filePath, 'utf-8').matchAll(/(?<![\w$])chromiumSwitches = \([^)]*\) => \[([\s\S]*?)\];/g)].map((match) => match[1]));
     expect(switchLists.length, 'playwright-core no longer defines chromiumSwitches where this test looks').toBeGreaterThan(0);
-    expect(switchLists.some((list) => list.includes('"--disable-extensions"'))).toBe(true);
+    expect(switchLists.every((list) => list.includes('"--disable-extensions"'))).toBe(true);
   });
 });
 

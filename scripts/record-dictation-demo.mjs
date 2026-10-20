@@ -43,8 +43,9 @@ const ONSET_SECONDS = 0.4;
 const LET_GO_SECONDS = 0.35;
 
 // The sample install's machine, so the selection is the one the demo's Dictation tab names
-// (DEMO_DICTATION_HARDWARE in tests/captures/helpers/demo-dataset.ts; the fixture's guard,
-// tests/unit/demo-dictation-recording-seeded.test.ts, holds the two to the same models).
+// (DEMO_DICTATION_HARDWARE in tests/captures/helpers/demo-dataset.ts). Nothing ties the two
+// profiles together. The fixture's guard, tests/unit/demo-dictation-recording-seeded.test.ts,
+// fails when the models they select differ, which is the part a recording depends on.
 const DEMO_HARDWARE = { cpuModel: 'Unknown CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: false, gpu: 'none', platform: 'win32', arch: 'x64' };
 
 /** The dictation worker's engine code, bundled for this Node process. sherpa-onnx-node stays external. */
@@ -75,15 +76,15 @@ async function loadEngineCode() {
 function resample(samples, fromRate) {
   if (fromRate === SAMPLE_RATE) return samples;
   const length = Math.round(samples.length * SAMPLE_RATE / fromRate);
-  const out = new Float32Array(length);
+  const resampled = new Float32Array(length);
   for (let index = 0; index < length; index += 1) {
     const position = index * fromRate / SAMPLE_RATE;
     const left = Math.floor(position);
     const right = Math.min(left + 1, samples.length - 1);
     const fraction = position - left;
-    out[index] = samples[left] * (1 - fraction) + samples[right] * fraction;
+    resampled[index] = samples[left] * (1 - fraction) + samples[right] * fraction;
   }
-  return out;
+  return resampled;
 }
 
 /** The phrase as a person says it into the mic: silence from the press, the words, silence to the release. */
@@ -148,6 +149,9 @@ async function resolveModels(engineCode, selection) {
 async function main() {
   const wavFlag = process.argv.indexOf('--wav');
   const wavPath = wavFlag !== -1 ? process.argv[wavFlag + 1] : null;
+  // Refused rather than read as no clip at all, which would record the synthesized phrase instead.
+  if (wavFlag !== -1 && (!wavPath || wavPath.startsWith('--'))) throw new Error('--wav needs the path of a clip after it');
+  if (wavPath && !fs.existsSync(wavPath)) throw new Error(`--wav names ${wavPath}, which does not exist`);
   const engineCode = await loadEngineCode();
   const config = engineCode.DEFAULT_CONFIG.dictation;
   const selection = engineCode.selectEngine(DEMO_HARDWARE, config);
