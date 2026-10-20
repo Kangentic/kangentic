@@ -181,7 +181,9 @@ jobs:
   # Web demo: builds the static web build of the renderer (`npm run build:demo`,
   # dist/demo/) and boots it through the `demo` Playwright project
   # (tests/demo/static-demo.spec.ts serves dist/demo itself on an ephemeral
-  # port). One always-on job, no shards: the tier is a handful of page loads.
+  # port). One always-on job, no shards: the tier is one spec file of about 290
+  # tests, which takes 14 minutes on a runner, so the 20 minute cap matches
+  # deploy-demo.yml's run of the same tier. Shard the spec before it nears 18.
   # Setup mirrors the UI shards (shared node_modules cache, cached Chromium, no
   # --with-deps). The steps run in order with the default success() gating on
   # purpose: the smoke has nothing to test without the build, so a failed build
@@ -189,7 +191,7 @@ jobs:
   demo:
     name: Web demo (build + smoke)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
