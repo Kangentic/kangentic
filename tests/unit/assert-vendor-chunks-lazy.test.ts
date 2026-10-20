@@ -1,8 +1,9 @@
 /**
  * Unit coverage for `assertVendorChunksLazy` in scripts/build.js - the
  * build-time backstop that fails `npm run build` unless the recharts, three,
- * xyflow and monaco vendor bundles stayed OUT of the renderer entry's static import
- * closure (see the function's own doc comment for the three invariants).
+ * xyflow and monaco vendor bundles and lucide's whole icon map stayed OUT of the
+ * renderer entry's static import closure (see the function's own doc comment for
+ * the three invariants).
  *
  * Before this file, the function had zero test coverage: it ran only as a
  * side effect of a real `npm run build`, which takes minutes and is not
@@ -76,6 +77,17 @@ function writeIndexHtml(content: string): void {
   fs.writeFileSync(path.join(tempDir, 'index.html'), content);
 }
 
+/** The marker scripts/build.js finds lucide's whole icon map by: an icon no renderer file imports by name. */
+const ICON_MAP_MARKER = 'ferris-wheel';
+
+/**
+ * lucide's whole icon map in its own chunk, named with the marker and reachable only by dynamic import,
+ * as a correct build emits it. Every case that has to get past the icon-map checks writes this.
+ */
+function writeLazyIconCatalog(): void {
+  writeAsset('icon-catalog-pqr987.js', `const glyphs = { "${ICON_MAP_MARKER}": 1 };\n`);
+}
+
 describe('assertVendorChunksLazy', () => {
   it('(a) throws when no recharts-*.js chunk exists in assets/', () => {
     writeAsset('index-abc123.js');
@@ -113,6 +125,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('three-def456.js');
     writeAsset('xyflow-ghi321.js');
     writeAsset('chunk-with-monaco.js', 'some code ... editorViewZones ... more code\n');
+    writeLazyIconCatalog();
     writeManifest({
       'src/renderer/index.tsx': {
         file: 'assets/entry-abc123.js',
@@ -133,6 +146,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('three-def456.js');
     writeAsset('xyflow-ghi321.js');
     writeAsset('recharts-xyz789.js');
+    writeLazyIconCatalog();
     writeManifest({
       'src/renderer/index.tsx': {
         file: 'assets/entry-abc123.js',
@@ -165,6 +179,7 @@ describe('assertVendorChunksLazy', () => {
     // a dynamic import, exactly the shape a correctly lazy-split build
     // produces.
     writeAsset('chunk-with-monaco.js', 'some code ... editorViewZones ... more code\n');
+    writeLazyIconCatalog();
     writeManifest({
       'src/renderer/index.tsx': {
         file: 'assets/entry-abc123.js',
@@ -302,6 +317,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('xyflow-ghi321.js');
     writeAsset('chart-shared-mno654.js');
     writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
+    writeLazyIconCatalog();
     writeManifest({
       'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
       'xyflow-chunk-key': { file: 'assets/xyflow-ghi321.js', imports: ['chart-shared-key'] },
@@ -311,5 +327,62 @@ describe('assertVendorChunksLazy', () => {
     });
 
     expect(() => assertVendorChunksLazy(tempDir)).not.toThrow();
+  });
+
+  /** Every vendor chunk a build emits, each lazy, so a case below reaches the icon-map checks. */
+  function writeLazyVendorChunks(): void {
+    writeAsset('recharts-xyz789.js');
+    writeAsset('three-def456.js');
+    writeAsset('xyflow-ghi321.js');
+    writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
+  }
+
+  it('(n) throws when no icon-catalog-*.js chunk exists in assets/', () => {
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/No icon-catalog-\*\.js chunk/);
+  });
+
+  it('(o) throws when the icon-catalog chunk is in the entry STATIC import closure', () => {
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    writeLazyIconCatalog();
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: ['board-key'] },
+      // A startup module that imports icon-catalog.ts itself instead of through loadIconCatalog().
+      'board-key': { file: 'assets/board.js', imports: ['icon-catalog-key'] },
+      'icon-catalog-key': { file: 'assets/icon-catalog-pqr987.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/icon-catalog-pqr987\.js is in the entry's STATIC import closure/);
+  });
+
+  it('(p) throws when a statically reachable chunk holds the whole icon map', () => {
+    // The shape this guards: something on the startup path imports lucide-react's `icons`, so the
+    // map is bundled into a startup chunk while icon-catalog's own chunk stays lazy and passes (o).
+    writeAsset('entry-abc123.js', `const glyphs = { "${ICON_MAP_MARKER}": 1 };\n`);
+    writeLazyVendorChunks();
+    writeLazyIconCatalog();
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/entry-abc123\.js is in the entry's STATIC import closure but holds lucide's whole icon map/);
+  });
+
+  it('(q) throws "gone blind" when no chunk anywhere names the icon-map marker', () => {
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    // The catalog chunk exists but no longer carries the marker, as after a lucide rename.
+    writeAsset('icon-catalog-pqr987.js', 'const glyphs = { "rocket": 1 };\n');
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(new RegExp(`No chunk names the icon "${ICON_MAP_MARKER}"`));
   });
 });
