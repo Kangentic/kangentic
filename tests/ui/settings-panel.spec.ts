@@ -1622,6 +1622,7 @@ test.describe('Settings Panel', () => {
       expect(isMoving(animatedAgain.chevron), `chevron durations ${animatedAgain.chevron}`).toBe(true);
 
       // The OS reduced-motion preference, with Animations on, stops them too.
+      // That is the web build's path: the desktop app never matches the query.
       await page.emulateMedia({ reducedMotion: 'reduce' });
       // Proves the emulation took effect, so the zeros below are not read off
       // the normal path.

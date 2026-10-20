@@ -169,8 +169,8 @@ function FlyingCard() {
   if (!completingTask) return null;
 
   const { task, startRect } = completingTask;
-  // Reduced motion (OS preference or the in-app Appearance toggle, which adds
-  // .no-motion to the root) collapses the fly to a short opacity fade. The
+  // Animations off (which adds .no-motion to the root), or the web build's
+  // reduced motion, collapses the fly to a short opacity fade. The
   // .no-motion class only zeroes CSS keyframe durations, not inline
   // transitions, so it must be checked here in JS rather than relied on via CSS.
   const reduceMotion = motionReduced();
