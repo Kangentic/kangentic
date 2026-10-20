@@ -1,3 +1,4 @@
+import { RATE_LIMIT_RESET_EPSILON_SECONDS, rateLimitGeneration } from '../../shared/types';
 import type { RateLimitWindow } from '../../shared/types';
 
 /**
@@ -14,42 +15,47 @@ export interface RateLimitSnapshot {
 }
 
 /**
- * Two reports whose `resetsAt` differ by no more than this many seconds
- * describe the SAME fixed window (this absorbs per-report jitter). A genuine
- * window rollover advances `resetsAt` by a whole window length (hours or days),
- * far past this tolerance. The comparison is always between two reported
- * `resetsAt` values, never the local clock, so it carries no wall-clock or
- * timezone dependence.
- */
-export const RATE_LIMIT_RESET_EPSILON_SECONDS = 60;
-
-/**
- * Monotonically merge an incoming rate-limit snapshot into the shared one,
- * per window id. Rate-limit windows are FIXED windows anchored by a `resetsAt`
- * epoch, so within one window `usedPercentage` only rises. Each Claude CLI
- * process refreshes its rate-limit info only from its own API traffic, so a
- * concurrently running sibling session can report a much older cached value for
- * the same window. Under a naive last-writer-wins snapshot those two sessions
- * make every ContextBar flip-flop between the fresh and stale numbers every few
- * seconds. Merging per window instead keeps the account-wide truth: within one
- * window we keep the maximum, we take a genuine rollover wholesale, and we
- * ignore a report for an older window.
+ * Merge an incoming rate-limit snapshot into the shared one, per window id.
+ * Rate-limit windows are FIXED windows anchored by a `resetsAt` epoch, so within
+ * one window `usedPercentage` normally only rises. Each Claude CLI process
+ * refreshes its rate-limit info only from its own API traffic, so a concurrently
+ * running sibling session can report a much older cached value for the same
+ * window. Under a naive last-writer-wins snapshot those two sessions make every
+ * ContextBar flip-flop between the fresh and stale numbers every few seconds.
+ * Merging per window instead keeps the account-wide truth: within one window we
+ * keep the maximum, we take a genuine rollover wholesale, and we ignore a report
+ * for an older window.
+ *
+ * A free usage reset lowers usage without moving `resetsAt`, which the maximum
+ * alone would reject forever. Main's `RateLimitLedger` sees which session said
+ * what and stamps each window with a reset `generation`, which decides between
+ * two reports of the same window: a reset arrives as a higher generation, and a
+ * stale sibling's pre-reset number carries a lower one. Windows without a stamp
+ * (demo data, UI fixtures) read as generation 0 and merge exactly as before.
  *
  * Per window id, comparing the incoming window to the one we already hold:
  * - id not present in current   -> add the incoming window.
  * - resetsAt advanced past the epsilon (rollover) -> take incoming wholesale,
  *   even when its `usedPercentage` is lower (the window reset).
- * - resetsAt within the epsilon (same window) -> keep the higher
- *   `usedPercentage` but hold the current window's `resetsAt` as the anchor, so
- *   the anchor cannot drift within a window; a lower or equal report is stale
- *   and is dropped.
  * - resetsAt older than the epsilon (stale window) -> ignore the incoming window.
+ * - resetsAt within the epsilon (same window), generation higher (a reset) ->
+ *   take the incoming `usedPercentage` and generation even when lower.
+ * - same window, generation lower (reported before the last reset) -> keep the
+ *   current window, even when the incoming one is higher.
+ * - same window, same generation -> keep the higher `usedPercentage`; a lower
+ *   or equal report is stale and is dropped.
+ * - In every same-window case the current window's `resetsAt` stays the anchor,
+ *   so the anchor cannot drift within a window.
  * - id present in current but absent from incoming -> keep the current window.
  *
  * Returns the EXACT `current` reference when nothing changed, so Zustand
  * subscribers do not re-render and `useValuePulse` does not fire on a no-op
  * report. Never mutates either input. A `null` current returns `incoming`
  * unchanged (the first snapshot, including the empty-array case).
+ *
+ * Per window the result is a maximum of (window, then generation, then value),
+ * so folding many reports stays order-independent for realistic inputs, as the
+ * `resetsAt` rules alone already were.
  */
 export function mergeRateLimitSnapshot(
   current: RateLimitSnapshot | null,
@@ -84,9 +90,27 @@ export function mergeRateLimitSnapshot(
       // stale cached data. Keep the current window.
       return currentWindow;
     }
-    // Same fixed window (resetsAt within epsilon). usedPercentage only rises
-    // within a window, so a strictly higher report is fresher and wins; a lower
-    // or equal one is stale and must not clobber the value already shown. Keep
+    // Same fixed window. The reset generation decides first, and only here. A
+    // session can drop inside a window the account has already rolled past, so
+    // a generation compared before the window would drag the bar back to it.
+    // Main's twin of this same-window test is `isSameRateLimitWindow`
+    // (rate-limit-ledger.ts), which also refuses a missing (0) anchor; change
+    // the two together.
+    const generationDelta = rateLimitGeneration(incomingWindow) - rateLimitGeneration(currentWindow);
+    if (generationDelta > 0) {
+      // A reset main detected (usage fell without resetsAt moving). Take the
+      // incoming value even when it is lower, keeping the anchor pinned.
+      changed = true;
+      return { ...currentWindow, usedPercentage: incomingWindow.usedPercentage, generation: incomingWindow.generation };
+    }
+    if (generationDelta < 0) {
+      // Reported by a session that has not seen anything new since the last
+      // reset, so its number is the pre-reset one. Keep the current window.
+      return currentWindow;
+    }
+    // Same generation: usedPercentage only rises within a window, so a strictly
+    // higher report is fresher and wins; a lower or equal one is stale and must
+    // not clobber the value already shown. Keep
     // the current window's `resetsAt` as the anchor (bump only usedPercentage)
     // rather than adopting the incoming one: taking the incoming resetsAt would
     // let the anchor walk by up to the epsilon on every accepted update, and

@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   windowElapsedPercentage,
   mergeRateLimitSnapshot,
-  RATE_LIMIT_RESET_EPSILON_SECONDS,
   type RateLimitSnapshot,
 } from '../../src/renderer/utils/rate-limit-window';
+import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
 import type { RateLimitWindow } from '../../src/shared/types';
 
 // All cases pass `nowMs` explicitly, so the helper is fully deterministic and
@@ -281,5 +281,87 @@ describe('mergeRateLimitSnapshot', () => {
     expect(current.sourceSessionId).toBe('sess-a');
     expect(incoming.rateLimits).toBe(incomingWindows);
     expect(incoming.rateLimits[0].usedPercentage).toBe(80);
+  });
+
+  describe('reset generation (stamped by main)', () => {
+    function stamped(rateLimitWindow: RateLimitWindow, generation: number): RateLimitWindow {
+      return { ...rateLimitWindow, generation };
+    }
+
+    it('takes a higher-generation window wholesale even when its usedPercentage is lower (a free reset)', () => {
+      const current = snapshot([stamped(sevenDay(99), 0)], 'sess-a', 1000);
+      const incoming = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 2000);
+
+      const result = mergeRateLimitSnapshot(current, incoming);
+      expect(result).not.toBe(current);
+      expect(result.rateLimits[0].usedPercentage).toBe(1);
+      expect(result.rateLimits[0].generation).toBe(1);
+      expect(result.capturedAt).toBe(2000);
+    });
+
+    it('ignores a lower-generation window even when its usedPercentage is higher (a stale pre-reset sibling)', () => {
+      const current = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 1000);
+      const incoming = snapshot([stamped(sevenDay(99), 0)], 'sess-b', 2000);
+
+      expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    });
+
+    it('keeps the anchor pinned when a higher generation lands with resetsAt jitter', () => {
+      const current = snapshot([stamped(sevenDay(99, SEVEN_DAY_RESET), 0)], 'sess-a', 1000);
+      const incoming = snapshot([stamped(sevenDay(1, SEVEN_DAY_RESET + 30), 1)], 'sess-a', 2000);
+
+      const result = mergeRateLimitSnapshot(current, incoming);
+      expect(result.rateLimits[0].usedPercentage).toBe(1);
+      expect(result.rateLimits[0].resetsAt).toBe(SEVEN_DAY_RESET);
+    });
+
+    it('never lets a higher generation pull the bar back to an older window', () => {
+      // A session can drop inside a window the account already rolled past (a
+      // second account, or a session still on the old window). The window is
+      // compared before the generation, so the older window is ignored as before.
+      const current = snapshot([stamped(sevenDay(20, SEVEN_DAY_RESET + SEVEN_DAY_SECONDS), 0)], 'sess-a', 1000);
+      const incoming = snapshot([stamped(sevenDay(1, SEVEN_DAY_RESET), 1)], 'sess-b', 2000);
+
+      expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    });
+
+    it('takes a rollover even from a lower generation', () => {
+      const current = snapshot([stamped(sevenDay(40, SEVEN_DAY_RESET), 2)], 'sess-a', 1000);
+      const incoming = snapshot([stamped(sevenDay(3, SEVEN_DAY_RESET + SEVEN_DAY_SECONDS), 1)], 'sess-b', 2000);
+
+      const result = mergeRateLimitSnapshot(current, incoming);
+      expect(result.rateLimits[0].usedPercentage).toBe(3);
+      expect(result.rateLimits[0].resetsAt).toBe(SEVEN_DAY_RESET + SEVEN_DAY_SECONDS);
+    });
+
+    it('applies the usual same-window maximum within one generation', () => {
+      const current = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 1000);
+      const raised = mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(3), 1)], 'sess-c', 2000));
+      expect(raised.rateLimits[0].usedPercentage).toBe(3);
+
+      expect(mergeRateLimitSnapshot(raised, snapshot([stamped(sevenDay(2), 1)], 'sess-a', 3000))).toBe(raised);
+    });
+
+    it('reads an absent generation as 0', () => {
+      const current = snapshot([sevenDay(99)], 'sess-a', 1000);
+      const reset = mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(1), 1)], 'sess-b', 2000));
+      expect(reset.rateLimits[0].usedPercentage).toBe(1);
+
+      // An unstamped report is generation 0, behind the held generation 1.
+      expect(mergeRateLimitSnapshot(reset, snapshot([sevenDay(99)], 'sess-c', 3000))).toBe(reset);
+      // An explicit 0 merges like an absent one.
+      expect(mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(50), 0)], 'sess-d', 2000))).toBe(current);
+    });
+
+    it('folds to the same result in either order', () => {
+      const stale = snapshot([stamped(fiveHour(40), 0), stamped(sevenDay(99), 0)], 'sess-stale', 1000);
+      const fresh = snapshot([stamped(fiveHour(40), 0), stamped(sevenDay(1), 1)], 'sess-fresh', 2000);
+
+      const staleFirst = mergeRateLimitSnapshot(mergeRateLimitSnapshot(null, stale), fresh);
+      const freshFirst = mergeRateLimitSnapshot(mergeRateLimitSnapshot(null, fresh), stale);
+      for (const result of [staleFirst, freshFirst]) {
+        expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.usedPercentage)).toEqual([40, 1]);
+      }
+    });
   });
 });

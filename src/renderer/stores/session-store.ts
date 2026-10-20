@@ -454,14 +454,15 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     // exact failure mode we're guarding against.
     //
     // latestRateLimits: fold every cached entry with rateLimits through the
-    // monotonic per-window merge (order-independent for realistic inputs, where
-    // a genuine rollover advances resetsAt by a whole window, far past the merge
-    // epsilon; the epsilon relation is not strictly transitive at the boundary).
-    // This both seeds the snapshot on first sync and, on a re-sync, only ever
-    // raises it: an IPC-delivered update that arrived during the async gap has
-    // already populated the store, and the merge rejects any same-window cached
-    // value that is not fresher, so a stale entry can never regress it. Without
-    // this
+    // per-window merge (order-independent for realistic inputs, where a genuine
+    // rollover advances resetsAt by a whole window, far past the merge epsilon;
+    // the epsilon relation is not strictly transitive at the boundary). This both
+    // seeds the snapshot on first sync and, on a re-sync, never regresses it: an
+    // IPC-delivered update that arrived during the async gap has already
+    // populated the store, and the merge rejects a cached value that is not
+    // fresher. Fresher means a higher reset generation (main stamps one per free
+    // usage reset), else a higher same-window value. So a stale suspended entry
+    // still carrying a pre-reset number cannot bring it back. Without this
     // fold the global snapshot would stay null until the next status update,
     // leaving a noticeable gap on app start. Reference identity is preserved
     // when nothing changed, so a no-op re-sync does not re-render ContextBars.
@@ -760,9 +761,10 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
         sessionUsage: { ...s.sessionUsage, [sessionId]: data },
       };
       if (data.rateLimits) {
-        // Merge monotonically per window rather than overwriting: a sibling
-        // session carrying a stale cached report must not clobber a fresher
-        // one, which is what made the pill flip-flop every ~5s.
+        // Merge per window rather than overwriting: a sibling session carrying
+        // a stale cached report must not clobber a fresher one, which is what
+        // made the pill flip-flop every ~5s. A free usage reset still lands,
+        // because main stamps it as a higher generation.
         const merged = mergeRateLimitSnapshot(s.latestRateLimits, {
           rateLimits: data.rateLimits,
           capturedAt: Date.now(),
@@ -823,7 +825,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
       for (const [sessionId, data] of entries) {
         merged[sessionId] = data;
         if (data.rateLimits) {
-          // Fold each entry through the monotonic per-window merge, so the
+          // Fold each entry through the per-window merge, so the
           // result is order-independent for realistic inputs (a genuine rollover
           // advances resetsAt by a whole window, far past the merge epsilon): a
           // stale entry iterated last cannot clobber a fresher one from earlier

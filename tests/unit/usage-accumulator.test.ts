@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
-import { EventType, IdleReason } from '../../src/shared/types';
+import { EventType, IdleReason, RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
 import type { SessionUsage, SessionEvent } from '../../src/shared/types';
 
 /** Build a tool lifecycle event, optionally carrying cost/token fields. */
@@ -453,6 +453,160 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     const cached = usage.getSessionUsage('unlearned-session');
     expect(cached?.contextWindow.contextWindowSize).toBe(0);
     expect(cached?.contextWindow.usedPercentage).toBe(0);
+  });
+});
+
+/**
+ * Rate-limit windows are stamped with a reset generation before caching, and a
+ * reset brings every other cached session still behind it up to the new value,
+ * so the cache keeps the reset after the session that saw it is gone.
+ */
+describe('UsageAccumulator - rate-limit reset generations', () => {
+  const SEVEN_DAY_RESET = 1_792_508_400;
+  let usage: UsageAccumulator;
+
+  function statusWithSevenDay(usedPercentage: number, resetsAt: number = SEVEN_DAY_RESET): SessionUsage {
+    return {
+      contextWindow: {
+        usedPercentage: 0,
+        usedTokens: 0,
+        cacheTokens: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        contextWindowSize: 0,
+      },
+      cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+      rateLimits: [
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage, resetsAt, windowDurationSeconds: 7 * 24 * 60 * 60 },
+      ],
+    };
+  }
+
+  function cachedSevenDay(sessionId: string): { usedPercentage: number; generation: number | undefined } | undefined {
+    const sevenDay = usage.getUsageCache()[sessionId]?.rateLimits?.[0];
+    return sevenDay ? { usedPercentage: sevenDay.usedPercentage, generation: sevenDay.generation } : undefined;
+  }
+
+  /**
+   * A status carrying a five-hour and a seven-day window. Both share one
+   * `resetsAt` on purpose, so a catch-up that rewrote the wrong window id would
+   * not be stopped by the anchor comparison and only the id check holds it back.
+   */
+  function statusWithBothWindows(fiveHourPercentage: number, sevenDayPercentage: number): SessionUsage {
+    const sevenDayStatus = statusWithSevenDay(sevenDayPercentage);
+    return {
+      ...sevenDayStatus,
+      rateLimits: [
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: fiveHourPercentage, resetsAt: SEVEN_DAY_RESET, windowDurationSeconds: 5 * 60 * 60 },
+        ...(sevenDayStatus.rateLimits ?? []),
+      ],
+    };
+  }
+
+  function cachedWindow(sessionId: string, windowId: string): { usedPercentage: number; generation: number | undefined } | undefined {
+    const foundWindow = usage.getUsageCache()[sessionId]?.rateLimits?.find((rateLimitWindow) => rateLimitWindow.id === windowId);
+    return foundWindow ? { usedPercentage: foundWindow.usedPercentage, generation: foundWindow.generation } : undefined;
+  }
+
+  beforeEach(() => {
+    usage = new UsageAccumulator();
+  });
+
+  it('stamps the cached window with its generation', () => {
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(40));
+    expect(cachedSevenDay('sess-a')).toEqual({ usedPercentage: 40, generation: 0 });
+  });
+
+  it('brings a paused sibling up to a reset and reports it once for re-emit', () => {
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-paused', statusWithSevenDay(99));
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual([]);
+
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(1));
+    expect(cachedSevenDay('sess-a')).toEqual({ usedPercentage: 1, generation: 1 });
+    expect(cachedSevenDay('sess-paused')).toEqual({ usedPercentage: 1, generation: 1 });
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual(['sess-paused']);
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual([]);
+
+    // The session that saw the reset goes away: the cache still says 1, not 99.
+    usage.removeSession('sess-a');
+    expect(cachedSevenDay('sess-paused')).toEqual({ usedPercentage: 1, generation: 1 });
+  });
+
+  it('keeps a stale repeat from putting the pre-reset number back, and takes a fresh catch-up', () => {
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-b', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(1));
+
+    usage.replaceSessionUsage('sess-b', statusWithSevenDay(99));
+    expect(cachedSevenDay('sess-b')).toEqual({ usedPercentage: 1, generation: 1 });
+
+    usage.replaceSessionUsage('sess-b', statusWithSevenDay(3));
+    expect(cachedSevenDay('sess-b')).toEqual({ usedPercentage: 3, generation: 1 });
+  });
+
+  it('leaves a sibling on another window alone', () => {
+    const otherWindow = SEVEN_DAY_RESET + 7 * 24 * 60 * 60;
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-other-account', statusWithSevenDay(30, otherWindow));
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(1));
+
+    expect(cachedSevenDay('sess-other-account')).toEqual({ usedPercentage: 30, generation: 0 });
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual([]);
+  });
+
+  it('stamps a merge-path report that carries rate limits, and keeps the stamp across a chunk without them', () => {
+    usage.setSessionUsage('sess-a', { rateLimits: statusWithSevenDay(50).rateLimits });
+    usage.setSessionUsage('sess-a', { cost: { totalCostUsd: 1, totalDurationMs: 0 } });
+    expect(cachedSevenDay('sess-a')).toEqual({ usedPercentage: 50, generation: 0 });
+  });
+
+  it('opens a generation on a merge-path report, catches a sibling up, and holds it against a stale merge-path repeat', () => {
+    usage.setSessionUsage('sess-a', { rateLimits: statusWithSevenDay(99).rateLimits });
+    usage.setSessionUsage('sess-paused', { rateLimits: statusWithSevenDay(99).rateLimits });
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual([]);
+
+    usage.setSessionUsage('sess-a', { rateLimits: statusWithSevenDay(1).rateLimits });
+    expect(cachedSevenDay('sess-a')).toEqual({ usedPercentage: 1, generation: 1 });
+    expect(cachedSevenDay('sess-paused')).toEqual({ usedPercentage: 1, generation: 1 });
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual(['sess-paused']);
+
+    // sess-paused re-sends its cached 99. The merge must not put it back.
+    usage.setSessionUsage('sess-paused', { rateLimits: statusWithSevenDay(99).rateLimits });
+    expect(cachedSevenDay('sess-paused')).toEqual({ usedPercentage: 1, generation: 1 });
+  });
+
+  it('removeSession drops a pending catch-up so a removed session is not handed back for re-emit', () => {
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-paused', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(1));
+
+    usage.removeSession('sess-paused');
+
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual([]);
+  });
+
+  it('brings only the reset window id up on a sibling and leaves its other window alone', () => {
+    usage.replaceSessionUsage('sess-a', statusWithBothWindows(30, 99));
+    usage.replaceSessionUsage('sess-paused', statusWithBothWindows(70, 99));
+
+    usage.replaceSessionUsage('sess-a', statusWithBothWindows(30, 1));
+
+    expect(cachedWindow('sess-paused', 'seven-day')).toEqual({ usedPercentage: 1, generation: 1 });
+    expect(cachedWindow('sess-paused', 'five-hour')).toEqual({ usedPercentage: 70, generation: 0 });
+    expect(usage.takeSessionsCaughtUpToReset()).toEqual(['sess-paused']);
+  });
+
+  it('holds a caught-up cache against a stale repeat whose resetsAt jitters within the epsilon', () => {
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-b', statusWithSevenDay(99));
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(1));
+    expect(cachedSevenDay('sess-b')).toEqual({ usedPercentage: 1, generation: 1 });
+
+    // Same cached 99, anchor a few seconds off: still a repeat, not a fresh catch-up.
+    usage.replaceSessionUsage('sess-b', statusWithSevenDay(99, SEVEN_DAY_RESET + RATE_LIMIT_RESET_EPSILON_SECONDS / 2));
+    expect(cachedSevenDay('sess-b')).toEqual({ usedPercentage: 1, generation: 1 });
   });
 });
 
