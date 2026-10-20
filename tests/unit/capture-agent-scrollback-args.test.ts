@@ -27,6 +27,10 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { CommandBuilder } from '../../src/main/agent/adapters/claude';
+import {
+  EVIDENCE_FIRST_WAIT_MS, EVIDENCE_RETRY_WAIT_MS, MIN_GAP_MS, OUTPUT_SETTLE_IDLE_MS, POST_ENTER_DATA_FLOOR_BYTES,
+  SETTLE_CAP_MIN_MS, SETTLE_CAP_PER_BYTE_MS, sanitizeForPaste,
+} from '../../src/main/pty/paste-engine';
 
 interface McpLaunchOptions {
   mcpConfig: string | null;
@@ -66,10 +70,57 @@ interface CaptureScrollbackModule {
   ) => LaunchCommand;
   CLAUDE_READ_ONLY_TOOLS: string;
   endsOnPermissionQuestion: (raw: string) => boolean;
+  pastePacket: (text: string) => string;
+  missedSecondTurn: (turn: { followUp: string | null; followUpSent: boolean; pasteRequested: boolean; pasteSent: boolean; reason: string }) => string | null;
+  PASTE_TIMINGS: {
+    settleIdleMs: number;
+    minGapMs: number;
+    capMinMs: number;
+    capPerByteMs: number;
+    enterWaitsMs: number[];
+    enterEvidenceBytes: number;
+  };
 }
 
 const require = createRequire(import.meta.url);
-const { parseArgs, buildCommand, endsOnPermissionQuestion, CLAUDE_READ_ONLY_TOOLS } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule;
+const { parseArgs, buildCommand, endsOnPermissionQuestion, pastePacket, missedSecondTurn, PASTE_TIMINGS, CLAUDE_READ_ONLY_TOOLS } = require('../../scripts/capture-agent-scrollback.js') as CaptureScrollbackModule;
+
+describe('the browser note the capture pastes', () => {
+  it('is the packet the paste engine writes for Send', () => {
+    // The capture records what the Browser pane's Send puts into a terminal, so the bytes have to
+    // be the engine's: its sanitizer over the payload, inside the bracketed-paste markers.
+    const payload = 'Only an admin should cancel.\r\n\r\nScreenshot: @.kangentic/sessions/x/captures/capture-1.png\r\n<browser_context>\x07\n  <url>http://localhost:5173/</url>\n</browser_context>';
+    expect(pastePacket(payload)).toBe(`\x1b[200~${sanitizeForPaste(payload)}\x1b[201~`);
+  });
+
+  it('refuses a paste beside a follow-up or a cut', () => {
+    const base = ['--agent', 'claude', '--cwd', os.tmpdir(), '--project', 'contoso-web', '--out', path.join(os.tmpdir(), 'out.json'), '--paste-file', path.join(os.tmpdir(), 'note.txt')];
+    expect(() => parseArgs([...base, '--follow-up', 'more'])).toThrow(/both a second turn/);
+    expect(() => parseArgs([...base, '--stop-after', '10'])).toThrow(/waits for the turn to end/);
+  });
+
+  it('is entered on the paste engine\'s own clock', () => {
+    // The web demo plays the recording from the paste to the Enter, so a capture that waited
+    // another span than the engine would record a Send the desktop never makes.
+    expect(PASTE_TIMINGS).toEqual({
+      settleIdleMs: OUTPUT_SETTLE_IDLE_MS,
+      minGapMs: MIN_GAP_MS,
+      capMinMs: SETTLE_CAP_MIN_MS,
+      capPerByteMs: SETTLE_CAP_PER_BYTE_MS,
+      enterWaitsMs: [EVIDENCE_FIRST_WAIT_MS, EVIDENCE_RETRY_WAIT_MS],
+      enterEvidenceBytes: POST_ENTER_DATA_FLOOR_BYTES,
+    });
+  });
+
+  it('fails a capture that asked for the note and never pasted it', () => {
+    const turn = { followUp: null, followUpSent: false, pasteRequested: true, pasteSent: false };
+    expect(missedSecondTurn({ ...turn, reason: 'question' })).toMatch(/browser note was never pasted \(the first turn ended on a permission question\)/);
+    expect(missedSecondTurn({ ...turn, reason: 'timeout' })).toMatch(/browser note was never pasted \(the first turn ended on a timeout\)/);
+    expect(missedSecondTurn({ ...turn, pasteSent: true, reason: 'idle' })).toBeNull();
+    expect(missedSecondTurn({ ...turn, pasteRequested: false, reason: 'idle' })).toBeNull();
+    expect(missedSecondTurn({ ...turn, pasteRequested: false, followUp: 'more', reason: 'exited' })).toMatch(/follow-up was never typed/);
+  });
+});
 
 const SANDBOX = path.join(os.tmpdir(), 'kangentic-capture-args-test');
 const SCRATCH_ROOT = path.join(SANDBOX, 'clone');

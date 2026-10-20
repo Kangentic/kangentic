@@ -414,6 +414,13 @@ function conversationWindowWorkspace() {
   };
 }
 
+/**
+ * The note the capture matrix sent the middleware session from the Browser pane (the manifest's
+ * browserSends). The browser scene types exactly this, since a Send plays its recording only for
+ * the note it was recorded with; tests/unit/demo-browser-send-seeded.test.ts holds the two equal.
+ */
+export const BROWSER_SEND_NOTE = 'Cancel should keep the plan active until Oct 1.';
+
 /** The first Command Terminal slot; the window's durable anchor (CommandTerminalLayer.tsx). */
 const COMMAND_TERMINAL_SLOT = 'slot-1';
 
@@ -1471,20 +1478,25 @@ export const SCENES: Record<string, SceneDefinition> = {
   browser: {
     name: 'browser',
     reach: 'state',
-    description: 'The task window with the Browser pane open on the project\'s dev URL. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it shows the session\'s tiled recording, filling the narrow pane (the comment above).',
+    description: 'The task window with the Browser pane open on the project\'s dev URL, its agent finished and waiting. The pane is the real renderer; its guest is demo/webview-shim.js\'s iframe onto a bundled page with the scaffold app\'s own data and an authored presentation (demo/README.md, Browser guest), since no browser has Electron\'s webview. The terminal beside it fills the narrow pane (the comment above) with the conversation as the matrix recorded it just before a note from this pane went in (send-sess-cw-middleware.json), so the loop\'s Send plays that recording on: the payload pasted, the agent reading the screenshot, and the cut taking it back.',
     alt: 'A task window with the Browser pane open beside the agent\'s terminal: an address bar on the project\'s local dev server, the page it serves loaded beneath, zoom and Close browser controls above, and Draw, Inspect, and a note field for the agent below.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
     tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: JSON.stringify({ browserOpen: true, dividerRatio: 0.45 }) }],
+    // Finished, so the session rests on the frame its recorded Send starts from (demo-dataset.ts,
+    // sendRests) and Send continues from what the visitor sees.
+    sessions: { [SESSION_MIDDLEWARE]: { activity: 'idle' } },
     ready: '[data-testid="browser-webview"] iframe',
-    // A note for the agent typed into the pane's own field and the pointer on Send. Then the cut,
-    // the note taken back behind it, and a click on the page that leaves the field. Never sent:
-    // Send and Enter are the two things that would. The guest page itself has nothing to type into
-    // and may not animate (demo/README.md, Browser guest).
+    // The note the matrix sent this session (the manifest's browserSends) typed into the pane's own
+    // field and sent. The recording plays on: the payload pasted into the agent's terminal and
+    // echoed whole, the screenshot read, and the agent at work. A few seconds in, the cut takes it
+    // back behind the veil (demo-dataset.ts, rewindSends) and a click on the page leaves the
+    // button. The guest page itself has nothing to type into and may not animate (demo/README.md,
+    // Browser guest).
     choreography: [
-      { type: { into: '[data-testid="browser-note-input"]', text: 'Ask for a confirmation before Cancel subscription' }, ms: 900 },
-      { hover: '[data-testid="browser-send"]', ms: 1600 },
+      { type: { into: '[data-testid="browser-note-input"]', text: BROWSER_SEND_NOTE }, ms: 700 },
+      { hover: '[data-testid="browser-send"]', ms: 900 },
+      { click: '[data-testid="browser-send"]', waitFor: 'button[aria-label="Pause session"] [data-mark="control-pause-working"]', ms: 4000 },
       { cut: true },
-      { type: { into: '[data-testid="browser-note-input"]', text: '' } },
       { click: '[data-testid="browser-webview"] iframe' },
     ],
   },

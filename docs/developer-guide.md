@@ -243,9 +243,12 @@ Terminal starts (recorded per task and per project by `scripts/capture-demo-sess
 the dataset), the `claude --resume` boot a Resume replays for a session paused at its
 recording's end (recorded by the same script as `resume-<sessionId>.json`), and a workflow's own
 agent planning it (`workflow-<workflowId>.json`, recorded by the same script against a seeded
-preview, beside the plan it saved under `workflow-plans/`), plus the agent transcript behind a session under `transcripts/` (from
+preview, beside the plan it saved under `workflow-plans/`), a note sent from the Browser pane
+(`send-<sessionId>.json`, the manifest's `browserSends`: the session's conversation resumed and
+sent the note the way Send sends it), whose rest frame ships as `send-frames/<session>.js` for only
+a frame that shows that session finished, plus the agent transcript behind a session under `transcripts/` (from
 `tests/captures/fixtures/demo/transcripts/`, derived by main's own parsers), which the
-conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, the Knowledge Graph file, the scene-only row scripts, and the guest pages carry a content hash in their
+conversation viewer fetches when it opens. The five scripts, the recordings, the transcripts, the Knowledge Graph file, the scene-only row scripts, the send rest frames, and the guest pages carry a content hash in their
 names, as Vite's own chunks do, so a copy GitHub Pages cached from an earlier release is never
 paired with a new seed. Beside them it emits `scenes.json` unhashed: the scene list (name, reach, the alt text a
 docs figure carries, the maintainer description), the frame size (1600 by 1000), and the app
