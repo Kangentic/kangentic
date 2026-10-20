@@ -11,9 +11,32 @@ import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { sanitizeDeep } = require('../../scripts/lib/demo-sanitizer.js') as {
+const { sanitizeDeep, stripAccountLinks, buildSanitizer } = require('../../scripts/lib/demo-sanitizer.js') as {
   sanitizeDeep: (value: unknown, sanitizer: { apply: (text: string) => string }) => unknown;
+  stripAccountLinks: (text: string) => string;
+  buildSanitizer: (options: { project: string; cwd: string }) => { apply: (text: string) => string; assertClean: (text: string, label: string) => void };
 };
+
+describe('stripAccountLinks', () => {
+  // Claude's footer as a recording carries it: "/rc" linked to the account's own session.
+  const linked = (terminator: string): string => `\x1b]8;id=u-abc%123;https://claude.ai/code/session_01AbCdEf?from=cli${terminator}/rc\x1b]8;;${terminator}`;
+
+  it('drops the session link\'s target and keeps the text in the same cells', () => {
+    expect(stripAccountLinks(linked('\x1b\\'))).toBe('\x1b]8;;\x1b\\/rc\x1b]8;;\x1b\\');
+    expect(stripAccountLinks(linked('\x07'))).toBe('\x1b]8;;\x07/rc\x1b]8;;\x07');
+  });
+
+  it('leaves every other link alone', () => {
+    const docs = '\x1b]8;;https://docs.example.com/page\x1b\\docs\x1b]8;;\x1b\\';
+    expect(stripAccountLinks(docs)).toBe(docs);
+  });
+
+  it('runs inside the capture\'s rewrite, and the leak check refuses a link that survived it', () => {
+    const sanitizer = buildSanitizer({ project: 'contoso-web', cwd: process.cwd() });
+    expect(sanitizer.apply(linked('\x1b\\'))).not.toContain('claude.ai/code/session_');
+    expect(() => sanitizer.assertClean(linked('\x1b\\'), 'footer')).toThrow(/claude\.ai session/);
+  });
+});
 
 const rewriter = { apply: (text: string) => text.replaceAll('MARKER', 'dev') };
 
