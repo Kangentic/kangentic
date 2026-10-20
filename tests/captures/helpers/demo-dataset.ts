@@ -2052,8 +2052,6 @@ export function buildDemoPreConfig(options: {
       // the moment a narrow window opened on it. A session the seed did not clock (a spawn, a
       // Command Terminal boot) has no data.ends entry and plays its own recording unshifted.
       function sessionDurationMs(sessionId, recording) {
-        var replay = replays[sessionId];
-        if (replay && replay.sending) return recordingEndMs(recording);
         var end = data.ends[sessionId];
         if (end && typeof end.durationMs === 'number') return end.durationMs;
         var last = recording.stream[recording.stream.length - 1];
@@ -2063,13 +2061,20 @@ export function buildDemoPreConfig(options: {
         var last = recording.stream[recording.stream.length - 1];
         return last ? last.t : 0;
       }
+      // The clock a session's replay runs on. A Send playing has its own: the note's recording,
+      // which is not the session's (the dataset's recording of the work it did before). Kept apart
+      // from sessionDurationMs, which demo-variant-clock.test.ts lifts out of the seed on its own.
+      function clockMs(sessionId, recording) {
+        var replay = replays[sessionId];
+        return replay && replay.sending ? recordingEndMs(recording) : sessionDurationMs(sessionId, recording);
+      }
       // Where a recording stops playing on its session's clock. A tiled sibling is a second run of
       // the prompt and can run longer than the session it stands in for, whose clock is the single
       // recording's, so it ends where the session does. Past that it replayed a working stretch
       // into a terminal whose card already read finished: a contoso Command Terminal tiled beside
       // a new one took a repaint every 110 ms for the 24 s its tiled run outlasted the single.
       function playedEndMs(sessionId, recording) {
-        return Math.min(recordingEndMs(recording), sessionDurationMs(sessionId, recording));
+        return Math.min(recordingEndMs(recording), clockMs(sessionId, recording));
       }
       /**
        * Queue the chunks still ahead of the session's clock, and return the ones already behind
@@ -2231,7 +2236,7 @@ export function buildDemoPreConfig(options: {
       window.__demoReplayMode = replayModes;
       function liveScrollback(sessionId, entry) {
         return fetchRecording(entry.file).then(function (recording) {
-          var duration = sessionDurationMs(sessionId, recording);
+          var duration = clockMs(sessionId, recording);
           if (entry.startedAt === null) {
             // A pre-seeded working session has been running for a while: everything but its
             // last stretch is already scrollback, and that stretch streams from here.
@@ -2256,7 +2261,7 @@ export function buildDemoPreConfig(options: {
       // bytes would leave, with every row above it. The same recording on a new grid (a resize,
       // a terminal mounted again) keeps its emulator and repaints it for that grid.
       function frameScrollback(sessionId, entry, recording, grid) {
-        var duration = sessionDurationMs(sessionId, recording);
+        var duration = clockMs(sessionId, recording);
         if (entry.startedAt === null) entry.startedAt = Date.now() - Math.max(0, duration - entry.tail);
         entry.mounted = true;
         entry.frameOnly = true;

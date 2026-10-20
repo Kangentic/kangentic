@@ -8,7 +8,7 @@
  */
 import { MESSAGE_TRAIL_MAX_ENTRIES } from '../../../src/main/agent/message-trail-tracker';
 import { buildDemoPreConfig } from './demo-dataset';
-import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, readAppVersion, readLiveTailMs } from './demo-scrollback';
+import { buildCellWidthTable, loadDemoChanges, loadDemoEnds, loadDemoHistory, loadDemoMessageTrails, loadDemoOpenFrames, loadDemoPeeks, loadDemoScrollback, loadDemoSendFrames, readAppVersion, readLiveTailMs } from './demo-scrollback';
 
 export function buildMarketingPreConfig(): string {
   // No peekTimelines here on purpose. The rig has no recordings index, so no session's clock ever
@@ -29,5 +29,8 @@ export function buildMarketingPreConfig(): string {
     knowledgeGraph: 'inline',
     // Carried too: no boot script writes a row's own script into the rig's page.
     sceneRowData: 'inline',
+    // And a recorded Send's rest frame, for the same reason. The rig has no recordings index, so
+    // no session rests on it; the option is carried so the two seeds take the same options.
+    sendFrames: loadDemoSendFrames(),
   });
 }
