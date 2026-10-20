@@ -27,6 +27,11 @@ import { forgetPlanApprovalSpawn, setPlanApprovalModeResolver, spawnedSessionFor
  *   changed board reload after that pass, so a burst of column edits reloads
  *   them once.
  *
+ * A task whose automations are disabled gets a decision that approves nothing
+ * (`readPlanApprovalDecision`). Its card menu and `kangentic_update_task` both
+ * announce the switch as a task update on the bus, so the same pass rewrites
+ * the file each way, with no respawn.
+ *
  * The file goes in the directory the spawn itself created, as the spawn
  * recorded it (`plan-approval-spawns.ts`), which is the directory the hook
  * command names. A session whose agent cannot approve plans still gets a file,
@@ -95,9 +100,17 @@ export class PlanApprovalWriter {
     sessionManager.setPlanApprovalLookup((sessionId) => this.approves(sessionId));
     // Asked by a plan-mode spawn before it launches. The session does not exist
     // yet, so its agent is taken as able and bypass as reachable: the answer is
-    // what the spawn should make possible.
+    // what the spawn should make possible. Disabled automations are ignored for
+    // the same reason. The user can enable them while the session lives, and a
+    // task spawned while held must then continue in the column's bypass mode.
     setPlanApprovalModeResolver((projectId, taskId) => {
-      const decision = readPlanApprovalDecision(this.context, { projectId, taskId, agentCanApprove: true, bypassAvailable: true });
+      const decision = readPlanApprovalDecision(this.context, {
+        projectId,
+        taskId,
+        agentCanApprove: true,
+        bypassAvailable: true,
+        ignoreDisabledAutomations: true,
+      });
       return decision?.approve ? decision.mode : null;
     });
     for (const session of sessionManager.listSessions()) this.noteSession(session.id, session);

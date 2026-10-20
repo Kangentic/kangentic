@@ -227,7 +227,7 @@ on `tasks` is unaffected and still MCP-only.
 terminal) or `automatic` (Kangentic, through the agent's plan approval hook). It is read only while
 the column's `permission_mode` is `plan`, and `mapRow` reads any other stored value as `manual`. A
 task in a running workflow follows the workflow's `plan_approval` instead (see the `workflows`
-table below).
+table below), and a task with `automations_disabled` set is always `manual`.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/session-lifecycle.md` "Isolated Sessions"):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.

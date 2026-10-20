@@ -51,8 +51,9 @@ registry, one folder per type, and a manifest the renderer reads.
   **`canTaskRunAutomations` the only answer to "will any row run for this task"** (a task whose
   automations the user disabled). Both live in `automation-manifest.ts` and are shared by the
   engine and the renderer, so the board and the engine can never disagree about what is about to
-  happen. The task gate sits in `executeTransition`, the turn-end runner, and the two places a move
-  types a column message outside the runner (warm injection, the handoff); never in
+  happen. The task gate sits in `executeTransition`, the turn-end runner, the two places a move
+  types a column message outside the runner (warm injection, the handoff), and the plan approval
+  reader (`readPlanApprovalDecision`, which holds an Automatic plan approval as Manual); never in
   `runAutomations`, which Run again shares and which must stay ungated.
 
 ## Enforcement (self-maintaining)
