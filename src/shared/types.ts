@@ -2,6 +2,7 @@ import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out
 import type { ModelLicenseId } from './model-licenses';
 import type { EmbeddingTier } from './embedding-models';
 import type { DictationMode } from './dictation-presets';
+import type { BackgroundCommandSupport } from './background-command-spec';
 import type {
   Announcement,
   AnnouncementArchiveEntry,
@@ -1980,21 +1981,22 @@ export const EventType = {
   WorktreeCreate: 'worktree_create',
   WorktreeRemove: 'worktree_remove',
   /**
-   * A Bash tool with `run_in_background: true` was launched. Emitted by
-   * the event-bridge when PreToolUse sees tool_input.run_in_background.
-   * Used by the activity state machine to keep the session as 'thinking'
-   * even after a subsequent Stop, because the detached child outlives
-   * the PostToolUse (which fires as soon as Claude returns the handle).
-   * See `tests/e2e/background-shell-idle.spec.ts` for the full repro.
+   * The agent started a background command, which keeps the session
+   * 'thinking' after a later Stop until it exits, because the agent may be
+   * waiting on it. `detail` is the command's id once the CLI assigned one
+   * (a named shell), or the command text before that (anonymous). Emitted only
+   * for an adapter that declares `AgentAdapter.backgroundCommands`: Claude's
+   * own hook remaps, the event bridge's `appendBackgroundLaunch` directive for
+   * the others, and the Codex rollout and Kimi wire parsers. See
+   * `docs/activity-detection.md` for the hold and every way it releases.
    */
   BackgroundShellStart: 'background_shell_start',
   /**
-   * A KillBash tool call was invoked. The agent explicitly killed a
-   * backgrounded shell; decrements the active-background-shells counter.
-   * Natural completion of a background shell is NOT tracked (Claude Code
-   * does not fire a hook for it), so the counter can over-estimate, but
-   * that errs on the safe side (keep thinking while any shell *might* be
-   * active).
+   * The agent stopped a background command it started (Claude's KillBash, the
+   * `appendBackgroundStop` directive on another CLI's stop tool, a wire or
+   * transcript record). `detail` names the id. A command that exits on its
+   * own ends through the process-tree watcher instead, which emits this with
+   * `IdleReason.NaturalExit`.
    */
   BackgroundShellEnd: 'background_shell_end',
   /**
@@ -2167,6 +2169,18 @@ export interface SessionEvent {
    * one leave it undefined.
    */
   planMode?: boolean;
+  /**
+   * The launch a named `background_shell_start` reports carried
+   * `--kangentic-no-activity-hold` (`background-shell-hold.ts`), so the shell
+   * lands in the exempt set: tracked for liveness, never holding the session.
+   * Honored only on a named start. Undefined means no report.
+   *
+   * Source: the event bridge's `appendBackgroundLaunch` directive, which reads
+   * the command from the same payload the shell id comes from. It exists for
+   * CLIs whose hook payloads carry no tool id, so the `toolId` memo a Claude
+   * launch rides cannot carry the flag.
+   */
+  noActivityHold?: boolean;
   /**
    * Polymorphic context for the event:
    * - For `tool_start`/`tool_end`: tool-specific info (file path, command)
@@ -5916,6 +5930,13 @@ export interface AgentParser {
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
   /**
+   * Optional: this agent reports the background commands it starts, so a
+   * launch holds the session and the agent is offered
+   * `kangentic_mark_background_service`. Read at spawn onto the session row.
+   * See `AgentAdapter.backgroundCommands`.
+   */
+  readonly backgroundCommands?: BackgroundCommandSupport;
+  /**
    * Optional per-session lifecycle hook. When present, session manager
    * calls it once per spawn and disposes the returned attachment on
    * session end. All adapter-specific orchestration that can't be
@@ -5932,14 +5953,16 @@ export interface AgentParser {
  *   Used by Claude Code. No PTY-based fallback.
  *
  * - `pty` - Activity is inferred from PTY output patterns. Primary
- *   mechanism for agents without hooks (Aider) or with broken hooks (Codex).
+ *   mechanism for agents without hooks (Aider).
  *   Optional `detectIdle` provides instant idle detection via prompt regex;
  *   otherwise falls back to a silence timer.
  *
- * - `hooks_and_pty` - Hooks are the primary mechanism, but PTY-based
- *   detection acts as a fallback if hooks fail to fire. Once hooks deliver
- *   a thinking event, PTY detection is automatically suppressed.
- *   Used by Gemini (hook format verified, but runtime issues possible).
+ * - `hooks_and_pty` - A structured source is the primary mechanism: hooks,
+ *   or a session history file the adapter parses (`runtime.sessionHistory`).
+ *   PTY-based detection acts as a fallback until that source flows. Once
+ *   hooks deliver a thinking event, or the history file is first read, PTY
+ *   detection is suppressed. Used by Gemini and Codex (hooks), and by Kimi,
+ *   whose wire.jsonl is the source.
  */
 export type ActivityDetectionStrategy =
   | { readonly kind: 'hooks' }
@@ -6066,6 +6089,17 @@ export interface AdapterRuntimeStrategy {
      * re-read the whole file.
      */
     readonly isFullRewrite: boolean;
+
+    /**
+     * Whether this file may turn the PTY tracker off for a `hooks_and_pty`
+     * agent: on its first read, and on a turn-initiating event it reports.
+     * Default true, which suits a file that carries the agent's turns (Kimi's
+     * wire.jsonl). False for a file that reports only part of the activity
+     * picture beside the agent's hooks (Codex's rollout: background commands
+     * and interrupts), so a session whose hooks never flow keeps the PTY
+     * tracker it had before (task #859).
+     */
+    readonly suppressesPtyFallback?: boolean;
   };
 
   /**

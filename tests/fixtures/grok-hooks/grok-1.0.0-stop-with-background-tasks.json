@@ -1,0 +1,22 @@
+{
+  "hookEventName": "stop",
+  "sessionId": "00000000-0000-4000-8000-9a5a2922ec04",
+  "cwd": "C:\\Users\\dev\\repo",
+  "workspaceRoot": "C:/Users/dev/repo/",
+  "timestamp": "2026-10-20T15:16:17.564755100+00:00",
+  "transcriptPath": "C:\\Users\\dev\\.grok\\sessions\\C%3A%5CUsers%5Cdev%5Crepo\\00000000-0000-4000-8000-9a5a2922ec04\\updates.jsonl",
+  "promptId": "00000000-0000-4000-8000-9d73c3a38edb",
+  "permissionMode": "bypassPermissions",
+  "reason": "end_turn",
+  "stopHookActive": false,
+  "lastAssistantMessage": "Done.",
+  "backgroundTasks": [
+    {
+      "id": "00000000-0000-4000-8000-426fc1a9c4f0",
+      "type": "shell",
+      "status": "running",
+      "command": "node server.js --kangentic-no-activity-hold"
+    }
+  ],
+  "sessionCrons": []
+}

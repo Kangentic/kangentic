@@ -120,6 +120,9 @@ export interface ManagedSession {
    *  (`AgentParser.consoleCloseIsGraceful`, read at spawn): end it by closing,
    *  never by typing. */
   consoleCloseIsGraceful?: boolean;
+  /** The agent reports its background commands (`AgentParser.backgroundCommands`,
+   *  read at spawn), so its session is offered `kangentic_mark_background_service`. */
+  reportsBackgroundCommands?: boolean;
   /** Agent adapter for adapter-specific behavior (readiness detection, parsing,
    *  runtime strategy, exit sequence, etc.). Typed as AgentParser for historical
    *  reasons but the actual value is always the full AgentAdapter instance. */

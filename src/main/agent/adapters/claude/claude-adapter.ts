@@ -314,6 +314,11 @@ export class ClaudeAdapter implements AgentAdapter {
   // for ExitPlanMode only once a plan is approved. Probed on 2.1.302: the
   // approver never ran for AskUserQuestion, whose dialog still showed.
   readonly supportsPlanAutoApproval = true;
+  // Background shells (task #857): PreToolUse/PostToolUse remaps in
+  // hook-manager.ts report a Bash or PowerShell `run_in_background` launch,
+  // KillBash and the transcript drain report the end, and a PostToolUse
+  // `additionalContext` hint names the MCP tool beside the launch.
+  readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   // `--add-dir` per directory (command-builder.ts): the CLI's own way to widen
   // what a session may read and search without a prompt.
   readonly supportsReadableDirectories = true;

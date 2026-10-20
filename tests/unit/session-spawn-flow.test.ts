@@ -1817,6 +1817,41 @@ describe('performSpawn - consoleCloseIsGraceful on the registered session', () =
   });
 });
 
+describe('performSpawn - reportsBackgroundCommands on the registered session', () => {
+  // The MCP server offers kangentic_mark_background_service only to a session
+  // whose row says its agent reports background commands (task #859), read from
+  // the adapter's declaration at spawn. Red-green: dropping the stamp in
+  // performSpawn fails the first case (the row would read undefined).
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('is true when the agent declares background commands', async () => {
+    const context = makeContext();
+    const parser = { ...makeAdapter({}), backgroundCommands: { source: 'hooks', launchHint: true } } as AgentParser;
+    const input = makeInput({ agentParser: parser });
+
+    await performSpawn(input, context);
+
+    expect(context.registry.get(input.id!)?.reportsBackgroundCommands).toBe(true);
+  });
+
+  it('is false when the agent declares none, or there is no agent adapter', async () => {
+    const declaresNone = makeContext();
+    const inputWithAdapter = makeInput({ agentParser: makeAdapter({}) });
+    await performSpawn(inputWithAdapter, declaresNone);
+    expect(declaresNone.registry.get(inputWithAdapter.id!)?.reportsBackgroundCommands).toBe(false);
+
+    const noAdapter = makeContext();
+    const inputWithoutAdapter = makeInput();
+    await performSpawn(inputWithoutAdapter, noAdapter);
+    expect(noAdapter.registry.get(inputWithoutAdapter.id!)?.reportsBackgroundCommands).toBe(false);
+  });
+});
+
 describe('performSpawn - shutdown begins during the host round trip', () => {
   // The quit can start while `host.spawn` is in flight. killAll() ran before the
   // registry had a row for this session, so nothing else would end the PTY the

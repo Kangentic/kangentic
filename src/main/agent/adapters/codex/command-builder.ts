@@ -1,6 +1,8 @@
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import { buildHooks } from './hook-manager';
+import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
+import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME } from './hook-manager';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue } from '../../../pty/process-tag/task-process-tag';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -32,6 +34,12 @@ export interface CodexCommandOptions {
   launchOptions?: Record<string, boolean>;
   /** The task's `KANGENTIC_TASK_ID`; see `CommandOptions.taskProcessTag`. */
   taskProcessTag?: string;
+  /**
+   * The `hooks.state` override Codex itself confirmed for this binary
+   * (`CodexHookTrustCheck`), or null/absent when it did not: the session then
+   * runs without Kangentic's hooks, on the PTY tracker.
+   */
+  codexHookStateOverride?: string | null;
 }
 
 /**
@@ -170,17 +178,60 @@ function buildTaskProcessTagArgs(options: CodexCommandOptions): string[] {
   return ['-c', quoteArg(`shell_environment_policy.set.${TASK_PROCESS_TAG_ENV}=${tag}`, options.shell)];
 }
 
+/**
+ * Keep Codex's "Update available" prompt out of a Kangentic session (task
+ * #859). It is a modal at TUI startup whose highlighted first option is
+ * "Update now", so an `auto_command` typed into a session showing it, or an
+ * Enter meant for the agent, updates and exits Codex instead (measured: a
+ * probe's Enter updated 0.154.0 to 0.163.0 and the session ended). Codex
+ * documents the key; this applies to the process only and writes nothing, so
+ * the user's own terminal still offers updates. Same QUOTING CONTRACT as
+ * buildMcpConfigArgs: a bare TOML boolean, no quotes.
+ */
+const NO_STARTUP_UPDATE_PROMPT_ARGS = ['-c', 'check_for_update_on_startup=false'];
+
+function buildStartupUpdatePromptArgs(options: CodexCommandOptions): string[] {
+  return NO_STARTUP_UPDATE_PROMPT_ARGS.map((part) => quoteArg(part, options.shell));
+}
+
+/**
+ * Kangentic's hooks for this session, in Codex's session-flags layer (task
+ * #859). Only with an events file and a trust state Codex confirmed for this
+ * binary; without one the TUI would stop at its "Hooks need review" dialog.
+ *
+ * QUOTING CONTRACT, the same rule as buildMcpConfigArgs from another side: the
+ * values hold no `"` at all. Every TOML string in them is a literal ('...'),
+ * the hook command is bare tokens (`codexHookCommand`), and a trust key holds
+ * no `'`, so `quoteArg` wraps each value in one pair of quotes every shell
+ * reads the same way. The bridge runs from a workspace copy because its
+ * relative path is the one that is always a bare token.
+ */
+function buildHookArgs(options: CodexCommandOptions): string[] {
+  const stateOverride = options.codexHookStateOverride;
+  if (!options.eventsOutputPath || !stateOverride) return [];
+  try {
+    // Keep the copy out of `git status` and an agent's `git add -A` in a
+    // worktree whose committed .gitignore does not list .kangentic/.
+    ensureLocalGitExcludes(options.cwd, ['.kangentic/']);
+    copyBridgeInto(options.cwd, 'event-bridge', CODEX_EVENT_BRIDGE_COPY_NAME);
+  } catch (error) {
+    console.warn('[codex] Could not copy the event bridge into the workspace; the session runs without hooks:', error);
+    return [];
+  }
+  return [...buildCodexHookOverrides(), stateOverride].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
+}
+
 export class CodexCommandBuilder {
   buildCodexCommand(options: CodexCommandOptions): string {
     const { shell } = options;
 
     // Codex 0.128 redesigned the hook system; the legacy `.codex/hooks.json`
     // we used to write is no longer parsed and now produces a yellow warning
-    // banner at session start. `buildHooks` is now a cleanup-only call that
-    // strips Kangentic-owned entries from any pre-upgrade legacy file.
-    // See hook-manager.ts for the full context. The eventsOutputPath gate
-    // is preserved so non-hookable spawns (no events pipeline requested)
-    // skip the disk sweep entirely.
+    // banner at session start. `buildHooks` is a cleanup-only call that
+    // strips Kangentic-owned entries from any pre-upgrade legacy file; the
+    // hooks themselves are `-c` overrides (buildHookArgs below). The
+    // eventsOutputPath gate is preserved so non-hookable spawns (no events
+    // pipeline requested) skip the disk sweep entirely.
     if (options.eventsOutputPath) {
       const projectRoot = options.projectRoot || options.cwd;
       buildHooks(projectRoot);
@@ -225,6 +276,8 @@ export class CodexCommandBuilder {
     // Codex's grammar is `codex [OPTIONS] [PROMPT]`.
     parts.push(...buildMcpConfigArgs(options));
     parts.push(...buildTaskProcessTagArgs(options));
+    parts.push(...buildStartupUpdatePromptArgs(options));
+    parts.push(...buildHookArgs(options));
 
     // Prompt as positional argument. Deliberately skipped when resuming: the
     // resumed conversation already contains it, and re-sending would re-ask

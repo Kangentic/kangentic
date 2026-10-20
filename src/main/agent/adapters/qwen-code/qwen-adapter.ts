@@ -36,6 +36,10 @@ export class QwenAdapter implements AgentAdapter {
   // `mcpDelivery`). Only a Qwen before 0.16, which has no such flag, still gets
   // the URL in the folder's `.qwen/settings.json`.
   readonly kangenticMcp = 'per-session' as const;
+  // `run_shell_command` with `is_background` reports its `bg_` id in the
+  // result, `task_stop` stops it, and a PostToolUse `additionalContext` reaches
+  // the model (QWEN_BACKGROUND_COMMAND_SPEC, measured on 0.25.3).
+  readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },

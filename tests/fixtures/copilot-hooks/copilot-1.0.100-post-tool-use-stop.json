@@ -1,0 +1,13 @@
+{
+  "sessionId": "00000000-0000-4000-8000-2fdc92d19b5a",
+  "timestamp": 1792508311386,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "stop_powershell",
+  "toolArgs": {
+    "shellId": "probe-server"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "<command with id: probe-server stopped>"
+  }
+}

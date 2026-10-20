@@ -252,11 +252,11 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     await expect(dialog.locator('[data-testid="column-effort-override"]')).toHaveCount(0);
     // Automation-free on purpose: column-automation is the configured counterpart.
     await expect(dialog.locator('[data-testid="column-automation-row"]')).toHaveCount(0);
-    // Codex reports no turn end (its adapter, carried by DEMO_AGENT_OVERRIDES), so On agent turn
-    // end is blocked here as on the desktop, while enter still offers Add automation.
+    // Codex reports a turn end through its Stop hook (its adapter, carried by
+    // DEMO_AGENT_OVERRIDES), so On agent turn end offers Add automation here as on the desktop.
     const group = (trigger: string): Locator => dialog.locator(`[data-testid="column-automation-group"][data-trigger="${trigger}"]`);
-    await expect(group('turn_end').locator('[data-testid="column-automation-group-blocked"]')).toContainText('can\'t report when it finishes a turn');
-    await expect(group('turn_end').locator('[data-testid="column-automation-add"]')).toHaveCount(0);
+    await expect(group('turn_end').locator('[data-testid="column-automation-group-blocked"]')).toHaveCount(0);
+    await expect(group('turn_end').locator('[data-testid="column-automation-add"]')).toBeVisible();
     await expect(group('enter').locator('[data-testid="column-automation-add"]')).toBeVisible();
   },
   'column-automation': async (page) => {

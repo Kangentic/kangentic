@@ -1,0 +1,16 @@
+{
+  "sessionId": "00000000-0000-4000-8000-2fdc92d19b5a",
+  "timestamp": 1792508301512,
+  "cwd": "C:\\Users\\dev\\repo",
+  "toolName": "powershell",
+  "toolArgs": {
+    "command": "node server.js",
+    "description": "Start the probe server",
+    "mode": "async",
+    "shellId": "probe-server"
+  },
+  "toolResult": {
+    "resultType": "success",
+    "textResultForLlm": "<command started in background with shellId: probe-server>"
+  }
+}

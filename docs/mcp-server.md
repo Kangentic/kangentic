@@ -65,8 +65,8 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 | Codex CLI | `-c mcp_servers.kangentic.*` per-invocation overrides | process env (`KANGENTIC_MCP_TOKEN`) |
 | Kimi Code | `--mcp-config-file <sessionDir>/mcp.json` | session file (gitignored) |
 | GitHub Copilot CLI | `--additional-mcp-config @<path>` | session-adjacent file |
-| Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | project file, stripped when the folder's last session exits |
-| Qwen Code | `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) | project file, stripped when the folder's last session exits |
+| Gemini CLI | `mcpServers` in `<cwd>/.gemini/settings.json` (`httpUrl`) | process env: the file holds only `${KANGENTIC_MCP_URL}` and `${KANGENTIC_MCP_TOKEN}` references, and the entry is stripped when the folder's last session exits |
+| Qwen Code | `--mcp-config <sessionDir>/mcp.json` (0.16+); `mcpServers` in `<cwd>/.qwen/settings.json` (`httpUrl`) before 0.16 | session file (gitignored) on 0.16+; the project file before, stripped when the folder's last session exits |
 | Droid | `<cwd>/.factory/mcp.json` with `${KANGENTIC_MCP_TOKEN}` | process env (file holds only the var name) |
 | Grok Build | `[mcp_servers.kangentic]` sentinel block in `<cwd>/.grok/config.toml` with `${KANGENTIC_MCP_URL}` + `${KANGENTIC_MCP_TOKEN}`, plus `--allow "MCPTool(kangentic__*)"` pre-approval | process env (file holds only var names - the URL too, so the block is fully static) |
 | OpenCode | `OPENCODE_CONFIG_CONTENT` env var | process env (local spawns only) |
@@ -77,11 +77,11 @@ Delivery is per-adapter, because no two of these CLIs accept MCP config the same
 
 Each adapter declares its row as `kangenticMcp` (`'per-session'` or `'shared-folder'`), and
 `tests/unit/kangentic-mcp-delivery.test.ts` drives every real builder to hold the declaration to
-what it does. Gemini, Qwen, Droid and Antigravity are `'shared-folder'`: the session's URL is
+what it does. Droid and Antigravity are `'shared-folder'`: the session's URL is
 written literally into a project file every session in that folder shares, so the last session to
 start decides the URL the others read. That is why they cannot carry a workflow agent's caller
-scope (`canBeWorkflowAgent`). Grok's and Cursor's files are static and their URLs are per-process
-env references, so they are `'per-session'`.
+scope (`canBeWorkflowAgent`). Gemini's, Grok's and Cursor's files are static and their URLs are
+per-process env references, and Qwen's config is a per-session file, so they are `'per-session'`.
 
 A project-file row's entry is held per session (`SharedFolderHolds`, keyed by the session's own id
 and recording the folder the build wrote), and the folder's last session to end strips it. A
@@ -1496,13 +1496,13 @@ Returns `total` (matching the filter), `returned` (after `tail`), and the `messa
 
 Mark background shells the calling agent started as services meant to keep running after its turn, such as a dev server or a watcher. A background shell keeps its task showing as working, and holds the column's On agent turn end automations, until it exits, because the agent may be waiting on it. A marked shell stops counting. It keeps running, and Kangentic still tracks it until it exits.
 
-Claude's PostToolUse hook names this tool beside every background launch whose command does not carry `--kangentic-no-activity-hold`, so the agent decides when it knows the answer. See "Opting a background shell out of the hold" in [activity-detection.md](activity-detection.md).
+For Claude, Qwen, Gemini and Copilot, a post-tool hook names this tool beside every background launch whose command does not carry `--kangentic-no-activity-hold`, so the agent decides when it knows the answer. Grok, Kimi and Codex have no hook that can add to the model's context at a launch, so their agents learn of it from this description, which therefore says when to call it (as soon as a service starts in the background) and that `--kangentic-no-activity-hold` in the command does the same at launch. Whether a real model acts on the description alone was not measured: the probes ran against a scripted stand-in for each model API. See "Opting a background shell out of the hold" in [activity-detection.md](activity-detection.md), and [Background commands](agent-integration.md#background-commands) for each agent.
 
-The tool acts only on the session in the caller URL (`/mcp/<projectId>/<callerSessionId>`), so an agent can mark only its own shells. It is registered only for a connection that names a task's session. A Command Terminal, a client outside Kangentic, a workflow's own agent and a Knowledge Graph answer run never see it. A call from a session that is no longer running changes nothing.
+The tool acts only on the session in the caller URL (`/mcp/<projectId>/<callerSessionId>`), so an agent can mark only its own shells. It is registered only for a connection that names a task's session whose agent reports its background commands (`AgentAdapter.backgroundCommands`, read onto the session row at spawn as `reportsBackgroundCommands`). An agent that does not report them never starts a hold, so a mark from it could only park an id. A Command Terminal, a client outside Kangentic, a workflow's own agent and a Knowledge Graph answer run never see it either. A call from a session that is no longer running changes nothing.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `shellIds` | string[] | Yes | 1 to 10 background shell ids, as the background command returned them (letters, digits, `-` and `_`). |
+| `shellIds` | string[] | Yes | 1 to 10 background command ids, as the background command returned them: the shell, task or process id (letters, digits, `-` and `_`). |
 
 Returns one line per id: `marked` (it was holding the session and no longer does), `already marked`, or not seen yet (Kangentic has not ingested the shell's start; the mark applies when it does, for up to 16 such ids per session).
 

@@ -6,6 +6,9 @@ import { AgentTool, EventType } from '../../../../shared/types';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-builders';
+import { backgroundLaunchDirective, backgroundStopDirectives, backgroundToolMatcher } from '../../shared/background-command-hooks';
+import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
+import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
 
 /**
  * A single hook entry under one event in a Copilot hook config.
@@ -16,17 +19,59 @@ import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-
  * per event are rejected with "Expected array, received object".
  * `command` and `timeout` are Copilot's cross-platform aliases for
  * `bash`/`powershell` and `timeoutSec` (CLI 1.0.2), still accepted by 1.0.97.
+ * `matcher` (a regex the tool name must match fully) is honored on a flat
+ * entry: measured on 1.0.100, a postToolUse entry matched to the shell tools
+ * never ran for `view` or `list_powershell`.
  */
 export interface CopilotHookEntry {
   command: string;
   timeout?: number;
+  matcher?: string;
 }
+
+/**
+ * Copilot's background commands (task #859), from a headless 1.0.100 run in
+ * BYOK mode against a local stand-in for the model API
+ * (tests/fixtures/copilot-hooks/copilot-1.0.100-*). `powershell` (`bash` off
+ * Windows) runs a command in the background two ways, and the result text is
+ * the only place both show: `mode: "async"` answers
+ * "<command started in background with shellId: X>", and a `sync` command
+ * still running at `initial_wait` answers "<command with shellId: X is still
+ * running after N seconds. ...>". `X` is the agent's own `shellId` or one
+ * Copilot assigns ("0", "1"). `detach: true` answers "started in detached
+ * background": an independent process the agent means to outlive the session,
+ * so it never holds. `stop_powershell` / `stop_bash` take `toolArgs.shellId`.
+ * Copilot adds a postToolUse reply's top-level `additionalContext` to the tool
+ * result ("Additional guidance from postToolUse hooks"); `hookSpecificOutput`
+ * is ignored. The command runs under `pwsh.exe` inside Copilot's tree.
+ */
+export const COPILOT_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
+  launch: {
+    toolField: 'toolName',
+    tools: ['powershell', 'bash'],
+    when: [],
+    unless: [{ path: ['toolArgs', 'detach'], equals: true }],
+    idSources: [
+      { path: ['toolResult', 'textResultForLlm'], pattern: '<command started in background with shellId: ([\\w-]+)>' },
+      { path: ['toolResult', 'textResultForLlm'], pattern: '<command with shellId: ([\\w-]+) is still running' },
+    ],
+    commandPath: ['toolArgs', 'command'],
+  },
+  stop: {
+    toolField: 'toolName',
+    tools: ['stop_powershell', 'stop_bash'],
+    when: [{ path: ['toolResult', 'resultType'], equals: 'success' }],
+    unless: [],
+    idSources: [{ path: ['toolArgs', 'shellId'] }],
+  },
+  hintReply: { additionalContext: BACKGROUND_SHELL_HINT_TEXT },
+};
 
 /**
  * The shell Copilot runs a hook's `command` in on Windows: the field is copied
  * to `powershell`, run as `pwsh.exe -nop -nol -c "<command>"` (measured on 1.0.98).
  */
-const COPILOT_HOOK_SHELL: HookShell = 'sh-or-powershell';
+export const COPILOT_HOOK_SHELL: HookShell = 'sh-or-powershell';
 
 /**
  * The shell Copilot runs the status line in on Windows: Node's `shell: true`,
@@ -85,7 +130,15 @@ export const COPILOT_HOOK_EVENTS: Array<{
   {
     event: 'postToolUse',
     bridgeEventType: EventType.ToolEnd,
-    directives: [extractTool('toolName'), APPROVED_PLAN_EXIT],
+    // A background launch and stop ride this entry: Copilot runs one event's
+    // hooks one after another (about 0.7 s each on 1.0.100), so a second
+    // entry would cost every tool call.
+    directives: [
+      extractTool('toolName'),
+      APPROVED_PLAN_EXIT,
+      backgroundLaunchDirective(COPILOT_BACKGROUND_COMMAND_SPEC),
+      ...backgroundStopDirectives(COPILOT_BACKGROUND_COMMAND_SPEC),
+    ],
   },
   {
     event: 'agentStop',
@@ -114,7 +167,10 @@ const SESSION_HOOKS_FILE = 'kangentic.json';
  * array of `{ command, timeout }` entries. This is the format Copilot CLI
  * v1.0.24 expects (empirically verified - single objects are rejected).
  */
-export function buildHooks(eventsOutputPath: string): Record<string, CopilotHookEntry[]> {
+export function buildHooks(
+  eventsOutputPath: string,
+  options: CopilotSessionHookOptions = {},
+): Record<string, CopilotHookEntry[]> {
   const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
   const eventsPath = toForwardSlash(eventsOutputPath);
 
@@ -125,7 +181,24 @@ export function buildHooks(eventsOutputPath: string): Record<string, CopilotHook
       timeout: 10,
     }];
   }
+  // The hint runs for the shell tools alone, after the event bridge.
+  if (options.backgroundShellHintCommand) {
+    hooks.postToolUse.push({
+      command: options.backgroundShellHintCommand,
+      timeout: 10,
+      matcher: backgroundToolMatcher(COPILOT_BACKGROUND_COMMAND_SPEC.launch.tools),
+    });
+  }
   return hooks;
+}
+
+/** What a Copilot session's hooks carry beyond the event bridge. */
+export interface CopilotSessionHookOptions {
+  /**
+   * The background shell hint's command (`backgroundShellHintCommandFor`).
+   * Passed only for a session offered `kangentic_mark_background_service`.
+   */
+  backgroundShellHintCommand?: string | null;
 }
 
 /**
@@ -253,6 +326,7 @@ export function writeSessionConfig(
   configDir: string,
   eventsOutputPath: string,
   statusOutputPath?: string,
+  hookOptions: CopilotSessionHookOptions = {},
 ): void {
   const hooksDir = path.join(configDir, SESSION_HOOKS_DIR);
   // sync-write-ok: this must throw, not degrade - configDir is passed straight
@@ -265,7 +339,7 @@ export function writeSessionConfig(
   // hooks this whole function exists to inject.
   fs.writeFileSync(
     path.join(hooksDir, SESSION_HOOKS_FILE),
-    JSON.stringify({ version: 1, hooks: buildHooks(eventsOutputPath) }, null, 2),
+    JSON.stringify({ version: 1, hooks: buildHooks(eventsOutputPath, hookOptions) }, null, 2),
   );
 
   const userDir = userCopilotConfigDir();

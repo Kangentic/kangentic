@@ -593,8 +593,11 @@ describe('KimiAdapter', () => {
   });
 
   describe('runtime.activity', () => {
-    it('uses PTY-based detection (no hooks)', () => {
-      expect(adapter.runtime.activity.kind).toBe('pty');
+    it('is driven by wire.jsonl, with PTY detection only until the first wire read', () => {
+      // `hooks_and_pty`: the first session history read suppresses the PTY
+      // tracker, so PTY silence cannot end a turn or clear a background
+      // task's hold (task #859).
+      expect(adapter.runtime.activity.kind).toBe('hooks_and_pty');
     });
 
     it('detects "kimi> " prompt at end of output as idle', () => {

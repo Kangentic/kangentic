@@ -465,6 +465,7 @@ export async function performSpawn(
     // closing wsl.exe, then a hangup in the distro) is not measured, so an
     // agent there is typed into as before.
     consoleCloseIsGraceful: !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,

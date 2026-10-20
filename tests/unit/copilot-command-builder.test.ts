@@ -12,11 +12,14 @@ import os from 'node:os';
 import { quoteArg } from '../../src/shared/paths';
 import { CopilotCommandBuilder } from '../../src/main/agent/adapters/copilot';
 import type { CopilotCommandOptions } from '../../src/main/agent/adapters/copilot';
+import { COPILOT_BACKGROUND_COMMAND_SPEC, writeSessionConfig } from '../../src/main/agent/adapters/copilot/hook-manager';
+import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 
 // Mock hook-manager to prevent real file I/O from writeSessionConfig.
 // Tests that want the --config-dir flag must supply eventsOutputPath,
 // but we use a tmp dir and real fs in those cases.
-vi.mock('../../src/main/agent/adapters/copilot/hook-manager', () => ({
+vi.mock('../../src/main/agent/adapters/copilot/hook-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/agent/adapters/copilot/hook-manager')>()),
   writeSessionConfig: vi.fn(),
 }));
 
@@ -393,6 +396,59 @@ describe('CopilotCommandBuilder', () => {
       expect(mcpFlagIndex).toBeGreaterThan(-1);
       expect(promptFlagIndex).toBeGreaterThan(-1);
       expect(mcpFlagIndex).toBeLessThan(promptFlagIndex);
+    });
+  });
+
+  // ── background shell hint ────────────────────────────────────────────────
+
+  /**
+   * The background shell hint (task #859) names kangentic_mark_background_service,
+   * so only a session offered that tool gets the hook: the MCP server on (not
+   * switched off), a token, and an MCP URL that names a task session as its
+   * caller (`/mcp/<project>/<session>`). writeSessionConfig is mocked above, so
+   * the command the builder hands it is what these tests read.
+   */
+  describe('background shell hint', () => {
+    const SESSION_MCP_URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-hint-test-'));
+      vi.mocked(writeSessionConfig).mockClear();
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    /** The hint command the builder passed to writeSessionConfig (null when the session gets none). */
+    function hintCommandPassed(overrides: Partial<CopilotCommandOptions>): string | null | undefined {
+      buildCommand({ eventsOutputPath: path.join(tmpDir, 'events.jsonl'), ...overrides });
+      const calls = vi.mocked(writeSessionConfig).mock.calls;
+      expect(calls).toHaveLength(1);
+      return calls[0][3]?.backgroundShellHintCommand;
+    }
+
+    it.each([true, undefined])('passes the hint, built from the Copilot spec, for a session URL and a token (mcpServerEnabled %s)', (mcpServerEnabled) => {
+      const command = hintCommandPassed({ mcpServerEnabled, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'secret-token' });
+
+      expect(typeof command).toBe('string');
+      expect(command!.startsWith('node ')).toBe(true);
+      expect(command).toContain('background-shell-hint-bridge');
+      // The last token is the base64 of the JSON spec the bridge reads.
+      const encodedSpec = command!.split(' ').pop() ?? '';
+      expect(JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'))).toEqual(backgroundShellHintSpecOf(COPILOT_BACKGROUND_COMMAND_SPEC));
+    });
+
+    it.each([
+      ['a project URL that names no session', { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123', mcpServerToken: 'secret-token' }],
+      ['a Knowledge Graph answer run URL', { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/answer-chat-1', mcpServerToken: 'secret-token' }],
+      ['a workflow agent URL', { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:5555/mcp/project-123/workflow-wf-1', mcpServerToken: 'secret-token' }],
+      ['no URL', { mcpServerEnabled: true, mcpServerUrl: undefined, mcpServerToken: 'secret-token' }],
+      ['no token', { mcpServerEnabled: true, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: undefined }],
+      ['the MCP server switched off', { mcpServerEnabled: false, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'secret-token' }],
+    ] as Array<[string, Partial<CopilotCommandOptions>]>)('passes no hint with %s', (_label, overrides) => {
+      expect(hintCommandPassed(overrides)).toBeNull();
     });
   });
 

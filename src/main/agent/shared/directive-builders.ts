@@ -1,4 +1,5 @@
 import type { AgentTool, EventType } from '../../../shared/types';
+import type { BackgroundCallMatch, BackgroundLaunchMatch } from '../../../shared/background-command-spec';
 
 /**
  * Typed builders for event-bridge directives.
@@ -270,4 +271,43 @@ export function extractDetailPattern(field: string, pattern: string): string {
  */
 export function emitOnlyWhenDetailMatches(pattern: string): string {
   return encodeDirective('emitOnlyWhenDetailMatches', { pattern });
+}
+
+/** `appendBackgroundLaunch`'s payload: the launch match plus what the bridge needs beside it. */
+export interface BackgroundLaunchDirective extends BackgroundLaunchMatch {
+  /** The id shape (`SHELL_ID_PATTERN_SOURCE`); an id that does not match is no launch. */
+  idPattern: string;
+  /** A command carrying this lands exempt (`SessionEvent.noActivityHold`). */
+  optOutFlag: string;
+}
+
+/** `appendBackgroundStop`'s payload. */
+export interface BackgroundStopDirective extends BackgroundCallMatch {
+  idPattern: string;
+}
+
+/**
+ * When the payload is a background launch (`BackgroundLaunchMatch`), write a
+ * named `background_shell_start` for its id BEFORE the hook's own event, which
+ * still lands as it would without this directive. One hook process reports
+ * both, so a CLI that runs one event's hooks in turn (Copilot, Grok) pays no
+ * extra hook per tool call. The start carries no `toolId`: the tool's own
+ * `tool_end` closes its pending tool, and a start that closed it too would
+ * decrement the count twice. A flagged command adds `noActivityHold: true`.
+ *
+ * Its own kind, so a stale bridge copy skips it as an unknown directive: the
+ * hook's own event still lands and no start is reported, which is the behavior
+ * before this directive.
+ */
+export function appendBackgroundLaunch(match: BackgroundLaunchDirective): string {
+  return encodeDirective('appendBackgroundLaunch', match);
+}
+
+/**
+ * When the payload is a background stop, write a `background_shell_end` for
+ * the id it names before the hook's own event. Register it on the stop tool's
+ * post-tool SUCCESS hook only. Its own kind, for the same stale-copy reason.
+ */
+export function appendBackgroundStop(match: BackgroundStopDirective): string {
+  return encodeDirective('appendBackgroundStop', match);
 }

@@ -39,6 +39,8 @@ on:
       - 'src/main/agent/adapters/qwen-code/command-builder.ts'
       - 'src/main/agent/adapters/qwen-code/hook-manager.ts'
       - 'src/main/agent/adapters/aider/aider-adapter.ts'
+      - 'src/main/agent/adapters/codex/command-builder.ts'
+      - 'src/main/agent/adapters/codex/hook-manager.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/auto-name-clean.test.ts'
@@ -52,6 +54,7 @@ on:
       - 'tests/unit/gemini-hook-manager.test.ts'
       - 'tests/unit/grok-adapter.test.ts'
       - 'tests/unit/qwen-command-builder.test.ts'
+      - 'tests/unit/codex-hook-overrides.test.ts'
       - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-windows.yml'
   push:
@@ -73,6 +76,8 @@ on:
       - 'src/main/agent/adapters/qwen-code/command-builder.ts'
       - 'src/main/agent/adapters/qwen-code/hook-manager.ts'
       - 'src/main/agent/adapters/aider/aider-adapter.ts'
+      - 'src/main/agent/adapters/codex/command-builder.ts'
+      - 'src/main/agent/adapters/codex/hook-manager.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/auto-name-clean.test.ts'
@@ -86,6 +91,7 @@ on:
       - 'tests/unit/gemini-hook-manager.test.ts'
       - 'tests/unit/grok-adapter.test.ts'
       - 'tests/unit/qwen-command-builder.test.ts'
+      - 'tests/unit/codex-hook-overrides.test.ts'
       - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-windows.yml'
   workflow_dispatch:
@@ -138,3 +144,4 @@ jobs:
           tests/unit/gemini-hook-manager.test.ts
           tests/unit/grok-adapter.test.ts
           tests/unit/qwen-command-builder.test.ts
+          tests/unit/codex-hook-overrides.test.ts

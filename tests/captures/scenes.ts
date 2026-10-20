@@ -1931,7 +1931,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'edit-columns': {
     name: 'edit-columns',
     reach: 'boot',
-    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column of the configured board the four Column Manager scenes share, where Codex CLI reviews on its own model. No automation is configured here, so the enter and exit slots read Add automation, and On agent turn end says the column\'s agent cannot report a turn end, because Codex does not. The column-automation scene is the configured counterpart.',
+    description: 'The Column Manager (the docs call it Edit Columns) on the Code Review column of the configured board the four Column Manager scenes share, where Codex CLI reviews on its own model. No automation is configured here, so every slot, On agent turn end included, reads Add automation. The column-automation scene is the configured counterpart.',
     alt: 'The Column Manager dialog with the Code Review column selected: its name, icon, and color, Codex CLI on gpt-5.5 as the agent that starts when a task enters it, and empty automation slots for entering and leaving the column.',
     seeds: { __mockSwimlanePatches: COLUMN_LADDER },
     ready: '[data-testid="board-manager-dialog"]',

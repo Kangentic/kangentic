@@ -14,11 +14,16 @@ import os from 'node:os';
 import path from 'node:path';
 
 let fakeBridgeSource: string;
+const resolvedBridgeNames: string[] = [];
 vi.mock('../../src/main/agent/shared/bridge-utils', () => ({
-  resolveBridgeScript: vi.fn(() => fakeBridgeSource),
+  resolveBridgeScript: vi.fn((name: string) => {
+    resolvedBridgeNames.push(name);
+    return fakeBridgeSource;
+  }),
 }));
 
-import { copyEventBridgeInto } from '../../src/main/agent/shared/workspace-bridge-copy';
+import { copyBridgeInto, copyEventBridgeInto } from '../../src/main/agent/shared/workspace-bridge-copy';
+import { isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 
 const COPY_NAME = 'test-event-bridge.cjs';
 
@@ -117,5 +122,41 @@ describe('copyEventBridgeInto', () => {
     fs.writeFileSync(path.join(workspaceDirectory, '.kangentic'), 'a file, not a directory');
 
     expect(() => copyEventBridgeInto(workspaceDirectory, COPY_NAME)).toThrow(/\.kangentic/);
+  });
+});
+
+describe('copyBridgeInto (task #859)', () => {
+  let scratchRoot: string;
+  let workspaceDirectory: string;
+
+  beforeEach(() => {
+    scratchRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-bridge-copy-'));
+    workspaceDirectory = path.join(scratchRoot, 'workspace');
+    fs.mkdirSync(workspaceDirectory);
+    fakeBridgeSource = path.join(scratchRoot, 'hint-bridge-source.js');
+    fs.writeFileSync(fakeBridgeSource, SOURCE_BYTES);
+    resolvedBridgeNames.length = 0;
+  });
+
+  afterEach(() => {
+    fs.rmSync(scratchRoot, { recursive: true, force: true });
+  });
+
+  it('copies the background shell hint bridge, resolving that script by name', () => {
+    const copy = copyBridgeInto(workspaceDirectory, 'background-shell-hint-bridge', 'qwen-background-shell-hint-bridge.cjs');
+    expect(copy).toBe(path.join(workspaceDirectory, '.kangentic', 'qwen-background-shell-hint-bridge.cjs'));
+    expect(fs.readFileSync(copy).equals(SOURCE_BYTES)).toBe(true);
+    expect(resolvedBridgeNames).toEqual(['background-shell-hint-bridge']);
+  });
+
+  it('refuses a copy name that does not contain the script name, which hook cleanup could not recognize', () => {
+    expect(() => copyBridgeInto(workspaceDirectory, 'background-shell-hint-bridge', 'qwen-hint.cjs')).toThrow(/must contain/);
+    expect(fs.existsSync(path.join(workspaceDirectory, '.kangentic'))).toBe(false);
+  });
+
+  it('names a copy that hook cleanup recognizes as Kangentic-injected', () => {
+    const copy = copyBridgeInto(workspaceDirectory, 'background-shell-hint-bridge', 'qwen-background-shell-hint-bridge.cjs');
+    const relative = path.relative(workspaceDirectory, copy).split(path.sep).join('/');
+    expect(isKangenticHookCommand(`node ${relative} eyJsYXVuY2giOnt9fQ==`)).toBe(true);
   });
 });

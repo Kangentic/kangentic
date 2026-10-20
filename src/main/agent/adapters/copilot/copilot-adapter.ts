@@ -43,6 +43,11 @@ export class CopilotAdapter implements AgentAdapter {
   readonly supportsCallerSessionId = true;
   // `--additional-mcp-config` pointing at a file in the session's own directory.
   readonly kangenticMcp = 'per-session' as const;
+  // An async or still-running `powershell`/`bash` call reports its shellId in
+  // the result, `stop_powershell`/`stop_bash` stop it, and a postToolUse
+  // `additionalContext` reaches the model (COPILOT_BACKGROUND_COMMAND_SPEC,
+  // measured on 1.0.100).
+  readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
 
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },

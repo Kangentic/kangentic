@@ -28,8 +28,15 @@ export class GeminiAdapter implements AgentAdapter {
   readonly supportsCallerSessionId = false;
   // Session files, its hook, and the shutdown banner (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
-  // The literal URL goes into the folder's `.gemini/settings.json`.
-  readonly kangenticMcp = 'shared-folder' as const;
+  // The folder's `.gemini/settings.json` names the URL and token as env
+  // references, which Gemini expands from the session's own environment
+  // (`buildEnv`), so each session reaches its own URL (task #859, measured on
+  // 0.64.0).
+  readonly kangenticMcp = 'per-session' as const;
+  // A background `run_shell_command` (or a Ctrl+B) reports its PID in the
+  // result, and an AfterTool `additionalContext` reaches the model
+  // (GEMINI_BACKGROUND_COMMAND_SPEC, measured on 0.64.0).
+  readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -91,6 +98,15 @@ export class GeminiAdapter implements AgentAdapter {
       this.hookHolds.retain(options.ptySessionId, options.cwd);
     }
     return command;
+  }
+
+  /**
+   * The MCP URL and token the folder-shared settings file names by reference,
+   * delivered through the PTY environment so neither touches disk or argv.
+   */
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    const { agentPath, model, effort, ...rest } = options;
+    return this.commandBuilder.buildGeminiEnv({ geminiPath: agentPath, model, effort, ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

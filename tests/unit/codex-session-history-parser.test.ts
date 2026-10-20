@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, it, expect } from 'vitest';
-import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
-import { Activity, EventType } from '../../src/shared/types';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { CodexSessionHistoryParser, resetCodexCallMemosForTests } from '../../src/main/agent/adapters/codex/session-history-parser';
+import { EventType, AgentTool, type SessionEvent } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 /**
  * CodexSessionHistoryParser unit tests. Uses inline JSONL fixtures derived from
@@ -79,11 +80,13 @@ describe('CodexSessionHistoryParser', () => {
       expect(result.usage!.contextWindow.totalOutputTokens).toBe(35);
       expect(result.usage!.contextWindow.usedTokens).toBe(11214);
       expect(result.usage!.contextWindow.usedPercentage).toBeCloseTo(11214 / 258400 * 100, 2);
-      // Last activity seen is task_complete, so we should report Idle.
-      expect(result.activity).toBe(Activity.Idle);
+      // A turn's end is the Stop hook's (task #859): a forced idle here raced
+      // it and ended no turn for onTurnEnded.
+      expect(result.activity).toBeNull();
+      expect(result.events).toEqual([]);
     });
 
-    it('reports Activity.Thinking when task_started is the last activity event', () => {
+    it('forces no activity when task_started is the last record', () => {
       const jsonl = [
         JSON.stringify({
           timestamp: '2026-04-09T04:36:51.070Z',
@@ -98,10 +101,11 @@ describe('CodexSessionHistoryParser', () => {
       ].join('\n') + '\n';
 
       const result = CodexSessionHistoryParser.parse(jsonl, 'append');
-      expect(result.activity).toBe(Activity.Thinking);
+      // The turn's start is the UserPromptSubmit hook's.
+      expect(result.activity).toBeNull();
     });
 
-    it('emits ToolStart events for function_call response_items', () => {
+    it('emits no tool event for a function_call: the PreToolUse hook reports it, with its id', () => {
       const jsonl = JSON.stringify({
         timestamp: '2026-04-09T04:36:52.000Z',
         type: 'response_item',
@@ -113,9 +117,7 @@ describe('CodexSessionHistoryParser', () => {
       }) + '\n';
 
       const result = CodexSessionHistoryParser.parse(jsonl, 'append');
-      expect(result.events).toHaveLength(1);
-      expect(result.events[0].type).toBe(EventType.ToolStart);
-      expect(result.events[0].detail).toBe('shell');
+      expect(result.events).toEqual([]);
     });
 
     it('ignores malformed JSON lines without throwing', () => {
@@ -340,8 +342,7 @@ describe('CodexSessionHistoryParser', () => {
       expect(result.usage!.contextWindow.totalInputTokens).toBe(10569);
       expect(result.usage!.contextWindow.usedTokens).toBe(10569);
       expect(result.usage!.contextWindow.usedPercentage).toBeCloseTo(10569 / 258400 * 100, 2);
-      // task_complete was the last activity event in the chunk.
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
     });
 
     it('replays a sanitized real Codex 0.118 rollout fixture and gets non-zero usage', () => {
@@ -360,8 +361,280 @@ describe('CodexSessionHistoryParser', () => {
       expect(result.usage!.contextWindow.contextWindowSize).toBe(258400);
       expect(result.usage!.contextWindow.usedPercentage).toBeGreaterThan(0);
       expect(result.usage!.contextWindow.usedTokens).toBeGreaterThan(0);
-      // Last activity event in the fixture is task_complete.
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+    });
+  });
+
+  describe('what no Codex hook reports (task #859, measured on 0.154.0 and 0.163.0)', () => {
+    beforeEach(() => {
+      resetCodexCallMemosForTests();
+    });
+
+    const rolloutLines = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-rollout-background-session.jsonl'), 'utf-8')
+      .split('\n')
+      .filter((line) => line.length > 0);
+
+    // Real Codex 0.163.0 records: a turn_aborted, then a task_complete carrying error.message.
+    const turnEndLines = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'codex-rollout-turn-ends.jsonl'), 'utf-8')
+      .split('\n')
+      .filter((line) => line.length > 0);
+
+    it('reports a command still running at its yield as a named start keyed by its call id', () => {
+      // Each line is its own read: a call and its output never share one.
+      const events = rolloutLines.flatMap((line) => CodexSessionHistoryParser.parse(`${line}\n`, 'append').events);
+      expect(events).toEqual([
+        expect.objectContaining({ type: EventType.BackgroundShellStart, toolId: 'call_probe_1', detail: '88918' }),
+        // The poll of a still-running process repeats the start; the engine reads a duplicate.
+        expect.objectContaining({ type: EventType.BackgroundShellStart, toolId: 'call_probe_3', detail: '88918' }),
+        expect.objectContaining({ type: EventType.BackgroundShellStart, toolId: 'call_probe_4', detail: '95311', noActivityHold: true }),
+      ]);
+      expect(events[0].noActivityHold).toBeUndefined();
+    });
+
+    it('ends a background command when a poll of its exec session finds it exited', () => {
+      const call = JSON.stringify({ timestamp: '2026-10-20T15:30:00.000Z', type: 'response_item', payload: { type: 'function_call', name: 'write_stdin', arguments: '{"session_id":88918,"chars":"","yield_time_ms":5000}', call_id: 'call_poll' } });
+      const output = JSON.stringify({ timestamp: '2026-10-20T15:30:05.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'call_poll', output: 'Chunk ID: 1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n' } });
+      expect(CodexSessionHistoryParser.parse(`${call}\n`, 'append').events).toEqual([]);
+      expect(CodexSessionHistoryParser.parse(`${output}\n`, 'append').events).toEqual([
+        expect.objectContaining({ type: EventType.BackgroundShellEnd, detail: '88918' }),
+      ]);
+    });
+
+    it('reports a foreground command that exited within its yield as nothing', () => {
+      const exitedLine = rolloutLines.find((line) => line.includes('call_probe_2') && line.includes('function_call_output'));
+      expect(exitedLine).toBeDefined();
+      expect(CodexSessionHistoryParser.parse(`${exitedLine}\n`, 'append').events).toEqual([]);
+    });
+
+    it('replays the real turn-end rollout: an Esc interrupt is Interrupted, a failed turn is TurnFailed carrying its error message', () => {
+      // Two real records from Codex 0.163.0: a turn_aborted (Esc fires no hook)
+      // and a task_complete with error.message (a failed model request fires no
+      // Stop hook). Replaced the synthetic one-line cases: this is the shape
+      // Codex actually writes, envelope and ordinal included.
+      const failedRecord = JSON.parse(turnEndLines[1]) as { payload: { error: { message: string } } };
+      // Codex hands the provider's body through as one string, JSON and all, so
+      // the detail is that string, read from the fixture rather than retyped.
+      const expectedMessage = failedRecord.payload.error.message;
+      expect(expectedMessage).toContain('stub refuses with 400');
+      expect(expectedMessage.length).toBeLessThanOrEqual(200);
+
+      const result = CodexSessionHistoryParser.parse(`${turnEndLines.join('\n')}\n`, 'append');
+      expect(result.events).toEqual([
+        { ts: Date.parse('2026-10-20T16:39:05.135Z'), type: EventType.Interrupted },
+        { ts: Date.parse('2026-10-20T16:58:21.592Z'), type: EventType.TurnFailed, detail: expectedMessage },
+      ]);
+      // A turn's end belongs to the hooks, so the parse never forces activity.
+      expect(result.activity).toBeNull();
+    });
+
+    it('reports the same events when each turn-end record arrives in its own read', () => {
+      const events = turnEndLines.flatMap((line) => CodexSessionHistoryParser.parse(`${line}\n`, 'append').events);
+      expect(events.map((event) => event.type)).toEqual([EventType.Interrupted, EventType.TurnFailed]);
+    });
+
+    it('caps a TurnFailed detail at 200 characters', () => {
+      const longMessage = 'a'.repeat(200) + 'b'.repeat(100);
+      const failed = JSON.stringify({ timestamp: '2026-10-20T16:58:22.000Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 't', last_agent_message: null, error: { message: longMessage } } });
+      const events = CodexSessionHistoryParser.parse(`${failed}\n`, 'append').events;
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe(EventType.TurnFailed);
+      expect(events[0].detail).toBe('a'.repeat(200));
+    });
+
+    it('names a failed turn "error" when its error carries no message, and reports nothing when error is absent or not an object', () => {
+      const completeWith = (payloadFields: Record<string, unknown>): string => JSON.stringify({
+        timestamp: '2026-10-20T16:58:22.000Z',
+        type: 'event_msg',
+        payload: { type: 'task_complete', turn_id: 't', last_agent_message: null, ...payloadFields },
+      });
+      expect(CodexSessionHistoryParser.parse(`${completeWith({ error: { codex_error_info: 'other' } })}\n`, 'append').events).toEqual([
+        expect.objectContaining({ type: EventType.TurnFailed, detail: 'error' }),
+      ]);
+      expect(CodexSessionHistoryParser.parse(`${completeWith({})}\n`, 'append').events).toEqual([]);
+      expect(CodexSessionHistoryParser.parse(`${completeWith({ error: null })}\n`, 'append').events).toEqual([]);
+      expect(CodexSessionHistoryParser.parse(`${completeWith({ error: 'boom' })}\n`, 'append').events).toEqual([]);
+    });
+  });
+
+  describe('background commands read only an exec result\'s status block (task #859)', () => {
+    beforeEach(() => {
+      resetCodexCallMemosForTests();
+    });
+
+    const BASE_TIMESTAMP_MS = Date.parse('2026-10-20T15:30:00.000Z');
+
+    function functionCallLine(callId: string, name: string, callArguments: Record<string, unknown>): string {
+      return JSON.stringify({
+        timestamp: '2026-10-20T15:30:00.000Z',
+        type: 'response_item',
+        payload: { type: 'function_call', name, arguments: JSON.stringify(callArguments), call_id: callId },
+      });
+    }
+
+    function functionCallOutputLine(callId: string, output: string): string {
+      return JSON.stringify({
+        timestamp: '2026-10-20T15:30:05.000Z',
+        type: 'response_item',
+        payload: { type: 'function_call_output', call_id: callId, output },
+      });
+    }
+
+    /** An exec result as Codex writes it: a status block, an `Output:` line, then the command's own text. */
+    function execResult(statusLine: string, outputBody: string): string {
+      return [
+        'Chunk ID: 3f9a1c',
+        'Wall time: 0.0412 seconds',
+        statusLine,
+        'Original token count: 24',
+        'Output:',
+        outputBody,
+      ].join('\n');
+    }
+
+    /** Each line is its own read of the rollout, as the file reader delivers them. */
+    function parseEachLine(lines: string[]): SessionEvent[] {
+      return lines.flatMap((line) => CodexSessionHistoryParser.parse(`${line}\n`, 'append').events);
+    }
+
+    describe('a line in the command\'s own output', () => {
+      const quotedSource = [
+        'const PROCESS_RUNNING_PATTERN = /^Process running with session ID (\\d+)$/m;',
+        'Process running with session ID 88918',
+        'Process exited with code 0',
+      ].join('\n');
+
+      it('is not a launch: a foreground command that exited, whose cat of a source file quotes the running line', () => {
+        const events = parseEachLine([
+          functionCallLine('call_cat', 'exec_command', { cmd: 'cat src/exec-status.ts' }),
+          functionCallOutputLine('call_cat', execResult('Process exited with code 0', quotedSource)),
+        ]);
+        expect(events).toEqual([]);
+      });
+
+      it('is not a launch when the call was never seen either (a resume starts past the function_call)', () => {
+        const events = parseEachLine([
+          functionCallOutputLine('call_unseen', execResult('Process exited with code 0', quotedSource)),
+        ]);
+        expect(events).toEqual([]);
+      });
+
+      it('does not end a background command: a poll still running whose output quotes an exit line', () => {
+        const events = parseEachLine([
+          functionCallLine('call_poll_running', 'write_stdin', { session_id: 88918, chars: '', yield_time_ms: 5000 }),
+          functionCallOutputLine('call_poll_running', execResult('Process running with session ID 88918', 'Process exited with code 0')),
+        ]);
+        // The repeated start is what a poll that finds the process still running
+        // has always reported. The quoted exit line must not turn it into an end.
+        expect(events).toEqual([
+          {
+            ts: BASE_TIMESTAMP_MS + 5000,
+            type: EventType.BackgroundShellStart,
+            tool: AgentTool.Bash,
+            toolId: 'call_poll_running',
+            detail: '88918',
+          },
+        ]);
+      });
+    });
+
+    describe('the status block itself', () => {
+      it('is empty when the result has no Output: line, so nothing in it is read as a launch', () => {
+        const events = parseEachLine([
+          functionCallLine('call_no_output_line', 'exec_command', { cmd: 'node server.js' }),
+          functionCallOutputLine('call_no_output_line', 'Process running with session ID 88918\nlistening'),
+        ]);
+        expect(events).toEqual([]);
+      });
+
+      it('matches a running or exited line only as a whole line, never as text inside another line', () => {
+        const events = parseEachLine([
+          functionCallLine('call_exec_inline', 'exec_command', { cmd: 'node server.js' }),
+          functionCallOutputLine('call_exec_inline', execResult('Warning: Process running with session ID 7 was restored', 'listening')),
+          functionCallLine('call_poll_inline', 'write_stdin', { session_id: 7, chars: '' }),
+          functionCallOutputLine('call_poll_inline', execResult('Last poll: Process exited with code 0', '')),
+        ]);
+        expect(events).toEqual([]);
+      });
+
+      it('is read with CRLF line endings (a Windows Codex)', () => {
+        const crlfResult = execResult('Process running with session ID 88918', 'listening').replace(/\n/g, '\r\n');
+        expect(crlfResult).toContain('\r\nOutput:\r\n');
+        const events = parseEachLine([
+          functionCallLine('call_crlf', 'exec_command', { cmd: 'node server.js' }),
+          functionCallOutputLine('call_crlf', crlfResult),
+        ]);
+        expect(events).toEqual([
+          expect.objectContaining({ type: EventType.BackgroundShellStart, toolId: 'call_crlf', detail: '88918' }),
+        ]);
+      });
+    });
+
+    describe('a result of a tool that is not an exec tool', () => {
+      it.each(['apply_patch', 'view_image'])('is nothing for %s, even with a status-shaped line above its Output: line', (toolName) => {
+        const statusShapedResult = execResult('Process running with session ID 5', 'patched');
+        const events = parseEachLine([
+          functionCallLine('call_other', toolName, { input: 'x' }),
+          functionCallOutputLine('call_other', statusShapedResult),
+        ]);
+        expect(events).toEqual([]);
+      });
+
+      it('reads the same result as a launch when the memoized call is an exec_command (the control)', () => {
+        const events = parseEachLine([
+          functionCallLine('call_exec', 'exec_command', { cmd: 'node server.js' }),
+          functionCallOutputLine('call_exec', execResult('Process running with session ID 5', 'listening')),
+        ]);
+        expect(events).toEqual([
+          expect.objectContaining({ type: EventType.BackgroundShellStart, toolId: 'call_exec', detail: '5' }),
+        ]);
+      });
+    });
+
+    describe('the call memo is bounded at 512 calls, oldest out first', () => {
+      // Mirrors CALL_MEMO_LIMIT in session-history-parser.ts, which is not exported.
+      const MEMO_LIMIT = 512;
+      const RUNNING_RESULT = execResult('Process running with session ID 95311', 'listening');
+
+      function flaggedCall(callId: string): string {
+        return functionCallLine(callId, 'exec_command', { cmd: `node server.js ${NO_ACTIVITY_HOLD_FLAG}` });
+      }
+
+      function fillerCalls(count: number): string[] {
+        return Array.from({ length: count }, (_unused, index) => functionCallLine(`call_filler_${index}`, 'exec_command', { cmd: 'echo hi' }));
+      }
+
+      it('forgets the first call once one more than the limit has arrived: its flagged output starts without noActivityHold', () => {
+        // 1 old + (limit - 1) fillers + 1 recent = limit + 1 calls, so exactly the old one is evicted.
+        const calls = [flaggedCall('call_old'), ...fillerCalls(MEMO_LIMIT - 1), flaggedCall('call_recent')];
+        expect(calls).toHaveLength(MEMO_LIMIT + 1);
+        const callEvents = parseEachLine(calls);
+        expect(callEvents).toEqual([]);
+
+        const events = parseEachLine([
+          functionCallOutputLine('call_old', RUNNING_RESULT),
+          functionCallOutputLine('call_recent', RUNNING_RESULT),
+        ]);
+        // An evicted call is still read by its status block, but its flag is gone.
+        expect(events).toHaveLength(2);
+        expect(events[0]).toEqual({
+          ts: BASE_TIMESTAMP_MS + 5000,
+          type: EventType.BackgroundShellStart,
+          tool: AgentTool.Bash,
+          toolId: 'call_old',
+          detail: '95311',
+        });
+        expect(events[0].noActivityHold).toBeUndefined();
+        expect(events[1]).toEqual(expect.objectContaining({ toolId: 'call_recent', noActivityHold: true }));
+      });
+
+      it('keeps the first call while the limit is not exceeded', () => {
+        const calls = [flaggedCall('call_old'), ...fillerCalls(MEMO_LIMIT - 2), flaggedCall('call_recent')];
+        expect(calls).toHaveLength(MEMO_LIMIT);
+        parseEachLine(calls);
+
+        const events = parseEachLine([functionCallOutputLine('call_old', RUNNING_RESULT)]);
+        expect(events).toEqual([expect.objectContaining({ toolId: 'call_old', noActivityHold: true })]);
+      });
     });
   });
 });

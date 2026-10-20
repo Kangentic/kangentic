@@ -1,0 +1,30 @@
+{
+  "hookEventName": "post_tool_use",
+  "sessionId": "00000000-0000-4000-8000-9a5a2922ec04",
+  "cwd": "C:\\Users\\dev\\repo",
+  "workspaceRoot": "C:/Users/dev/repo/",
+  "timestamp": "2026-10-20T15:16:01.965846200+00:00",
+  "transcriptPath": "C:\\Users\\dev\\.grok\\sessions\\C%3A%5CUsers%5Cdev%5Crepo\\00000000-0000-4000-8000-9a5a2922ec04\\updates.jsonl",
+  "permissionMode": "bypassPermissions",
+  "toolName": "run_terminal_command",
+  "toolUseId": "call_probe_1",
+  "toolInput": {
+    "command": "node server.js",
+    "description": "Start the probe server",
+    "background": true
+  },
+  "toolResult": {
+    "type": "BackgroundTaskStarted",
+    "task_id": "00000000-0000-4000-8000-6d078eb2d5c1",
+    "task_type": "bash",
+    "output_file": "C:\\Users\\dev\\.grok\\sessions\\C%3A%5CUsers%5Cdev%5Crepo\\00000000-0000-4000-8000-9a5a2922ec04\\terminal\\call_probe_1.log",
+    "status": "running",
+    "command": "node server.js",
+    "summary": "Background task 00000000-0000-4000-8000-6d078eb2d5c1 started",
+    "retrieval_hint": "Use get_command_or_subagent_output tool with task_ids=[\"00000000-0000-4000-8000-6d078eb2d5c1\"] to retrieve the output.",
+    "pid": 11676
+  },
+  "toolInputTruncated": false,
+  "toolResultTruncated": false,
+  "isBackgrounded": false
+}

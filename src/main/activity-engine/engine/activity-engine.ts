@@ -613,40 +613,51 @@ export class ActivityEngine {
    * Force a transition to `'idle'`. Used by the PTY tracker (silence
    * timer or prompt detection). Resets all counters - the PTY's
    * "definitive idle" overrides our event-based bookkeeping.
+   *
+   * `keepBackgroundShells` ends the turn the same way but leaves every
+   * background shell set, and the liveness anchors their watchdogs read, in
+   * place. The predicate then decides: a holding shell keeps the session
+   * `thinking` until it exits. `SessionTelemetry.handlePtyIdle` passes it while
+   * the session tracks a shell (task #859).
    */
-  forceIdle(sessionId: string): void {
+  forceIdle(sessionId: string, options: { keepBackgroundShells?: boolean } = {}): void {
     if (this.disposed) return;
+    const keepBackgroundShells = options.keepBackgroundShells === true;
     const state = this.getOrCreateState(sessionId);
     const before = snapshotCounters(state);
     state.turnActive = false;
     state.turnForcedByHeartbeat = false;
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
-    state.lastSignalAt = null;
-    state.lastPtyOutputAt = null;
+    if (!keepBackgroundShells) {
+      state.lastSignalAt = null;
+      state.lastPtyOutputAt = null;
+    }
     state.pendingToolCount = 0;
     state.pendingToolStack.length = 0;
     releaseSubagentSlots(state);
-    state.activeBackgroundShellIds.clear();
-    state.anonymousBackgroundShellCount = 0;
-    // Unlike `resetInFlightCounters`, this path is reached with a dead agent
-    // process, so every descendant shell is gone too - including the exempt
-    // ones. Clearing them here keeps the watcher's `expected` honest rather
-    // than corrupting it.
+    // Unlike `resetInFlightCounters`, this clear is for a dead agent process,
+    // so every descendant shell is gone too - including the exempt ones.
+    // Clearing them here keeps the watcher's `expected` honest rather than
+    // corrupting it.
     //
     // `forceIdle` has two other callers (`handlePtyIdle` and `forceActivity`)
-    // that do NOT imply a dead process, so that premise is about which of them
-    // can reach a session holding exempt shells, not about the method at
-    // large: only a hooks-driven agent can populate the exempt set, and for
-    // those the PTY and history paths are both inert (the adapter declares
-    // `ActivityDetection.hooks()`, which gates `notifyPtyIdle`, and its history
-    // parser never emits an activity). So in practice `onRootProcessDied` is
-    // the only caller that reaches a non-empty exempt set. Should a
-    // PTY-driven agent ever gain this flag, revisit this clear - it would then
-    // be dropping live shells, the corruption the sibling reset avoids.
-    state.exemptBackgroundShellIds.clear();
-    state.pendingExemptShellToolIds.clear();
-    state.pendingServiceShellIds.clear();
+    // that do NOT imply a dead process, so neither may clear a tracked shell.
+    // A Codex session whose hooks never flowed keeps its PTY tracker while its
+    // rollout reports background commands (task #859), so `handlePtyIdle`
+    // passes `keepBackgroundShells` whenever the session tracks a shell.
+    // `SessionTelemetry.forceActivity` routes a history parser's idle as a
+    // plain Idle event while any shell is tracked, so it never lands here.
+    // That leaves `onRootProcessDied` as the only caller that clears a
+    // non-empty set. A new caller must keep that true, or this clear drops
+    // live shells, the corruption the sibling reset avoids.
+    if (!keepBackgroundShells) {
+      state.activeBackgroundShellIds.clear();
+      state.anonymousBackgroundShellCount = 0;
+      state.exemptBackgroundShellIds.clear();
+      state.pendingExemptShellToolIds.clear();
+      state.pendingServiceShellIds.clear();
+    }
     state.currentTool = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
@@ -659,6 +670,10 @@ export class ActivityEngine {
     state.turnEndSource = null;
     state.compensationCounters.forceIdle += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
+    if (keepBackgroundShells) {
+      this.reevaluate(sessionId, state, 'force-idle', delta);
+      return;
+    }
     this.commitTransition(sessionId, state, 'idle', 'force-idle', delta);
   }
 

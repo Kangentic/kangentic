@@ -188,13 +188,16 @@ export async function startMcpHttpServer(
 
   // Caller scope for kangentic_mark_background_service: the caller marks only
   // its own session's shells, so a connection that names no session (a Command
-  // Terminal, a client outside Kangentic) is not offered the tool at all. Null
-  // before the IPC context exists, which is strictly before any agent could
-  // have started a shell.
+  // Terminal, a client outside Kangentic) is not offered the tool at all, nor is
+  // a session whose agent does not report background commands (task #859),
+  // since nothing would ever start a shell for a mark to act on. Null before
+  // the IPC context exists, which is strictly before any agent could have
+  // started a shell.
   const resolveBackgroundShells = (callerSessionId?: string): BackgroundShellToolDependencies | null => {
     if (!callerSessionId) return null;
     const sessionManager = getSteeringContext()?.sessionManager ?? null;
     if (!sessionManager) return null;
+    if (!sessionManager.reportsBackgroundCommands(callerSessionId)) return null;
     return { sessions: sessionManager, callerSessionId };
   };
 

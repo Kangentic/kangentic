@@ -16,7 +16,18 @@
  *
  * <spec>  base64(JSON) from `buildBackgroundShellHintCommand`
  *         (`src/main/agent/shared/background-shell-hint-hook.ts`). All agent
- *         knowledge travels here, never in this file:
+ *         knowledge travels here, never in this file. Two shapes:
+ *
+ *         v2 (task #859), the launch match the event bridge's
+ *         `appendBackgroundLaunch` directive carries, so the hint and the hold
+ *         answer exactly the same calls:
+ *         {
+ *           launch: { toolField, tools, when, unless, idSources, commandPath,
+ *                     idPattern, optOutFlag },
+ *           reply: object
+ *         }
+ *
+ *         v1 (Claude's, kept byte for byte):
  *         {
  *           toolField: string,     stdin field naming the tool
  *           tools: string[],       the tools that can start a background shell
@@ -42,6 +53,75 @@ const SHELL_ID_PLACEHOLDER = '{{shellId}}';
 
 const [, , encodedSpec] = process.argv;
 
+// BEGIN background-call-match
+// Shared verbatim by event-bridge.js and background-shell-hint-bridge.js (a
+// workspace copy of either bridge is one file, so it cannot require a module). The shape is
+// BackgroundCallMatch in src/shared/background-command-spec.ts.
+// tests/unit/background-call-match-parity.test.ts keeps the two copies equal.
+const BACKGROUND_MATCH_SCAN_CAP = 64 * 1024;
+
+function valueAtPath(root, pathSegments) {
+  if (!Array.isArray(pathSegments) || pathSegments.length === 0) return undefined;
+  let value = root;
+  for (const segment of pathSegments) {
+    value = value && typeof value === 'object' ? value[segment] : undefined;
+  }
+  return value;
+}
+
+function conditionHolds(root, condition) {
+  return Boolean(condition) && valueAtPath(root, condition.path) === condition.equals;
+}
+
+function idFromSources(root, sources, idPattern) {
+  if (!Array.isArray(sources) || typeof idPattern !== 'string') return null;
+  let shape;
+  try {
+    shape = new RegExp(idPattern);
+  } catch {
+    return null;
+  }
+  for (const source of sources) {
+    if (!source) continue;
+    const value = valueAtPath(root, source.path);
+    let candidate = null;
+    if (typeof source.pattern === 'string') {
+      if (typeof value !== 'string') continue;
+      try {
+        const match = value.slice(0, BACKGROUND_MATCH_SCAN_CAP).match(new RegExp(source.pattern));
+        if (match && typeof match[1] === 'string') candidate = match[1];
+      } catch {
+        continue;
+      }
+    } else if (typeof value === 'string' || typeof value === 'number') {
+      candidate = String(value);
+    }
+    if (candidate && shape.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** The id of a call `match` names, or null. Never throws. */
+function matchBackgroundCall(root, match, idPattern) {
+  if (!root || typeof root !== 'object' || !match || typeof match !== 'object') return null;
+  if (typeof match.toolField !== 'string' || !Array.isArray(match.tools)) return null;
+  const tool = root[match.toolField];
+  if (typeof tool !== 'string' || !match.tools.includes(tool)) return null;
+  const when = Array.isArray(match.when) ? match.when : [];
+  const unless = Array.isArray(match.unless) ? match.unless : [];
+  if (!when.every((condition) => conditionHolds(root, condition))) return null;
+  if (unless.some((condition) => conditionHolds(root, condition))) return null;
+  const id = idFromSources(root, match.idSources, idPattern);
+  return id ? { tool, id } : null;
+}
+
+/** True when the command at `commandPath` carries `flag`. */
+function commandCarries(root, commandPath, flag) {
+  const command = valueAtPath(root, commandPath);
+  return typeof command === 'string' && typeof flag === 'string' && flag.length > 0 && command.includes(flag);
+}
+// END background-call-match
+
 /** Copy the reply template, putting the shell id in place inside every string. */
 function fill(template, shellId) {
   if (typeof template === 'string') return template.split(SHELL_ID_PLACEHOLDER).join(shellId);
@@ -62,6 +142,30 @@ function shellIdOf(response, idFields) {
   return null;
 }
 
+/** v1: Claude's spec. The shell id of a background launch, or null. */
+function legacyLaunchId(spec, context) {
+  if (!Array.isArray(spec.tools) || !Array.isArray(spec.idFields)) return null;
+  if (!spec.tools.includes(context[spec.toolField])) return null;
+
+  const response = context[spec.responseField];
+  if (!response || typeof response !== 'object') return null;
+  const shellId = shellIdOf(response, spec.idFields);
+  if (!shellId) return null;
+
+  const toolInput = context[spec.inputField];
+  const command = toolInput && typeof toolInput === 'object' ? toolInput[spec.commandField] : undefined;
+  if (typeof command === 'string' && typeof spec.optOutFlag === 'string' && spec.optOutFlag && command.includes(spec.optOutFlag)) return null;
+  return shellId;
+}
+
+/** v2: the launch match the event bridge reads. The id of a background launch, or null. */
+function launchId(launch, context) {
+  const match = matchBackgroundCall(context, launch, launch.idPattern);
+  if (!match) return null;
+  if (commandCarries(context, launch.commandPath, launch.optOutFlag)) return null;
+  return match.id;
+}
+
 let input = '';
 let overflowed = false;
 process.stdin.setEncoding('utf8');
@@ -79,7 +183,7 @@ process.stdin.on('end', () => {
   try {
     if (overflowed || !encodedSpec) return;
     const spec = JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'));
-    if (!spec || typeof spec !== 'object' || !spec.reply || !Array.isArray(spec.tools) || !Array.isArray(spec.idFields)) return;
+    if (!spec || typeof spec !== 'object' || !spec.reply) return;
 
     let context;
     try {
@@ -88,16 +192,11 @@ process.stdin.on('end', () => {
       return;
     }
     if (!context || typeof context !== 'object') return;
-    if (!spec.tools.includes(context[spec.toolField])) return;
 
-    const response = context[spec.responseField];
-    if (!response || typeof response !== 'object') return;
-    const shellId = shellIdOf(response, spec.idFields);
+    const shellId = spec.launch && typeof spec.launch === 'object'
+      ? launchId(spec.launch, context)
+      : legacyLaunchId(spec, context);
     if (!shellId) return;
-
-    const toolInput = context[spec.inputField];
-    const command = toolInput && typeof toolInput === 'object' ? toolInput[spec.commandField] : undefined;
-    if (typeof command === 'string' && typeof spec.optOutFlag === 'string' && spec.optOutFlag && command.includes(spec.optOutFlag)) return;
 
     process.stdout.write(JSON.stringify(fill(spec.reply, shellId)));
   } catch {

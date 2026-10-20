@@ -2,6 +2,9 @@ import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen } from '../../shared/directive-builders';
+import { backgroundLaunchDirective, backgroundStopDirectives, nestedBackgroundShellHintEntries } from '../../shared/background-command-hooks';
+import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
+import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
 
 /** Hook entry in Qwen Code's settings.json. */
 export interface QwenHookEntry {
@@ -62,6 +65,49 @@ const APPROVED_PLAN_EXIT = setToolWhen({
 });
 
 /**
+ * Qwen Code's background commands (task #859), from a headless 0.25.3 run
+ * against a local stand-in for the model API (tests/fixtures/qwen-hooks/,
+ * `qwen-0.25.3-post-tool-use-*`). `run_shell_command` with `is_background:
+ * true` returns "Background shell started.\nid: bg_<hex>\npid: ..." in
+ * `tool_response.llmContent`; `task_stop` (offered behind `tool_search`, but
+ * its hooks name the underlying tool) takes the id as `tool_input.task_id`,
+ * and its PostToolUse fires only once the stop succeeded. Qwen appends a
+ * PostToolUse `hookSpecificOutput.additionalContext` to the tool result the
+ * model reads (a top-level `additionalContext` is ignored). The launched
+ * command runs under `cmd.exe` inside Qwen's process tree on Windows.
+ */
+export const QWEN_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
+  launch: {
+    toolField: 'tool_name',
+    tools: ['run_shell_command'],
+    when: [{ path: ['tool_input', 'is_background'], equals: true }],
+    unless: [],
+    idSources: [{ path: ['tool_response', 'llmContent'], pattern: '\\bid: (bg_[0-9a-f]+)\\b' }],
+    commandPath: ['tool_input', 'command'],
+  },
+  stop: {
+    toolField: 'tool_name',
+    tools: ['task_stop'],
+    when: [],
+    unless: [],
+    idSources: [{ path: ['tool_input', 'task_id'] }],
+  },
+  hintReply: {
+    hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: BACKGROUND_SHELL_HINT_TEXT },
+  },
+};
+
+/** Options for `buildHooks`. */
+export interface QwenBuildHooksOptions {
+  /**
+   * The background shell hint's command, from `backgroundShellHintCommandFor`,
+   * registered on PostToolUse for the shell tool alone. Passed only for a
+   * session offered `kangentic_mark_background_service`.
+   */
+  backgroundShellHintCommand?: string | null;
+}
+
+/**
  * Keys under `hooks` that configure the hook system instead of naming an event
  * (Qwen's `HOOKS_CONFIG_FIELDS`). Their values are not entry lists.
  */
@@ -104,6 +150,9 @@ export const QWEN_HOOK_SHELL: HookShell = 'bare-tokens';
 
 /** The event bridge's copy in `<cwd>/.kangentic/` that a Windows hook runs by a bare relative path. */
 export const QWEN_BRIDGE_COPY_NAME = 'qwen-event-bridge.cjs';
+
+/** The background shell hint bridge's copy, for the same reason. */
+export const QWEN_HINT_BRIDGE_COPY_NAME = 'qwen-background-shell-hint-bridge.cjs';
 
 /** Build a single Qwen hook entry for the event bridge. */
 function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): QwenHookEntry {
@@ -150,6 +199,7 @@ export function buildHooks(
   eventBridge: string,
   eventsPath: string,
   existingHooks: Record<string, QwenHookEntry[]>,
+  options: QwenBuildHooksOptions = {},
 ): Record<string, QwenHookEntry[]> {
   const userHooks = userHooksOnly(existingHooks);
   const withBridge = (hookEvent: QwenHookEvent, eventType: string, ...directives: string[]): QwenHookEntry[] => {
@@ -172,10 +222,18 @@ export function buildHooks(
       extractDetail(['file_path', 'command', 'query'], { nested: 'tool_input' })),
     // Fires only for a result with no error; an error or a cancel fires
     // PostToolUseFailure instead.
-    [QwenHookEvent.PostToolUse]: withBridge(QwenHookEvent.PostToolUse, EventType.ToolEnd,
-      extractTool('tool_name'),
-      extractToolId(['tool_use_id']),
-      APPROVED_PLAN_EXIT),
+    // The background launch and stop ride this entry (`appendBackground*`),
+    // and the hint runs beside it for the shell tool alone. Qwen runs one
+    // event's hooks in parallel (measured on 0.25.3).
+    [QwenHookEvent.PostToolUse]: [
+      ...withBridge(QwenHookEvent.PostToolUse, EventType.ToolEnd,
+        extractTool('tool_name'),
+        extractToolId(['tool_use_id']),
+        APPROVED_PLAN_EXIT,
+        backgroundLaunchDirective(QWEN_BACKGROUND_COMMAND_SPEC),
+        ...backgroundStopDirectives(QWEN_BACKGROUND_COMMAND_SPEC)),
+      ...nestedBackgroundShellHintEntries(QWEN_BACKGROUND_COMMAND_SPEC, options.backgroundShellHintCommand),
+    ],
     [QwenHookEvent.PostToolUseFailure]: withBridge(QwenHookEvent.PostToolUseFailure, EventType.ToolEnd,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),

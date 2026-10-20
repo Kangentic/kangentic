@@ -21,9 +21,12 @@ on:
       - 'src/shared/shell-quote.ts'
       - 'src/shared/paths.ts'
       - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'src/main/agent/adapters/codex/command-builder.ts'
+      - 'src/main/agent/adapters/codex/hook-manager.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
+      - 'tests/unit/codex-hook-overrides.test.ts'
       - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-posix.yml'
   push:
@@ -32,9 +35,12 @@ on:
       - 'src/shared/shell-quote.ts'
       - 'src/shared/paths.ts'
       - 'src/main/agent/adapters/claude/command-builder.ts'
+      - 'src/main/agent/adapters/codex/command-builder.ts'
+      - 'src/main/agent/adapters/codex/hook-manager.ts'
       - 'tests/unit/helpers/shell-argv-probe.ts'
       - 'tests/unit/command-builder.test.ts'
       - 'tests/unit/shell-quote.test.ts'
+      - 'tests/unit/codex-hook-overrides.test.ts'
       - 'vitest.config.mts'
       - '.github/workflows/shell-quoting-posix.yml'
   workflow_dispatch:
@@ -87,4 +93,4 @@ jobs:
         # A shell missing from the runner fails the run instead of skipping it.
         env:
           KANGENTIC_SHELL_PROBE_REQUIRE_POSIX_SHELLS: '1'
-        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/shell-quote.test.ts
+        run: npx vitest run tests/unit/command-builder.test.ts tests/unit/shell-quote.test.ts tests/unit/codex-hook-overrides.test.ts

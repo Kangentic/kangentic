@@ -38,7 +38,8 @@ vi.mock('node:os', async () => {
 });
 
 // copilot-hook-manager.test.ts covers the real file operations.
-vi.mock('../../src/main/agent/adapters/copilot/hook-manager', () => ({
+vi.mock('../../src/main/agent/adapters/copilot/hook-manager', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/agent/adapters/copilot/hook-manager')>()),
   writeSessionConfig: vi.fn(),
   removeSessionConfig: vi.fn(),
   buildHooks: vi.fn(() => ({})),

@@ -1,0 +1,14 @@
+{
+  "session_id": "00000000-0000-4000-8000-9422fe9dcf40",
+  "transcript_path": "C:\\Users\\dev\\.factory\\sessions\\-C-Users-dev-AppData-Local-Temp-claude-C--Users-dev-repo-00000000-0000-4000-8000-79ad0fe86297-scratchpad-probe-work-droid-2026-10-20T15-24-35-452Z\\00000000-0000-4000-8000-9422fe9dcf40.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "permission_mode": "auto-low",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Execute",
+  "tool_input": {
+    "summary": "Start the probe server",
+    "command": "node server.js",
+    "fireAndForget": true
+  },
+  "tool_response": "Background process started (PID: 84832)\nCommand: node server.js\nOutput: C:\\Users\\dev\\AppData\\Local\\Temp\\droid-bg-1792509878543.out\nStatus: Running in background\nWarning: Node processes should handle SIGTERM properly\n\nNote: Process will continue after CLI exits. Use 'ps' or 'kill' commands to manage."
+}

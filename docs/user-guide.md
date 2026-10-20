@@ -531,8 +531,10 @@ over, so its **Delivery** is shown disabled and keeps whatever it was set to.
 
 A turn counts as finished only once the background commands the agent started have exited, since
 the agent may be waiting on a build or a test run. A dev server or watcher it leaves running would
-keep the task working forever, so when Claude starts a background command in a task, Kangentic
-tells it how to mark the command as a service, and a marked command no longer counts. While a task waits, its
+keep the task working forever, so an agent that reports its background commands (Claude, Codex,
+Copilot, Gemini, Grok, Kimi and Qwen) holds the turn until they exit. Claude, Copilot, Gemini and
+Qwen are also told, when they start one, how to mark it as a service; the others read it in the
+marking tool's description. A marked command no longer counts. While a task waits, its
 card's activity tooltip names the background shells. If one of them is a server, ask the agent to
 mark it as a service.
 

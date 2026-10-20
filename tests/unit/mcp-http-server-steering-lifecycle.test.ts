@@ -70,6 +70,9 @@ import { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver'
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
+/** A session whose agent does not report background commands. */
+const NON_REPORTING_SESSION = 'task-session-no-background-reports';
+
 /**
  * Minimal fake for the `sessionManager` slice `McpSteeringContext` requires
  * (`SessionSendSessionManager & SteeringSessionLookup &
@@ -82,6 +85,9 @@ function createFakeSteeringSessionManager() {
   return {
     markBackgroundShellsAsServices: vi.fn((_sessionId: string, shellIds: readonly string[]) =>
       shellIds.map((shellId) => ({ shellId, outcome: 'marked' as const }))),
+    // Every session's agent reports background commands except the one named
+    // for an agent that does not (task #859).
+    reportsBackgroundCommands: vi.fn((sessionId: string) => sessionId !== NON_REPORTING_SESSION),
     isWritable: () => false,
     getActivityCache: () => ({}),
     findLiveSessionByTaskId: () => undefined,
@@ -365,6 +371,19 @@ describe('startMcpHttpServer - kangentic_mark_background_service offer (task #85
       params: { name: MARK_SERVICE_TOOL, arguments: { shellIds: ['bserver01'] } },
     });
     expect(sessionManager.markBackgroundShellsAsServices).not.toHaveBeenCalled();
+  });
+
+  it('does not offer the tool to a session whose agent does not report background commands', async () => {
+    const sessionManager = createFakeSteeringSessionManager();
+    const { port, token } = await startServer(makeSteeringContext(sessionManager));
+
+    const toolNames = await listToolNames(port, token, `/mcp/proj-1/${NON_REPORTING_SESSION}`);
+
+    // Red: dropping the `reportsBackgroundCommands` check in resolveBackgroundShells
+    // offers it, and a mark from such an agent could only park an id.
+    expect(toolNames).toContain(FULL_SERVER_TOOL);
+    expect(toolNames).not.toContain(MARK_SERVICE_TOOL);
+    expect(sessionManager.reportsBackgroundCommands).toHaveBeenCalledWith(NON_REPORTING_SESSION);
   });
 
   it('does not offer the tool to a workflow agent caller', async () => {

@@ -7,6 +7,7 @@ import { parseCodexTranscript, locateCodexTranscriptFile } from './transcript-pa
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
+import { CodexHookTrustCheck } from './hook-trust';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
@@ -14,6 +15,9 @@ import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+/** How long a spawn waits for the hook trust read before going without hooks. */
+const HOOK_TRUST_SETTLE_MS = 8_000;
 
 /**
  * Codex CLI adapter - wraps CodexDetector, CodexCommandBuilder, and
@@ -66,8 +70,23 @@ export class CodexAdapter implements AgentAdapter {
   // the build swept. See SharedFolderHolds.
   private readonly hookHolds = new SharedFolderHolds();
 
+  /** Codex's own answer for the trust of Kangentic's hooks, per binary (hook-trust.ts). */
+  private readonly hookTrust = new CodexHookTrustCheck();
+
+  /**
+   * Background commands (task #859): the rollout reports a command still
+   * running at its yield (`Process running with session ID N`, which Codex's
+   * hooks never report: a yielded command fires no PostToolUse) and a poll
+   * that finds it exited. No launch hint, since no hook fires at the yield.
+   */
+  readonly backgroundCommands = { source: 'session-history', launchHint: false } as const;
+
   async detect(overridePath?: string | null): Promise<AgentInfo> {
-    return this.detector.detect(overridePath);
+    const info = await this.detector.detect(overridePath);
+    // Read the hook trust as soon as the binary is known, so the first spawn
+    // (which awaits it in ensureTrust) rarely waits.
+    if (info.found && info.path) this.hookTrust.start(info.path);
+    return info;
   }
 
   invalidateDetectionCache(): void {
@@ -81,6 +100,10 @@ export class CodexAdapter implements AgentAdapter {
     // worktree, the user would otherwise be prompted on EVERY task with no
     // answer that carries forward. See trust-manager.ts.
     await ensureWorktreeTrust(workingDirectory);
+    // Every spawn path awaits this before buildCommand, which reads the
+    // result synchronously. A read still running after the bound leaves this
+    // session without hooks rather than holding the spawn.
+    await this.hookTrust.settle(HOOK_TRUST_SETTLE_MS);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -90,6 +113,7 @@ export class CodexAdapter implements AgentAdapter {
       model,
       effort,
       ...rest,
+      codexHookStateOverride: this.hookTrust.stateOverrideFor(agentPath),
     });
     // buildCodexCommand sweeps any stale legacy `.codex/hooks.json` in the
     // project root whenever eventsOutputPath is present. Hold that root until
@@ -124,14 +148,14 @@ export class CodexAdapter implements AgentAdapter {
   /**
    * Runtime strategy: how Codex exposes activity state and session IDs.
    *
-   * - Activity: PTY silence timer as fallback. The sessionHistory hook
-   *   below provides authoritative task_started/task_complete events
-   *   from the rollout JSONL; the PTY tracker is suppressed once the
-   *   first history event arrives.
-   * - Session ID (fromHook): reads `thread_id` from the SessionStart
-   *   hookContext (openai/codex#10096). Inert today: Codex hook integration
-   *   is disabled (see codex/hook-manager.ts), so no SessionStart event is
-   *   emitted; fromOutput is the live path. Wired up when hooks return.
+   * - Activity: hooks (`hooks_and_pty`, task #859). Kangentic's hooks report
+   *   prompts, tools, permission waits and turn ends; the rollout adds what no
+   *   hook reports (a failed turn, an interrupt, background commands). The PTY
+   *   silence timer runs until a hook delivers a turn-initiating event, and
+   *   for the whole session when Codex did not confirm the hooks' trust.
+   * - Session ID (fromHook): reads `session_id` from the SessionStart
+   *   hookContext (`thread_id` on older payloads). fromOutput stays the path
+   *   for a session without hooks.
    * - Session ID (fromOutput): Codex v0.118+ prints "session id: <uuid>" in
    *   the startup header; older versions printed "codex resume thr_..." at exit.
    *   This UUID is used to locate the rollout file on disk.
@@ -139,44 +163,34 @@ export class CodexAdapter implements AgentAdapter {
    *   for real-time model, context window, and token counts. See CodexSessionHistoryParser.
    */
   readonly runtime: AdapterRuntimeStrategy = {
-    // Codex has no status line (parseStatus returns null). The
-    // hook-driven events.jsonl pipeline is currently dormant: 0.118
-    // ignored the project-local `.codex/hooks.json` we used to write,
-    // and 0.128 redesigned hooks entirely (TOML in ~/.codex/config.toml
-    // or plugin manifests). parseEvent is wired up so the pipeline
-    // re-activates automatically once we adopt the new hook format,
-    // but no events flow through it today.
+    // Codex has no status line (parseStatus returns null). Its hooks write
+    // events.jsonl through the workspace bridge copy, registered as `-c`
+    // overrides (hook-manager.ts) once Codex confirmed their trust.
     statusFile: {
       parseStatus: CodexStatusParser.parseStatus,
       parseEvent: CodexStatusParser.parseEvent,
       isFullRewrite: false,
     },
-    // Codex idle detection: silence timer only (no detectIdle callback).
+    // The Stop hook's Idle ends a turn for onTurnEnded (task #859).
     //
-    // The `›` (U+203A) guillemet is NOT idle-specific - it's always visible
-    // in the Codex Ink TUI's prompt area, even during active tool execution.
-    // Using it for detectIdle causes false idle transitions during active
-    // work (state oscillates thinking↔idle on every frame). Empirically
-    // verified: Codex goes completely SILENT when idle (no TUI redraws),
-    // so PtyActivityTracker's silence timer (`PTY_SILENCE_THRESHOLD_MS`)
-    // fires reliably.
-    //
-    // Content deduplication in SessionManager provides an agent-agnostic
-    // safety net: if any TUI agent does continuously redraw, repeated
-    // frames with identical stripped text are filtered automatically.
-    // Only terminal silence says a turn ended.
-    reportsTurnEnd: false,
-    activity: ActivityDetection.pty(),
+    // The PTY fallback has no detectIdle callback. The `›` (U+203A)
+    // guillemet is NOT idle-specific - it's always visible in the Codex Ink
+    // TUI's prompt area, even during active tool execution, so using it
+    // caused false idle transitions. Codex goes completely SILENT when idle
+    // (no TUI redraws), so PtyActivityTracker's silence timer
+    // (`PTY_SILENCE_THRESHOLD_MS`) fires reliably for a session without hooks.
+    reportsTurnEnd: true,
+    activity: ActivityDetection.hooksAndPty(),
     sessionId: {
       fromHook(hookContext) {
         try {
           const context = JSON.parse(hookContext);
-          const threadId = context.thread_id ?? context.threadId;
-          if (typeof threadId === 'string') {
-            console.log(`[codex] Captured thread ID from hook: ${threadId.slice(0, 16)}...`);
-            return threadId;
+          const sessionId = context.session_id ?? context.thread_id ?? context.threadId;
+          if (typeof sessionId === 'string') {
+            console.log(`[codex] Captured session ID from hook: ${sessionId.slice(0, 16)}...`);
+            return sessionId;
           }
-          console.warn(`[codex] SessionStart hookContext missing thread_id. Keys: ${Object.keys(context).join(', ')}`);
+          console.warn(`[codex] SessionStart hookContext missing session_id. Keys: ${Object.keys(context).join(', ')}`);
           return null;
         } catch {
           console.warn('[codex] Failed to parse SessionStart hookContext');
@@ -202,6 +216,9 @@ export class CodexAdapter implements AgentAdapter {
       locate: CodexSessionHistoryParser.locate,
       parse: CodexSessionHistoryParser.parse,
       isFullRewrite: false,
+      // The rollout carries no turn starts or ends, so its reads must not
+      // turn the PTY tracker off: a session whose hooks never flow keeps it.
+      suppressesPtyFallback: false,
     },
   };
 
@@ -218,10 +235,9 @@ export class CodexAdapter implements AgentAdapter {
       // for the numbers and scripts/measure-injection-flush.mjs for the rig).
       return createCodexCommandInjectionVerifier();
     }
-    // 'paste': Codex's hook pipeline is currently dormant for Kangentic (see
-    // the runtime comment above): 0.118 ignored the legacy hooks.json, and
-    // 0.128 redesigned hooks into a format we don't write yet. The paste engine
-    // falls back to its activity-event and data-floor backstops.
+    // 'paste': no verifier yet. Codex's UserPromptSubmit hook now reports a
+    // submission, but no paste flush has been measured against it, so the
+    // paste engine keeps its activity-event and data-floor backstops.
     return null;
   }
 

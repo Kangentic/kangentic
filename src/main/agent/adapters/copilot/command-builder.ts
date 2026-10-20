@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import { writeSessionConfig } from './hook-manager';
+import { backgroundShellHintCommandFor, shippedHintBridgePath } from '../../shared/background-command-hooks';
+import { COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, writeSessionConfig } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
 export interface CopilotCommandOptions {
@@ -81,6 +82,13 @@ export class CopilotCommandBuilder {
         sessionConfigDir,
         options.eventsOutputPath,
         options.statusOutputPath,
+        {
+          // Names kangentic_mark_background_service, so only a session
+          // offered that tool gets it.
+          backgroundShellHintCommand: backgroundShellHintCommandFor(
+            options, COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, shippedHintBridgePath(),
+          ),
+        },
       );
     }
 

@@ -7,6 +7,10 @@ import {
   type SessionUsage,
   type SessionEvent,
 } from '../../../../shared/types';
+import { SHELL_ID_PATTERN_SOURCE } from '../../../../shared/background-command-spec';
+import { HOOK_DETAIL_CAP } from '../../../git/push-command';
+
+const SHELL_ID_PATTERN = new RegExp(SHELL_ID_PATTERN_SOURCE);
 
 /**
  * Parser for Kimi CLI's `wire.jsonl` session telemetry.
@@ -45,16 +49,22 @@ import {
  *   Event              Activity      SessionEvent emitted
  *   ─────────────────  ────────────  ───────────────────────────
  *   TurnBegin          → Thinking    Prompt (detail = user input)
- *   TurnEnd            → Idle        (none)
+ *   TurnEnd            (released)    Idle
  *   StepBegin          → Thinking    (none)
- *   StepInterrupted    → Idle        Interrupted
+ *   StepInterrupted    (released)    Interrupted
  *   CompactionBegin    → Thinking    Compact
  *   CompactionEnd      (preserve)    (none)
  *   StatusUpdate       (preserve)    (none; updates SessionUsage)
  *   ContentPart        (preserve)    (none; streaming text fragment)
- *   ToolCall           (preserve)    ToolStart (detail = tool name)
+ *   ToolCall           (preserve)    ToolStart (toolId = call id; detail = the
+ *                                    command for Shell, else the tool name)
  *   ToolCallPart       (preserve)    (none; argument-streaming fragment)
- *   ToolResult         (preserve)    ToolEnd (detail = ok | error)
+ *   ToolResult         (preserve)    ToolEnd (toolId; detail = ok | error), or for
+ *                                    a background launch BackgroundShellStart
+ *                                    (detail = task id) in its place; a TaskStop's
+ *                                    result adds BackgroundShellEnd
+ *   Notification       (preserve)    BackgroundShellEnd for a background task's
+ *                                    `task.*` notification, else nothing
  *   ApprovalResponse   → Thinking    Notification (detail = response)
  *   SubagentEvent      (preserve)    SubagentStart  if inner event.type === TurnBegin
  *                                    SubagentStop   if inner event.type === TurnEnd
@@ -69,14 +79,37 @@ import {
  *
  *   Request            Activity      SessionEvent emitted
  *   ─────────────────  ────────────  ───────────────────────────
- *   ApprovalRequest    → Idle        Idle (detail = IdleReason.Permission)
+ *   ApprovalRequest    (released)    Idle (detail = IdleReason.Permission)
  *   ToolCallRequest    (preserve)    ToolStart (detail = name)
- *   QuestionRequest    → Idle        Idle (detail = IdleReason.Permission)
+ *   QuestionRequest    (released)    Idle (detail = IdleReason.Permission)
  *   HookRequest        (preserve)    Notification (detail = "<event>:<target>[: <summary>]")
+ *
+ * "Released" (task #859): the event alone moves the engine, and the chunk
+ * forces no activity. A forced idle runs `forceIdle`, which ends no turn for
+ * `onTurnEnded` (so the column's On agent turn end automations never ran for
+ * Kimi) and clears every background shell the session holds.
+ *
+ * Background commands (task #859, measured on 1.37.0 against a local stand-in
+ * for the model API, tests/fixtures/kimi/wire-background-tasks.jsonl): `Shell`
+ * with `run_in_background: true` answers `message: "Background task started."`
+ * with a `background_task` display block naming the task id (`bash-<id>`). The
+ * launch's ToolStart carries the command, so the no-activity-hold flag rides
+ * the engine's `toolId` memo to the named start, the way a Claude PowerShell
+ * launch does. `TaskStop` answers "Task stop requested." with the same block,
+ * and a background task that ends posts a `task.*` Notification naming it.
  *
  * All other inputs (malformed JSON, unrecognized types, missing
  * envelope fields) are skipped silently. Defensive parsing throughout.
  */
+
+/** The ToolResult message of a `Shell` call that started a background task. */
+const KIMI_BACKGROUND_STARTED_MESSAGE = 'Background task started.';
+
+/** The ToolResult message of a `TaskStop` call. */
+const KIMI_TASK_STOP_MESSAGE = 'Task stop requested.';
+
+/** Kimi's shell tool, whose command is the ToolStart's detail. */
+const KIMI_SHELL_TOOL = 'Shell';
 
 /** Every wire-protocol message type we explicitly handle. */
 const KIMI_DISPATCH_TYPES = [
@@ -100,6 +133,7 @@ const KIMI_DISPATCH_TYPES = [
   'PlanDisplay',
   'HookTriggered',
   'HookResolved',
+  'Notification',
   // Requests
   'ApprovalRequest',
   'ToolCallRequest',
@@ -240,7 +274,10 @@ export function parseWireJsonl(
         break;
       }
       case 'TurnEnd': {
-        activity = Activity.Idle;
+        // The Idle event ends the turn the way a Stop hook does; a forced
+        // idle would end no turn and drop every background shell.
+        activity = null;
+        events.push({ ts: timestamp, type: EventType.Idle });
         break;
       }
       case 'StepBegin': {
@@ -248,7 +285,7 @@ export function parseWireJsonl(
         break;
       }
       case 'StepInterrupted': {
-        activity = Activity.Idle;
+        activity = null;
         events.push({ ts: timestamp, type: EventType.Interrupted });
         break;
       }
@@ -297,11 +334,16 @@ export function parseWireJsonl(
       case 'ToolCall': {
         if (isRecord(payload)) {
           const toolName = extractToolCallName(payload);
+          const toolId = typeof payload.id === 'string' && payload.id.length > 0 ? payload.id : undefined;
+          const command = toolName === KIMI_SHELL_TOOL ? extractShellCommand(payload) : null;
           events.push({
             ts: timestamp,
             type: EventType.ToolStart,
             tool: AgentTool.Bash,
-            detail: toolName,
+            ...(toolId ? { toolId } : {}),
+            // Capped as a hook's detail is (the event bridge's FIELD_CAP): the
+            // event cache keeps it and the command detectors scan it per event.
+            detail: command !== null ? command.slice(0, HOOK_DETAIL_CAP) : toolName,
           });
         }
         break;
@@ -310,19 +352,54 @@ export function parseWireJsonl(
         if (isRecord(payload)) {
           const returnValue = payload.return_value;
           const isError = isRecord(returnValue) && returnValue.is_error === true;
+          const toolId = typeof payload.tool_call_id === 'string' && payload.tool_call_id.length > 0
+            ? payload.tool_call_id
+            : undefined;
+          const message = isRecord(returnValue) && typeof returnValue.message === 'string' ? returnValue.message : null;
+          const backgroundTaskId = isError || !isRecord(returnValue) ? null : extractBackgroundTaskId(returnValue.display);
+          if (backgroundTaskId && message === KIMI_BACKGROUND_STARTED_MESSAGE) {
+            // The tool moved to the background rather than ending: the named
+            // start closes its pending tool by `toolId` and reads the flag memo.
+            events.push({
+              ts: timestamp,
+              type: EventType.BackgroundShellStart,
+              tool: AgentTool.Bash,
+              ...(toolId ? { toolId } : {}),
+              detail: backgroundTaskId,
+            });
+            break;
+          }
           events.push({
             ts: timestamp,
             type: EventType.ToolEnd,
             tool: AgentTool.Bash,
+            ...(toolId ? { toolId } : {}),
             detail: isError ? 'error' : 'ok',
           });
+          if (backgroundTaskId && message === KIMI_TASK_STOP_MESSAGE) {
+            events.push({ ts: timestamp, type: EventType.BackgroundShellEnd, tool: AgentTool.Bash, detail: backgroundTaskId });
+          }
+        }
+        break;
+      }
+      case 'Notification': {
+        // A background task that ended (completed, failed, killed, ...).
+        if (
+          isRecord(payload)
+          && payload.source_kind === 'background_task'
+          && typeof payload.type === 'string'
+          && payload.type.startsWith('task.')
+          && typeof payload.source_id === 'string'
+          && payload.source_id.length > 0
+        ) {
+          events.push({ ts: timestamp, type: EventType.BackgroundShellEnd, tool: AgentTool.Bash, detail: payload.source_id });
         }
         break;
       }
 
       // ── Approval / question flow ───────────────────────────────────
       case 'ApprovalRequest': {
-        activity = Activity.Idle;
+        activity = null;
         events.push({
           ts: timestamp,
           type: EventType.Idle,
@@ -334,7 +411,7 @@ export function parseWireJsonl(
         // Closest semantic match in our IdleReason enum. The agent is
         // blocked waiting for a user response; treat it identically to
         // a permission request for activity purposes.
-        activity = Activity.Idle;
+        activity = null;
         events.push({
           ts: timestamp,
           type: EventType.Idle,
@@ -541,6 +618,39 @@ function extractToolCallName(payload: Record<string, unknown>): string {
     return payload.type;
   }
   return KIMI_TOOL_FALLBACK_NAME;
+}
+
+/**
+ * The `command` of a `Shell` ToolCall, whose `function.arguments` is a JSON
+ * string. Null when it does not parse or names no command.
+ */
+function extractShellCommand(payload: Record<string, unknown>): string | null {
+  const functionField = payload.function;
+  if (!isRecord(functionField) || typeof functionField.arguments !== 'string') return null;
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(functionField.arguments);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsedArguments)) return null;
+  const command = parsedArguments.command;
+  return typeof command === 'string' && command.trim().length > 0 ? command : null;
+}
+
+/**
+ * The task id of a ToolResult's `background_task` display block, when it is
+ * id-shaped. A shapeless id is dropped: as a start it would take an anonymous
+ * slot that no end could name.
+ */
+function extractBackgroundTaskId(display: unknown): string | null {
+  if (!Array.isArray(display)) return null;
+  for (const block of display) {
+    if (!isRecord(block) || block.type !== 'background_task') continue;
+    const taskId = block.task_id;
+    if (typeof taskId === 'string' && SHELL_ID_PATTERN.test(taskId)) return taskId;
+  }
+  return null;
 }
 
 /**

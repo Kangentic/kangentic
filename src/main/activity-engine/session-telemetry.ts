@@ -135,6 +135,15 @@ interface SessionTelemetryCallbacks {
   retireAgentlessSession?(sessionId: string): void;
 }
 
+/** How one batch of events entered (`ingestEvents`). */
+export interface IngestEventsOptions {
+  /**
+   * False when the batch comes from a session history file that must not turn
+   * the PTY tracker off (`sessionHistory.suppressesPtyFallback`). Default true.
+   */
+  suppressesPtyTracker?: boolean;
+}
+
 export interface SessionTelemetryOptions {
   /** Engine timing overrides (test-only typically). */
   activityEngineOptions?: ActivityEngineOptions;
@@ -901,7 +910,11 @@ export class SessionTelemetry {
   private handlePtyIdle(sessionId: string, detail: IdleReason): void {
     const event: SessionEvent = { ts: Date.now(), type: EventType.Idle, detail };
     this.pushEvent(sessionId, event);
-    this.activityEngine.forceIdle(sessionId);
+    // A session history parser can report background commands while the PTY
+    // tracker still runs (a Codex session whose hooks never flowed, task
+    // #859). Silence while one runs is the agent waiting on it, so the idle
+    // keeps the shells and the hold, the watcher's counts with them.
+    this.activityEngine.forceIdle(sessionId, { keepBackgroundShells: this.tracksBackgroundShells(sessionId) });
   }
 
   /**
@@ -1008,12 +1021,16 @@ export class SessionTelemetry {
    * which can drop, hold, or follow one with another, so nothing downstream
    * ever sees the permission idle of a plan Kangentic approved.
    */
-  ingestEvents(sessionId: string, events: SessionEvent[]): void {
+  ingestEvents(sessionId: string, events: SessionEvent[], options: IngestEventsOptions = {}): void {
     if (events.length === 0) return;
-    this.processAdmittedEvents(sessionId, events.flatMap((event) => this.planApprovalGate.admit(sessionId, event)));
+    this.processAdmittedEvents(
+      sessionId,
+      events.flatMap((event) => this.planApprovalGate.admit(sessionId, event)),
+      options.suppressesPtyTracker !== false,
+    );
   }
 
-  private processAdmittedEvents(sessionId: string, events: SessionEvent[]): void {
+  private processAdmittedEvents(sessionId: string, events: SessionEvent[], suppressesPtyTracker = true): void {
     if (events.length === 0) return;
     let cached = this.eventCache.get(sessionId);
     if (!cached) {
@@ -1039,7 +1056,7 @@ export class SessionTelemetry {
       // for the per-task lifetime-stats rollup.
       if (event.type === EventType.Compact) this.usage.recordCompaction(sessionId);
 
-      this.maybeSuppressPtyTracker(sessionId, event, parser);
+      if (suppressesPtyTracker) this.maybeSuppressPtyTracker(sessionId, event, parser);
       this.detectExitPlanMode(sessionId, event);
       this.planModeTrail.note(sessionId, event, Date.now());
 
@@ -1084,9 +1101,28 @@ export class SessionTelemetry {
       this.activityEngine.forceThinking(sessionId);
     } else if (activity === Activity.Idle) {
       const event: SessionEvent = { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Prompt };
+      // A session history parser reports a turn end this way (Grok's
+      // updates.jsonl, Codex's rollout). `forceIdle` clears every background
+      // shell set, which would drop a live hold and fold the still-running
+      // process into the watcher's helper baseline. While any shell is tracked,
+      // the hint ends the turn the way a Stop hook's Idle does instead, which
+      // keeps the shells (task #859). With none tracked nothing changes.
+      if (this.tracksBackgroundShells(sessionId)) {
+        this.ingestEvents(sessionId, [event]);
+        return;
+      }
       this.pushEvent(sessionId, event);
       this.activityEngine.forceIdle(sessionId);
     }
+  }
+
+  /** True while the engine tracks any background shell for the session, holding or exempt. */
+  private tracksBackgroundShells(sessionId: string): boolean {
+    const state = this.activityEngine.getState(sessionId);
+    if (!state) return false;
+    return state.activeBackgroundShellIds.size
+      + state.exemptBackgroundShellIds.size
+      + state.anonymousBackgroundShellCount > 0;
   }
 
   /**

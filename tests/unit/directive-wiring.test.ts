@@ -5,10 +5,10 @@
  * catches a kind typo at build time, complementing the bridge's runtime
  * unknown-directive diagnostic and the per-adapter wiring assertions.
  *
- * Runs every adapter that wires bridge directives through `buildHooks` and
- * scans the resulting command strings. Codex is excluded: it wires no bridge
- * directives (its hook-manager only cleans up legacy files), and OpenCode uses
- * an inline plugin that writes JSONL directly rather than the event-bridge.
+ * Runs every adapter that wires bridge directives through `buildHooks` (or,
+ * for Codex, `buildCodexHookOverrides`) and scans the resulting command
+ * strings. OpenCode is excluded: it uses an inline plugin that writes JSONL
+ * directly rather than the event-bridge.
  */
 import { describe, it, expect, vi } from 'vitest';
 
@@ -23,6 +23,7 @@ import { buildHooks as buildClaudeHooks } from '../../src/main/agent/adapters/cl
 import { buildHooks as buildGeminiHooks } from '../../src/main/agent/adapters/gemini';
 import { buildHooks as buildQwenHooks } from '../../src/main/agent/adapters/qwen-code';
 import { buildHooks as buildCopilotHooks } from '../../src/main/agent/adapters/copilot';
+import { buildCodexHookOverrides } from '../../src/main/agent/adapters/codex/hook-manager';
 
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
 const EVENTS_PATH = '/fake/.kangentic/sessions/abc/events.jsonl';
@@ -41,6 +42,8 @@ const KNOWN_KINDS = new Set([
   'setTypeWhenDetailMatches',
   'extractDetailPattern',
   'emitOnlyWhenDetailMatches',
+  'appendBackgroundLaunch',
+  'appendBackgroundStop',
 ]);
 
 // A directive token is `<kind>:<base64>`: letters, a colon, then standard
@@ -92,5 +95,12 @@ describe('adapter directive wiring is well-formed (no raw/hand-authored directiv
 
   it('copilot wires only <kind>:<base64> directives', () => {
     expect(assertWellFormed(commandsOf(buildCopilotHooks(EVENTS_PATH)))).toBeGreaterThan(0);
+  });
+
+  it('codex wires only <kind>:<base64> directives', () => {
+    // Its hooks are `-c` overrides, each command inside a TOML literal string.
+    const commands = buildCodexHookOverrides().map((override) => /command='([^']*)'/.exec(override)?.[1] ?? '');
+    expect(commands.every((command) => command.length > 0)).toBe(true);
+    expect(assertWellFormed(commands)).toBeGreaterThan(0);
   });
 });

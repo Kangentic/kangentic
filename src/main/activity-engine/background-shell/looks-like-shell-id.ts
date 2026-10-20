@@ -1,3 +1,7 @@
+import { SHELL_ID_PATTERN_SOURCE } from '../../../shared/background-command-spec';
+
+const SHELL_ID_PATTERN = new RegExp(SHELL_ID_PATTERN_SOURCE);
+
 /**
  * Returns true if `value` plausibly identifies one specific bg shell.
  * Constraints: non-empty string, ≤64 chars, only word chars / hyphens.
@@ -12,7 +16,5 @@
  * look like.
  */
 export function looksLikeShellId(value: string | undefined): value is string {
-  if (typeof value !== 'string') return false;
-  if (value.length === 0 || value.length > 64) return false;
-  return /^[\w-]+$/.test(value);
+  return typeof value === 'string' && SHELL_ID_PATTERN.test(value);
 }

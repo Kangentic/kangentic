@@ -1,14 +1,14 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import {
-  Activity,
   EventType,
   AgentTool,
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
 } from '../../../../shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
+import { codexHomeDir } from './config-toml';
 
 /**
  * Parser for Codex CLI's native session history files (rollout JSONL).
@@ -21,16 +21,20 @@ import {
  *
  * - `session_meta`     → session UUID + cli_version + cwd (line 1)
  * - `task_started`     → `model_context_window` (context window size)
- *                        + triggers Activity.Thinking
  * - `turn_context`     → `model` field, follows mid-session `/model` changes
  * - `token_count`      → `info.total_token_usage` (input/output/cached totals)
- * - `task_complete`    → triggers Activity.Idle
- * - `response_item`    → `type: "function_call"` → SessionEvent ToolStart/ToolEnd
+ * - `task_complete`    → TurnFailed when it carries an `error` (no Stop hook fires then)
+ * - `turn_aborted`     → Interrupted (an Esc interrupt fires no hook)
+ * - `response_item`    → `function_call` / `function_call_output` → background
+ *                        command starts and ends (see `backgroundEventOfOutput`)
+ *
+ * Turn starts, tool calls and turn ends are the hooks' (task #859, Codex
+ * 0.163.0): this file reports what no hook does.
  *
  * All other entries are ignored. Defensive parsing throughout: any
  * malformed line is skipped without throwing.
  *
- * Cross-platform: uses os.homedir() + path.join for all filesystem
+ * Cross-platform: uses Codex's home (`codexHomeDir`) + path.join for all filesystem
  * operations. No shell-outs. CRLF-tolerant line splitting.
  */
 export class CodexSessionHistoryParser {
@@ -154,7 +158,6 @@ export class CodexSessionHistoryParser {
     let totalOutputTokens: number | undefined;
     let cachedInputTokens: number | undefined;
     const events: SessionEvent[] = [];
-    let activity: Activity | null = null;
 
     // CRLF-tolerant split. Drops empty lines (final \n produces one).
     const lines = content.split(/\r?\n/).filter((line) => line.length > 0);
@@ -200,8 +203,7 @@ export class CodexSessionHistoryParser {
         if (typeof windowSize === 'number' && windowSize > 0) {
           contextWindowSize = windowSize;
         }
-        // task_started = agent is actively working on a turn.
-        activity = Activity.Thinking;
+        // The turn's start is the UserPromptSubmit hook's (task #859).
       } else if (entryType === 'token_count' && isRecord(payload)) {
         const info = payload.info;
         if (isRecord(info)) {
@@ -231,19 +233,25 @@ export class CodexSessionHistoryParser {
             contextWindowSize = windowSize;
           }
         }
-      } else if (entryType === 'task_complete') {
-        // Turn ended - agent is idle waiting for next prompt.
-        activity = Activity.Idle;
+      } else if (entryType === 'task_complete' && isRecord(payload)) {
+        // A turn that ended normally is the Stop hook's. One whose model
+        // request failed fires no Stop (measured on 0.163.0), and only this
+        // record says so.
+        const failure = payload.error;
+        if (isRecord(failure)) {
+          const message = typeof failure.message === 'string' ? failure.message : 'error';
+          events.push({ ts: timestamp, type: EventType.TurnFailed, detail: message.slice(0, 200) });
+        }
+      } else if (entryType === 'turn_aborted') {
+        // An Esc interrupt fires no hook at all (measured on 0.163.0).
+        events.push({ ts: timestamp, type: EventType.Interrupted });
       } else if (entryType === 'response_item' && isRecord(payload)) {
         const responseType = payload.type;
         if (responseType === 'function_call') {
-          const toolName = typeof payload.name === 'string' ? payload.name : 'function';
-          events.push({
-            ts: timestamp,
-            type: EventType.ToolStart,
-            tool: mapCodexToolName(toolName),
-            detail: toolName,
-          });
+          rememberCodexCall(payload);
+        } else if (responseType === 'function_call_output') {
+          const event = backgroundEventOfOutput(payload, timestamp);
+          if (event) events.push(event);
         }
       }
     }
@@ -257,8 +265,122 @@ export class CodexSessionHistoryParser {
       cachedInputTokens,
     });
 
-    return { usage, events, activity };
+    // Activity is the hooks' (task #859): a forced idle here raced the Stop
+    // hook's Idle and ended no turn for onTurnEnded.
+    return { usage, events, activity: null };
   }
+}
+
+// ---------- Background commands (task #859) ----------
+
+/**
+ * What an `exec_command` answers when its command is still running at the
+ * yield: `Process running with session ID 88918`. The number is Codex's own
+ * exec session, which `write_stdin` takes, not an OS process id. Read from
+ * the status block only (`execStatusOf`), one whole line.
+ */
+const PROCESS_RUNNING_PATTERN = /^Process running with session ID (\d+)\r?$/m;
+
+/** What a poll of a session whose process ended answers, also a status line. */
+const PROCESS_EXITED_PATTERN = /^Process exited with code -?\d+\r?$/m;
+
+/** The tools whose result carries an exec session's status block. */
+const EXEC_TOOL_NAMES: ReadonlySet<string> = new Set(['exec_command', 'write_stdin']);
+
+/**
+ * The status block of an exec result: the lines before its `Output:` line.
+ * The command's own output follows that line, so a foreground command that
+ * prints "Process running with session ID 1" (a `cat` of this file) is never
+ * read as a launch. Empty when the result has no `Output:` line, which every
+ * exec result in the captured rollouts has.
+ */
+function execStatusOf(output: string): string {
+  const outputLine = output.search(/^Output:\r?$/m);
+  return outputLine < 0 ? '' : output.slice(0, outputLine);
+}
+
+/** What one function_call was, kept until its output arrives (a later read). */
+interface CodexCallMemo {
+  name: string;
+  /** The `exec_command` command carried `--kangentic-no-activity-hold`. */
+  flagged: boolean;
+  /** The exec session a `write_stdin` call polled. */
+  execSessionId: string | null;
+}
+
+/**
+ * Calls by `call_id`, which Codex makes unique across sessions. A call and its
+ * output land in different reads of the rollout, so the parse cannot pair them
+ * within one chunk. Bounded, oldest out first.
+ */
+const callMemos = new Map<string, CodexCallMemo>();
+const CALL_MEMO_LIMIT = 512;
+
+function rememberCodexCall(payload: Record<string, unknown>): void {
+  const callId = payload.call_id;
+  if (typeof callId !== 'string' || callId.length === 0) return;
+  const name = typeof payload.name === 'string' ? payload.name : '';
+  let parsedArguments: unknown = null;
+  if (typeof payload.arguments === 'string') {
+    try {
+      parsedArguments = JSON.parse(payload.arguments);
+    } catch {
+      parsedArguments = null;
+    }
+  }
+  const command = isRecord(parsedArguments) && typeof parsedArguments.cmd === 'string' ? parsedArguments.cmd : '';
+  const polledSession = isRecord(parsedArguments) ? parsedArguments.session_id : undefined;
+  callMemos.set(callId, {
+    name,
+    flagged: command.includes(NO_ACTIVITY_HOLD_FLAG),
+    execSessionId: typeof polledSession === 'number' || typeof polledSession === 'string' ? String(polledSession) : null,
+  });
+  while (callMemos.size > CALL_MEMO_LIMIT) {
+    const oldest = callMemos.keys().next().value;
+    if (oldest === undefined) break;
+    callMemos.delete(oldest);
+  }
+}
+
+/**
+ * A command still running at its yield is a background command: Codex fires
+ * no PostToolUse for it (its PreToolUse did fire), so this start, keyed by the
+ * call id the hook's `tool_start` carried, closes that pending tool. A poll that
+ * finds the process exited ends it. A poll that finds it still running repeats
+ * the start, which the engine reads as a duplicate.
+ *
+ * A call whose `function_call` line was written before the reader's cursor (a
+ * resume starts at the end of the rollout) has no memo. Its output is still
+ * read by the status block alone, but its start cannot carry the opt-out flag
+ * from the memo. With hooks flowing, the PreToolUse `tool_start` that carried
+ * the command still exempts it through the engine's tool-id memo.
+ */
+function backgroundEventOfOutput(payload: Record<string, unknown>, timestamp: number): SessionEvent | null {
+  const callId = typeof payload.call_id === 'string' ? payload.call_id : undefined;
+  const output = typeof payload.output === 'string' ? payload.output : '';
+  const memo = callId ? callMemos.get(callId) : undefined;
+  if (callId) callMemos.delete(callId);
+  if (memo && !EXEC_TOOL_NAMES.has(memo.name)) return null;
+  const status = execStatusOf(output);
+  if (memo?.name === 'write_stdin' && memo.execSessionId && PROCESS_EXITED_PATTERN.test(status)) {
+    return { ts: timestamp, type: EventType.BackgroundShellEnd, tool: AgentTool.Bash, detail: memo.execSessionId };
+  }
+  const running = PROCESS_RUNNING_PATTERN.exec(status);
+  if (!running) return null;
+  const execSessionId = running[1];
+  return {
+    ts: timestamp,
+    type: EventType.BackgroundShellStart,
+    tool: AgentTool.Bash,
+    ...(callId ? { toolId: callId } : {}),
+    detail: execSessionId,
+    ...(memo?.flagged ? { noActivityHold: true } : {}),
+  };
+}
+
+/** Forget every remembered call. For tests. */
+export function resetCodexCallMemosForTests(): void {
+  callMemos.clear();
 }
 
 // ---------- Internal helpers ----------
@@ -280,6 +402,7 @@ const CODEX_DISPATCH_TYPES = [
   'task_started',
   'token_count',
   'task_complete',
+  'turn_aborted',
   'response_item',
 ] as const;
 
@@ -322,7 +445,7 @@ function codexSessionsDirForDate(date: Date): string {
   const year = iso.slice(0, 4);
   const month = iso.slice(5, 7);
   const day = iso.slice(8, 10);
-  return path.join(os.homedir(), '.codex', 'sessions', year, month, day);
+  return path.join(codexHomeDir(), 'sessions', year, month, day);
 }
 
 /**
@@ -406,17 +529,6 @@ function safeReaddirWithStats(directory: string): Array<{ name: string; mtimeMs:
 /** Simple async sleep helper for polling loops. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Map a Codex function_call name to Kangentic's AgentTool enum. The
- * enum only has two values (Bash, ExitPlanMode); any Codex tool call
- * that isn't an exit-plan action gets bucketed as Bash. Activity
- * tracking only cares about ToolStart/ToolEnd transitions, not the
- * specific tool identity, so this coarse mapping is sufficient.
- */
-function mapCodexToolName(_name: string): AgentTool {
-  return AgentTool.Bash;
 }
 
 /**

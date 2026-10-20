@@ -31,6 +31,8 @@ import {
   KIMI_SUBAGENT_FALLBACK_NAME,
 } from '../../src/main/agent/adapters/kimi/wire-parser';
 import { Activity, EventType, IdleReason } from '../../src/shared/types';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import { HOOK_DETAIL_CAP } from '../../src/main/git/push-command';
 
 const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'kimi');
 
@@ -45,18 +47,25 @@ describe('parseWireJsonl', () => {
     it('skips the metadata header line without throwing', () => {
       const result = parseWireJsonl(content, 'append');
       // Real fixture is TurnBegin "hello" / TurnEnd / TurnBegin "hello" / TurnEnd.
-      // Each TurnBegin extracts the user_input text into a Prompt event; the
-      // metadata header line itself is silently skipped (no error, no event).
-      expect(result.events).toHaveLength(2);
-      expect(result.events.every((event) => event.type === EventType.Prompt)).toBe(true);
-      expect(result.events.every((event) => event.detail === 'hello')).toBe(true);
+      // Each TurnBegin extracts the user_input text into a Prompt event and
+      // each TurnEnd is an Idle event; the metadata header line itself is
+      // silently skipped (no error, no event).
+      expect(result.events.map((event) => event.type)).toEqual([
+        EventType.Prompt, EventType.Idle, EventType.Prompt, EventType.Idle,
+      ]);
+      const prompts = result.events.filter((event) => event.type === EventType.Prompt);
+      expect(prompts.every((event) => event.detail === 'hello')).toBe(true);
     });
 
-    it('settles on Idle when the chunk ends with TurnEnd', () => {
+    it('ends the turn with an Idle event and forces no activity when the chunk ends with TurnEnd', () => {
+      // A forced idle runs the engine's forceIdle, which ends no turn for
+      // onTurnEnded and drops every background shell (task #859). The Idle
+      // event ends the turn the way a Stop hook does.
       const result = parseWireJsonl(content, 'append');
-      // Real fixture has TurnBegin, TurnEnd, TurnBegin, TurnEnd.
-      // The final transition is Idle.
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+      const idle = result.events[result.events.length - 1];
+      expect(idle.type).toBe(EventType.Idle);
+      expect(idle.detail).toBeUndefined();
     });
 
     it('emits no usage when no StatusUpdate is present', () => {
@@ -68,11 +77,11 @@ describe('parseWireJsonl', () => {
   describe('against the synthesized rich fixture', () => {
     const content = loadFixture('wire-rich.jsonl');
 
-    it('parses both ToolCall events as ToolStart entries', () => {
+    it('parses both ToolCall events as ToolStart entries, a Shell call carrying its command', () => {
       const result = parseWireJsonl(content, 'append');
       const toolStarts = result.events.filter((event) => event.type === EventType.ToolStart);
       expect(toolStarts).toHaveLength(2);
-      expect(toolStarts[0].detail).toBe('Shell');
+      expect(toolStarts[0].detail).toBe('ls');
       expect(toolStarts[1].detail).toBe('ReadFile');
     });
 
@@ -120,9 +129,10 @@ describe('parseWireJsonl', () => {
       expect(result.usage?.contextWindow.cacheTokens).toBe(2048);
     });
 
-    it('settles on Idle when the rich chunk ends with TurnEnd', () => {
+    it('forces no activity when the rich chunk ends with TurnEnd', () => {
       const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+      expect(result.events[result.events.length - 1].type).toBe(EventType.Idle);
     });
   });
 
@@ -135,10 +145,11 @@ describe('parseWireJsonl', () => {
       // which now emits a Prompt event ahead of the tool pairs.
       expect(ordered).toEqual([
         'prompt:list files',
-        'tool_start:Shell',
+        'tool_start:ls',
         'tool_end:ok',
         'tool_start:ReadFile',
         'tool_end:error',
+        'idle:undefined',
       ]);
     });
   });
@@ -156,10 +167,11 @@ describe('parseWireJsonl', () => {
       expect(result.activity).toBe(Activity.Thinking);
     });
 
-    it('settles on Idle when the chunk contains StepInterrupted', () => {
+    it('forces no activity when the chunk contains StepInterrupted, whose Interrupted event ends the turn', () => {
       const partial = '{"timestamp": 1.0, "message": {"type": "StepInterrupted", "payload": {}}}\n';
       const result = parseWireJsonl(partial, 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+      expect(result.events.map((event) => event.type)).toEqual([EventType.Interrupted]);
     });
 
     it('returns activity null on a chunk with no transitional events', () => {
@@ -178,7 +190,8 @@ describe('parseWireJsonl', () => {
         '{"timestamp": 2.0, "message": {"type": "TurnEnd", "payload": {}}}',
       ].join('\n');
       const result = parseWireJsonl(mixed, 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+      expect(result.events.map((event) => event.type)).toEqual([EventType.Idle]);
     });
 
     it('skips lines whose message envelope is missing a recognized type', () => {
@@ -199,7 +212,8 @@ describe('parseWireJsonl', () => {
         + '{"timestamp": 1.0, "message": {"type": "TurnBegin", "payload": {}}}\r\n'
         + '{"timestamp": 2.0, "message": {"type": "TurnEnd", "payload": {}}}\r\n';
       const result = parseWireJsonl(content, 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
+      expect(result.events.map((event) => event.type)).toEqual([EventType.Idle]);
     });
   });
 
@@ -280,6 +294,58 @@ describe('parseWireJsonl', () => {
       expect(result.events).toHaveLength(1);
       expect(result.events[0].type).toBe(EventType.ToolEnd);
       expect(result.events[0].detail).toBe('ok');
+    });
+  });
+
+  describe('Shell ToolCall detail cap', () => {
+    // A Shell ToolCall's command is the ToolStart's detail, capped the way a
+    // hook's detail is (the event bridge's FIELD_CAP, HOOK_DETAIL_CAP): the
+    // event cache keeps the detail and the command detectors scan it per event,
+    // so a pasted script must not ride through whole.
+    function shellToolCall(command: string): string {
+      return JSON.stringify({
+        timestamp: 1776824399.5,
+        message: {
+          type: 'ToolCall',
+          payload: {
+            type: 'function',
+            id: 'call-cap',
+            function: { name: 'Shell', arguments: JSON.stringify({ command }) },
+          },
+        },
+      }) + '\n';
+    }
+
+    function toolStartDetail(command: string): string | undefined {
+      const toolStarts = parseWireJsonl(shellToolCall(command), 'append').events.filter((event) => event.type === EventType.ToolStart);
+      expect(toolStarts).toHaveLength(1);
+      return toolStarts[0].detail;
+    }
+
+    // The comparisons are booleans so a failure does not print 2000 characters.
+    it('cuts a command longer than the cap to exactly its first HOOK_DETAIL_CAP characters', () => {
+      const head = 'a'.repeat(HOOK_DETAIL_CAP);
+      const detail = toolStartDetail(`${head}${'b'.repeat(500)}`);
+      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
+      expect(detail === head).toBe(true);
+    });
+
+    it('cuts at the cap even when the command is one character over', () => {
+      const head = 'a'.repeat(HOOK_DETAIL_CAP);
+      const detail = toolStartDetail(`${head}b`);
+      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
+      expect(detail === head).toBe(true);
+    });
+
+    it('leaves a command of exactly the cap length whole', () => {
+      const command = 'a'.repeat(HOOK_DETAIL_CAP);
+      const detail = toolStartDetail(command);
+      expect(detail).toHaveLength(HOOK_DETAIL_CAP);
+      expect(detail === command).toBe(true);
+    });
+
+    it('leaves a short command unchanged', () => {
+      expect(toolStartDetail('node server.js --port 3000')).toBe('node server.js --port 3000');
     });
   });
 
@@ -396,9 +462,9 @@ describe('parseWireJsonl', () => {
   });
 
   describe('StepInterrupted', () => {
-    it('emits an Interrupted event and sets activity to Idle', () => {
+    it('emits an Interrupted event and forces no activity', () => {
       const result = parseWireJsonl(envelope('StepInterrupted', {}), 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
       expect(result.events).toEqual([
         expect.objectContaining({ type: EventType.Interrupted }),
       ]);
@@ -412,7 +478,7 @@ describe('parseWireJsonl', () => {
         envelope('SteerInput', { user_input: 'change direction' }, 2.0),
       ].join('\n');
       const result = parseWireJsonl(content, 'append');
-      // SteerInput overrides the prior Idle from TurnEnd.
+      // SteerInput is the last transition; TurnEnd before it forces nothing.
       expect(result.activity).toBe(Activity.Thinking);
       const promptEvents = result.events.filter((event) => event.type === EventType.Prompt);
       expect(promptEvents).toHaveLength(1);
@@ -441,7 +507,7 @@ describe('parseWireJsonl', () => {
   });
 
   describe('Approval / Question flow (Requests)', () => {
-    it('ApprovalRequest sets activity to Idle with IdleReason.Permission', () => {
+    it('ApprovalRequest emits an Idle with IdleReason.Permission and forces no activity', () => {
       const result = parseWireJsonl(envelope('ApprovalRequest', {
         id: 'req-1',
         tool_call_id: 'tc-1',
@@ -449,7 +515,7 @@ describe('parseWireJsonl', () => {
         action: 'edit_file',
         description: 'Modify package.json',
       }), 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
       expect(result.events).toEqual([
         expect.objectContaining({
           type: EventType.Idle,
@@ -458,13 +524,13 @@ describe('parseWireJsonl', () => {
       ]);
     });
 
-    it('QuestionRequest also drops to Idle with IdleReason.Permission', () => {
+    it('QuestionRequest also emits an Idle with IdleReason.Permission', () => {
       const result = parseWireJsonl(envelope('QuestionRequest', {
         id: 'q-1',
         tool_call_id: 'tc-2',
         questions: [{ question: 'Pick a framework', options: [{ label: 'React' }] }],
       }), 'append');
-      expect(result.activity).toBe(Activity.Idle);
+      expect(result.activity).toBeNull();
       expect(result.events).toEqual([
         expect.objectContaining({
           type: EventType.Idle,
@@ -703,12 +769,12 @@ describe('parseWireJsonl', () => {
     it('drives the wire-subagent.jsonl fixture into the expected lifecycle sequence', () => {
       const content = loadFixture('wire-subagent.jsonl');
       const result = parseWireJsonl(content, 'append');
-      // Final transition is the outer TurnEnd → Idle.
-      expect(result.activity).toBe(Activity.Idle);
+      // The outer TurnEnd ends the turn as an Idle event, forcing nothing.
+      expect(result.activity).toBeNull();
       // Events: parent Prompt, parent ToolStart(Agent), then the wrapped
       // subagent lifecycle (SubagentStart, two Notifications for the
-      // mid-run StatusUpdate + ToolCall chatter, SubagentStop), and
-      // finally the parent ToolEnd.
+      // mid-run StatusUpdate + ToolCall chatter, SubagentStop), the
+      // parent ToolEnd, and the parent's Idle.
       const ordered = result.events.map((event) => `${event.type}:${event.detail}`);
       expect(ordered).toEqual([
         'prompt:delegate exploration',
@@ -718,6 +784,7 @@ describe('parseWireJsonl', () => {
         'notification:explore',
         'subagent_stop:explore',
         'tool_end:ok',
+        'idle:undefined',
       ]);
     });
   });
@@ -996,6 +1063,76 @@ describe('parseWireJsonl', () => {
     });
   });
 
+  describe('background tasks (captured from kimi 1.37.0, task #859)', () => {
+    // A turn that starts `node server.js` in the background, runs a foreground
+    // command, stops the first task with TaskStop, and starts a flagged launch;
+    // then the task.killed notification and two follow-up turns Kimi started
+    // itself.
+    const content = loadFixture('wire-background-tasks.jsonl');
+    const result = parseWireJsonl(content, 'append');
+
+    it('reports a background launch as a named start in place of the tool end, keyed by the call id', () => {
+      const launch = result.events.find((event) => event.type === EventType.BackgroundShellStart);
+      expect(launch).toMatchObject({ toolId: 'call_probe_1', detail: 'bash-tkkk1arw' });
+      const toolEndIds = result.events.filter((event) => event.type === EventType.ToolEnd).map((event) => event.toolId);
+      expect(toolEndIds).toEqual(['call_probe_2', 'call_probe_3']);
+    });
+
+    it('carries a Shell launch command on its start, so the flag memo can key on the call id', () => {
+      const flaggedStart = result.events.find((event) => event.type === EventType.ToolStart && event.toolId === 'call_probe_4');
+      expect(flaggedStart?.detail).toBe('node server.js --kangentic-no-activity-hold');
+    });
+
+    it('ends a task on its TaskStop result and again on its task.* notification', () => {
+      const ends = result.events.filter((event) => event.type === EventType.BackgroundShellEnd).map((event) => event.detail);
+      expect(ends).toEqual(['bash-tkkk1arw', 'bash-tkkk1arw']);
+    });
+
+    it('reads a TaskStop result, whose display block names the task, as no launch', () => {
+      const starts = result.events.filter((event) => event.type === EventType.BackgroundShellStart).map((event) => event.detail);
+      expect(starts).toEqual(['bash-tkkk1arw', 'bash-n2672x0l']);
+    });
+
+    it('drops a background block whose task id is not id-shaped', () => {
+      const shapeless = parseWireJsonl(envelope('ToolResult', {
+        tool_call_id: 'call-x',
+        return_value: { is_error: false, message: 'Background task started.', display: [{ type: 'background_task', task_id: 'not an id' }] },
+      }), 'append');
+      expect(shapeless.events.map((event) => event.type)).toEqual([EventType.ToolEnd]);
+    });
+
+    it('drives the engine: the launch holds until its stop, the flagged launch never holds, and each TurnEnd ends a turn', () => {
+      const turnEnds: number[] = [];
+      const engine = new ActivityEngine(
+        { onActivityChange: () => {}, onSyntheticEvent: () => {}, onTurnEnded: (_sessionId, _startedAt, workSerial) => turnEnds.push(workSerial) },
+        { bgShellEscapeHatchMs: 600_000, bgShellOnlyGraceMs: 600_000, staleThinkingTimeoutMs: 600_000, idleStabilityWindowMs: 0 },
+      );
+      try {
+        engine.initSession('kimi-session');
+        const firstTurnEnd = result.events.findIndex((event) => event.type === EventType.Idle);
+        const launchIndex = result.events.findIndex((event) => event.type === EventType.BackgroundShellStart);
+        for (const event of result.events.slice(0, launchIndex + 1)) engine.processEvent('kimi-session', event);
+        // The task holds while it runs, and its tool is no longer pending.
+        expect([...engine.getState('kimi-session')!.activeBackgroundShellIds]).toEqual(['bash-tkkk1arw']);
+        expect(engine.getState('kimi-session')?.pendingToolCount).toBe(0);
+
+        for (const event of result.events.slice(launchIndex + 1, firstTurnEnd + 1)) engine.processEvent('kimi-session', event);
+        const afterTurn = engine.getState('kimi-session')!;
+        expect(afterTurn.activeBackgroundShellIds.size).toBe(0);
+        expect(afterTurn.anonymousBackgroundShellCount).toBe(0);
+        expect([...afterTurn.exemptBackgroundShellIds]).toEqual(['bash-n2672x0l']);
+        expect(afterTurn.activity).toBe('idle');
+
+        for (const event of result.events.slice(firstTurnEnd + 1)) engine.processEvent('kimi-session', event);
+        // Red before task #859: TurnEnd was a forced idle, which ends no turn.
+        expect(turnEnds).toHaveLength(3);
+        expect(engine.getState('kimi-session')?.activity).toBe('idle');
+      } finally {
+        engine.dispose();
+      }
+    });
+  });
+
   describe('Full lifecycle replay (every dispatch type in one chunk)', () => {
     /**
      * Synthesizes a realistic session covering every documented wire
@@ -1006,7 +1143,7 @@ describe('parseWireJsonl', () => {
      * display, and finally turn end.
      *
      * Asserts the parser produces events in the expected shape and
-     * settles on Idle (final TurnEnd).
+     * ends on the final TurnEnd's Idle event.
      */
     it('produces a coherent SessionHistoryParseResult covering every message type', () => {
       const lines = [
@@ -1048,8 +1185,9 @@ describe('parseWireJsonl', () => {
       const content = lines.join('\n');
       const result = parseWireJsonl(content, 'append');
 
-      // Final activity is Idle (TurnEnd is the last transition).
-      expect(result.activity).toBe(Activity.Idle);
+      // TurnEnd is the last transition, and its Idle event ends the turn,
+      // so the chunk forces no activity.
+      expect(result.activity).toBeNull();
 
       // Pluck event types in order to verify the dispatch firing.
       const eventTypes = result.events.map((event) => event.type);
@@ -1059,7 +1197,7 @@ describe('parseWireJsonl', () => {
       // SubagentStart (BtwBegin), SubagentStop (BtwEnd),
       // Notification (SubagentEvent), Compact (CompactionBegin),
       // Prompt (SteerInput), Notification (PlanDisplay),
-      // Idle (QuestionRequest), Interrupted (StepInterrupted).
+      // Idle (QuestionRequest), Interrupted (StepInterrupted), Idle (TurnEnd).
       expect(eventTypes).toEqual([
         EventType.Prompt,
         EventType.ToolStart,
@@ -1076,6 +1214,7 @@ describe('parseWireJsonl', () => {
         EventType.Notification,
         EventType.Idle,
         EventType.Interrupted,
+        EventType.Idle,
       ]);
 
       // Usage was captured from the StatusUpdate.

@@ -9,6 +9,10 @@
  *    >1s means the agent silently resumed, so force thinking.
  *  - checkIdleTimeouts(): the per-minute sweep that auto-suspends a session
  *    idle past the configured timeout.
+ *  - handlePtyIdle(), reached through the PTY tracker: silence while a
+ *    background shell is tracked ends the turn but keeps the shell (task #859).
+ *  - ingestEvents({ suppressesPtyTracker }): whether a turn-initiating event
+ *    turns the PTY fallback off.
  *
  * The bg-shell watcher is disabled (no OS process enumeration needed) and
  * engine timings are collapsed so transitions are synchronous.
@@ -17,7 +21,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import type { SessionTelemetryOptions } from '../../src/main/activity-engine/session-telemetry';
 import { EventType, Activity, IdleReason, PromptReason } from '../../src/shared/types';
-import type { ActivityState, ActivityReason, SessionEvent, SessionUsage } from '../../src/shared/types';
+import type { ActivityState, ActivityReason, AgentParser, SessionEvent, SessionUsage } from '../../src/shared/types';
+import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 
 interface DecisionLog {
   activityChanges: Array<{ sessionId: string; activity: ActivityState; reason: ActivityReason }>;
@@ -121,6 +126,269 @@ describe('SessionTelemetry activity decisions', () => {
       const last = log.events[log.events.length - 1].event;
       expect(last.type).toBe(EventType.Idle);
       expect(last.detail).toBe(IdleReason.Prompt);
+    });
+
+    // Task #859: a session history parser's turn-end hint (Grok's
+    // updates.jsonl, Codex's rollout) must not wipe a background hold, or the
+    // still-running process folds into the watcher's helper baseline.
+    it('ends the turn without clearing a tracked background shell', () => {
+      telemetry.initSession('s1');
+      telemetry.ingestEvents('s1', [
+        { ts: Date.now(), type: EventType.Prompt },
+        { ts: Date.now(), type: EventType.ToolStart, tool: 'run_terminal_command' },
+        { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'run_terminal_command', detail: 'task-1' },
+        { ts: Date.now(), type: EventType.ToolEnd, tool: 'run_terminal_command' },
+      ]);
+      telemetry.forceActivity('s1', Activity.Idle);
+      const state = telemetry.getActivityStatsSnapshot('s1');
+      expect(state?.backgroundShellIds).toEqual(['task-1']);
+      // The shell still holds the session, the turn itself is over.
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      expect(state?.turnActive).toBe(false);
+      // The hint went through the normal event path, so the log shows it.
+      const last = log.events[log.events.length - 1].event;
+      expect(last).toMatchObject({ type: EventType.Idle, detail: IdleReason.Prompt });
+    });
+
+    it('keeps an exempt shell through the hint too, and still reads idle', () => {
+      telemetry.initSession('s1');
+      telemetry.ingestEvents('s1', [
+        { ts: Date.now(), type: EventType.Prompt },
+        { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'powershell', detail: 'probe-server', noActivityHold: true },
+      ]);
+      telemetry.forceActivity('s1', Activity.Idle);
+      expect(telemetry.getActivityStatsSnapshot('s1')?.exemptBackgroundShellIds).toEqual(['probe-server']);
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    // A launch whose detail is a command string (not an id-shaped token) is
+    // tracked as an anonymous slot, a count with no id. The hint must treat
+    // that slot as a tracked shell too, or it takes the plain forceIdle path,
+    // which zeroes the count and drops the hold.
+    //
+    // Red-green: drop `state.anonymousBackgroundShellCount` from the sum in
+    // `tracksBackgroundShells` and this goes red (the count reads 0 and the
+    // session reads idle).
+    it('keeps an anonymous shell slot through the hint too', () => {
+      telemetry.initSession('s1');
+      telemetry.ingestEvents('s1', [
+        { ts: Date.now(), type: EventType.Prompt },
+        { ts: Date.now(), type: EventType.ToolStart, tool: 'run_terminal_command' },
+        { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'run_terminal_command', detail: 'npm run dev' },
+        { ts: Date.now(), type: EventType.ToolEnd, tool: 'run_terminal_command' },
+      ]);
+      const before = telemetry.getActivityStatsSnapshot('s1');
+      // Precondition: the command string landed as an anonymous slot, not a named id.
+      expect(before?.anonymousBackgroundShellCount).toBe(1);
+      expect(before?.backgroundShellIds).toEqual([]);
+
+      telemetry.forceActivity('s1', Activity.Idle);
+
+      const after = telemetry.getActivityStatsSnapshot('s1');
+      expect(after?.anonymousBackgroundShellCount).toBe(1);
+      expect(after?.turnActive).toBe(false);
+      // The slot still holds the session; the turn itself is over.
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+  });
+
+  // Task #859: a session history file can report background commands while the
+  // PTY tracker still runs (Codex, whose hooks may never flow). The tracker's
+  // silence is then the agent waiting on its command, not the agent being done,
+  // so `handlePtyIdle` ends the turn but leaves the shells, the hold, and the
+  // anchors their watchdogs read in place.
+  describe('PTY silence while a background shell is tracked', () => {
+    /** Longer than the PTY tracker's silence threshold (3s), shorter than every watchdog. */
+    const PAST_PTY_SILENCE_MS = 5_000;
+
+    beforeEach(() => {
+      // Replace the outer instance with one whose bg-shell-only grace cannot
+      // fire inside this block, so only the PTY path under test can end a hold.
+      telemetry.dispose();
+      telemetry = makeTelemetry(log, notRunning, { bgShellOnlyGraceMs: 600_000 });
+      telemetry.initSession('s1');
+      // markBackgroundShellsAsServices logs its outcome; keep the run quiet.
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** A turn that launches a background command and finishes the launching tool call. */
+    function launchBackgroundShell(detail: string, extra: Partial<SessionEvent> = {}): void {
+      telemetry.ingestEvents('s1', [
+        { ts: Date.now(), type: EventType.Prompt },
+        { ts: Date.now(), type: EventType.ToolStart, tool: 'run_terminal_command' },
+        { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'run_terminal_command', detail, ...extra },
+        { ts: Date.now(), type: EventType.ToolEnd, tool: 'run_terminal_command' },
+      ]);
+    }
+
+    /** Output, then silence: the tracker reaches `handlePtyIdle` through its silence timer. */
+    function letPtyGoSilent(): void {
+      telemetry.notifyPtyData('s1');
+      vi.advanceTimersByTime(PAST_PTY_SILENCE_MS);
+    }
+
+    function ptyIdleWasReported(): boolean {
+      return log.events.some(({ event }) => event.type === EventType.Idle && event.detail === IdleReason.Silence);
+    }
+
+    // Red-green: revert `handlePtyIdle` to a bare `forceIdle(sessionId)` and the
+    // shell id is cleared, the session reads idle at once, and this goes red.
+    it('keeps a named holding shell and the thinking hold, then idles when the shell ends', () => {
+      launchBackgroundShell('88918');
+      expect(telemetry.getActivityStatsSnapshot('s1')?.backgroundShellIds).toEqual(['88918']);
+
+      letPtyGoSilent();
+
+      // Precondition: the silence really reached the idle handler.
+      expect(ptyIdleWasReported()).toBe(true);
+      const held = telemetry.getActivityStatsSnapshot('s1');
+      expect(held?.backgroundShellIds).toEqual(['88918']);
+      expect(held?.turnActive).toBe(false);
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+
+      // The shell exiting is what finally releases the session.
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.BackgroundShellEnd, detail: '88918' }]);
+      expect(telemetry.getActivityStatsSnapshot('s1')?.backgroundShellIds).toEqual([]);
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    // Red-green: drop `if (!keepBackgroundShells)` around the two anchor
+    // resets in `ActivityEngine.forceIdle` and both anchors read null.
+    it('keeps the liveness anchors the shell watchdogs read', () => {
+      launchBackgroundShell('88918');
+      telemetry.activityEngine.markPtyOutput('s1');
+      const stateBefore = telemetry.activityEngine.getState('s1');
+      const lastSignalAtBefore = stateBefore?.lastSignalAt;
+      const lastPtyOutputAtBefore = stateBefore?.lastPtyOutputAt;
+      expect(lastSignalAtBefore).not.toBeNull();
+      expect(lastPtyOutputAtBefore).not.toBeNull();
+
+      telemetry.notifyPtyData('s1');
+      vi.advanceTimersByTime(PAST_PTY_SILENCE_MS);
+
+      expect(ptyIdleWasReported()).toBe(true);
+      const stateAfter = telemetry.activityEngine.getState('s1');
+      expect(stateAfter?.lastSignalAt).toBe(lastSignalAtBefore);
+      expect(stateAfter?.lastPtyOutputAt).toBe(lastPtyOutputAtBefore);
+    });
+
+    // Red-green: drop `if (!keepBackgroundShells)` around the five clears in
+    // `ActivityEngine.forceIdle` and each of these reads empty / 0.
+    it('keeps every shell set and memo: named, exempt, anonymous, and the two pending memos', () => {
+      launchBackgroundShell('88918');
+      telemetry.ingestEvents('s1', [
+        // Named, flagged at launch: lands in the exempt set. Ingested before the
+        // anonymous launch below, so it cannot consume that slot as a promotion.
+        { ts: Date.now(), type: EventType.BackgroundShellStart, tool: 'run_terminal_command', detail: 'probe-server', noActivityHold: true },
+        // Anonymous launch flagged no-activity-hold: counts as a slot and
+        // remembers its tool id until the shell's id arrives.
+        {
+          ts: Date.now(),
+          type: EventType.BackgroundShellStart,
+          tool: 'run_terminal_command',
+          toolId: 'tool-flagged',
+          detail: `npm run dev ${NO_ACTIVITY_HOLD_FLAG}`,
+        },
+      ]);
+      // The agent marks an id as a service before the engine has seen it start.
+      telemetry.activityEngine.markBackgroundShellsAsServices('s1', ['svc-pending']);
+      const stateBefore = telemetry.activityEngine.getState('s1');
+      // Preconditions: all five collections hold something.
+      expect([...(stateBefore?.activeBackgroundShellIds ?? [])]).toEqual(['88918']);
+      expect([...(stateBefore?.exemptBackgroundShellIds ?? [])]).toEqual(['probe-server']);
+      expect(stateBefore?.anonymousBackgroundShellCount).toBe(1);
+      expect([...(stateBefore?.pendingExemptShellToolIds ?? [])]).toEqual(['tool-flagged']);
+      expect([...(stateBefore?.pendingServiceShellIds ?? [])]).toEqual(['svc-pending']);
+
+      letPtyGoSilent();
+
+      expect(ptyIdleWasReported()).toBe(true);
+      const stateAfter = telemetry.activityEngine.getState('s1');
+      expect([...(stateAfter?.activeBackgroundShellIds ?? [])]).toEqual(['88918']);
+      expect([...(stateAfter?.exemptBackgroundShellIds ?? [])]).toEqual(['probe-server']);
+      expect(stateAfter?.anonymousBackgroundShellCount).toBe(1);
+      expect([...(stateAfter?.pendingExemptShellToolIds ?? [])]).toEqual(['tool-flagged']);
+      expect([...(stateAfter?.pendingServiceShellIds ?? [])]).toEqual(['svc-pending']);
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+
+    // An exempt shell is tracked (its process is alive, the watcher counts it)
+    // but never holds the session. PTY silence still ends the turn, and the
+    // session goes idle with the exempt entry intact.
+    //
+    // Red-green: revert `handlePtyIdle` to a bare `forceIdle(sessionId)` and the
+    // session still reads idle, but the exempt set is cleared, so the id
+    // assertion goes red.
+    it('leaves an exempt-only shell tracked and goes idle', () => {
+      launchBackgroundShell('probe-server', { noActivityHold: true });
+      expect(telemetry.getActivityStatsSnapshot('s1')?.exemptBackgroundShellIds).toEqual(['probe-server']);
+
+      letPtyGoSilent();
+
+      expect(ptyIdleWasReported()).toBe(true);
+      expect(telemetry.getActivityStatsSnapshot('s1')?.exemptBackgroundShellIds).toEqual(['probe-server']);
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    // Control: with nothing tracked the PTY idle is the unchanged hard idle.
+    it('with no shell tracked, goes idle at once and clears the anchors and memos', () => {
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]);
+      // A memo for a shell the engine never saw start does not count as tracked.
+      telemetry.activityEngine.markBackgroundShellsAsServices('s1', ['svc-pending']);
+      telemetry.activityEngine.markPtyOutput('s1');
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      expect(telemetry.activityEngine.getState('s1')?.pendingServiceShellIds.size).toBe(1);
+
+      letPtyGoSilent();
+
+      expect(ptyIdleWasReported()).toBe(true);
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+      const stateAfter = telemetry.activityEngine.getState('s1');
+      expect(stateAfter?.lastSignalAt).toBeNull();
+      expect(stateAfter?.lastPtyOutputAt).toBeNull();
+      expect(stateAfter?.pendingServiceShellIds.size).toBe(0);
+    });
+  });
+
+  // `SessionManager` passes `{ suppressesPtyTracker: false }` for a session
+  // history file that carries only part of the activity picture (Codex's
+  // rollout). A turn-initiating event from such a file must leave the PTY
+  // fallback running; the default, which every hook source uses, turns it off.
+  describe('ingestEvents suppressesPtyTracker option', () => {
+    const PAST_PTY_SILENCE_MS = 5_000;
+    /** The only part of the parser `maybeSuppressPtyTracker` reads. */
+    const hooksAndPtyParser = {
+      runtime: { activity: { kind: 'hooks_and_pty' } },
+    } as unknown as AgentParser;
+
+    function promptThenPtySilence(options?: { suppressesPtyTracker?: boolean }): void {
+      telemetry.initSession('s1', hooksAndPtyParser);
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }], options);
+      // Precondition: the prompt started a turn.
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      telemetry.notifyPtyData('s1');
+      vi.advanceTimersByTime(PAST_PTY_SILENCE_MS);
+    }
+
+    // Red-green: replace `options.suppressesPtyTracker !== false` in
+    // `ingestEvents` with `false` and this goes red (the tracker stays on and
+    // the silence idles the session).
+    it('suppresses the PTY tracker on a turn-initiating event by default', () => {
+      promptThenPtySilence();
+      // Hooks proved themselves, so PTY silence is no longer read as idle.
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+
+    // Red-green: replace `options.suppressesPtyTracker !== false` in
+    // `ingestEvents` with `true` and this goes red (the prompt turns the
+    // tracker off and the session stays thinking through the silence).
+    it('leaves the PTY tracker running when the batch opts out', () => {
+      promptThenPtySilence({ suppressesPtyTracker: false });
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
     });
   });
 
