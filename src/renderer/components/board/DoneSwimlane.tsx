@@ -96,7 +96,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
     <div
       data-testid="swimlane"
       data-swimlane-name={swimlane.name}
-      className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg bg-surface-raised/70 ring-1 ring-edge/50`}
+      className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg overflow-clip bg-surface-raised/70 ring-1 ring-edge/50`}
     >
       {/* Accent bar */}
       <div

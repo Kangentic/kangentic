@@ -5744,6 +5744,12 @@ export interface TaskMoveRecord {
 export interface TaskUnarchiveInput {
   id: string;
   targetSwimlaneId: string;
+  /**
+   * Where in the target lane the restored task lands, as an index into the
+   * lane's position order. Omitted, it goes last. The board passes one for a
+   * card dragged out of Done onto a lane: the slot that lane's cards parted at.
+   */
+  position?: number;
 }
 
 /**

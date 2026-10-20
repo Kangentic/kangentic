@@ -349,6 +349,9 @@ test('ArrowRight moves a keyboard drag into the next column, not onto the card b
     await page.keyboard.press('ArrowRight');
     await expect(page.locator('[data-swimlane-name="Planning"].drop-highlight')).toHaveCount(1, { timeout: 3000 });
     await expect(page.locator('[data-swimlane-name="To Do"].drop-highlight')).toHaveCount(0);
+    // A keyboard drag gets the same cross-column slot as a pointer drag:
+    // Planning is empty here, so its blank slot card shows at the top.
+    await expect(page.locator('[data-swimlane-name="Planning"] [data-drop-slot][data-visible]')).toHaveCount(1, { timeout: 3000 });
 
     await page.keyboard.press('Escape');
     await expect(page.locator(OVERLAY)).toHaveCount(0, { timeout: 3000 });

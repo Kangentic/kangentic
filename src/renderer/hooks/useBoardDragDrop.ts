@@ -8,6 +8,7 @@ import {
   useSensor,
   useSensors,
   type DragStartEvent,
+  type DragMoveEvent,
   type DragOverEvent,
   type DragEndEvent,
   type CollisionDetection,
@@ -29,7 +30,30 @@ import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
 import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
 import { isLockedOnBoard } from '../utils/board-workflow';
+import {
+  CARD_GAP_PX,
+  applyDropGap,
+  clearDropGapDom,
+  closeDropGap,
+  dropGapTarget,
+  getInsertionIndex,
+  laneTaskList,
+  laneTasksForDrop,
+  placeDropSlot,
+  releaseDropSettle,
+  settleDropGap,
+} from '../utils/board-drop-preview';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
+
+/**
+ * How long dnd-kit's sortable keeps `wasDragging` true after a drop
+ * (`useSortable`'s 50ms timer), the window in which an index change animates
+ * from the old rect. A settled drop gap is held past it (`settleDropGap`).
+ */
+const SORTABLE_WAS_DRAGGING_MS = 50;
+
+/** A drop whose gap never sees its card land (a failed move that reloads) closes after this. */
+const DROP_HANDOFF_FALLBACK_MS = 1000;
 
 interface UseBoardDragDropParams {
   swimlanes: SwimlaneType[];
@@ -43,50 +67,20 @@ interface UseBoardDragDropResult {
   /** The DndContext's modifiers: a locked workflow card stays over its own column. */
   modifiers: Modifier[];
   handleDragStart: (event: DragStartEvent) => void;
+  handleDragMove: (event: DragMoveEvent) => void;
   handleDragOver: (event: DragOverEvent) => void;
   handleDragEnd: (event: DragEndEvent) => Promise<void>;
   handleDragCancel: () => void;
+  /**
+   * KanbanBoard calls this from a layout effect on `tasksPerLane`: once the
+   * dropped card is in its lane, the drop gap hands over to it. `boardTasks` is
+   * the unfiltered list, for a dropped card the board filter keeps out of
+   * `lanes`.
+   */
+  settleDropHandoff: (lanes: ReadonlyMap<string, readonly Task[]>, boardTasks: readonly Task[]) => void;
   activeTask: Task | null;
   sortableColumnIds: string[];
   dropAnimation: DropAnimation;
-}
-
-/**
- * Determine the insertion index for a cross-column drop by comparing
- * the pointer position to the over-element's midpoint.
- */
-function getInsertionIndex(
-  event: DragOverEvent | DragEndEvent,
-  laneTasks: Task[],
-  swimlaneIds: Set<string>,
-): number {
-  const { over } = event;
-  if (!over) return 0;
-  const overId = String(over.id);
-
-  // Over a swimlane container (empty column) → append
-  if (swimlaneIds.has(overId)) return laneTasks.length;
-
-  // Over a task → check above/below midpoint
-  const overIndex = laneTasks.findIndex((task) => task.id === overId);
-  if (overIndex === -1) return laneTasks.length;
-
-  const overRect = over.rect;
-  const midY = overRect.top + overRect.height / 2;
-
-  // Use the actual pointer position - directly reflects user intent
-  let pointerY: number;
-  if (event.activatorEvent instanceof PointerEvent) {
-    pointerY = event.activatorEvent.clientY + event.delta.y;
-  } else {
-    // Keyboard drag fallback: use translated rect center
-    const translated = event.active.rect.current.translated;
-    pointerY = translated
-      ? translated.top + translated.height / 2
-      : overRect.top;
-  }
-
-  return pointerY < midY ? overIndex : overIndex + 1;
 }
 
 /**
@@ -177,6 +171,24 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
   // the unmount cleanup below to recover the reload gate if the <DndContext>
   // unmounts mid-drag (dnd-kit fires no dragEnd/dragCancel in that case).
   const dragInFlightRef = useRef(false);
+
+  // The cross-column drop gap (board-drop-preview.ts): the lane whose cards are
+  // parted for this drag and the slot they part at, or null. Refs and direct
+  // DOM, like the drop highlight, so a pointer move never re-renders the board.
+  const dropGapRef = useRef<{ laneId: string; slot: number } | null>(null);
+  // Whether the workflow lock refuses this drag's card each lane, asked once per
+  // lane per drag rather than on every pointer move.
+  const refusalByLaneRef = useRef<Map<string, boolean>>(new Map());
+  // The last target lane's drop order, kept while `tasks` is unchanged so a
+  // pointer move does not re-filter and re-sort the board.
+  const laneTasksCacheRef = useRef<{ tasks: Task[]; laneId: string; activeId: string; laneTasks: Task[] } | null>(null);
+  // A drop whose gap stays open until the dropped card lands in its lane.
+  const dropHandoffRef = useRef<{ laneId: string; taskId: string } | null>(null);
+  const dropTimersRef = useRef<{
+    fallback: ReturnType<typeof setTimeout> | null;
+    settle: ReturnType<typeof setTimeout> | null;
+    frame: number | null;
+  }>({ fallback: null, settle: null, frame: null });
 
   // Never the stock KeyboardSensor: it arms on a mouse-focused card and cannot
   // end on a click. See intent-keyboard-sensor.ts and keyboard-drag-intent.md.
@@ -317,13 +329,153 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     hoveringSwimlaneIdRef.current = targetId;
   }, []);
 
-  // Clean up stale drop highlights on unmount (e.g. HMR replaces this component
-  // mid-drag, so handleDragEnd/handleDragCancel never fire).
+  const cancelDropTimers = useCallback(() => {
+    const timers = dropTimersRef.current;
+    if (timers.fallback !== null) clearTimeout(timers.fallback);
+    if (timers.settle !== null) clearTimeout(timers.settle);
+    if (timers.frame !== null) cancelAnimationFrame(timers.frame);
+    timers.fallback = null;
+    timers.settle = null;
+    timers.frame = null;
+  }, []);
+
+  /** Close the drop gap at once, wherever it is, and forget a pending handoff. */
+  const clearDropGap = useCallback(() => {
+    cancelDropTimers();
+    dropHandoffRef.current = null;
+    dropGapRef.current = null;
+    clearDropGapDom();
+  }, [cancelDropTimers]);
+
+  /** The target lane's drop order, from the cache while `tasks` is unchanged. */
+  const laneTasksFor = useCallback((laneId: string, activeId: string): Task[] => {
+    const tasksNow = useBoardStore.getState().tasks;
+    const cached = laneTasksCacheRef.current;
+    if (cached && cached.tasks === tasksNow && cached.laneId === laneId && cached.activeId === activeId) {
+      return cached.laneTasks;
+    }
+    const laneTasks = laneTasksForDrop(tasksNow, laneId, activeId);
+    laneTasksCacheRef.current = { tasks: tasksNow, laneId, activeId, laneTasks };
+    return laneTasks;
+  }, []);
+
+  /**
+   * Part the target lane's cards at the slot the drop would use, and move its
+   * blank slot card there. Runs from both handleDragOver and handleDragMove:
+   * onDragOver fires only when `over` changes, and the slot can change under
+   * the same `over` (past the last card, or cards of unequal height). The slot
+   * is computed from event data alone; the DOM is touched only when the lane or
+   * the slot changes.
+   */
+  const updateDropGap = useCallback((event: DragMoveEvent) => {
+    const activeId = String(event.active.id);
+    const originLaneId = dragOriginRef.current;
+    const targetLaneId = event.over ? findSwimlane(String(event.over.id)) ?? null : null;
+
+    let refused = false;
+    if (targetLaneId && originLaneId && targetLaneId !== originLaneId && !activeId.startsWith('column:')) {
+      const known = refusalByLaneRef.current.get(targetLaneId);
+      if (known !== undefined) {
+        refused = known;
+      } else {
+        // An archived card is not in `tasks`; its drop restores rather than
+        // moves, and nothing refuses a restore.
+        const movingTask = useBoardStore.getState().tasks.find((candidate) => candidate.id === activeId);
+        refused = movingTask ? refusedBoardMove(movingTask, targetLaneId, swimlanes) !== null : false;
+        refusalByLaneRef.current.set(targetLaneId, refused);
+      }
+    }
+
+    const laneId = dropGapTarget({
+      activeId,
+      originLaneId,
+      targetLaneId,
+      doneLaneId,
+      lockedLaneId: lockedLaneRef.current,
+      refused,
+    });
+    const previous = dropGapRef.current;
+    if (!laneId) {
+      if (previous) {
+        const previousList = laneTaskList(previous.laneId);
+        if (previousList) closeDropGap(previousList);
+        dropGapRef.current = null;
+      }
+      return;
+    }
+
+    const ghost = event.active.rect.current.translated;
+    if (!ghost) return;
+    const laneTasks = laneTasksFor(laneId, activeId);
+    const slot = getInsertionIndex(event, laneTasks);
+    if (previous && previous.laneId === laneId && previous.slot === slot) return;
+
+    if (previous && previous.laneId !== laneId) {
+      const previousList = laneTaskList(previous.laneId);
+      if (previousList) closeDropGap(previousList);
+    }
+    const list = laneTaskList(laneId);
+    if (!list) {
+      dropGapRef.current = null;
+      return;
+    }
+    applyDropGap(list, laneTasks, slot, ghost.height + CARD_GAP_PX);
+    // The overlay's card is the card as it will land, so the slot shows it.
+    placeDropSlot(list, laneTasks, slot, ghost.height, document.querySelector<HTMLElement>('.drag-overlay [data-task-id]'));
+    dropGapRef.current = { laneId, slot };
+  }, [findSwimlane, doneLaneId, swimlanes, laneTasksFor]);
+
+  /** Keep the gap open until the dropped card lands in `laneId` (settleDropHandoff). */
+  const beginDropHandoff = useCallback((laneId: string, taskId: string) => {
+    cancelDropTimers();
+    dropGapRef.current = null;
+    dropHandoffRef.current = { laneId, taskId };
+    dropTimersRef.current.fallback = setTimeout(() => {
+      dropTimersRef.current.fallback = null;
+      clearDropGap();
+    }, DROP_HANDOFF_FALLBACK_MS);
+  }, [cancelDropTimers, clearDropGap]);
+
+  const settleDropHandoff = useCallback((lanes: ReadonlyMap<string, readonly Task[]>, boardTasks: readonly Task[]) => {
+    const handoff = dropHandoffRef.current;
+    if (!handoff) return;
+    if (!lanes.get(handoff.laneId)?.some((task) => task.id === handoff.taskId)) {
+      // In the lane, but not in its bucket: the board filter hides it. Done's
+      // completed list ignores the filter, so a card it hides can be dragged out
+      // of Done. It never takes the slot's place, so the gap closes now rather
+      // than wait for the fallback.
+      if (boardTasks.some((task) => task.id === handoff.taskId && task.swimlane_id === handoff.laneId)) clearDropGap();
+      return;
+    }
+    dropHandoffRef.current = null;
+    cancelDropTimers();
+    settleDropGap();
+    // Hold the settle past dnd-kit's `wasDragging` window, then two frames for
+    // the derived transforms it set in that window to clear. Measured in the UI
+    // tier: with no settle a parted card jumps 76px back toward its drag-start
+    // place on the frame after the drop; the derived transform there cleared
+    // within a frame, but it is cleared from a passive effect, which no frame
+    // bounds, so the hold runs to the end of the window that can set one.
+    const timers = dropTimersRef.current;
+    timers.settle = setTimeout(() => {
+      timers.settle = null;
+      timers.frame = requestAnimationFrame(() => {
+        timers.frame = requestAnimationFrame(() => {
+          timers.frame = null;
+          releaseDropSettle();
+        });
+      });
+    }, SORTABLE_WAS_DRAGGING_MS);
+  }, [cancelDropTimers, clearDropGap]);
+
+  // Clean up stale drop highlights and drop gaps on unmount (e.g. HMR replaces
+  // this component mid-drag, so handleDragEnd/handleDragCancel never fire).
   useEffect(() => {
     return () => {
       updateDropHighlight(null);
+      clearDropGap();
     };
-  }, [updateDropHighlight]);
+  }, [updateDropHighlight, clearDropGap]);
 
   // Recover the reload gate if the <DndContext> unmounts mid-drag. AppLayout
   // mounts the board only while activeView === 'board', so switching to the
@@ -345,6 +497,12 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // Reset for this drag. handleDragOver re-derives it before any drop fires,
     // so a stale value carried over between drags is harmless.
     overDoneRef.current = false;
+    // A drop gap left from the last drop (a handoff still waiting, or a settle
+    // still held) goes now: a held settle pins cards to their resting transform
+    // with no transition, which would freeze this drag's own reordering.
+    clearDropGap();
+    refusalByLaneRef.current = new Map();
+    laneTasksCacheRef.current = null;
     // Park background reloads for the duration of the drag (session pushes still
     // apply; only a full reload re-measures a lane). Flushed in handleDragEnd/Cancel.
     beginBoardDrag();
@@ -383,13 +541,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
         }
       }
     }
-  }, [taskToSwimlane]);
+  }, [taskToSwimlane, clearDropGap]);
+
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    updateDropGap(event);
+  }, [updateDropGap]);
 
   // Track which swimlane the pointer is hovering over for column highlights.
   // Done is excluded - it has its own drop-zone animation (green spinning border)
   // via useDroppable's isOver, so the generic blue ring would conflict.
   // Uses ref + direct DOM class toggling to avoid React re-renders on every mouse move.
   const handleDragOver = useCallback((event: DragOverEvent) => {
+    updateDropGap(event);
     if (!event.over) {
       updateDropHighlight(null);
       overDoneRef.current = false;
@@ -405,7 +568,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     // value at drop time. dnd-kit fires onDragOver with the final `over` before
     // onDragEnd, so by drop time this ref reflects the real target.
     overDoneRef.current = targetLane !== null && targetLane === doneLaneId;
-  }, [findSwimlane, doneLaneId, updateDropHighlight]);
+  }, [findSwimlane, doneLaneId, updateDropHighlight, updateDropGap]);
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -416,6 +579,17 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     dragStartRectRef.current = null;
     setActiveTask(null);
     updateDropHighlight(null);
+    // A drop into the lane whose cards are parted keeps the gap open until the
+    // card lands there (settleDropHandoff), so the cards never close up for a
+    // frame before it arrives. Every other ending closes it now. The gap only
+    // exists for a move the drop below makes: not Done, not the card's own lane,
+    // not a locked card, not a refused move.
+    const dropGap = dropGapRef.current;
+    if (dropGap && over && findSwimlane(String(over.id)) === dropGap.laneId) {
+      beginDropHandoff(dropGap.laneId, String(active.id));
+    } else {
+      clearDropGap();
+    }
     // Flush deferred session updates now (synchronously, before any await) so
     // the held spawn/activity pushes apply immediately and the buffer stops
     // growing while the async drop resolves.
@@ -479,7 +653,9 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       const doneLane = swimlanes.find((swimlane) => swimlane.role === 'done');
       if (doneLane && targetSwimlaneId === doneLane.id) return;
 
-      await state.unarchiveTask({ id: taskId, targetSwimlaneId });
+      // Restored where the cards parted for it, by the same rule as a move.
+      const position = getInsertionIndex(event, laneTasksForDrop(state.tasks, targetSwimlaneId, taskId));
+      await state.unarchiveTask({ id: taskId, targetSwimlaneId, position });
       return;
     }
 
@@ -500,16 +676,14 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const movingTask = state.tasks.find((candidate) => candidate.id === taskId);
     const refusal = movingTask ? refusedBoardMove(movingTask, targetSwimlaneId, swimlanes) : null;
     if (movingTask && refusal) {
+      clearDropGap();
       useBoardStore.getState().loadBoard();
       showWorkflowRefusal(movingTask, refusal, () => useBoardStore.getState().setActiveView('workflows'));
       return;
     }
 
-    const currentTasks = state.tasks;
-    const laneTasks = currentTasks
-      .filter((task) => task.swimlane_id === targetSwimlaneId && task.id !== taskId)
-      .sort((a, b) => a.position - b.position);
-    const targetPosition = getInsertionIndex(event, laneTasks, swimlaneIds);
+    // The same function the drop gap used, so the card lands where the gap was.
+    const targetPosition = getInsertionIndex(event, laneTasksForDrop(state.tasks, targetSwimlaneId, taskId));
 
     // Project this drop targets, captured synchronously before any await. A Done
     // drop defers its persist ~700ms (the FlyingCard flight) and is threaded
@@ -635,13 +809,14 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
 
     } catch (err) {
       console.error('handleDragEnd error:', err);
+      clearDropGap();
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
         message: `Drag failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
       });
     }
-  }, [moveTask, setCompletingTask, addCompletingTaskId, requestDoneConfirmAnimated, requestDoneConfirmDirect, findSwimlane, swimlanes, swimlaneIds, reorderSwimlanes, reorderTaskInColumn, updateDropHighlight]);
+  }, [moveTask, setCompletingTask, addCompletingTaskId, requestDoneConfirmAnimated, requestDoneConfirmDirect, findSwimlane, swimlanes, reorderSwimlanes, reorderTaskInColumn, updateDropHighlight, beginDropHandoff, clearDropGap]);
 
   const handleDragCancel = useCallback(() => {
     // Flush any updates that were held while the drag was active.
@@ -649,20 +824,23 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     endBoardDrag();
     setActiveTask(null);
     updateDropHighlight(null);
+    clearDropGap();
     lockedLaneRef.current = null;
     dragOriginRef.current = null;
     dragStartRectRef.current = null;
     useBoardStore.getState().loadBoard();
-  }, [updateDropHighlight]);
+  }, [updateDropHighlight, clearDropGap]);
 
   return {
     sensors,
     collisionDetection,
     modifiers,
     handleDragStart,
+    handleDragMove,
     handleDragOver,
     handleDragEnd,
     handleDragCancel,
+    settleDropHandoff,
     activeTask,
     sortableColumnIds,
     dropAnimation,

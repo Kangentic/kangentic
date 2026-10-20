@@ -287,6 +287,22 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // Same-column reorder: no lane changes, so a lane pin would be a no-op.
       if (previous.swimlane_id === input.targetSwimlaneId) return { tasks };
 
+      // Renumber both lanes the way main's TaskRepository.move does: the source
+      // lane closes the card's old slot and the target lane opens one at the
+      // target position. Without it the card ties with the target card already
+      // at that position and sorts on array order, so it can render one slot off
+      // the drop until the move's reload lands: a visible jump right where the
+      // drop gap handed over to it.
+      for (let index = 0; index < tasks.length; index++) {
+        if (index === taskIndex) continue;
+        const sibling = tasks[index];
+        if (sibling.swimlane_id === previous.swimlane_id && sibling.position > previous.position) {
+          tasks[index] = { ...sibling, position: sibling.position - 1 };
+        } else if (sibling.swimlane_id === input.targetSwimlaneId && sibling.position >= input.targetPosition) {
+          tasks[index] = { ...sibling, position: sibling.position + 1 };
+        }
+      }
+
       // Pin the destination in the SAME set() as the optimistic lane write -
       // they are one fact and must commit together. Pinning later (e.g. next to
       // `claimMoveGeneration`) would leave a gap across the `checkPendingChanges`

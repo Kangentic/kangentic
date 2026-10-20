@@ -479,6 +479,37 @@ describe('task-archive handlers', () => {
       expect(mockSpawnAgent).not.toHaveBeenCalled();
     });
 
+    // A card dragged out of Done onto a lane passes the slot that lane's cards
+    // parted at (the board's drop gap). Any other restore passes none and lands
+    // last, as every restore did before.
+    it('places the restored task at a position inside the lane, and appends for none or one outside it', async () => {
+      const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
+      swimlaneRepo = createMockSwimlaneRepo([doneLane, noSpawnLane]);
+      const restored = createMockTask('task-restored', { swimlane_id: 'lane-done' });
+      const laneFirst = createMockTask('lane-first', { swimlane_id: 'lane-backlog' });
+      const laneSecond = createMockTask('lane-second', { swimlane_id: 'lane-backlog' });
+      const reorderWithinSwimlane = vi.fn();
+      const repo = { ...createMockTaskRepo([restored, laneFirst, laneSecond]), reorderWithinSwimlane };
+      repo.list = vi.fn((swimlaneId?: string) => (swimlaneId === 'lane-backlog' ? [laneFirst, laneSecond] : []));
+      mockGetProjectRepos.mockReturnValue({
+        tasks: repo,
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+
+      await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position: 1 });
+
+      expect(repo.unarchive).toHaveBeenCalledWith('task-restored', 'lane-backlog', 2);
+      expect(reorderWithinSwimlane).toHaveBeenCalledWith('lane-backlog', ['lane-first', 'task-restored', 'lane-second']);
+
+      for (const position of [undefined, 2, 7, -1, 0.5]) {
+        reorderWithinSwimlane.mockClear();
+        await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position });
+        expect(reorderWithinSwimlane).not.toHaveBeenCalled();
+      }
+    });
+
     it('returns task without spawning when ensureTaskWorktree throws', async () => {
       const task = createMockTask('task-worktree-err');
       taskRepo = createMockTaskRepo([task]);
