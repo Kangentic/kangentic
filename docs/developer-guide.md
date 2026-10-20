@@ -115,15 +115,16 @@ src/
       session-queue.ts     # Concurrency limiter with reentrancy-safe promotion
       shell-resolver.ts    # Cross-platform shell detection
       terminal-submit.ts   # Unified byte-pushing engine: submitContent (paste) + submitKeystrokes (slash-command burst with verifier)
-      activity/              # Activity-detection subsystem (engine, watchers, telemetry orchestrator)
-        engine/              # Single-predicate state machine: activity-engine.ts, shapes, predicate, event-handlers, watchdog, snapshot-writer
-        background-shell/    # Process-tree watcher + resume reconciliation; also hosts the agent-absence sweep (retires a session whose agent CLI exited under a surviving shell)
-        session-telemetry.ts # Wires engine + watchers + Ctrl+C coordinator (was usage-tracker.ts)
-        user-interrupt-coordinator.ts # 3s settle timer for Ctrl+C; synthesizes Interrupted on stuck state
-        usage-accumulator.ts # Per-tool stats
-        pr-command-detector.ts # PR command pattern detector
-        push-command-detector.ts # git push destination capture (the pushed_branch PR anchor)
-        pty-activity-tracker.ts # PTY-byte fallback for non-hook agents
+    activity-engine/       # Activity-detection subsystem (engine, watchers, telemetry orchestrator)
+      engine/              # Single-predicate state machine: activity-engine.ts, shapes, predicate, event-handlers, watchdog, snapshot-writer
+      background-shell/    # Process-tree watcher + resume reconciliation; also hosts the agent-absence sweep (retires a session whose agent CLI exited under a surviving shell)
+      session-telemetry.ts # Wires engine + watchers + Ctrl+C coordinator (was usage-tracker.ts)
+      user-interrupt-coordinator.ts # 3s settle timer for Ctrl+C; synthesizes Interrupted on stuck state
+      usage-accumulator.ts # Per-tool stats, per-session usage cache, rate-limit generation stamping and reset catch-up
+      rate-limit-ledger.ts # Stamps each rate-limit window's reset generation (free usage resets)
+      pr-command-detector.ts # PR command pattern detector
+      push-command-detector.ts # git push destination capture (the pushed_branch PR anchor)
+      pty-activity-tracker.ts # PTY-byte fallback for non-hook agents
   preload/
     preload.ts             # Context bridge (window.electronAPI)
   renderer/                # React UI

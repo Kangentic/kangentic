@@ -603,6 +603,10 @@ export class SessionTelemetry {
     this.stampToolCallCount(sessionId, usage);
     this.usage.replaceSessionUsage(sessionId, usage);
     this.callbacks.onUsageChange(sessionId, usage);
+    // A free usage reset in this report brought sibling sessions' cached rate
+    // limits up with it. Push them too, so a renderer that filters out this
+    // session (another project) still sees the reset through its own sessions.
+    this.reemitBackfilled(this.usage.takeSessionsCaughtUpToReset());
 
     // status.json is authoritative: teach the accumulator this model's window,
     // and re-emit any sibling background session it back-fills (an idle card of
@@ -923,6 +927,7 @@ export class SessionTelemetry {
     // processStatusUpdate).
     this.stampToolCallCount(sessionId, merged);
     this.callbacks.onUsageChange(sessionId, merged);
+    this.reemitBackfilled(this.usage.takeSessionsCaughtUpToReset());
   }
 
   /**
@@ -937,10 +942,11 @@ export class SessionTelemetry {
   }
 
   /**
-   * Push a fresh usage snapshot to the renderer for each session whose window
-   * was just back-filled from a newly-learned account+model window. Stamps the
-   * live tool-call count like the other emit paths so snapshot reads stay
-   * consistent.
+   * Push a fresh usage snapshot to the renderer for each session whose cached
+   * usage changed without a report of its own: a context window back-filled
+   * from a newly-learned account+model window, or rate limits brought up to
+   * another session's reset. Stamps the live tool-call count like the other
+   * emit paths so snapshot reads stay consistent.
    */
   private reemitBackfilled(sessionIds: string[]): void {
     for (const sessionId of sessionIds) {

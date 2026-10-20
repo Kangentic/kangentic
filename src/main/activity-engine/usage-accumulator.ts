@@ -1,5 +1,6 @@
-import { EventType, IdleReason } from '../../shared/types';
-import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types';
+import { EventType, IdleReason, rateLimitGeneration } from '../../shared/types';
+import type { SessionUsage, SessionEvent, PerToolStat, RateLimitWindow } from '../../shared/types';
+import { RateLimitLedger, isSameRateLimitWindow } from './rate-limit-ledger';
 
 /**
  * Per-session token, cost, and per-tool aggregator. Pure logic - no
@@ -16,6 +17,16 @@ import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types
  *   - Both are pure transformations of already-parsed events, so the
  *     logic earns isolation under unit tests without touching the
  *     orchestrator.
+ *
+ * Every report that carries rate limits is stamped by a `RateLimitLedger`
+ * before it is cached, so the cache, the usage push, and `getUsageCache` all
+ * carry each window's reset `generation` (see rate-limit-ledger.ts). When a
+ * report opens a new generation, every other cached session still behind it in
+ * that window is brought up to the reset's value. Each of those sessions has
+ * reported nothing since the reset, so the account's newest value is the best
+ * thing its cache entry can say. That keeps the reset in the cache after the
+ * session that saw it is removed, and in the project-scoped cache when that
+ * session belongs to another project.
  */
 
 interface ToolAccumulator {
@@ -143,6 +154,13 @@ export class UsageAccumulator {
    * Telling the two apart would need per-model effort levels.
    */
   private firstReportedEffort = new Map<string, string>();
+  /** Per-session rate-limit history that stamps each reported window's reset generation. */
+  private rateLimitLedger = new RateLimitLedger();
+  /**
+   * Sessions whose cached rate-limit windows another session's reset brought up,
+   * since the last `takeSessionsCaughtUpToReset`. The owner re-emits them.
+   */
+  private sessionsCaughtUpToReset = new Set<string>();
 
   /** Latest cached usage for a session, or undefined if none recorded yet. */
   getSessionUsage(sessionId: string): SessionUsage | undefined {
@@ -226,6 +244,11 @@ export class UsageAccumulator {
       cost: { ...base.cost, ...(partial.cost ?? {}) },
       model: { ...base.model, ...(partial.model ?? {}) },
     };
+    // Only a partial that carries rate limits is a new report of them. A chunk
+    // without them (a transcript tick) keeps base's windows, already stamped.
+    if (partial.rateLimits) {
+      next.rateLimits = this.stampRateLimits(sessionId, partial.rateLimits, base.rateLimits);
+    }
     // Recalculate usedPercentage from merged values. Individual parse
     // chunks (Codex append-mode JSONL) may provide contextWindowSize
     // and usedTokens in separate updates; computing percentage only
@@ -275,6 +298,11 @@ export class UsageAccumulator {
    * same usage AFTER replacing. Unlike the merge path, an over-budget pairing
    * (usedTokens > window) is left as-is: this snapshot is authoritative, so
    * usedTokens > window is a legitimate critical state, not a stale seed.
+   *
+   * Its rate-limit windows are stamped with their reset generation before the
+   * cache write, so every reader of this usage sees the stamp. A reset in this
+   * report also brings sibling sessions' cached windows up with it (see
+   * `takeSessionsCaughtUpToReset`).
    */
   replaceSessionUsage(sessionId: string, usage: SessionUsage): void {
     const context = usage.contextWindow;
@@ -285,11 +313,85 @@ export class UsageAccumulator {
         context.usedPercentage = (context.usedTokens / knownWindow) * 100;
       }
     }
+    if (usage.rateLimits) {
+      usage.rateLimits = this.stampRateLimits(sessionId, usage.rateLimits, this.usageCache.get(sessionId)?.rateLimits);
+    }
     // Recording the authoritative window for this model (and re-emitting any
     // sibling background sessions it back-fills) is done by the caller
     // (SessionTelemetry.processStatusUpdate) so it can push the re-emits.
     this.usageCache.set(sessionId, usage);
     this.noteFirstReportedEffort(sessionId, usage);
+  }
+
+  /**
+   * Ids of the sessions whose cached rate-limit windows were brought up to a
+   * reset since the last call, cleared as they are returned. Their usage
+   * changed without a report of their own, so the caller re-emits them.
+   */
+  takeSessionsCaughtUpToReset(): string[] {
+    const sessionIds = Array.from(this.sessionsCaughtUpToReset);
+    this.sessionsCaughtUpToReset.clear();
+    return sessionIds;
+  }
+
+  /**
+   * Stamp one report's rate-limit windows with their reset generation, using
+   * the session's previously cached windows for two decisions:
+   * - A stale repeat from a session behind the current generation keeps the
+   *   cached window a reset already brought up, so the repeat cannot put the
+   *   pre-reset number back into the cache. The ledger stamps a generation
+   *   below the cached one only on such a repeat, so the generation comparison
+   *   alone identifies it.
+   * - A window that opens a new generation brings every other cached session
+   *   still behind it, in the same window, up to its value.
+   */
+  private stampRateLimits(
+    sessionId: string,
+    windows: RateLimitWindow[],
+    previousWindows: RateLimitWindow[] | undefined,
+  ): RateLimitWindow[] {
+    const generationsBefore = new Map<string, number>(
+      windows.map((rateLimitWindow): [string, number] => [
+        rateLimitWindow.id,
+        this.rateLimitLedger.currentGeneration(rateLimitWindow.id),
+      ]),
+    );
+    const stamped = this.rateLimitLedger.stamp(sessionId, windows).map((stampedWindow) => {
+      const cachedWindow = previousWindows?.find((previousWindow) => previousWindow.id === stampedWindow.id);
+      const keepCached = cachedWindow !== undefined
+        && rateLimitGeneration(cachedWindow) > rateLimitGeneration(stampedWindow);
+      return keepCached ? cachedWindow : stampedWindow;
+    });
+    for (const stampedWindow of stamped) {
+      if (rateLimitGeneration(stampedWindow) > (generationsBefore.get(stampedWindow.id) ?? 0)) {
+        this.bringCachedSessionsUpToReset(sessionId, stampedWindow);
+      }
+    }
+    return stamped;
+  }
+
+  /** Bring every other cached session behind `resetWindow`'s generation, in its window, up to its value. */
+  private bringCachedSessionsUpToReset(resettingSessionId: string, resetWindow: RateLimitWindow): void {
+    const resetGeneration = rateLimitGeneration(resetWindow);
+    for (const [otherSessionId, otherUsage] of this.usageCache) {
+      if (otherSessionId === resettingSessionId || !otherUsage.rateLimits) continue;
+      let caughtUp = false;
+      const nextWindows = otherUsage.rateLimits.map((otherWindow) => {
+        if (
+          otherWindow.id !== resetWindow.id
+          || rateLimitGeneration(otherWindow) >= resetGeneration
+          || !isSameRateLimitWindow(otherWindow.resetsAt, resetWindow.resetsAt)
+        ) {
+          return otherWindow;
+        }
+        caughtUp = true;
+        return { ...otherWindow, usedPercentage: resetWindow.usedPercentage, generation: resetGeneration };
+      });
+      if (caughtUp) {
+        otherUsage.rateLimits = nextWindows;
+        this.sessionsCaughtUpToReset.add(otherSessionId);
+      }
+    }
   }
 
   /**
@@ -534,5 +636,7 @@ export class UsageAccumulator {
     this.toolStats.delete(sessionId);
     this.compactionCounts.delete(sessionId);
     this.firstReportedEffort.delete(sessionId);
+    this.rateLimitLedger.removeSession(sessionId);
+    this.sessionsCaughtUpToReset.delete(sessionId);
   }
 }

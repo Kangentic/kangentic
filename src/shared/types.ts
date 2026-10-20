@@ -2270,6 +2270,30 @@ export interface RateLimitWindow {
    * omits it, and the renderer simply draws no time marker for that window.
    */
   windowDurationSeconds?: number;
+  /**
+   * Reset generation, stamped by main's `RateLimitLedger` and never by an adapter. It rises by
+   * one when a session's fresh report shows usage falling inside the same window (a reset that
+   * keeps its `resetsAt`, such as a free usage reset). A session that has reported nothing new
+   * since then keeps its older generation. Between two reports of the same window, the renderer
+   * merge compares it before the values: a higher generation replaces the held value, a lower one
+   * is ignored. A rollover or an older window is still decided by `resetsAt`. Absent reads as 0.
+   */
+  generation?: number;
+}
+
+/**
+ * Two rate-limit reports whose `resetsAt` differ by no more than this many seconds describe the
+ * SAME fixed window (this absorbs per-report jitter). A genuine window rollover advances
+ * `resetsAt` by a whole window length (hours or days), far past this tolerance. The comparison is
+ * always between two reported `resetsAt` values, never the local clock, so it carries no
+ * wall-clock or timezone dependence. Shared by main's `RateLimitLedger` and the renderer's
+ * `mergeRateLimitSnapshot`.
+ */
+export const RATE_LIMIT_RESET_EPSILON_SECONDS = 60;
+
+/** A window's reset `generation`, reading an absent stamp (an adapter's raw report, demo data) as 0. */
+export function rateLimitGeneration(rateLimitWindow: RateLimitWindow): number {
+  return rateLimitWindow.generation ?? 0;
 }
 
 export interface SessionUsage {

@@ -125,10 +125,14 @@ export interface CoreSessionSlice {
    * value, but each session only sees its own status.json updates, and a
    * session whose CLI has not refreshed its rate-limit info reports a stale
    * cached value. So the renderer keeps ONE snapshot that every ContextBar
-   * reads, merged MONOTONICALLY per window by `mergeRateLimitSnapshot`: within
-   * a fixed window (same `resetsAt`) `usedPercentage` only rises, so a lower
-   * same-window report is stale and is rejected instead of flip-flopping every
-   * bar; a genuine rollover (resetsAt advanced) is taken wholesale. Provenance
+   * reads, merged per window by `mergeRateLimitSnapshot`. A genuine rollover
+   * (resetsAt advanced) is taken wholesale and an older window is ignored.
+   * Within one fixed window (same `resetsAt`), the reset `generation` main
+   * stamps is compared before the values: a free usage reset arrives as a
+   * higher generation and replaces the held value, and a stale sibling's
+   * pre-reset number carries a lower one and is ignored. Within one generation
+   * `usedPercentage` only rises, so a lower report is stale and is rejected
+   * instead of flip-flopping every bar. Provenance
    * (`capturedAt` / `sourceSessionId`) reflects the last report that actually
    * changed the merged result, so the tooltip's "Updated ..." time can lag an
    * identical repeat report - the deliberate price of preserving the snapshot's

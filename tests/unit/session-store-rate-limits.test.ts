@@ -1,9 +1,10 @@
 /**
  * Unit tests for the latestRateLimits snapshot logic in session-store.ts.
  *
- * The snapshot is a shared account-wide value merged MONOTONICALLY per window
- * by `mergeRateLimitSnapshot` (see rate-limit-window.test.ts for the pure merge
- * cases). These tests exercise the three store writers that feed it:
+ * The snapshot is a shared account-wide value merged per window by
+ * `mergeRateLimitSnapshot` (see rate-limit-window.test.ts for the pure merge
+ * cases). Within one reset generation the value only rises. These tests
+ * exercise the three store writers that feed it:
  *  - updateUsage: folds a single session's rateLimits into the snapshot. A
  *    higher same-window value raises it; a lower same-window value (a sibling's
  *    stale cached report - the flip-flop bug) is rejected and the reference is
@@ -12,8 +13,12 @@
  *    is ORDER-INDEPENDENT (a stale entry iterated last cannot clobber a fresher
  *    one), and the reference is unchanged when nothing raised.
  *  - syncSessions: folds all cached entries through the merge. This seeds the
- *    snapshot on first sync and, on re-sync, only ever raises it - a stale
- *    cached entry can never regress an already-populated snapshot.
+ *    snapshot on first sync and, on re-sync, never regresses it - a stale
+ *    cached entry cannot bring back an older value.
+ *
+ * The last block runs a free usage reset through both halves: main's real
+ * UsageAccumulator stamps each report's reset generation, and the stamped usage
+ * goes through the real store writers.
  *
  * All tests drive the Zustand store directly. window.electronAPI is stubbed
  * globally so module-level optional chaining in the store does not throw in
@@ -58,6 +63,7 @@ import type { SessionUsage } from '../../src/shared/types';
 
 // Import after the global stub so the store module sees the mocked window.
 import { useSessionStore } from '../../src/renderer/stores/session-store';
+import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -501,5 +507,138 @@ describe('syncSessions - seed + monotonic fold path', () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot!.sourceSessionId).toBe('sess-cached');
     expect(snapshot!.rateLimits[0].usedPercentage).toBe(22);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Free usage reset - main's ledger stamps, the store merges
+// ---------------------------------------------------------------------------
+
+describe('free usage reset end to end (main stamps the generation, the store merges)', () => {
+  let accumulator: UsageAccumulator;
+
+  beforeEach(() => {
+    resetStore();
+    accumulator = new UsageAccumulator();
+  });
+
+  /**
+   * One status.json report through main's real accumulator, the path
+   * SessionTelemetry.processStatusUpdate takes. Returns the cached (stamped)
+   * usage, which is what both the usage push and getUsage hand the renderer.
+   */
+  function reportFromMain(sessionId: string, sevenDayPct: number): SessionUsage {
+    accumulator.replaceSessionUsage(sessionId, makeUsage(makeRateLimits(40, sevenDayPct)));
+    return accumulator.getSessionUsage(sessionId)!;
+  }
+
+  function shownSevenDay(): number | undefined {
+    return useSessionStore.getState().latestRateLimits?.rateLimits
+      .find((rateLimitWindow) => rateLimitWindow.id === 'seven-day')?.usedPercentage;
+  }
+
+  function stubGetUsage(cache: Record<string, SessionUsage>): void {
+    (window as Record<string, unknown> & {
+      electronAPI: { sessions: { getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>> } }
+    }).electronAPI.sessions.getUsage = async () => cache;
+  }
+
+  it('updateUsage: A drops from 99 to 1 while B repeats 99, and the bar shows 1', () => {
+    const { updateUsage } = useSessionStore.getState();
+    updateUsage('sess-a', reportFromMain('sess-a', 99));
+    updateUsage('sess-b', reportFromMain('sess-b', 99));
+    expect(shownSevenDay()).toBe(99);
+
+    updateUsage('sess-a', reportFromMain('sess-a', 1));
+    expect(shownSevenDay()).toBe(1);
+
+    // B has not called the API since the reset: its cached 99 keeps arriving.
+    updateUsage('sess-b', reportFromMain('sess-b', 99));
+    updateUsage('sess-b', reportFromMain('sess-b', 99));
+    expect(shownSevenDay()).toBe(1);
+
+    // A new session's startup fetch already sees the post-reset value.
+    updateUsage('sess-c', reportFromMain('sess-c', 2));
+    expect(shownSevenDay()).toBe(2);
+
+    // B finally calls the API and catches up.
+    updateUsage('sess-b', reportFromMain('sess-b', 3));
+    expect(shownSevenDay()).toBe(3);
+  });
+
+  it('updateUsage: a brand-new terminal moves the bar off 99 when no old session ever drops', () => {
+    const { updateUsage } = useSessionStore.getState();
+    updateUsage('sess-a', reportFromMain('sess-a', 99));
+    updateUsage('sess-b', reportFromMain('sess-b', 99));
+
+    updateUsage('sess-terminal', reportFromMain('sess-terminal', 1));
+    updateUsage('sess-a', reportFromMain('sess-a', 99));
+    expect(shownSevenDay()).toBe(1);
+  });
+
+  it('batchUpdateUsage: the stale and the fresh entry give 1 in either insertion order', () => {
+    reportFromMain('sess-a', 99);
+    const stale = reportFromMain('sess-b', 99);
+    const fresh = reportFromMain('sess-a', 1);
+
+    for (const order of [[['sess-b', stale], ['sess-a', fresh]], [['sess-a', fresh], ['sess-b', stale]]] as const) {
+      resetStore();
+      useSessionStore.getState().batchUpdateUsage(new Map<string, SessionUsage>(order));
+      expect(shownSevenDay()).toBe(1);
+    }
+  });
+
+  it('syncSessions: after a reset, a stale suspended entry in the cache does not bring back 99', async () => {
+    reportFromMain('sess-a', 99);
+    const suspendedStale = reportFromMain('sess-suspended', 99);
+    const fresh = reportFromMain('sess-a', 1);
+
+    try {
+      for (const cache of [
+        { 'sess-suspended': suspendedStale, 'sess-a': fresh },
+        { 'sess-a': fresh, 'sess-suspended': suspendedStale },
+      ]) {
+        // A renderer reload: the snapshot starts empty and is seeded from main's cache.
+        resetStore();
+        stubGetUsage(cache);
+        await useSessionStore.getState().syncSessions();
+        expect(shownSevenDay()).toBe(1);
+
+        // A re-sync over the live post-reset snapshot does not regress it either.
+        await useSessionStore.getState().syncSessions();
+        expect(shownSevenDay()).toBe(1);
+      }
+    } finally {
+      stubGetUsage({});
+    }
+  });
+
+  it('syncSessions: a reload still shows 1 after the session that saw the reset is removed', async () => {
+    // A brand-new Command Terminal sees the reset and is then closed: only the
+    // stale paused entry is left in main's cache.
+    reportFromMain('sess-suspended', 99);
+    reportFromMain('sess-terminal', 1);
+    accumulator.removeSession('sess-terminal');
+
+    try {
+      stubGetUsage(accumulator.getUsageCache());
+      await useSessionStore.getState().syncSessions();
+      expect(shownSevenDay()).toBe(1);
+    } finally {
+      stubGetUsage({});
+    }
+  });
+
+  it('updateUsage: a reset seen only through a re-emitted sibling still lands', () => {
+    // The session that saw the reset belongs to another project, so its own push
+    // is filtered out. Main re-emits this project's caught-up session instead.
+    const { updateUsage } = useSessionStore.getState();
+    updateUsage('sess-here', reportFromMain('sess-here', 99));
+    reportFromMain('sess-other-project', 99);
+    reportFromMain('sess-other-project', 1);
+    expect(accumulator.takeSessionsCaughtUpToReset()).toEqual(['sess-here']);
+
+    updateUsage('sess-here', accumulator.getSessionUsage('sess-here')!);
+    expect(shownSevenDay()).toBe(1);
   });
 });
