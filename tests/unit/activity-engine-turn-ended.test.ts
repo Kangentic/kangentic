@@ -382,6 +382,79 @@ describe('onTurnEnded', () => {
     harness.engine.dispose();
   });
 
+  // Task #857: the agent marks a shell it left running as a service through the
+  // kangentic_mark_background_service MCP tool. A held turn then ends as if its
+  // background work had drained, through the real stability window.
+  it('ends a turn held by an untagged server once the agent marks that server as a service', () => {
+    const harness = createHarness({ stabilityMs: 400 });
+    const turnStartedAt = Date.now();
+    harness.send(EventType.Prompt);
+    startBackgroundServer(harness, 'npm run dev');
+    harness.send(EventType.Idle);
+    vi.advanceTimersByTime(60_000);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    expect(harness.turnEnds).toHaveLength(0);
+    const workSerial = harness.engine.getState(SESSION_ID)?.workSerial;
+
+    const outcomes = harness.engine.markBackgroundShellsAsServices(SESSION_ID, ['shell-server']);
+    expect(outcomes).toEqual([{ shellId: 'shell-server', outcome: 'marked' }]);
+    vi.advanceTimersByTime(400);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    expect(harness.turnStarts).toEqual([turnStartedAt]);
+    expect(harness.workSerials).toEqual([workSerial]);
+    // Marking it again reports nothing more.
+    harness.engine.markBackgroundShellsAsServices(SESSION_ID, ['shell-server']);
+    vi.advanceTimersByTime(400);
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
+  it('ends the turn at its Stop when the agent marked its server as a service mid-turn', () => {
+    const harness = createHarness({ stabilityMs: 400 });
+    harness.send(EventType.Prompt);
+    startBackgroundServer(harness, 'npm run dev');
+    harness.engine.markBackgroundShellsAsServices(SESSION_ID, ['shell-server']);
+    // The turn itself still holds until its Stop.
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    harness.send(EventType.Idle);
+    vi.advanceTimersByTime(400);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
+  it('a mark that arrives before the engine saw the shell start lands it exempt at its promotion', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'server', detail: 'npm run dev' });
+    expect(harness.engine.markBackgroundShellsAsServices(SESSION_ID, ['shell-server']))
+      .toEqual([{ shellId: 'shell-server', outcome: 'pending' }]);
+    harness.send(EventType.BackgroundShellStart, { tool: 'Bash', toolId: 'server', detail: 'shell-server' });
+    harness.send(EventType.Idle);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
+  // #854: the /preview watcher, flag included, launched through the PowerShell
+  // tool. Claude's PreToolUse remap is Bash-only, so the launch is a plain
+  // tool_start and only its PostToolUse names the shell.
+  it('ends the turn at its Stop when a flagged server was launched through a tool the PreToolUse remap does not cover', () => {
+    const harness = createHarness();
+    harness.send(EventType.Prompt);
+    harness.send(EventType.ToolStart, {
+      tool: 'PowerShell',
+      toolId: 'preview-watch',
+      detail: `node scripts/worktree-preview.js --wait --port=5175 ${NO_ACTIVITY_HOLD_FLAG}`,
+    });
+    harness.send(EventType.BackgroundShellStart, { tool: 'PowerShell', toolId: 'preview-watch', detail: 'bdrb9enzm' });
+    harness.send(EventType.Idle);
+    expect(harness.engine.getState(SESSION_ID)?.activity).toBe('idle');
+    expect(harness.turnEnds).toHaveLength(1);
+    harness.engine.dispose();
+  });
+
   it('a Stop inside a live subagent is the subagent\'s; the parent\'s Stop after it ends the turn once', () => {
     const harness = createHarness();
     harness.send(EventType.Prompt);

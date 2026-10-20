@@ -1072,7 +1072,7 @@ export class BgShellWatcher {
       // cycles (~4 seconds) before firing natural-exit. The probe-
       // failure guard upstream independently protects against probe
       // timeouts dropping shellLikeCount to 0, and the 5-min escape
-      // hatch / 60s stuck-tracking hatch backstop any permanent
+      // hatch and the output-quiescence reclaim backstop any permanent
       // miscount.
       state.consecutiveDeficitCycles += 1;
       if (state.consecutiveDeficitCycles < 2) {

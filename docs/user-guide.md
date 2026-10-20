@@ -529,6 +529,13 @@ fixes them. A column whose agent cannot report a finished turn (agents that only
 reason instead of Add automation. A Send message row here sends at once, since the turn is already
 over, so its **Delivery** is shown disabled and keeps whatever it was set to.
 
+A turn counts as finished only once the background commands the agent started have exited, since
+the agent may be waiting on a build or a test run. A dev server or watcher it leaves running would
+keep the task working forever, so when Claude starts a background command in a task, Kangentic
+tells it how to mark the command as a service, and a marked command no longer counts. While a task waits, its
+card's activity tooltip names the background shells. If one of them is a server, ask the agent to
+mark it as a service.
+
 **Reordering.** Drag a row by its grip. A drag stays inside its own group: it changes where the row
 sits, never when it runs. To change when it runs, open the row and set its Trigger.
 

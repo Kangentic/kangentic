@@ -18,8 +18,8 @@ import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 // others and the preview watcher, or a dev server, goes back to pinning its
 // task ACTIVE for hours - a regression with NO failing type, lint, or engine
 // test, because the engine keeps working perfectly on a flag nobody sends any
-// more. The workflow prompt (`prompt-xml.ts`) interpolates the constant, so it
-// is not a copy.
+// more. The Claude background shell hint (`hook-manager.ts`) reads the constant
+// to leave a flagged launch alone, so it is not a copy.
 //
 // This is the same hand-duplication pattern as `WORKTREE_MARKER`
 // (`src/shared/git-utils.ts` vs `scripts/worktree-preview.js`).

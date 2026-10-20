@@ -444,7 +444,7 @@ For every session, a merged settings file is built at `.kangentic/sessions/<sess
    - Only permissions are merged (captures "always allow" grants from user)
    - Hooks from the worktree are skipped (may be stale leftovers)
 4. Inject `statusLine` config pointing to the status bridge script
-5. Inject event-bridge hooks into all registered hook points
+5. Inject event-bridge hooks into all registered hook points, plus the plan approval hook and, for a task session whose MCP URL names it, the background shell hint hook (see [`plan-approval-bridge.js`](#plan-approval-bridgejs) and [`background-shell-hint-bridge.js`](#background-shell-hint-bridgejs))
 6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode. `--permission-mode auto` runs a SEPARATE natural-language classifier that does not honor `permissions.allow`, so a plain-language allow rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) is also appended to `autoMode.allow` (seeded with `$defaults` when the array is absent, preserving the classifier's built-in rules) so a board-driven auto-mode session does not soft-deny Kangentic's own board/session tools
 7. Write merged file to session directory
 8. Pass `--settings <mergedSettingsPath>` to the CLI
@@ -476,7 +476,7 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 | `WorktreeCreate` | `worktree_create` | Worktree created |
 | `WorktreeRemove` | `worktree_remove` | Worktree removed |
 
-All event-bridge hooks use blank matchers (fire for every invocation regardless of tool name). The one hook with a matcher is the plan approval hook: a second `PermissionRequest` entry, matcher exactly `ExitPlanMode`, registered on every spawn (see [`plan-approval-bridge.js`](#plan-approval-bridgejs)). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
+All event-bridge hooks use blank matchers (fire for every invocation regardless of tool name). Two hooks carry a matcher: the plan approval hook, a second `PermissionRequest` entry, matcher exactly `ExitPlanMode`, registered on every spawn (see [`plan-approval-bridge.js`](#plan-approval-bridgejs)), and the background shell hint, a second `PostToolUse` entry, matcher `Bash|PowerShell`, registered for a session whose MCP URL names it (see [`background-shell-hint-bridge.js`](#background-shell-hint-bridgejs)). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
 
 #### Paths in hook commands
 
@@ -541,9 +541,9 @@ pattern (`CLI_ENVIRONMENT_REFERENCE`, `tests/unit/helpers/shell-argv-probe.ts`).
 
 Kangentic hooks are identified by two markers in the command string:
 - Contains `.kangentic` (path component)
-- Contains a known bridge name (`activity-bridge`, `event-bridge` or `plan-approval-bridge`)
+- Contains a known bridge name (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`)
 
-Both must match. This two-marker pattern prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge scripts are `event-bridge` and `plan-approval-bridge`.
+Both must match. This two-marker pattern prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
 
 #### Hook Cleanup
 
@@ -1787,7 +1787,15 @@ Three standalone Node.js scripts in `src/main/agent/`:
 - **Decision writer:** `PlanApprovalWriter` (`src/main/plan-approval/plan-approval-writer.ts`) writes the file through `safeWriteJson` (source `plan_approval`) when a task session first appears, and rewrites every live session's file, coalesced at 100 ms, on any board change and on a Board Profile edit, a settings change or a `kangentic.json` apply (`refreshPlanApprovals`). The decision comes from `resolvePlanApprovalDecision` (`src/main/plan-approval/resolve-decision.ts`): a running workflow's value, else the column's own while it runs in plan mode, and never an approval where the session's agent cannot approve plans or the task's automations are disabled (`canTaskRunAutomations`). `mode` is the destination's effective permission mode (the After Plan Mode target, or the next column on a workflow task's route); where that is `plan`, or `bypassPermissions` in a session launched without bypass available, it falls back to the task's own mode, then the global mode, then `default`. A plan-mode spawn whose approval would continue in `bypassPermissions` launches with `CommandOptions.bypassAvailable`. Transient sessions (a Command Terminal, a workflow's own agent) get no decision file, so their plans always wait.
 - **Supported by:** Claude Code (measured on 2.1.302: `acceptEdits` and `auto` apply through `setMode`; `bypassPermissions` applies only to a session launched with bypass available)
 
-All three scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.
+### `background-shell-hint-bridge.js`
+
+- **Hook point:** a second `PostToolUse` entry, matcher `Bash|PowerShell`, beside the event bridge's catch-all one. Registered only for a session whose MCP URL names it as the caller (`urlNamesTaskSessionCaller`), because the hint points at `kangentic_mark_background_service`, which the server offers only to such a session. A Command Terminal, or a session with the MCP server off, gets none.
+- **Input:** the hook payload on stdin, and a base64 spec (`BackgroundShellHintSpec` in `src/main/agent/shared/background-shell-hint-hook.ts`) naming the tools, where the command and the shell id sit, the opt-out flag, and the reply. All agent knowledge is in the spec, never in the script.
+- **Output:** for a result carrying an id-shaped background shell id, from a command without `--kangentic-no-activity-hold`, the reply on stdout. Claude's (`CLAUDE_BACKGROUND_SHELL_HINT_SPEC` in `adapters/claude/hook-manager.ts`) is `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":<hint>}}`: the shell keeps the task working and holds the column's turn-end automations until it exits, and a server or watcher can be marked with the tool. See "Opting a background shell out of the hold" in [Activity Detection](activity-detection.md).
+- **Prints nothing** for a foreground call, another tool, a flagged command, stdin over 1 MiB, or any error, and exits 0, so it never fails or blocks a tool.
+- **Supported by:** Claude Code (probed headless on 2026-10-20: the context reached the model for a Bash and a PowerShell `run_in_background` launch, both results carried `tool_response.backgroundTaskId`, and Claude runs one event's hooks in parallel, so the hint adds no wall time to a tool call)
+
+All four scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.
 
 ## CWD Strategy
 

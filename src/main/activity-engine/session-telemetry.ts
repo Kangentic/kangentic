@@ -1,7 +1,14 @@
 import { EventType, AgentTool, IdleReason, PromptReason, Activity } from '../../shared/types';
 import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../shared/types';
 import { PtyActivityTracker } from './pty-activity-tracker';
-import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, type ActivityStatsSnapshot, type TurnStartCause } from './engine';
+import {
+  ActivityEngine,
+  ActivitySnapshotWriter,
+  type ActivityEngineOptions,
+  type ActivityStatsSnapshot,
+  type BackgroundShellServiceOutcome,
+  type TurnStartCause,
+} from './engine';
 import { BgShellWatcher } from './background-shell/watcher';
 import {
   createProcessTreeProbe,
@@ -1129,6 +1136,11 @@ export class SessionTelemetry {
   /** See `ActivityEngine.markIdleAuthoritative`. */
   markIdleAuthoritative(sessionId: string): void {
     this.activityEngine.markIdleAuthoritative(sessionId);
+  }
+
+  /** See `ActivityEngine.markBackgroundShellsAsServices`. Null for a session the engine does not track. */
+  markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
+    return this.activityEngine.markBackgroundShellsAsServices(sessionId, shellIds);
   }
 
   /**

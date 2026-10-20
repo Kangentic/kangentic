@@ -3,6 +3,8 @@ import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
 import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
+import { BACKGROUND_SHELL_HINT_SHELL_ID, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
+import { MARK_BACKGROUND_SERVICE_TOOL, NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -66,6 +68,13 @@ export interface BuildHooksOptions {
    * whether it answers.
    */
   planApprovalCommand?: string;
+  /**
+   * The background shell hint hook's command (`buildBackgroundShellHintCommand`
+   * with `CLAUDE_BACKGROUND_SHELL_HINT_SPEC`), registered on PostToolUse with
+   * the matcher `Bash|PowerShell`. Passed only for a session whose MCP URL names
+   * it as the caller, since the hint points at a tool only such a session has.
+   */
+  backgroundShellHintCommand?: string;
 }
 
 /**
@@ -100,6 +109,36 @@ export const CLAUDE_PLAN_APPROVAL_SPEC: PlanApprovalHookSpec = {
         updatedInput: PLAN_APPROVAL_TOOL_INPUT,
         updatedPermissions: [{ type: 'setMode', mode: PLAN_APPROVAL_MODE, destination: 'session' }],
       },
+    },
+  },
+};
+
+/** Claude's tools that take `run_in_background`, and the hint hook's matcher for them. */
+const CLAUDE_BACKGROUND_SHELL_TOOLS = ['Bash', 'PowerShell'];
+
+/**
+ * Claude's background shell hint (task #857). Claude adds a PostToolUse hook's
+ * `hookSpecificOutput.additionalContext` to the model's context beside the tool
+ * result. Probed on Claude Code headless, 2026-10-20: it reached the model for
+ * a Bash and a PowerShell `run_in_background` launch, and both results carried
+ * the id as `tool_response.backgroundTaskId`. `shellId` and `shell_id` follow
+ * the PostToolUse remap's own candidate list. Claude runs one event's hooks in
+ * parallel, so this costs a tool call no wall time.
+ */
+export const CLAUDE_BACKGROUND_SHELL_HINT_SPEC: BackgroundShellHintSpec = {
+  toolField: 'tool_name',
+  tools: CLAUDE_BACKGROUND_SHELL_TOOLS,
+  inputField: 'tool_input',
+  commandField: 'command',
+  responseField: 'tool_response',
+  idFields: ['backgroundTaskId', 'shellId', 'shell_id'],
+  optOutFlag: NO_ACTIVITY_HOLD_FLAG,
+  reply: {
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      additionalContext:
+        `Kangentic keeps this task marked as working, and holds its column's turn-end automations, until background shell ${BACKGROUND_SHELL_HINT_SHELL_ID} exits. `
+        + `If it is a server or watcher meant to keep running after your turn, not work you are waiting on, call ${MARK_BACKGROUND_SERVICE_TOOL} with shellIds ["${BACKGROUND_SHELL_HINT_SHELL_ID}"].`,
     },
   },
 };
@@ -168,10 +207,12 @@ export function buildHooks(
         // tracking. Falls back to the command/path/etc when shell_id
         // is absent, preserving anonymous bg shell behavior.
         extractDetail(['shell_id', 'file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
-        // Tool-scoped remaps via the typed builder. run_in_background is
-        // Bash-only; gating on `whenTool: 'Bash'` makes that explicit so a
-        // future tool with an incidental run_in_background field can never
-        // be mis-mapped to a bg-shell event.
+        // Tool-scoped remap via the typed builder, gated on `whenTool: 'Bash'`.
+        // The PowerShell tool takes run_in_background too, and is left out on
+        // purpose: its launch stays a pending `tool_start`, which is what lets
+        // the process-tree watcher adopt the shell's pid from its foreground
+        // memo, and its PostToolUse still promotes it to a named shell. The
+        // engine reads the no-activity-hold flag on either event (task #857).
         setTypeWhen({ whenTool: 'Bash', nested: ['tool_input', 'run_in_background'], equals: 'true', to: EventType.BackgroundShellStart }),
         setTypeWhen({ field: 'tool_name', equals: 'KillBash', to: EventType.BackgroundShellEnd })) }] },
     ],
@@ -205,6 +246,8 @@ export function buildHooks(
       // engine independently re-classifies named-vs-anonymous via the same
       // shape, so the two MUST be kept in sync by hand (no shared constant
       // links the `^[\w-]{1,64}$` literal here to looksLikeShellId's check).
+      // `background-shell-hint-bridge.js` holds a third copy, which
+      // `background-shell-hint-bridge.test.ts` pins against looksLikeShellId.
       // Matching on the resolved
       // detail (not a source field) keeps it robust to CLI field-name skew,
       // exactly like the Notification setTypeWhenDetailContains remap.
@@ -261,6 +304,13 @@ export function buildHooks(
         // status-less timeout marker.
         extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
         setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart)) }] },
+      // The background shell hint (task #857): beside a background launch's
+      // result, tell the agent the shell keeps its task working and how to
+      // mark it as a service. A separate script because the event bridge
+      // silences stdout for every agent.
+      ...(options.backgroundShellHintCommand
+        ? [{ matcher: CLAUDE_BACKGROUND_SHELL_TOOLS.join('|'), hooks: [{ type: 'command', command: options.backgroundShellHintCommand }] }]
+        : []),
     ],
     [H.PostToolUseFailure]: [
       ...(existingHooks[H.PostToolUseFailure] || []),

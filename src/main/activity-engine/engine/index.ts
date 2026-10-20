@@ -18,6 +18,7 @@ export type {
   ActivityEngineOptions,
   ActivityEngineCallbacks,
   ActivityStatsSnapshot,
+  BackgroundShellServiceOutcome,
   SessionEngineState,
   TransitionRecord,
   TransitionTrigger,

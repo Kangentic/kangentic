@@ -505,7 +505,7 @@ Sparse-checkout in a linked worktree needs git 2.26+. On git 2.25.0 every sparse
 
 ## Hook Delivery
 
-Three bridge scripts integrate Claude Code's hook system with Kangentic's UI.
+Four bridge scripts integrate Claude Code's hook system with Kangentic's UI.
 
 ### Bridge Scripts
 
@@ -516,6 +516,7 @@ All in `src/main/agent/`:
 | `status-bridge.js` | `status.json` | statusLine | Token usage, cost, model, context % |
 | `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
 | `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode` | Approves the plan when the session's `plan-approval.json` says to; otherwise prints nothing (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)) |
+| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](agent-integration.md#background-shell-hint-bridgejs)) |
 
 The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](agent-integration.md#hook-injection) for the full mapping.
 
@@ -541,9 +542,9 @@ All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/
 
 Kangentic hooks are identified by two markers in the command string:
 - Contains `.kangentic` (path component)
-- Contains a known bridge name (`activity-bridge`, `event-bridge` or `plan-approval-bridge`)
+- Contains a known bridge name (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`)
 
-Both must match. This prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge` and `plan-approval-bridge`.
+Both must match. This prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
 
 ## Session Directory
 

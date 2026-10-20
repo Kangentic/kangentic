@@ -1328,6 +1328,40 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-034-powershell-watcher (the flag on a launch the PreToolUse remap does not cover)', () => {
+    // Task #854's /preview watcher, flag included, launched through Claude's
+    // PowerShell tool (session d1af24be, events.jsonl lines 1826/1827 and the
+    // Stop at 2076/2077, verbatim; the session_start and prompt lines are
+    // constructed). Claude's PreToolUse remap to background_shell_start is
+    // Bash-only, so the launch arrived as a plain tool_start and only its
+    // PostToolUse named the shell. The flag was read on the background_shell_start
+    // arm alone, so the shell held the session through the Stop until the
+    // session ended, and the column's turn-end automations never ran (task
+    // #857). The twin is the same stream without the flag.
+    const HOLDS = 'session-034-powershell-watcher-holds-active.jsonl';
+    const EXEMPT = 'session-034-powershell-watcher-exempt.jsonl';
+
+    it('an unflagged PowerShell watcher holds the session thinking after the Stop (the control)', () => {
+      const result = replay(loadFixture(HOLDS));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.turnActive).toBe(false);
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.activeBackgroundShellIds).toEqual(['bdrb9enzm']);
+      expect(result.finalState.exemptBackgroundShellIds).toEqual([]);
+    });
+
+    it('reads idle when the PowerShell launch carries the no-activity-hold flag', () => {
+      const result = replay(loadFixture(EXEMPT));
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.exemptBackgroundShellIds).toEqual(['bdrb9enzm']);
+      expect(result.finalState.activeBackgroundShellIds).toEqual([]);
+      // The promotion closed the pending PowerShell tool, so nothing is left
+      // in flight and no anonymous slot leaked.
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.anonymousBackgroundShellCount).toBe(0);
+    });
+  });
+
   describe('session-029-code-review-9-way-fanout (why a card freezes during a fan-out)', () => {
     // A real /code-review fan-out: the driver spawns 9 finders, says nothing for
     // minutes, and the card's message trail sits on the driver's last line the
@@ -1507,6 +1541,8 @@ describe('ActivityEngine replay tests', () => {
         'session-030-duplicate-named-subagent-stop.jsonl',
         'session-032-restarted-live-subagent.jsonl',
         'session-033-internal-agent-tool-after-stop.jsonl',
+        'session-034-powershell-watcher-holds-active.jsonl',
+        'session-034-powershell-watcher-exempt.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

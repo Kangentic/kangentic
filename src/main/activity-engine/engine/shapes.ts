@@ -53,18 +53,21 @@ export const DEFAULT_BG_SHELL_ESCAPE_HATCH_MS = 5 * 60_000;
 export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 
 /**
- * FIFO cap on `pendingExemptShellToolIds`.
+ * FIFO cap on `pendingExemptShellToolIds`, and on `pendingServiceShellIds`.
  *
  * An entry lives only for the window between a bg shell's PreToolUse and its
  * PostToolUse (1.7s in the captured evidence), so in practice the set holds at
  * most one or two. A DROPPED PostToolUse would strand its entry indefinitely
- * though: only `forceIdle` clears the memo, and it does not fire in the steady
- * state - the exempt-shell case is by definition a session that sits quiet for
- * hours. A stranded entry is inert (no counter, no predicate term, and
- * `toolId`s are unique per tool call so it can never false-match a later
- * shell), but the bound should be real rather than assumed. This cap is the
- * ONLY bound on the memo, which is why `resetInFlightCounters` can safely
- * leave it alone - see the comment there for why it must.
+ * though: only `forceIdle` and a `tool_end` for the same id clear the memo,
+ * and neither fires for a shell that moved to the background - the
+ * exempt-shell case is by definition a session that sits quiet for hours. A
+ * stranded entry is inert (no counter, no predicate term, and `toolId`s are
+ * unique per tool call so it can never false-match a later shell), but the
+ * bound should be real rather than assumed. This cap is the ONLY bound on a
+ * memo of a shell that moved to the background, which is why
+ * `resetInFlightCounters` can safely leave it alone - see the comment there
+ * for why it must. Shell ids are unique per session too, so the same argument
+ * holds for a service mark whose shell never starts.
  */
 export const MAX_PENDING_EXEMPT_SHELL_TOOL_IDS = 16;
 
@@ -414,9 +417,12 @@ export interface SessionEngineState {
    */
   anonymousBackgroundShellCount: number;
   /**
-   * Named bg shells that declared themselves NON-HOLDING via
-   * `NO_ACTIVITY_HOLD_FLAG` in their launching command (today: `/preview`'s
-   * watcher, which blocks for the preview's whole lifetime).
+   * Named bg shells that do not hold the session. Two ways in: the launching
+   * command carried `NO_ACTIVITY_HOLD_FLAG` (`/preview`'s watcher, which blocks
+   * for the preview's whole lifetime), or the agent marked the shell as a
+   * service through the `kangentic_mark_background_service` MCP tool
+   * (`ActivityEngine.markBackgroundShellsAsServices`), which moves the id here
+   * from `activeBackgroundShellIds`.
    *
    * Deliberately a SEPARATE set rather than a side-flag on
    * `activeBackgroundShellIds`: every activity site is written in terms of
@@ -437,12 +443,17 @@ export interface SessionEngineState {
    */
   exemptBackgroundShellIds: Set<string>;
   /**
-   * `toolId`s whose PreToolUse `background_shell_start` carried
-   * `NO_ACTIVITY_HOLD_FLAG`, awaiting their PostToolUse promotion.
+   * `toolId`s whose PreToolUse event carried `NO_ACTIVITY_HOLD_FLAG`, awaiting
+   * their PostToolUse promotion. The PreToolUse event is a
+   * `background_shell_start` for a Bash `run_in_background` launch and a plain
+   * `tool_start` for any other (Claude's PowerShell tool, or a foreground
+   * command Claude moves to the background itself). A `tool_end` for the same
+   * id drops it: that command finished in the foreground and never promotes.
    *
    * A correlation memo, NOT a counter: the exempt shell is still counted in
-   * `anonymousBackgroundShellCount` during the sub-second window between the
-   * two events, so every existing anonymous drain path stays untouched.
+   * `anonymousBackgroundShellCount` (or, from a `tool_start`, in
+   * `pendingToolCount`) during the window between the two events, so every
+   * existing drain path stays untouched.
    *
    * The memo is required because the anonymous-to-named promotion is a shape
    * heuristic, not a `toolId` correlation, and the exemption cannot be
@@ -453,6 +464,17 @@ export interface SessionEngineState {
    * PostToolUse cannot strand entries indefinitely.
    */
   pendingExemptShellToolIds: Set<string>;
+  /**
+   * Shell ids the agent marked as services before the engine saw them start.
+   * The MCP call and the events tailer race: the agent reads the id from the
+   * tool result the PostToolUse hook ran beside, so its mark can arrive before
+   * the PostToolUse line is ingested. The named promotion reads this set and
+   * files the id straight into `exemptBackgroundShellIds`.
+   *
+   * Bounded at `MAX_PENDING_EXEMPT_SHELL_TOOL_IDS` (FIFO), like the toolId
+   * memo, so a mark for an id that never starts cannot strand entries.
+   */
+  pendingServiceShellIds: Set<string>;
   /**
    * Sticky flag set when an Idle event with `detail=permission` fires.
    * Cleared by Prompt, Interrupted, SubagentStart, depth-0 ToolStart,
@@ -704,6 +726,18 @@ export interface SessionEngineState {
 }
 
 /**
+ * What `ActivityEngine.markBackgroundShellsAsServices` did with one shell id:
+ *   - `marked`         - it was holding the session and now does not.
+ *   - `already-marked` - it was already exempt (flagged at launch, or marked before).
+ *   - `pending`        - the engine has not seen it start yet; it lands exempt
+ *                        when it does (`pendingServiceShellIds`).
+ */
+export interface BackgroundShellServiceOutcome {
+  shellId: string;
+  outcome: 'marked' | 'already-marked' | 'pending';
+}
+
+/**
  * Free-form trigger label describing what caused a transition. Useful
  * for debugging "why did this go idle?" reports. Examples:
  *   - `event:tool_start`           - hook event drove it
@@ -715,6 +749,7 @@ export interface SessionEngineState {
  *   - `timer:stale-thinking`       - 180s stale-thinking watchdog
  *   - `timer:stuck-pending-tools`  - 5-min hatch for orphan tool_starts
  *   - `timer:stuck-subagent`       - 5-min hatch for a stuck subagentDepth
+ *   - `event:bg-shell-service:mcp` - the agent marked background shells as services
  *   - `interrupted`                - Interrupted event reset everything
  */
 export type TransitionTrigger =
@@ -760,9 +795,9 @@ export interface ActivityStatsSnapshot {
   subagentDepth: number;
   backgroundShellIds: readonly string[];
   anonymousBackgroundShellCount: number;
-  /** Named bg shells that opted out of holding the session active via
-   *  `NO_ACTIVITY_HOLD_FLAG`. Tracked for liveness, excluded from the
-   *  predicate. See `SessionEngineState.exemptBackgroundShellIds`. */
+  /** Named bg shells that do not hold the session active (`NO_ACTIVITY_HOLD_FLAG`
+   *  at launch, or marked as services by the agent). Tracked for liveness,
+   *  excluded from the predicate. See `SessionEngineState.exemptBackgroundShellIds`. */
   exemptBackgroundShellIds: readonly string[];
   turnActive: boolean;
   permissionPending: boolean;
@@ -834,9 +869,11 @@ export interface ActivityEngineCallbacks {
    * Fired once when a turn the agent itself ended has fully settled: a
    * thinking-to-idle commit whose turn was cleared by the agent's turn-end hook
    * (`turnEndSource === 'stop'`), after any background work the turn left
-   * holding the session has drained. Never for an interrupt, a failed turn, an
-   * `idle_hint`, a PTY-silence or watchdog idle, a resume's idle seed, or a
-   * permission prompt resolving to idle.
+   * holding the session has drained. A shell the agent marks as a service
+   * (`markBackgroundShellsAsServices`) counts as drained: it no longer holds.
+   * Never for an interrupt, a failed turn, an `idle_hint`, a PTY-silence or
+   * watchdog idle, a resume's idle seed, or a permission prompt resolving to
+   * idle.
    *
    * Always fires AFTER the matching `onActivityChange`, so a listener that
    * reads the session's activity sees `idle`. Optional: only the production

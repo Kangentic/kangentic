@@ -63,6 +63,11 @@ import {
 } from './mcp-http/browser-tools';
 import { registerSteeringTools, type SteeringToolDependencies, type SteeringSessionLookup } from './mcp-http/steering-tools';
 import {
+  registerBackgroundShellTools,
+  type BackgroundShellServiceMarker,
+  type BackgroundShellToolDependencies,
+} from './mcp-http/background-shell-tools';
+import {
   createSessionSendCoordinator,
   type SessionSendCoordinator,
   type SessionSendSessionManager,
@@ -124,7 +129,7 @@ export interface McpHttpServerHandle {
  * context does not exist yet at `startMcpHttpServer` time.
  */
 export interface McpSteeringContext {
-  sessionManager: SessionSendSessionManager & SteeringSessionLookup;
+  sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker;
   terminalSubmit: SessionSendTerminalSubmit;
 }
 
@@ -181,8 +186,20 @@ export async function startMcpHttpServer(
     };
   };
 
+  // Caller scope for kangentic_mark_background_service: the caller marks only
+  // its own session's shells, so a connection that names no session (a Command
+  // Terminal, a client outside Kangentic) is not offered the tool at all. Null
+  // before the IPC context exists, which is strictly before any agent could
+  // have started a shell.
+  const resolveBackgroundShells = (callerSessionId?: string): BackgroundShellToolDependencies | null => {
+    if (!callerSessionId) return null;
+    const sessionManager = getSteeringContext()?.sessionManager ?? null;
+    if (!sessionManager) return null;
+    return { sessions: sessionManager, callerSessionId };
+  };
+
   const httpServer: Server = createServer((req, res) => {
-    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering, resolveBrowser)
+    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig, networkConfig, resolveSteering, resolveBrowser, resolveBackgroundShells)
       .catch((error) => {
         console.error('[mcp-http] Request handler crashed:', error);
         if (!res.headersSent) {
@@ -353,6 +370,8 @@ export function buildConfiguredMcpServer(
   // empty one. See the call site in handleHttpRequest for why passing it here,
   // before it is populated, is safe.
   toolArgumentNotices?: ToolArgumentNotices,
+  // Null before the IPC context exists, like `steering`.
+  backgroundShells?: BackgroundShellToolDependencies | null,
 ): McpServer {
   const browserAutomationEnabled = getBrowserAutomationConfig().enabled;
   const instructions = buildServerInstructions(resolver, browserAutomationEnabled);
@@ -381,6 +400,9 @@ export function buildConfiguredMcpServer(
   // strictly before any agent can be running to be steered.
   if (steering) {
     registerSteeringTools(mcpServer, resolver, steering);
+  }
+  if (backgroundShells) {
+    registerBackgroundShellTools(mcpServer, backgroundShells);
   }
 
   // Dev-only: register the kangentic_devtools_* tools that drive the localhost
@@ -475,6 +497,7 @@ async function handleHttpRequest(
   networkConfig: McpServerNetworkConfig,
   resolveSteering: (callerSessionId?: string) => SteeringToolDependencies | null,
   resolveBrowser: (projectId: string, callerSessionId?: string) => BrowserToolDependencies,
+  resolveBackgroundShells: (callerSessionId?: string) => BackgroundShellToolDependencies | null,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
   // local timing oracle can't byte-by-byte recover the token. When bound to
@@ -543,6 +566,7 @@ async function handleHttpRequest(
         resolveSteering(callerSessionId),
         resolveBrowser(projectId, callerSessionId),
         toolArgumentNotices,
+        resolveBackgroundShells(callerSessionId),
       );
 
   const transport = new StreamableHTTPServerTransport({

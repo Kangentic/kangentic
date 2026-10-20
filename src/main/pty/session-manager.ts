@@ -57,7 +57,12 @@ import type {
   PtyResizeOrigin,
   SessionResizeResult,
 } from '../../shared/types';
-import type { ActivityEngineOptions, ActivityStatsSnapshot, TurnStartCause } from '../activity-engine/engine';
+import type {
+  ActivityEngineOptions,
+  ActivityStatsSnapshot,
+  BackgroundShellServiceOutcome,
+  TurnStartCause,
+} from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
@@ -3504,6 +3509,19 @@ export class SessionManager extends EventEmitter {
    */
   markIdleAuthoritative(sessionId: string): void {
     this.telemetry.markIdleAuthoritative(sessionId);
+  }
+
+  /**
+   * The session's agent marked these background shells as services it leaves
+   * running after its turn (the `kangentic_mark_background_service` MCP tool).
+   * See `ActivityEngine.markBackgroundShellsAsServices`. Null when no running
+   * session has this id. A row that exited keeps its engine state, so the
+   * status check, not the row's presence, is what keeps a late mark from
+   * ending a dead session's held turn and firing its turn-end automations.
+   */
+  markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
+    if (this.registry.get(sessionId)?.status !== 'running') return null;
+    return this.telemetry.markBackgroundShellsAsServices(sessionId, shellIds);
   }
 
   /** Return cached ActivityReason for all sessions (HMR/full-reload reconcile). */
