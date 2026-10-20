@@ -242,3 +242,24 @@ describe('PtyHostCore checkReportedProcesses', () => {
     await expect(core.checkReportedProcesses([{ pid: 5000, startKey: 'start-5000' }])).resolves.toEqual([null]);
   });
 });
+
+describe('PtyHostCore awaitAgentExit request', () => {
+  it('dispatches to awaitAgentExit with the task ids, and answers at once when the host holds no root for them', async () => {
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => null,
+    });
+    const awaitAgentExit = vi.spyOn(core, 'awaitAgentExit');
+
+    const answer = await core.handleRequest('awaitAgentExit', { taskIds: [TASK, 'other-task'] });
+
+    // Called with the unwrapped list, not the whole params object.
+    expect(awaitAgentExit).toHaveBeenCalledTimes(1);
+    expect(awaitAgentExit).toHaveBeenCalledWith([TASK, 'other-task']);
+    // No ledger root for either task: nothing found, nothing waited on.
+    expect(answer).toEqual({ found: [], stillRunning: [], waitedMs: 0 });
+  });
+});

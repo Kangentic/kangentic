@@ -67,12 +67,23 @@ export function addTaskProcessTag(
   options: { wslShell: boolean; inheritedWslEnv?: string },
 ): Record<string, string> {
   const tagged: Record<string, string> = { ...env, [TASK_PROCESS_TAG_ENV]: taskId };
-  if (options.wslShell) {
-    const existing = env.WSLENV ?? options.inheritedWslEnv ?? '';
-    const entries = existing.split(':').filter((entry) => entry.length > 0);
-    const alreadyListed = entries.some((entry) => entry.split('/')[0] === TASK_PROCESS_TAG_ENV);
-    if (!alreadyListed) entries.push(`${TASK_PROCESS_TAG_ENV}/u`);
-    tagged.WSLENV = entries.join(':');
+  return options.wslShell ? listInWslEnv(tagged, [TASK_PROCESS_TAG_ENV], options.inheritedWslEnv) : tagged;
+}
+
+/**
+ * List variables in a spawn env's `WSLENV` (`/u`: only when a Win32 process
+ * launches WSL), so they cross into a WSL shell's distro. The env's own
+ * `WSLENV` is extended, else the inherited one; a name already listed is kept
+ * as it is.
+ */
+export function listInWslEnv(
+  env: Record<string, string>,
+  names: readonly string[],
+  inheritedWslEnv?: string,
+): Record<string, string> {
+  const entries = (env.WSLENV ?? inheritedWslEnv ?? '').split(':').filter((entry) => entry.length > 0);
+  for (const name of names) {
+    if (!entries.some((entry) => entry.split('/')[0] === name)) entries.push(`${name}/u`);
   }
-  return tagged;
+  return { ...env, WSLENV: entries.join(':') };
 }

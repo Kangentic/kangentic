@@ -57,7 +57,10 @@ vi.mock('../../src/main/shutdown-state', () => ({
 // Stub spawn env/cwd helpers - return safe defaults, no real fs access.
 // resolveSpawnCwd is a vi.fn() so write-order tests can override the fixup
 // command per-call via mockReturnValueOnce.
-vi.mock('../../src/main/pty/spawn/pty-spawn', () => ({
+vi.mock('../../src/main/pty/spawn/pty-spawn', async (importOriginal) => ({
+  // The real set of renderer variables a spawn may set: a WSL spawn lists the
+  // ones its env carries in WSLENV (see the renderer-variable tests below).
+  SPAWN_SETTABLE_CLAUDE_CODE_KEYS: (await importOriginal<typeof import('../../src/main/pty/spawn/pty-spawn')>()).SPAWN_SETTABLE_CLAUDE_CODE_KEYS,
   resolveShellArgs: (shell: string) => ({ exe: shell, args: [] }),
   buildSpawnEnv: (env: Record<string, string> | undefined) => ({ ...env }),
   resolveSpawnCwd: vi.fn(({ requestedCwd }: { requestedCwd: string }) => ({
@@ -327,6 +330,7 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function spawnEnvAt(callIndex: number): Record<string, string> {
@@ -363,6 +367,69 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
 
     expect(spawnEnvAt(0).KANGENTIC_TASK_ID).toBe('task-wsl');
     expect(spawnEnvAt(0).WSLENV?.split(':')).toContain('KANGENTIC_TASK_ID/u');
+  });
+
+  describe('the Claude renderer variables a spawn sets, on a WSL shell', () => {
+    // A distro sees a Windows variable only when WSLENV names it, so a renderer
+    // variable the spawn sets (CLAUDE_CODE_NO_FLICKER, the fullscreen default)
+    // is listed beside the task tag, or the agent in the distro never reads it.
+    //
+    // Red-green: deleting the renderer-key listing in session-spawn-flow.ts
+    // fails the first and third cases; dropping its `spawnEnv[key] !== undefined`
+    // filter fails the second and third (every settable key would be listed,
+    // set or not); running the listing for every shell, not just WSL, fails the
+    // non-WSL case, which then gains a WSLENV.
+    const NO_FLICKER = 'CLAUDE_CODE_NO_FLICKER';
+    const DISABLE_ALTERNATE_SCREEN = 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN';
+
+    beforeEach(() => {
+      // A known inherited list, so the assertions do not depend on the machine
+      // the suite runs on (a developer inside WSL has a WSLENV of its own).
+      vi.stubEnv('WSLENV', 'USERPROFILE/p');
+    });
+
+    function wslEnvEntries(callIndex = 0): string[] {
+      return (spawnEnvAt(callIndex).WSLENV ?? '').split(':');
+    }
+
+    it('lists CLAUDE_CODE_NO_FLICKER in WSLENV beside the task tag, keeping the inherited entries', async () => {
+      const context = makeContext();
+      vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+      await performSpawn(makeInput({ taskId: 'task-wsl-renderer', env: { [NO_FLICKER]: '1' } }), context);
+
+      expect(spawnEnvAt(0)[NO_FLICKER]).toBe('1');
+      expect(wslEnvEntries()).toContain(`${NO_FLICKER}/u`);
+      expect(wslEnvEntries()).toContain('KANGENTIC_TASK_ID/u');
+      expect(wslEnvEntries()).toContain('USERPROFILE/p');
+    });
+
+    it('does not list a renderer variable the input env does not carry', async () => {
+      const context = makeContext();
+      vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+      await performSpawn(makeInput({ taskId: 'task-wsl-no-renderer' }), context);
+
+      expect(wslEnvEntries()).toContain('KANGENTIC_TASK_ID/u');
+      expect(wslEnvEntries()).not.toContain(`${NO_FLICKER}/u`);
+      expect(wslEnvEntries()).not.toContain(`${DISABLE_ALTERNATE_SCREEN}/u`);
+    });
+
+    it('lists only the renderer variable that is set, whichever of the two it is', async () => {
+      const context = makeContext();
+      vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+      await performSpawn(makeInput({ taskId: 'task-wsl-classic', env: { [DISABLE_ALTERNATE_SCREEN]: '1' } }), context);
+
+      expect(wslEnvEntries()).toContain(`${DISABLE_ALTERNATE_SCREEN}/u`);
+      expect(wslEnvEntries()).not.toContain(`${NO_FLICKER}/u`);
+    });
+
+    it('adds nothing to WSLENV on a shell that is not WSL', async () => {
+      const context = makeContext();
+      await performSpawn(makeInput({ taskId: 'task-native-renderer', env: { [NO_FLICKER]: '1' } }), context);
+
+      // The variable still reaches the process; only the WSLENV list is WSL's.
+      expect(spawnEnvAt(0)[NO_FLICKER]).toBe('1');
+      expect(spawnEnvAt(0).WSLENV).toBeUndefined();
+    });
   });
 });
 
@@ -1672,6 +1739,81 @@ describe('performSpawn - exit sequence handed to the host', () => {
     await performSpawn(makeInput({ exitSequence: undefined }), context);
 
     expect(lastSpawnParams(context).exitSequence).toEqual(['\x03']);
+  });
+});
+
+describe('performSpawn - task id handed to the host', () => {
+  // The host keeps a ledger of task PTY roots (host/exited-root-wait.ts) so a
+  // task reap can wait for the agent a killed or exited shell left running. It
+  // only learns which task a PTY belongs to from the spawn params.
+  //
+  // Red-green: dropping `taskId: input.taskId` from the host.spawn params in
+  // session-spawn-flow.ts leaves the field undefined and fails this.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('gives the host the input\'s task id', async () => {
+    const context = makeContext();
+
+    await performSpawn(makeInput({ taskId: 'task-ledger-7f3a' }), context);
+
+    expect(lastSpawnParams(context).taskId).toBe('task-ledger-7f3a');
+  });
+});
+
+describe('performSpawn - consoleCloseIsGraceful on the registered session', () => {
+  // An agent whose console close is its graceful exit is closed, never typed
+  // into (pty-teardown-grace.md). That answer was measured for this platform's
+  // own console only: ConPTY closing wsl.exe, then a hangup in the distro, is a
+  // chain no probe ran, so an agent in a WSL shell keeps its exit keys.
+  //
+  // The parser answers true for any platform, so the expectation does not depend
+  // on the OS the suite runs on.
+  //
+  // Red-green: dropping `!wslShell &&` from the row's consoleCloseIsGraceful
+  // fails the two WSL cases (the row would read true); dropping the field fails
+  // the non-WSL case (the row would read undefined).
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function gracefulCloseParser(): AgentParser {
+    return { ...makeAdapter({}), consoleCloseIsGraceful: vi.fn(() => true) } as AgentParser;
+  }
+
+  it('is true on a shell that is not WSL, when the agent says a close is its graceful exit', async () => {
+    const context = makeContext();
+    const input = makeInput({ agentParser: gracefulCloseParser() });
+
+    await performSpawn(input, context);
+
+    expect(context.registry.get(input.id!)?.consoleCloseIsGraceful).toBe(true);
+  });
+
+  it.each(['wsl -d Ubuntu', 'wsl.exe'])('is false on the WSL shell "%s", even though the agent says a close is graceful', async (wslShell) => {
+    const context = makeContext();
+    vi.mocked(context.getShell).mockResolvedValue(wslShell);
+    const input = makeInput({ agentParser: gracefulCloseParser() });
+
+    await performSpawn(input, context);
+
+    expect(context.registry.get(input.id!)?.consoleCloseIsGraceful).toBe(false);
+  });
+
+  it('is false for a session with no agent adapter', async () => {
+    const context = makeContext();
+    const input = makeInput();
+
+    await performSpawn(input, context);
+
+    expect(context.registry.get(input.id!)?.consoleCloseIsGraceful).toBe(false);
   });
 });
 
