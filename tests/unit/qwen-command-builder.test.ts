@@ -15,7 +15,12 @@ import path from 'node:path';
 import { quoteArg, toForwardSlash } from '../../src/shared/paths';
 import { QwenCommandBuilder, supportsMcpConfigFlag } from '../../src/main/agent/adapters/qwen-code';
 import type { QwenCommandOptions } from '../../src/main/agent/adapters/qwen-code';
-import { QWEN_BRIDGE_COPY_NAME } from '../../src/main/agent/adapters/qwen-code/hook-manager';
+import {
+  QWEN_BACKGROUND_COMMAND_SPEC,
+  QWEN_BRIDGE_COPY_NAME,
+  QWEN_HINT_BRIDGE_COPY_NAME,
+} from '../../src/main/agent/adapters/qwen-code/hook-manager';
+import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 import { EVENTS_PATH_FROM_ENVIRONMENT, isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 import {
   buildForPlatform,
@@ -680,6 +685,113 @@ describe('QwenCommandBuilder', () => {
         expect(fs.readFileSync(eventsOutput, 'utf-8'), host).toContain('"tool_start"');
       }
     }, 120_000);
+  });
+
+  /**
+   * The background shell hint (task #859) names kangentic_mark_background_service,
+   * so only a session offered that tool gets the hook: the MCP server on (not
+   * switched off), a token, and an MCP URL that names a task session as its
+   * caller (`/mcp/<project>/<session>`). On Windows the hint runs from a
+   * workspace copy of its bridge, as the event bridge does, and that copy is
+   * written only for a session that gets the hint.
+   */
+  describe('background shell hint', () => {
+    const HINT_HOOK_NAME = 'kangentic-background-shell-hint';
+    const SESSION_MCP_URL = 'http://127.0.0.1:51234/mcp/proj-1/sess-abc';
+    let tmpDir: string;
+    let eventsOutput: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-hint-'));
+      eventsOutput = path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl');
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function buildOn(platform: NodeJS.Platform, overrides: Partial<QwenCommandOptions>): void {
+      buildForPlatform(platform, () => new QwenCommandBuilder().buildQwenCommand({
+        ...baseOptions(),
+        cwd: tmpDir,
+        projectRoot: tmpDir,
+        eventsOutputPath: eventsOutput,
+        ...overrides,
+      }));
+    }
+
+    function postToolUseEntries(): Array<{ matcher: string; hooks: Array<{ name: string; command: string }> }> {
+      const settings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.qwen', 'settings.json'), 'utf-8')) as {
+        hooks: Record<string, Array<{ matcher: string; hooks: Array<{ name: string; command: string }> }>>;
+      };
+      return settings.hooks.PostToolUse;
+    }
+
+    function hintCommands(): string[] {
+      return postToolUseEntries().flatMap((entry) => entry.hooks).filter((hook) => hook.name === HINT_HOOK_NAME).map((hook) => hook.command);
+    }
+
+    /** The hint spec the command carries: its last token is the base64 of the JSON spec. */
+    function decodedSpec(command: string): unknown {
+      const encodedSpec = command.split(' ').pop() ?? '';
+      return JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'));
+    }
+
+    it.each([true, undefined])('wires the hint, built from the Qwen spec, for a session URL and a token (mcpServerEnabled %s)', (mcpServerEnabled) => {
+      buildOn('linux', { mcpServerEnabled, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'token-abc' });
+
+      const commands = hintCommands();
+      expect(commands).toHaveLength(1);
+      expect(commands[0].startsWith('node ')).toBe(true);
+      expect(commands[0]).toContain('background-shell-hint-bridge');
+      expect(decodedSpec(commands[0])).toEqual(backgroundShellHintSpecOf(QWEN_BACKGROUND_COMMAND_SPEC));
+      // Beside the event bridge's entry, not in place of it.
+      expect(postToolUseEntries()).toHaveLength(2);
+    });
+
+    it.each([
+      ['a project URL that names no session', { mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1', mcpServerToken: 'token-abc' }],
+      ['a Knowledge Graph answer run URL', { mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1/answer-chat-1', mcpServerToken: 'token-abc' }],
+      ['a workflow agent URL', { mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1/workflow-wf-1', mcpServerToken: 'token-abc' }],
+      ['no URL', { mcpServerUrl: undefined, mcpServerToken: 'token-abc' }],
+      ['no token', { mcpServerUrl: SESSION_MCP_URL, mcpServerToken: undefined }],
+      ['the MCP server switched off', { mcpServerEnabled: false, mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'token-abc' }],
+    ] as Array<[string, Partial<QwenCommandOptions>]>)('wires no hint with %s, leaving the event bridge entry alone', (_label, overrides) => {
+      buildOn('linux', overrides);
+
+      expect(hintCommands()).toEqual([]);
+      const entries = postToolUseEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].hooks[0].command).toContain('event-bridge');
+    });
+
+    it('on Windows runs the hint from the workspace bridge copy by a bare relative path', () => {
+      buildOn('win32', { mcpServerUrl: SESSION_MCP_URL, mcpServerToken: 'token-abc' });
+
+      const copy = path.join(tmpDir, '.kangentic', QWEN_HINT_BRIDGE_COPY_NAME);
+      expect(fs.readFileSync(copy, 'utf-8')).toBe(fs.readFileSync(path.resolve(__dirname, '../../src/main/agent/background-shell-hint-bridge.js'), 'utf-8'));
+
+      const commands = hintCommands();
+      expect(commands).toHaveLength(1);
+      // `node <relative forward-slashed copy> <base64 spec>`, three bare tokens.
+      const [nodeBinary, bridgePath, encodedSpec, ...rest] = commands[0].split(' ');
+      expect(rest).toEqual([]);
+      expect(nodeBinary).toBe('node');
+      expect(bridgePath).toBe(`.kangentic/${QWEN_HINT_BRIDGE_COPY_NAME}`);
+      expect(JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'))).toEqual(backgroundShellHintSpecOf(QWEN_BACKGROUND_COMMAND_SPEC));
+      expect(commands[0]).not.toContain('"');
+      expect(commands[0]).not.toContain('\\');
+      expect(isKangenticHookCommand(commands[0])).toBe(true);
+    });
+
+    it('on Windows copies the hint bridge only for a session offered the tool', () => {
+      buildOn('win32', { mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1', mcpServerToken: 'token-abc' });
+
+      expect(hintCommands()).toEqual([]);
+      // The event bridge copy shows the Windows path ran.
+      expect(fs.existsSync(path.join(tmpDir, '.kangentic', QWEN_BRIDGE_COPY_NAME))).toBe(true);
+      expect(fs.existsSync(path.join(tmpDir, '.kangentic', QWEN_HINT_BRIDGE_COPY_NAME))).toBe(false);
+    });
   });
 
   // ── Multiline prompt preservation (regression guard) ─────────────────────
