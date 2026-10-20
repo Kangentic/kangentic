@@ -1948,10 +1948,23 @@
           return t.id === input.id;
         });
         if (idx < 0) throw new Error('Archived task not found: ' + input.id);
+        // Mirrors TASK_UNARCHIVE: a position inside the lane places the restored
+        // task there and moves the lane's later tasks down one. Without one the
+        // mock keeps its long-standing position 0, which existing specs rely on.
+        var restorePosition = 0;
+        var laneCount = tasks.filter(function (t) { return t.swimlane_id === input.targetSwimlaneId; }).length;
+        if (typeof input.position === 'number' && input.position >= 0 && input.position < laneCount) {
+          restorePosition = input.position;
+          tasks.forEach(function (t, taskIndex) {
+            if (t.swimlane_id === input.targetSwimlaneId && t.position >= restorePosition) {
+              tasks[taskIndex] = Object.assign({}, t, { position: t.position + 1 });
+            }
+          });
+        }
         var task = Object.assign({}, archivedTasks[idx], {
           swimlane_id: input.targetSwimlaneId,
           archived_at: null,
-          position: 0,
+          position: restorePosition,
           // Mirrors TaskRepository: leaving Done enables column automations again.
           automations_disabled: false,
           updated_at: now(),

@@ -47,6 +47,11 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
     [swimlane.color],
   );
 
+  // The lane is `overflow-clip` so its 2px accent bar follows the rounded
+  // corners: a 2px box clamps its own 8px radius to 2px, so unclipped the bar
+  // ran square past the curve, under the drop highlight's rounded outline.
+  // `clip`, not `hidden`: the lane stays no scroll container, and the
+  // fixed-position New Task dialog inside it still escapes the clip.
   return (
     // A ghost column says why it is greyed out wherever the pointer rests on it.
     <Tooltip label={isGhost ? 'Removed from team config. Move tasks to continue.' : ''}>
@@ -54,7 +59,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
         data-testid="swimlane"
         data-swimlane-name={swimlane.name}
         data-swimlane-id={swimlane.id}
-        className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg ${
+        className={`flex-shrink-0 ${widthClass} h-full flex flex-col rounded-lg overflow-clip ${
           isGhost ? 'opacity-50 border-2 border-dashed border-fg-disabled' : ''
         } ${
           isSystemColumn ? 'ring-1 ring-edge/50' : ''
@@ -130,12 +135,22 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
           </div>
         </Tooltip>
 
-        {/* Task list */}
+        {/* Task list. `relative` so the slot card below is placed in, scrolls
+            with and is clipped by the list. */}
         <div
           ref={setNodeRef}
           data-swimlane-task-list={swimlane.id}
-          className="flex-1 overflow-y-auto p-2 space-y-2 min-h-[100px] transition-colors"
+          className="relative flex-1 overflow-y-auto p-2 space-y-2 min-h-[100px] transition-colors"
         >
+          {/* The slot a card dragged in from another column will drop into,
+              filled with a dimmed copy of that card (`.drop-slot`,
+              board-drop-preview.ts). The drag places, fills and shows it straight
+              on the DOM, so it renders with no style, no attribute and no
+              children the drag writes: this lane re-renders on every change of
+              the drag's target. Absolutely positioned and the FIRST child, so it
+              takes no space and never becomes the `:last-child` that
+              `space-y-2` leaves without a margin. */}
+          <div data-drop-slot aria-hidden="true" className="drop-slot" />
           <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
             {tasks.map((task) => (
               <TaskCard key={task.id} task={task} />

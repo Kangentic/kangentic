@@ -18,7 +18,7 @@ import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import type { TaskRepository } from '../../db/repositories/task-repository';
-import type { SwimlaneRole, Task } from '../../../shared/types';
+import type { SwimlaneRole, Task, TaskUnarchiveInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -86,7 +86,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     return tasks.listArchivedPreview(limit);
   });
 
-  ipcMain.handle(IPC.TASK_UNARCHIVE, async (event, input: { id: string; targetSwimlaneId: string }, projectId?: string | null) => {
+  ipcMain.handle(IPC.TASK_UNARCHIVE, async (event, input: TaskUnarchiveInput, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
@@ -102,6 +102,21 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
       const position = laneTasks.length;
 
       const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
+
+      // A card dragged out of Done lands where the lane's cards parted for it
+      // (`position`, an index into the lane's order). Any other restore, or an
+      // index that is not inside the lane, keeps the end.
+      const requestedPosition = input.position;
+      if (
+        typeof requestedPosition === 'number'
+        && Number.isInteger(requestedPosition)
+        && requestedPosition >= 0
+        && requestedPosition < position
+      ) {
+        const orderedTaskIds = laneTasks.map((laneTask) => laneTask.id);
+        orderedTaskIds.splice(requestedPosition, 0, input.id);
+        tasks.reorderWithinSwimlane(input.targetSwimlaneId, orderedTaskIds);
+      }
 
       // Folded through the unarchived task's Board Profile, so it comes back
       // on the same rung it was archived from.

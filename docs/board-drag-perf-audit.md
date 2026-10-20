@@ -343,6 +343,72 @@ stylesheet, so an arm that switches an animation off shows it did (13 with the f
 for a selected card with two links). A `zoomShot` experiment can name `zoomAt`, a selector, to
 zoom over the first element it matches inside the canvas instead of the canvas's centre.
 
+## The cross-column drop gap (2026-10-20)
+
+A card dragged into another column now parts that column's cards under the ghost, the way its own
+column does, and a dimmed copy of the card fills the slot (`src/renderer/utils/board-drop-preview.ts`). It runs
+on every pointer move (dnd-kit's `onDragOver` fires only when `over` changes, and the slot can
+change under the same `over`), so it was built to the budget above: the slot is computed from the
+drag event alone, with no layout read, and the DOM is written only when the slot changes. The
+parting itself is dnd-kit's own inline `transform 200ms ease` on each card, driven by an
+attribute and a non-inherited registered custom property, so a write restyles only the card it is
+on. Nothing changes lane membership, which is what the earlier preview did before `cd7b40c1b`
+removed it. The slot's copy of the card is made once each time the ghost enters a column, never per
+move: copying and laying out a whole column of 13 cards (80 elements) measured 0.6ms median and
+1.3ms worst on the dev build, so one card is a fraction of that.
+
+S1 and S4a, 5 runs each, on the production build before and after, run back to back on the same
+machine, medians:
+
+| Scenario | p95 frame | missed refreshes | pointer-move max | release to settle |
+|---|---|---|---|---|
+| S1 before | 10.3ms | 22 | 8.2ms | 270ms |
+| S1 after | 9.0ms | 20 | 7.5ms | 272ms |
+| S4a before | 11.3ms | 16 | 7.4ms | 267ms |
+| S4a after | 10.7ms | 13 | 7.7ms | 269ms |
+
+The machine was busier than in the September runs (a 10ms p95 against 7ms then), so only these two
+runs compare, and their differences sit inside run-to-run spread. Neither had a long task or a long
+animation frame.
+
+With the slot holding a copy of the card, S1 measured a 7.0ms p95 with no missed refresh on a quiet
+machine, and S6 put the overlay up 29 to 30ms after the pointerdown with no long frame. The copy does
+not show up at all.
+
+## Drag start at 100 cards (2026-10-20)
+
+The September table declined splitting `TaskCard` into a sortable wrapper and a memoized body: the
+sweep's re-renders cost nothing visible, and the split restructured a root 51 test files select on.
+The #732 trace then put the remaining drag-start cost in four commits that each re-render every
+card, and the dnd-kit maintainer's advice for large lists is the same split (issue #389; every legacy
+performance issue was closed with a pointer to the `@dnd-kit/react` rewrite, so no fix is coming in
+6.x). It ships now without touching the DOM. `useTaskCardViewModel` returns one object per change
+instead of per render, and `TaskCard` hands React its content as a memoized element. Every drag-start
+commit still re-renders each card's root, because `useSortable` reads dnd-kit's context, but stops
+there. `tests/ui/board-drag-skips-card-content.spec.ts` counts content renders through the activity
+mark's per-render layout effect: 24 at a drag start without the memo (6 cards, 4 commits), 0 with it.
+
+W100's board drags, two interleaved invocations per build (A, B, A, B) from a scratch copy of the
+tree, medians with the traced first run of the second pair left out:
+
+| 100 cards | overlay latency before | after | drag-start slow frame before | after |
+|---|---|---|---|---|
+| Plain cards | 67ms | 60ms | 35ms | 28ms |
+| Workflow cards | 73ms | 65ms | 35ms | 28ms |
+
+That is one refresh off the drag start at 100 cards. At 25 cards S6 is unchanged once warm (30 to
+36ms after, 29 to 37ms before; its first two runs after were 44 and 45ms because that invocation ran
+S6 first, before any warm-up drag). The traced drag start, one run each, was a single 87.7ms task before and 42.1ms after, and
+that is the clearest single number here: run-to-run spread on this machine is as large as the gain,
+which is why the pairs were interleaved. What is left in that task is dnd-kit itself: about 15ms of
+forced style and layout while it measures every droppable (`getBoundingClientRect` plus
+`getComputedStyle` per node), and its own reducer and context work. ResizeObserver delivery was 0ms
+in both traces, so disabling the cards' observers (`resizeObserverConfig`) would buy nothing.
+
+A path note for the rig: run from a checkout whose path is short. W100 starts its sessions in git
+worktrees under the rig's project, and from a 150-character scratch path those passed Windows'
+260-character limit, so no session started and the scenario timed out waiting for four.
+
 ## Reproducing
 
 The production rig is committed as `scripts/drag-perf-rig.mjs` with its mock agent in

@@ -37,6 +37,7 @@ import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shar
 import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
+import { clearDropGapDom } from './utils/board-drop-preview';
 import { setRebindCaptureActive } from './utils/rebind-state';
 import { useWindowStore, commandWindowManager, knowledgeGraphWindowManager } from './window-manager/store/window-store';
 import {
@@ -1241,6 +1242,8 @@ if (import.meta.hot) {
 
     // Cancel stale drop highlights (HMR unmounts DndContext without firing dragEnd)
     document.querySelectorAll('.drop-highlight').forEach(element => element.classList.remove('drop-highlight'));
+    // Same for a cross-column drop gap: parted cards, a held settle, a visible slot card.
+    clearDropGapDom();
 
     // Window-manager Pattern D: an HMR mid window-drag fires no pointerup, so
     // hide the snap preview and clear any leftover frame transforms.

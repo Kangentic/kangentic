@@ -182,23 +182,33 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   const isIdle = displayState.kind === 'running' && requiresUserInteraction(displayState.activity);
   const isThinking = displayState.kind === 'running' && isActive(displayState.activity);
 
-  return {
-    sessionId,
-    isHighlighted,
-    isResuming,
-    activityReason,
-    displayState,
-    browserAlive,
-    isIdle,
-    isThinking,
-    shownTrail,
-    trailMode,
-    labelColors,
-    taskLabels,
-    archivedRelativeTime,
-    cardDensity,
-    showTaskNumbers,
-  };
+  // One object per change, not per render, so a host can skip re-rendering the
+  // card's content when nothing in it changed (`TaskCard` does, through every
+  // re-render a board drag forces on it). Every field is a primitive or a
+  // reference its own source keeps stable.
+  return useMemo(
+    () => ({
+      sessionId,
+      isHighlighted,
+      isResuming,
+      activityReason,
+      displayState,
+      browserAlive,
+      isIdle,
+      isThinking,
+      shownTrail,
+      trailMode,
+      labelColors,
+      taskLabels,
+      archivedRelativeTime,
+      cardDensity,
+      showTaskNumbers,
+    }),
+    [
+      sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
+      shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity, showTaskNumbers,
+    ],
+  );
 }
 
 /**

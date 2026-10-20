@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Trash2 } from 'lucide-react';
@@ -197,6 +197,38 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     if (created) useBoardStore.getState().setActiveView('workflows');
   };
 
+  const boardDensity = view.cardDensity;
+
+  // The card's content as one element that changes only when its inputs do.
+  // `React.memo` on this component cannot skip a drag: `useSortable` reads
+  // dnd-kit's context, and a drag start changes it in several commits, each of
+  // which re-renders every card on the board. Handing React the same element
+  // lets it skip the content (title row, activity mark, labels, footer) in all
+  // of them, so only this root re-renders.
+  const cardContent = useMemo(() => {
+    if (compact) {
+      return (
+        <TaskCardCompactBody
+          task={task}
+          view={view}
+          trailing={onDelete && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+              className="p-2 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover/card:opacity-100 transition-all flex-shrink-0"
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        />
+      );
+    }
+    return task.workflow_id
+      // The drag overlay and the flying card are copies: their strip shows, and does nothing.
+      ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} interactive={!isDragOverlay} />
+      : <TaskCardBody task={task} view={view} density={boardDensity} />;
+  }, [compact, task, view, boardDensity, isDragOverlay, onDelete]);
+
   if (compact) {
     return (
       <>
@@ -212,19 +244,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             isDragOverlay ? 'shadow-xl' : ''
           }`}
         >
-          <TaskCardCompactBody
-            task={task}
-            view={view}
-            trailing={onDelete && (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
-                className="p-2 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover/card:opacity-100 transition-all flex-shrink-0"
-              >
-                <Trash2 size={14} />
-              </button>
-            )}
-          />
+          {cardContent}
         </div>
 
         {contextMenu && task.archived_at && (
@@ -251,8 +271,6 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     );
   }
 
-  const boardDensity = view.cardDensity;
-
   return (
     <>
       <div
@@ -265,10 +283,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         data-task-id={task.id}
         className={`${taskCardFrameClass(view, boardDensity)} cursor-grab active:cursor-grabbing select-none transition-colors ${isDragOverlay ? 'shadow-xl' : ''}`}
       >
-        {task.workflow_id
-          // The drag overlay and the flying card are copies: their strip shows, and does nothing.
-          ? <WorkflowTaskCardBody task={task} view={view} density={boardDensity} interactive={!isDragOverlay} />
-          : <TaskCardBody task={task} view={view} density={boardDensity} />}
+        {cardContent}
       </div>
 
       {contextMenu && (

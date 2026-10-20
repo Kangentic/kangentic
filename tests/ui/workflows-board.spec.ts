@@ -455,6 +455,9 @@ test.describe('Workflow tasks on the board', () => {
       expect(ghostCenter).toBeGreaterThan(executing.x);
       expect(ghostCenter).toBeLessThan(executing.x + executing.width);
       await expect(page.locator('[data-board-lanes] [data-swimlane-name="Code Review"].drop-highlight')).toHaveCount(0);
+      // No other column parts its cards or shows a slot for it either
+      // (board-drop-preview.ts gives a locked card no cross-column gap).
+      await expect(page.locator('[data-drop-shift], [data-drop-slot][data-visible]')).toHaveCount(0);
       // Dragging the card whose links are up keeps them.
       await expect(overlay).toHaveAttribute('data-focus-task-id', 't414');
       await page.mouse.up();

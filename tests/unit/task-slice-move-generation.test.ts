@@ -330,3 +330,46 @@ describe('moveTask - per-task generation supersession', () => {
     expect(tasksApi.list).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// moveTask's optimistic positions. Not the generation guard: it shares this
+// file's harness. A cross-column move renumbers both lanes the way main's
+// TaskRepository.move does, so the moved card sorts into its slot at once.
+// Before, it kept every sibling's position and tied with the target card
+// already at that position, sorting on array order: one slot off the drop
+// until the move's reload landed, a jump right where the board's drop gap
+// handed over to it.
+// ---------------------------------------------------------------------------
+
+describe('moveTask - optimistic positions', () => {
+  function laneOrder(tasks: Task[], laneId: string): string[] {
+    return tasks
+      .filter((task) => task.swimlane_id === laneId)
+      .sort((a, b) => a.position - b.position)
+      .map((task) => task.id);
+  }
+
+  it('closes the source slot and opens the target slot in the same write', () => {
+    // The moved card sits AFTER the target lane's cards in the array, the order
+    // that sorted it below the card it tied with.
+    const { getState } = buildHarness({
+      tasks: [
+        makeTask({ id: 'target-a', title: 'A', swimlane_id: 'lane-target', position: 0 }),
+        makeTask({ id: 'target-b', title: 'B', swimlane_id: 'lane-target', position: 1 }),
+        makeTask({ id: 'source-a', title: 'S A', swimlane_id: 'lane-source', position: 0 }),
+        makeTask({ id: 'moved', title: 'Moved', swimlane_id: 'lane-source', position: 1 }),
+        makeTask({ id: 'source-c', title: 'S C', swimlane_id: 'lane-source', position: 2 }),
+      ],
+      swimlanes: [makeSwimlane('lane-source'), makeSwimlane('lane-target')],
+    });
+    tasksApi.move.mockReturnValue(new Promise(() => {}));
+
+    void getState().moveTask({ taskId: 'moved', targetSwimlaneId: 'lane-target', targetPosition: 1 }, true);
+
+    const tasks = getState().tasks;
+    expect(laneOrder(tasks, 'lane-target')).toEqual(['target-a', 'moved', 'target-b']);
+    expect(tasks.filter((task) => task.swimlane_id === 'lane-target').map((task) => task.position).sort()).toEqual([0, 1, 2]);
+    expect(laneOrder(tasks, 'lane-source')).toEqual(['source-a', 'source-c']);
+    expect(tasks.filter((task) => task.swimlane_id === 'lane-source').map((task) => task.position).sort()).toEqual([0, 1]);
+  });
+});

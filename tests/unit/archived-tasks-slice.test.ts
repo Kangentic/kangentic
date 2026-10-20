@@ -61,6 +61,7 @@ const tasksApi = {
   delete: vi.fn(),
   bulkDelete: vi.fn(),
   bulkUnarchive: vi.fn(),
+  unarchive: vi.fn(),
   list: vi.fn(),
   listArchived: vi.fn(),
   onBulkDeleteProgress: vi.fn(),
@@ -440,5 +441,58 @@ describe('loadArchivedTasks - project-switch guard', () => {
     expect(state.archivedTasks).toEqual(fetchedTasks);
     expect(state.archivedTotalCount).toBe(1);
     expect(state.archivedFullyLoaded).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unarchiveTask's optimistic placement. A card dragged out of Done onto a lane
+// restores at the slot that lane's cards parted at (board-drop-preview.ts);
+// main honors a position inside the lane and appends otherwise
+// (TASK_UNARCHIVE), and the optimistic write mirrors that rule. The IPC is
+// held open so the assertions read the optimistic state alone.
+// ---------------------------------------------------------------------------
+
+describe('unarchiveTask - optimistic placement', () => {
+  function laneOrder(tasks: Task[], laneId: string): string[] {
+    return tasks
+      .filter((task) => task.swimlane_id === laneId)
+      .sort((a, b) => a.position - b.position)
+      .map((task) => task.id);
+  }
+
+  function seeded() {
+    return buildHarness({
+      tasks: [
+        makeTask({ id: 'first', swimlane_id: 'lane-planning', position: 0 }),
+        makeTask({ id: 'second', swimlane_id: 'lane-planning', position: 1 }),
+        makeTask({ id: 'third', swimlane_id: 'lane-planning', position: 2 }),
+      ],
+      swimlanes: [{ id: 'lane-planning', role: null, auto_spawn: false } as Swimlane],
+      archivedTasks: [makeTask({ id: 'restored', swimlane_id: 'lane-done', archived_at: '2026-01-02T00:00:00.000Z' })],
+      archivedTotalCount: 1,
+    });
+  }
+
+  it('places the restored card at the position and moves the later cards down one', () => {
+    tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+    const { getState } = seeded();
+
+    void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position: 1 });
+
+    const state = getState();
+    expect(laneOrder(state.tasks, 'lane-planning')).toEqual(['first', 'restored', 'second', 'third']);
+    expect(state.tasks.map((task) => task.position).sort()).toEqual([0, 1, 2, 3]);
+    expect(state.archivedTasks).toEqual([]);
+  });
+
+  it('appends with no position, or with one outside the lane, as main does', () => {
+    for (const position of [undefined, 3, 9, -1, 1.5]) {
+      tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+      const { getState } = seeded();
+
+      void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position });
+
+      expect(laneOrder(getState().tasks, 'lane-planning')).toEqual(['first', 'second', 'third', 'restored']);
+    }
   });
 });

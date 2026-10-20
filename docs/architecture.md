@@ -137,7 +137,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:cancelSpawn` | invoke | Abort an in-flight spawn for a task (e.g. while parked in the git queue or fetching); aborts the move's AbortController and rolls the move back |
 | `task:list-archived` | invoke | Fetch archived tasks |
 | `task:list-archived-preview` | invoke | Fetch the newest N archived tasks plus the total archived count (cheap hydration payload; the full list loads lazily via `task:list-archived`) |
-| `task:unarchive` | invoke | Restore archived task |
+| `task:unarchive` | invoke | Restore archived task, last in the target column, or at an optional `position` inside it (the board passes the slot a card dragged out of Done opened) |
 | `task:bulk-delete` | invoke | Delete multiple archived tasks by ID array |
 | `task:bulk-delete-progress` | on | Event: progress payload during bulk task delete (completed/total/failures) |
 | `task:bulk-unarchive` | invoke | Restore multiple archived tasks to a target swimlane |

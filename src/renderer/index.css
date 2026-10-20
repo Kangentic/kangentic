@@ -1064,6 +1064,88 @@
   background-color: color-mix(in srgb, var(--drop-color, var(--kng-accent)) 5%, transparent);
 }
 
+/* Cross-column drop gap (src/renderer/utils/board-drop-preview.ts). A card
+   dragged in from another column parts the target lane's cards at the slot it
+   will drop into, by transform only: dnd-kit measures droppables with
+   transforms ignored, so the parting never feeds back into collision
+   detection. The drag writes these attributes straight on the DOM.
+
+   Registered so it does not inherit: it is written on each shifted card, and an
+   inherited custom property restyles every element under it (the drop
+   highlight's `--drop-color` did, docs/board-drag-perf-audit.md). */
+@property --drop-gap {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* `!important` beats the card's inline resting transform. The function list
+   matches dnd-kit's spelling, so the move runs on the card's own inline
+   `transform 200ms ease`, the same slide the same-column gap uses. */
+[data-drop-shift] {
+  transform: translate3d(0px, var(--drop-gap), 0) scaleX(1) scaleY(1) !important;
+}
+
+/* Held from the drop until dnd-kit's own after-drop animation has passed (see
+   settleDropGap, which sets --drop-gap to 0px here). That makes the value
+   RESTING_TRANSFORM (resting-transform.ts) with the same function list, so
+   lifting the hold changes nothing on screen. It goes through the variable
+   because the CSS minifier folds a literal `translate3d(0px, 0px, 0)` into the
+   2D `translate(0)`, a different function list from the card's inline one;
+   tests/unit/board-drop-preview.test.ts pins both. */
+[data-drop-settle] {
+  transform: translate3d(0px, var(--drop-gap), 0) scaleX(1) scaleY(1) !important;
+  transition: none !important;
+}
+
+/* The slot a card dragged in from another column will drop into, filled with
+   a copy of that card at the 0.4 opacity the dragged card has in its own
+   column's slot (TaskCard's isDragging style). It slides between slots with
+   the cards and fades in where it first appears. Hidden, it is `display: none`,
+   not just transparent: placed at a nearly full lane's end slot it reaches past
+   the list, and a transparent one kept the list's scrollbar (and its narrower
+   cards) after the gap had closed. Coming back from `display: none` it has no
+   previous place to slide from, so it appears where it belongs, and
+   `@starting-style` fades it in. */
+.drop-slot {
+  position: absolute;
+  top: 0;
+  left: 0.5rem;
+  right: 0.5rem;
+  display: none;
+  pointer-events: none;
+  transition: transform 200ms ease, opacity 150ms ease;
+}
+
+.drop-slot[data-visible] {
+  display: block;
+  opacity: 0.4;
+}
+
+/* No card to copy (the overlay not up yet): the card's outline instead. */
+.drop-slot:empty {
+  box-sizing: border-box;
+  border: 1px solid var(--kng-edge-input);
+  border-radius: 0.375rem;
+  background-color: var(--kng-surface-raised);
+}
+
+@starting-style {
+  .drop-slot[data-visible] {
+    opacity: 0;
+  }
+}
+
+.no-motion .drop-slot {
+  transition-duration: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drop-slot {
+    transition-duration: 0s;
+  }
+}
+
 /* Blame gutter annotation: a Monaco `before`-content decoration on the
    DiffViewer's modified editor (see DiffViewer.tsx applyBlameDecorations),
    reading "<shortHash>  <author>" at the start of each line. Rendered as

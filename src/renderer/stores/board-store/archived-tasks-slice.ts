@@ -144,19 +144,37 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
 
     const targetLane = get().swimlanes.find((lane) => lane.id === input.targetSwimlaneId);
     const endOfLanePosition = previousTasks.filter((t) => t.swimlane_id === input.targetSwimlaneId).length;
+    // Main honors a position inside the lane and appends otherwise
+    // (TASK_UNARCHIVE); the optimistic placement mirrors that rule.
+    const requestedPosition = input.position;
+    const position = requestedPosition !== undefined
+      && Number.isInteger(requestedPosition)
+      && requestedPosition >= 0
+      && requestedPosition < endOfLanePosition
+      ? requestedPosition
+      : endOfLanePosition;
     const optimisticTask: Task = {
       ...archivedRecord,
       archived_at: null,
       swimlane_id: input.targetSwimlaneId,
-      position: endOfLanePosition,
+      position,
     };
 
     // Symmetric optimistic update: insert into tasks[] and remove from
     // archivedTasks[] in one set() so the card is continuously present in
     // some list. Without this, dnd-kit's DragOverlay has no handoff target
-    // during the IPC window and animates back to Done.
+    // during the IPC window and animates back to Done. The lane's cards at or
+    // past the position move down one in the same set(), so the restored card
+    // sorts into its slot rather than tying with the card already there.
     set((state) => ({
-      tasks: [...state.tasks, optimisticTask],
+      tasks: [
+        ...state.tasks.map((t) => (
+          t.swimlane_id === input.targetSwimlaneId && t.position >= position
+            ? { ...t, position: t.position + 1 }
+            : t
+        )),
+        optimisticTask,
+      ],
       archivedTasks: state.archivedTasks.filter((t) => t.id !== input.id),
       archivedTotalCount: Math.max(0, state.archivedTotalCount - 1),
     }));

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -311,9 +311,11 @@ export function KanbanBoard() {
     collisionDetection,
     modifiers,
     handleDragStart,
+    handleDragMove,
     handleDragOver,
     handleDragEnd,
     handleDragCancel,
+    settleDropHandoff,
     activeTask,
     sortableColumnIds,
     dropAnimation,
@@ -383,6 +385,14 @@ export function KanbanBoard() {
   }, [swimlanes, tasks, taskFilter, completingTaskIds, lanePins]);
   /* eslint-enable react-hooks/refs */
 
+  // A cross-column drop leaves its lane's cards parted until the dropped card
+  // is in that lane. This runs in the commit that puts it there, before paint,
+  // so the gap gives way to the card in one frame. It reads the buckets, never
+  // re-derives them.
+  useLayoutEffect(() => {
+    settleDropHandoff(tasksPerLane, tasks);
+  }, [tasksPerLane, tasks, settleDropHandoff]);
+
   // The links overlay draws over the lanes, measured against this root.
   const boardRootRef = useRef<HTMLDivElement>(null);
 
@@ -398,6 +408,7 @@ export function KanbanBoard() {
         collisionDetection={collisionDetection}
         modifiers={modifiers}
         onDragStart={handleDragStart}
+        onDragMove={handleDragMove}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
