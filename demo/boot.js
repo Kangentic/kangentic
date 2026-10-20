@@ -262,6 +262,9 @@
    * veil an arriving terminal could take focus too, and every other scene keeps the veil it was
    * shot under. Once a field holds focus, a terminal that arrives later is refused it (arrival
    * focus reads it as occupied).
+   *
+   * The focus never scrolls: a focus scrolls its element into view through every box above it, and
+   * in an embedded frame that carries on into the page embedding it.
    */
   function clickTarget(target) {
     if (target.matches('input, textarea, [contenteditable="true"]')) {
@@ -271,7 +274,7 @@
         root.style.opacity = '0';
         root.style.pointerEvents = 'none';
       }
-      target.focus();
+      target.focus({ preventScroll: true });
     }
     target.click();
   }

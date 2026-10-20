@@ -11,7 +11,10 @@ const require = createRequire(import.meta.url);
 // opts back in. This test fails on the ways a launch could: a persistent context (a real profile,
 // which is where installed extensions live), an installed browser channel, a --load-extension
 // switch, or an ignoreDefaultArgs that drops --disable-extensions or every default at once. The
-// live frame in a visitor's browser is demo/boot.js's job (demo/README.md, Browser extensions).
+// one channel allowed is `chromium`, the full Chromium build Playwright downloads beside its
+// headless shell, run in Chrome's new headless mode with the same default switches. The demo tier
+// needs it because the headless shell stops a scroll at a fixed box where Chrome carries it on.
+// The live frame in a visitor's browser is demo/boot.js's job (demo/README.md, Browser extensions).
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['demo', 'tests/captures', 'tests/demo', 'scripts'];
@@ -45,7 +48,7 @@ const LAUNCH_RULES: LaunchRule[] = [
   { description: '--load-extension loads an extension', pattern: /--load-extension/g },
   { description: 'ignoreDefaultArgs: true drops --disable-extensions with every other default', pattern: /ignoreDefaultArgs\s*:\s*true\b/g },
   { description: 'ignoreDefaultArgs names --disable-extensions', pattern: /ignoreDefaultArgs\s*:\s*\[[^\]]*--disable-extensions/g },
-  { description: 'a channel launches an installed browser, not the bundled one', pattern: /\bchannel\s*:\s*['"`]/g, playwrightOnly: true },
+  { description: 'a channel launches an installed browser, not the bundled one', pattern: /\bchannel\s*:\s*['"`](?!chromium['"`])/g, playwrightOnly: true },
 ];
 
 function collectCodeFiles(directory: string): string[] {
@@ -136,6 +139,10 @@ describe('findExtensionLaunches', () => {
   it('passes the launches the demo uses', () => {
     expect(findExtensionLaunches(`import { chromium } from '@playwright/test';\nawait chromium.launch({ headless: true, args: ['--force-device-scale-factor=2'] });`)).toEqual([]);
     expect(findExtensionLaunches(`import { chromium } from '@playwright/test';\nawait chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'] });`)).toEqual([]);
+    // The bundled build in new headless mode, which the host-scroll tests run on, in each quoting.
+    expect(findExtensionLaunches(`import { chromium } from '@playwright/test';\nawait chromium.launch({ channel: 'chromium', headless: true });`)).toEqual([]);
+    expect(findExtensionLaunches(`import { chromium } from '@playwright/test';\nawait chromium.launch({ channel: "chromium" });`)).toEqual([]);
+    expect(findExtensionLaunches('import { chromium } from \'@playwright/test\';\nawait chromium.launch({ channel: `chromium` });')).toEqual([]);
   });
 
   it('flags each way a launch takes extensions back', () => {
@@ -144,6 +151,8 @@ describe('findExtensionLaunches', () => {
     expect(findExtensionLaunches(`await chromium.launch({ ignoreDefaultArgs: true });`)).toHaveLength(1);
     expect(findExtensionLaunches(`await chromium.launch({\n  ignoreDefaultArgs: ['--hide-scrollbars',\n    '--disable-extensions'],\n});`)).toEqual(['2: ignoreDefaultArgs names --disable-extensions']);
     expect(findExtensionLaunches(`import { chromium } from 'playwright';\n\nawait chromium.launch({ channel: 'chrome' });`)).toEqual(['3: a channel launches an installed browser, not the bundled one']);
+    // A channel that only starts with the bundled name is still an installed browser.
+    expect(findExtensionLaunches(`import { chromium } from 'playwright';\nawait chromium.launch({ channel: 'chromium-beta' });`)).toEqual(['2: a channel launches an installed browser, not the bundled one']);
   });
 
   it('leaves a channel alone in a file that does not launch a browser', () => {

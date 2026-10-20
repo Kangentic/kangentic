@@ -110,9 +110,13 @@ it in `src/renderer`.
 Our own shots are clean by construction. Every capture, poster, measurement and demo-tier run is
 Playwright's bundled Chromium, whose default switches include `--disable-extensions`.
 `tests/unit/demo-launches-no-extensions.test.ts` fails on a launch under `demo/`, `tests/captures/`,
-`tests/demo/` or `scripts/` that takes that back: a persistent context, a `channel`, a
-`--load-extension`, or an `ignoreDefaultArgs` that is `true` or names the switch. It also reads the
-switch out of the installed `playwright-core`, so an upgrade that drops it fails there.
+`tests/demo/` or `scripts/` that takes that back: a persistent context, a `channel` other than
+`chromium`, a `--load-extension`, or an `ignoreDefaultArgs` that is `true` or names the switch. It
+also reads the switch out of the installed `playwright-core`, so an upgrade that drops it fails
+there. The `chromium` channel is the full Chromium build Playwright downloads beside the default
+headless shell, run in Chrome's new headless mode with the same default switches. The host-scroll
+tests run on it, because the headless shell stops a scroll at a fixed box that Chrome carries on
+into the embedding page.
 
 In a visitor's browser the frame does two things:
 
@@ -456,10 +460,12 @@ scene that says none:
   the focus; never Escape or Enter), `choose` (an option of a native select: the pointer clicks the
   field and the value changes with the events a pick sends, since no page can draw the browser's
   own option list), and `hotkeyDown` and `hotkeyUp` (a mouse hotkey held and let
-  go through boot.js's own `pressCombo`, balanced within a cycle). `scroll` brings an element to the
-  middle of its scroll container. At most one `pose`, and at most one `cut`, which comes after the
-  pose with a step on each side of it (below). A step may carry `waitFor`, a selector its
-  effect must produce (the app's own timing: a dwell, an animation, a check), and `ms`, the pacing
+  go through boot.js's own `pressCombo`, balanced within a cycle). `scroll` moves only the box a
+  wheel over an element would scroll. It centres the element vertically and moves it horizontally
+  the least distance that shows it. It is not `scrollIntoView`, which also scrolls the page that
+  embeds the frame. At most one `pose`, and at most one `cut`, which comes after the pose with a
+  step on each side of it (below). A step may carry `waitFor`, a selector its effect must produce
+  (the app's own timing: a dwell, an animation, a check), and `ms`, the pacing
   after it. Any step the next depends on waits for its effect; `ms` is pacing only. A removal is
   waited for as `body:not(:has(...))`, since a popover or a dialog stays mounted through its exit.
 - **`timeline`**, what main does at a moment on a working session's replay clock. The one moment

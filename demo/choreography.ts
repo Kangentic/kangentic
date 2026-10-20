@@ -193,6 +193,76 @@ function centreOf(element: Element): Point {
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
 }
 
+/** The overflow values a visitor's wheel scrolls. A `hidden` box scrolls only from a script. */
+const WHEEL_SCROLLABLE = new Set(['auto', 'scroll', 'overlay']);
+
+/**
+ * The box a wheel over the element scrolls on one axis: the nearest ancestor whose overflow on that
+ * axis lets a visitor scroll it and whose content overflows it there. Null when none does.
+ */
+function scrollContainerOf(element: Element, axis: 'vertical' | 'horizontal'): Element | null {
+  for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    const scrolls = axis === 'vertical'
+      ? WHEEL_SCROLLABLE.has(style.overflowY) && ancestor.scrollHeight > ancestor.clientHeight
+      : WHEEL_SCROLLABLE.has(style.overflowX) && ancestor.scrollWidth > ancestor.clientWidth;
+    if (scrolls) return ancestor;
+  }
+  return null;
+}
+
+/** Where a scroll container's content shows, in viewport coordinates, inside its borders and scrollbars. */
+function visibleBoxOf(scroller: Element): { top: number; left: number; width: number; height: number } {
+  // The frame's own viewport: its root's rect is the whole document, which moves as it scrolls.
+  if (scroller === document.scrollingElement) return { top: 0, left: 0, width: scroller.clientWidth, height: scroller.clientHeight };
+  const rect = scroller.getBoundingClientRect();
+  return { top: rect.top + scroller.clientTop, left: rect.left + scroller.clientLeft, width: scroller.clientWidth, height: scroller.clientHeight };
+}
+
+/**
+ * How far to scroll so a span shows in a box, as `scrollIntoView`'s `nearest` does: nothing when it
+ * shows already or covers the box, else the least distance, which brings in the edge that is out
+ * when the span fits and the other edge when it does not. Exported for its unit test.
+ */
+export function nearestOffset(start: number, end: number, boxStart: number, boxEnd: number): number {
+  if ((start >= boxStart && end <= boxEnd) || (start < boxStart && end > boxEnd)) return 0;
+  const fits = end - start <= boxEnd - boxStart;
+  const startIsOut = start < boxStart;
+  if (fits) return startIsOut ? start - boxStart : end - boxEnd;
+  return startIsOut ? end - boxEnd : start - boxStart;
+}
+
+/**
+ * Scroll an element to the middle of the boxes a wheel over it would scroll, and nothing else:
+ * centred vertically, and horizontally moved the least distance that shows it. Never
+ * `scrollIntoView`, which scrolls every box above the element, `overflow: hidden` ones too, and in
+ * an embedded frame carries on through the iframe into the page embedding it, so that page moved
+ * under its reader with no input.
+ */
+function scrollIntoMiddle(element: Element, behavior: ScrollBehavior): void {
+  // Measured once, before either axis moves.
+  const rect = element.getBoundingClientRect();
+  const vertical = scrollContainerOf(element, 'vertical');
+  const horizontal = scrollContainerOf(element, 'horizontal');
+  let top = 0;
+  let left = 0;
+  if (vertical) {
+    const box = visibleBoxOf(vertical);
+    top = vertical.scrollTop + (rect.top - box.top) - (box.height - rect.height) / 2;
+  }
+  if (horizontal) {
+    const box = visibleBoxOf(horizontal);
+    left = horizontal.scrollLeft + nearestOffset(rect.left, rect.right, box.left, box.left + box.width);
+  }
+  // One call for one box: a second smooth scroll on an element cancels the first one's animation.
+  if (vertical && vertical === horizontal) {
+    vertical.scrollTo({ top, left, behavior });
+    return;
+  }
+  vertical?.scrollTo({ top, behavior });
+  horizontal?.scrollTo({ left, behavior });
+}
+
 async function resolveTarget(target: ChoreographyTarget): Promise<Point> {
   if (typeof target !== 'string') return { x: target.x * window.innerWidth, y: target.y * window.innerHeight };
   return centreOf(await waitForElement(target));
@@ -651,12 +721,12 @@ export function createChoreography(steps: ChoreographyStep[], options: Choreogra
     }
   }
 
-  /** Bring an element to the middle of its scroll container and wait for the scroll to finish. */
+  /** Bring an element to the middle of its scroll container, only that one, and wait for the scroll to finish. */
   async function scrollTo(selector: string): Promise<void> {
     const element = await waitForElement(selector);
     // The page is the visitor's once they take over, so a scroll still on its way stays put.
     if (stopped) return;
-    element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: instant ? 'auto' : 'smooth' });
+    scrollIntoMiddle(element, instant ? 'auto' : 'smooth');
     let previous = centreOf(element);
     let still = 0;
     for (let frame = 0; frame < SETTLE_FRAMES * 2 && still < SETTLED_FRAMES; frame++) {
