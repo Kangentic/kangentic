@@ -179,6 +179,11 @@ function lift(factory: EmulatorFactory, originalSetMounted: ReturnType<typeof vi
     'var openFrames = {};',
     'var REPAINT = "";',
     'function sessionDurationMs() { return 0; }',
+    'function clockMs() { return 0; }',
+    // Where a recording stops playing on its session's clock (the seed's playedEndMs, which caps a
+    // tiled sibling at its session's end). These recordings never reach their end, so it is the
+    // recording's own end, which is what frameScrollback compared against before that cap.
+    'function playedEndMs(sessionId, recording) { return recordingEndMs(recording); }',
     'function clearReplayTimers() {}',
     'function scheduleSessionClock() {}',
     'function endedOnItsOwn() { return false; }',
