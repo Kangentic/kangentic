@@ -72,13 +72,16 @@ import type { CommandContext } from '../../src/main/agent/commands/types';
 
 /**
  * Minimal fake for the `sessionManager` slice `McpSteeringContext` requires
- * (`SessionSendSessionManager & SteeringSessionLookup`), with listener-count
- * tracking so we can observe how many times the coordinator subscribed/
- * unsubscribed without reaching into mcp-http-server's private state.
+ * (`SessionSendSessionManager & SteeringSessionLookup &
+ * BackgroundShellServiceMarker`), with listener-count tracking so we can
+ * observe how many times the coordinator subscribed/unsubscribed without
+ * reaching into mcp-http-server's private state.
  */
 function createFakeSteeringSessionManager() {
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   return {
+    markBackgroundShellsAsServices: vi.fn((_sessionId: string, shellIds: readonly string[]) =>
+      shellIds.map((shellId) => ({ shellId, outcome: 'marked' as const }))),
     isWritable: () => false,
     getActivityCache: () => ({}),
     findLiveSessionByTaskId: () => undefined,
@@ -139,6 +142,57 @@ function postToPath(port: number, pathname: string, token: string): Promise<{ st
     );
     request.on('error', reject);
     request.end(JSON.stringify({ jsonrpc: '2.0', method: 'ping', id: 1 }));
+  });
+}
+
+/** The slice of a JSON-RPC reply the tool-offer tests read. */
+interface JsonRpcReply {
+  statusCode: number;
+  body: {
+    result?: {
+      tools?: Array<{ name: string }>;
+      content?: Array<{ type: string; text: string }>;
+      isError?: boolean;
+    };
+    error?: unknown;
+  } | null;
+}
+
+/**
+ * POSTs one JSON-RPC request and returns the parsed reply. The server runs in
+ * stateless JSON mode (`enableJsonResponse`), so the reply is a single JSON body
+ * and no `initialize` handshake is needed first.
+ */
+function postJsonRpc(port: number, pathname: string, token: string, message: Record<string, unknown>): Promise<JsonRpcReply> {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: pathname,
+        method: 'POST',
+        headers: {
+          Accept: 'application/json, text/event-stream',
+          'Content-Type': 'application/json',
+          'X-Kangentic-Token': token,
+        },
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => {
+          let body: JsonRpcReply['body'] = null;
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as JsonRpcReply['body'];
+          } catch {
+            // A non-JSON reply (a bare 4xx or 5xx) leaves body null; the caller asserts on statusCode.
+          }
+          resolve({ statusCode: response.statusCode ?? 0, body });
+        });
+      },
+    );
+    request.on('error', reject);
+    request.end(JSON.stringify({ jsonrpc: '2.0', id: 1, ...message }));
   });
 }
 
@@ -211,5 +265,132 @@ describe('startMcpHttpServer - SessionSendCoordinator lifecycle', () => {
     // request, so this would read 2 instead of 1.
     expect(sessionManager.listenerCount('activity')).toBe(1);
     expect(sessionManager.listenerCount('exit')).toBe(1);
+  });
+});
+
+/**
+ * Task #857: `kangentic_mark_background_service` marks the shells of the session
+ * that calls it, so it is offered only to a connection whose URL names a task
+ * session (`/mcp/<projectId>/<callerSessionId>`), and it is wired to the
+ * SessionManager the steering context carries. The tool's own behavior is in
+ * background-shell-tools.test.ts and the engine's in activity-engine.test.ts;
+ * these cover the wiring in between, which neither of those crosses:
+ * `resolveBackgroundShells` and the caller routing in `handleHttpRequest`.
+ */
+describe('startMcpHttpServer - kangentic_mark_background_service offer (task #857)', () => {
+  const MARK_SERVICE_TOOL = 'kangentic_mark_background_service';
+  /** A task-tool every full server registers, so a list that came back empty or broken cannot pass a "not offered" check. */
+  const FULL_SERVER_TOOL = 'kangentic_list_tasks';
+  let handle: McpHttpServerHandle | undefined;
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+  });
+
+  async function startServer(
+    steeringContext: McpSteeringContext | null,
+  ): Promise<{ port: number; token: string }> {
+    const resolver = makeResolver();
+    handle = await startMcpHttpServer(
+      (projectId) => (projectId === 'proj-1' ? resolver : null),
+      () => ({ enabled: false, allowInteraction: false, allowNavigation: false, allowEval: false, restrictNavigationToLocalhost: false }),
+      { bindAddress: '127.0.0.1' },
+      () => steeringContext,
+    );
+    return { port: Number(new URL(handle.baseUrl).port), token: handle.token };
+  }
+
+  function makeSteeringContext(sessionManager: ReturnType<typeof createFakeSteeringSessionManager>): McpSteeringContext {
+    return {
+      sessionManager,
+      terminalSubmit: { submitContent: vi.fn(() => Promise.resolve()) },
+    };
+  }
+
+  /**
+   * The tool names a `tools/list` on this path returns. Asserts the list itself
+   * came back, so a 5xx or a JSON-RPC error cannot read as "the tool is not offered".
+   */
+  async function listToolNames(port: number, token: string, pathname: string): Promise<string[]> {
+    const reply = await postJsonRpc(port, pathname, token, { method: 'tools/list' });
+    expect(reply.statusCode).toBe(200);
+    expect(reply.body?.error).toBeUndefined();
+    const toolNames = (reply.body?.result?.tools ?? []).map((tool) => tool.name);
+    expect(toolNames.length).toBeGreaterThan(0);
+    return toolNames;
+  }
+
+  it('offers the tool on a task-session caller URL', async () => {
+    const { port, token } = await startServer(makeSteeringContext(createFakeSteeringSessionManager()));
+
+    const toolNames = await listToolNames(port, token, '/mcp/proj-1/task-session-42');
+
+    expect(toolNames).toContain(FULL_SERVER_TOOL);
+    // Red: passing `undefined` instead of `resolveBackgroundShells(callerSessionId)`
+    // to buildConfiguredMcpServer in handleHttpRequest drops the tool from the list.
+    expect(toolNames).toContain(MARK_SERVICE_TOOL);
+  });
+
+  it('routes a call to the SessionManager with the session id from the URL and the shell ids', async () => {
+    const sessionManager = createFakeSteeringSessionManager();
+    const { port, token } = await startServer(makeSteeringContext(sessionManager));
+
+    const reply = await postJsonRpc(port, '/mcp/proj-1/task-session-42', token, {
+      method: 'tools/call',
+      params: { name: MARK_SERVICE_TOOL, arguments: { shellIds: ['bserver01'] } },
+    });
+
+    expect(reply.statusCode).toBe(200);
+    expect(reply.body?.error).toBeUndefined();
+    // The session is the URL's, never a tool argument, so a caller cannot mark another session's shells.
+    expect(sessionManager.markBackgroundShellsAsServices).toHaveBeenCalledTimes(1);
+    expect(sessionManager.markBackgroundShellsAsServices).toHaveBeenCalledWith('task-session-42', ['bserver01']);
+    expect(reply.body?.result?.isError).toBeFalsy();
+    const resultText = (reply.body?.result?.content ?? []).map((entry) => entry.text).join('\n');
+    expect(resultText).toContain('bserver01: marked as a service');
+  });
+
+  it('does not offer the tool, nor route a call, on a connection that names no session', async () => {
+    const sessionManager = createFakeSteeringSessionManager();
+    const { port, token } = await startServer(makeSteeringContext(sessionManager));
+
+    const toolNames = await listToolNames(port, token, '/mcp/proj-1');
+
+    expect(toolNames).toContain(FULL_SERVER_TOOL);
+    expect(toolNames).not.toContain(MARK_SERVICE_TOOL);
+
+    await postJsonRpc(port, '/mcp/proj-1', token, {
+      method: 'tools/call',
+      params: { name: MARK_SERVICE_TOOL, arguments: { shellIds: ['bserver01'] } },
+    });
+    expect(sessionManager.markBackgroundShellsAsServices).not.toHaveBeenCalled();
+  });
+
+  it('does not offer the tool to a workflow agent caller', async () => {
+    const { port, token } = await startServer(makeSteeringContext(createFakeSteeringSessionManager()));
+
+    const toolNames = await listToolNames(port, token, '/mcp/proj-1/workflow-wf1');
+
+    expect(toolNames).toContain(FULL_SERVER_TOOL);
+    expect(toolNames).not.toContain(MARK_SERVICE_TOOL);
+  });
+
+  it('does not offer the tool to a Knowledge Graph answer caller', async () => {
+    const { port, token } = await startServer(makeSteeringContext(createFakeSteeringSessionManager()));
+
+    const toolNames = await listToolNames(port, token, '/mcp/proj-1/answer-chat1');
+
+    expect(toolNames).toContain('kangentic_search');
+    expect(toolNames).not.toContain(MARK_SERVICE_TOOL);
+  });
+
+  it('does not offer the tool before the steering context exists, even to a task-session caller', async () => {
+    const { port, token } = await startServer(null);
+
+    const toolNames = await listToolNames(port, token, '/mcp/proj-1/task-session-42');
+
+    expect(toolNames).toContain(FULL_SERVER_TOOL);
+    expect(toolNames).not.toContain(MARK_SERVICE_TOOL);
   });
 });
