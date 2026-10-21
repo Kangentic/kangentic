@@ -1304,6 +1304,116 @@ describe('BridgeSession.connectionState', () => {
       vi.useRealTimers();
     }
   });
+
+  // The relay closes the parked socket of a phone that is away every 60 s
+  // (code 4408), and RelayClient is back in about 1 s (500 ms backoff plus a
+  // ~450 ms dial, measured on the hosted relay). Without a hold for the absent
+  // verdict, every recycle wrote "offline -> reconnecting" and "reconnecting ->
+  // offline" as warn lines, flashed the badge to "Reconnecting", and reset its
+  // "since" time once a minute.
+  it('holds "offline" across the relay\'s park recycle of an absent phone, with no flicker', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createReconnectableLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      vi.advanceTimersByTime(10 * 1000);
+      expect(session.connectionState).toBe('offline');
+
+      const observed: string[] = [];
+      session.on('connectionState', () => observed.push(session.connectionState));
+
+      setDesktopState('reconnecting');
+      // The service's relayState aggregate reads the link through the same
+      // hold, so the recycle does not move the panel-wide value either.
+      expect(session.transportState).toBe('reconnecting');
+      expect(session.relayLinkState).toBe('connected');
+      vi.advanceTimersByTime(500);
+      setDesktopState('connected');
+      // Past the hold's expiry and the fresh socket's own probe budget.
+      vi.advanceTimersByTime(12 * 1000);
+
+      expect(session.connectionState).toBe('offline');
+      expect(observed.filter((state) => state !== 'offline')).toEqual([]);
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls through to "reconnecting" when an absent phone\'s relay outage outlasts the hold, and announces it', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createReconnectableLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      vi.advanceTimersByTime(10 * 1000);
+      expect(session.connectionState).toBe('offline');
+
+      setDesktopState('reconnecting');
+      expect(session.connectionState).toBe('offline');
+      const connectionStateEvents = vi.fn();
+      session.on('connectionState', connectionStateEvents);
+
+      // A relay the desktop cannot reach is a network problem, not an absent
+      // phone, so it must surface once the hold runs out, and notify.
+      vi.advanceTimersByTime(2 * 1000);
+
+      expect(session.connectionState).toBe('reconnecting');
+      expect(session.relayLinkState).toBe('reconnecting');
+      expect(connectionStateEvents).toHaveBeenCalled();
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dispose() clears an armed "offline" hold, so connectionState reports the real transport state', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createReconnectableLoopback();
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      vi.advanceTimersByTime(10 * 1000);
+      expect(session.connectionState).toBe('offline');
+
+      setDesktopState('reconnecting');
+      session.dispose();
+
+      expect(session.connectionState).toBe('reconnecting');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A hold repeats a presence verdict. A session whose first handshake is still
+  // unanswered has no verdict yet, so leaving 'connected' must report the real
+  // transport state at once instead of arming a hold that claims one.
+  it('arms no hold when the transport drops before any presence verdict, so both getters read "reconnecting" at once', () => {
+    vi.useFakeTimers();
+    try {
+      const desktopIdentity = testIdentity();
+      const deviceStatic = generateX25519KeyPair();
+      const { desktop, setDesktopState } = createReconnectableLoopback();
+      // No responder and no timer advance, so the presence verdict stays 'unknown'.
+      const session = startSession(desktop, desktopIdentity, deviceStatic.publicKey);
+      expect(session.connectionState).toBe('connecting');
+
+      setDesktopState('reconnecting');
+
+      expect(session.connectionState).toBe('reconnecting');
+      expect(session.relayLinkState).toBe('reconnecting');
+
+      session.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 /**
@@ -1979,9 +2089,9 @@ describe('BridgeSession spent-budget redial', () => {
       expect(desktop.redialNow).toHaveBeenCalledWith(expect.objectContaining({ force: true }));
       // The absence edge is announced BEFORE the transport is torn down, and
       // presence is already 'absent' when the leave-connected edge lands, so
-      // no reconnect grace holds a stale 'connected'.
+      // the reconnect grace holds 'offline', never a stale 'connected'.
       expect(events).toEqual(['peerAbsent', 'forcedRedial', 'transport:reconnecting']);
-      expect(session.connectionState).toBe('reconnecting');
+      expect(session.connectionState).toBe('offline');
 
       // The fresh park's 'connected' edge sends one msg1 into an empty
       // buffer; the phone arriving finds exactly that one.
@@ -2249,6 +2359,10 @@ describe('BridgeSession spent-budget redial', () => {
 
       vi.advanceTimersByTime(MOCK_REHANDSHAKE_INTERVAL_MS + 10 * 1000);
       expect(desktop.redialNow).toHaveBeenCalledTimes(1);
+      // The phone is absent, so the reconnect grace holds 'offline' first;
+      // a dial still failing once it expires surfaces as 'reconnecting'.
+      expect(session.connectionState).toBe('offline');
+      vi.advanceTimersByTime(2 * 1000);
       expect(session.connectionState).toBe('reconnecting');
 
       // Nothing the session owns fires while the transport is down: no

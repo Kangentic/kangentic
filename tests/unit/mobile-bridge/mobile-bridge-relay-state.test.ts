@@ -95,6 +95,8 @@ const createdSessions: FakeBridgeSession[] = [];
 class FakeBridgeSession extends EventEmitter {
   readonly deviceId: string;
   transportState: TransportState = 'connecting';
+  /** What the aggregate reads. Follows transportState except inside a reconnect hold (setTransportStateInsideHold). */
+  relayLinkState: TransportState = 'connecting';
   /**
    * Mirrors the real getter's pre-handshake value: a session whose transport
    * has connected but whose Noise KK session has not completed still reports
@@ -123,7 +125,20 @@ class FakeBridgeSession extends EventEmitter {
    */
   setTransportState(state: TransportState): void {
     this.transportState = state;
+    this.relayLinkState = state;
     if (state !== 'connected') this.connectionState = state;
+    this.emit('transportState', state);
+    this.emit('connectionState');
+  }
+
+  /**
+   * Mirrors the real session's reconnect hold (RECONNECT_GRACE_MS): the
+   * transport leaves 'connected', but connectionState keeps its presence
+   * verdict and relayLinkState keeps reading 'connected' until the hold
+   * expires or the transport comes back.
+   */
+  setTransportStateInsideHold(state: TransportState): void {
+    this.transportState = state;
     this.emit('transportState', state);
     this.emit('connectionState');
   }
@@ -373,6 +388,36 @@ describe('MobileBridgeService.scheduleRelayStateEmit() throttle', () => {
     expect(stateChanged).toHaveBeenCalledTimes(1);
     expect(service.getStatus().relayState).toBe('connected');
     expect(service.listDevices().find((device) => device.deviceId === 'device-B')?.connectionState).toBe('offline');
+
+    service.dispose();
+  });
+
+  it('a reconnect inside a session\'s hold moves neither relayState nor the signature, so the renderer is not told to re-fetch', async () => {
+    // The relay's park recycle of an absent phone: once a minute the parked
+    // socket closes and is back in about 1 s, which straddles the 500 ms
+    // throttle check. Reading the raw transport state there sent two
+    // 'stateChanged' notifications per recycle for a panel nothing renders.
+    rosterDevices = [deviceA];
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    const sessions = await openSessions(service);
+    const session = sessions.get('device-A');
+    if (!session) throw new Error('device-A session was not opened');
+    session.setTransportState('connected');
+    session.setConnectionState('offline');
+    await vi.advanceTimersByTimeAsync(500);
+
+    const stateChanged = vi.fn();
+    service.on('stateChanged', stateChanged);
+
+    session.setTransportStateInsideHold('reconnecting');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(service.getStatus().relayState).toBe('connected');
+
+    session.setTransportState('connected');
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(stateChanged).not.toHaveBeenCalled();
+    expect(service.listDevices()[0]?.connectionState).toBe('offline');
 
     service.dispose();
   });
