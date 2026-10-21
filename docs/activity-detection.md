@@ -86,7 +86,7 @@ Surrounding infrastructure:
 | `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
-| `src/main/activity-engine/plan-approval-gate.ts` | Runs first in `SessionTelemetry.ingestEvents`: drops or holds the plan prompt's permission idle for a plan Kangentic approves, and emits `plan_auto_approved` (see [Plan approval gate](#plan-approval-gate)) |
+| `src/main/activity-engine/plan-approval-gate.ts` | Runs first in `SessionTelemetry.ingestEvents`: drops or holds the permission idle of the plan prompt, and of an allowed tool the adapter's hook answers, for a plan Kangentic approves, and emits `plan_auto_approved` (see [Plan approval gate](#plan-approval-gate)) |
 | `src/main/activity-engine/plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move |
 | `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode` |
 
@@ -254,7 +254,7 @@ The same hook answers a plan-mode prompt for a tool the session's allow rules na
 with no `readOnlyHint` even when an allow rule names it. Its permission idle races that marker the same way: on
 Claude Code 2.1.306 the approving hook started 5 to 114 ms after the catch-all one. So, for a
 session whose decision approves plans and a tool its adapter's `mayApprovePlanTool` names (for
-Claude, any MCP tool but Kangentic's own):
+Claude, any MCP tool but Kangentic's own), or when that tool's marker already arrived first:
 
 - The idle is held for `TOOL_APPROVAL_WAIT_MS` (1 s) for the marker, and released then if none
   came. A prompt the hook left alone shows that much late.
@@ -265,7 +265,7 @@ Claude, any MCP tool but Kangentic's own):
   minute. A tool that really runs longer reads as needing you from then until its `tool_end`.
 - Several can wait at once, as when a subagent calls the tool its parent does. Markers, idles and
   `tool_end`s pair with the oldest entry of the same tool. The agent's end drops them all.
-- The turn's end drops them all too: a Stop idle, a `turn_failed`, an `interrupted` that names no
+- The turn's end drops them all too: any idle that is not a permission one, a `turn_failed`, an `interrupted` that names no
   tool, or a new prompt. An idle released after the turn ended would mark an idle session as
   needing you.
 
