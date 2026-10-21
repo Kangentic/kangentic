@@ -16,7 +16,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { Plus, FolderPlus, FileDiff, MessagesSquare, ChartColumn, Brain, GripVertical } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, MessagesSquare, ChartColumn, Brain, GripVertical, MemoryStick } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
@@ -145,6 +145,7 @@ export function TestHarness() {
   const [seeding, setSeeding] = useState(false);
   const [seedingConversation, setSeedingConversation] = useState(false);
   const [seedingUsage, setSeedingUsage] = useState(false);
+  const [simulatingLowMemory, setSimulatingLowMemory] = useState(false);
   const [seedingKnowledgeGraph, setSeedingKnowledgeGraph] = useState(false);
 
   // Draggable so the panel can be moved off whatever it is covering. Position
@@ -343,6 +344,22 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: read every host memory sample as low memory, so the low-memory
+  // pause runs on this machine: one agent that has waited on you 5 minutes or
+  // more is paused per minute (the first right away), oldest wait first.
+  const handleToggleLowMemory = async () => {
+    const next = !simulatingLowMemory;
+    try {
+      await window.electronAPI.dev?.simulateLowMemory(next);
+      setSimulatingLowMemory(next);
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to simulate low memory: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    }
+  };
+
   // Dev-only: give the Knowledge Graph something to show. The REAL parent
   // project's index is mirrored when this machine has one, because synthetic
   // text makes every product question unanswerable (you cannot judge a cluster
@@ -478,6 +495,17 @@ export function TestHarness() {
       >
         <ChartColumn size={16} />
         {seedingUsage ? 'Seeding...' : 'Seed Usage Data'}
+      </button>
+      <button
+        type="button"
+        onClick={handleToggleLowMemory}
+        aria-pressed={simulatingLowMemory}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface transition-colors aria-pressed:border-warning aria-pressed:text-warning"
+        data-testid="dev-simulate-low-memory"
+        title="Read every host memory sample as low memory, so the low-memory pause pauses one agent that has waited on you 5+ minutes per minute"
+      >
+        <MemoryStick size={16} />
+        {simulatingLowMemory ? 'Stop Low Memory' : 'Simulate Low Memory'}
       </button>
       <button
         type="button"

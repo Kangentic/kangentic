@@ -12,6 +12,7 @@ import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
+import { createLowMemoryAgentPauser, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
@@ -19,6 +20,7 @@ import { resolvePreviewTaskLabel } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
 import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
+import { registerSimulateLowMemoryDevIpc } from '../devtools/main/simulate-low-memory';
 import { registerSeedKnowledgeGraphDevIpc } from '../devtools/main/seed-knowledge-graph';
 import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-knowledge-graph-real';
 import { registerSeedKnowledgeGraphDemoDevIpc } from '../devtools/main/seed-knowledge-graph-demo';
@@ -959,6 +961,10 @@ let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
 // a window rebuilt on macOS activate or a second-instance launch.
 let previousRunLogged = false;
 let stopHostMemorySampler: (() => void) | null = null;
+// Pauses the agent that has waited on the user longest while memory runs low
+// (diagnostics/idle-agent-pause.ts). Fed from the sampler's per-tick hook;
+// reads the IPC context at tick time, since the sampler is armed before it.
+const lowMemoryAgentPauser = createLowMemoryAgentPauser(() => getOptionalIpcContext());
 // DESKTOP-16 bounded-reload guard for the main window's render-process-gone
 // handler below. See renderer-recovery.ts for why the decision logic lives
 // in its own testable module rather than inline here.
@@ -1481,6 +1487,15 @@ const createWindow = () => {
           // real capture repositories, so the usage dashboard has rich charts
           // to show in an ephemeral preview.
           registerSeedUsageDataDevIpc(getOptionalIpcContext);
+          // The TestHarness "Simulate Low Memory" toggle: every sample reads as
+          // low memory, so the low-memory pause can be watched in a preview
+          // without exhausting the machine. Turning it on evaluates the last
+          // sample at once rather than waiting up to a minute for a tick.
+          registerSimulateLowMemoryDevIpc((on) => {
+            setSimulatedLowMemory(on);
+            const lastSample = getLastHostMemorySample();
+            if (on && lastSample) lowMemoryAgentPauser.onSample(lastSample);
+          });
           // The TestHarness "Seed Knowledge Graph" button: the REAL-index mirror
           // (the parent project's actual conversations, titles and vectors), and
           // the synthetic cluster corpus it falls back to on a machine with no
@@ -1931,7 +1946,16 @@ app.whenReady().then(async () => {
         return 0;
       }
     },
-    onSample: (sample) => setHostMemoryContext(sample),
+    onSample: (sample) => {
+      setHostMemoryContext(sample);
+      // Its own try: a throw here must not skip this tick's Windows warning,
+      // which the sampler evaluates after this hook returns.
+      try {
+        lowMemoryAgentPauser.onSample(sample);
+      } catch (error) {
+        console.error('[idle-agent-pause] Tick failed:', error);
+      }
+    },
     onPressure: (sample, activeAgentCount) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.webContents.send(IPC.HOST_MEMORY_PRESSURE, { sample, activeAgentCount });

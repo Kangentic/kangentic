@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   createHostMemoryPressureState,
+  createPressureLevelReader,
   evaluateHostMemoryPressure,
   getLastHostMemorySample,
+  memoryHeadroom,
+  parseMacPressureLevel,
   pressureThreshold,
+  recoveryLine,
   sampleHostMemory,
   startHostMemorySampler,
   type HostMemorySample,
@@ -334,6 +338,174 @@ describe('sampleHostMemory', () => {
 
     expect(result.platform).toBe(platform);
     expect(result.physicalAvailableBytes).toBeNull();
+  });
+
+  // The low-memory pause reads RAM plus swap on Linux.
+  it('records swap on linux, in bytes', () => {
+    stubPlatform('linux');
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000, available: 555_000 });
+
+    const result = sampleHostMemory();
+
+    expect(result.swapTotalBytes).toBe(333_000 * 1024);
+    expect(result.swapFreeBytes).toBe(444_000 * 1024);
+  });
+
+  it.each(['win32', 'darwin'] as const)('reports no swap reading on %s, where swap means something else or nothing', (platform) => {
+    stubPlatform(platform);
+    stubMemoryInfo({ total: 111_000, free: 222_000, swapTotal: 333_000, swapFree: 444_000 });
+
+    const result = sampleHostMemory();
+
+    expect(result.swapTotalBytes).toBeNull();
+    expect(result.swapFreeBytes).toBeNull();
+  });
+
+  it('carries the cached pressure level on darwin and drops it everywhere else', () => {
+    stubMemoryInfo({ total: 111_000, free: 222_000 });
+
+    stubPlatform('darwin');
+    expect(sampleHostMemory({ memoryPressureLevel: 4 }).memoryPressureLevel).toBe(4);
+    expect(sampleHostMemory().memoryPressureLevel).toBeNull();
+
+    stubPlatform('win32');
+    expect(sampleHostMemory({ memoryPressureLevel: 4 }).memoryPressureLevel).toBeNull();
+  });
+});
+
+describe('memoryHeadroom', () => {
+  it('reads commit headroom on Windows', () => {
+    expect(memoryHeadroom(sample({ commitLimitBytes: 64 * GB, commitRemainingBytes: 3 * GB }))).toEqual({
+      kind: 'bytes',
+      remainingBytes: 3 * GB,
+      limitBytes: 64 * GB,
+    });
+  });
+
+  it('has no Windows reading without commit figures, or with a zero limit', () => {
+    expect(memoryHeadroom(sample({ commitLimitBytes: null, commitRemainingBytes: null }))).toBeNull();
+    expect(memoryHeadroom(sample({ commitLimitBytes: 0, commitRemainingBytes: 0 }))).toBeNull();
+  });
+
+  it('reads RAM plus swap on Linux, so a healthy machine with cold pages in swap is not low', () => {
+    const headroom = memoryHeadroom(sample({
+      platform: 'linux',
+      commitLimitBytes: null,
+      commitRemainingBytes: null,
+      physicalTotalBytes: 16 * GB,
+      physicalAvailableBytes: 1 * GB,
+      swapTotalBytes: 8 * GB,
+      swapFreeBytes: 6 * GB,
+    }));
+
+    expect(headroom).toEqual({ kind: 'bytes', remainingBytes: 7 * GB, limitBytes: 24 * GB });
+  });
+
+  it('reads RAM alone on Linux when the sample predates the swap fields', () => {
+    const headroom = memoryHeadroom(sample({
+      platform: 'linux',
+      commitLimitBytes: null,
+      commitRemainingBytes: null,
+      physicalTotalBytes: 16 * GB,
+      physicalAvailableBytes: 2 * GB,
+    }));
+
+    expect(headroom).toEqual({ kind: 'bytes', remainingBytes: 2 * GB, limitBytes: 16 * GB });
+  });
+
+  it('has no Linux reading without MemAvailable', () => {
+    expect(memoryHeadroom(sample({ platform: 'linux', commitLimitBytes: null, commitRemainingBytes: null }))).toBeNull();
+  });
+
+  it.each([[2, true], [4, true], [1, false]] as const)('reads macOS pressure level %i as low=%s', (level, low) => {
+    expect(memoryHeadroom(sample({ platform: 'darwin', commitLimitBytes: null, commitRemainingBytes: null, memoryPressureLevel: level })))
+      .toEqual({ kind: 'level', low });
+  });
+
+  it.each([null, 0, 3, 8])('has no macOS reading for level %s', (level) => {
+    expect(memoryHeadroom(sample({ platform: 'darwin', commitLimitBytes: null, commitRemainingBytes: null, memoryPressureLevel: level })))
+      .toBeNull();
+  });
+
+  it('has no reading on any other platform', () => {
+    expect(memoryHeadroom(sample({ platform: 'freebsd' }))).toBeNull();
+  });
+
+  it('puts the recovery line at twice the threshold', () => {
+    expect(recoveryLine(64 * GB)).toBe(pressureThreshold(64 * GB) * 2);
+  });
+});
+
+describe('parseMacPressureLevel', () => {
+  it('reads the number sysctl prints, ignoring the newline', () => {
+    expect(parseMacPressureLevel('1\n')).toBe(1);
+    expect(parseMacPressureLevel(' 4 ')).toBe(4);
+  });
+
+  it('reads anything else as unknown', () => {
+    expect(parseMacPressureLevel('')).toBeNull();
+    expect(parseMacPressureLevel('sysctl: unknown oid')).toBeNull();
+    expect(parseMacPressureLevel('-1')).toBeNull();
+  });
+});
+
+describe('createPressureLevelReader', () => {
+  async function settle(): Promise<void> {
+    for (let tick = 0; tick < 5; tick++) await Promise.resolve();
+  }
+
+  it('has nothing until a read lands, then serves it until it is older than the cap', async () => {
+    let clock = 1_000;
+    const reader = createPressureLevelReader(async () => 2, () => clock);
+
+    expect(reader.current(clock, 120_000)).toBeNull();
+    reader.refresh();
+    await settle();
+
+    expect(reader.current(clock, 120_000)).toBe(2);
+    clock += 120_000;
+    expect(reader.current(clock, 120_000)).toBe(2);
+    expect(reader.current(clock + 1, 120_000)).toBeNull();
+  });
+
+  it('forgets the level when a read fails', async () => {
+    let level: number | null = 4;
+    const reader = createPressureLevelReader(async () => level, () => 1_000);
+    reader.refresh();
+    await settle();
+    expect(reader.current(1_000, 120_000)).toBe(4);
+
+    level = null;
+    reader.refresh();
+    await settle();
+    expect(reader.current(1_000, 120_000)).toBeNull();
+  });
+
+  it('runs one read at a time', async () => {
+    let finish: (level: number) => void = () => {};
+    const read = vi.fn(() => new Promise<number>((resolve) => { finish = resolve; }));
+    const reader = createPressureLevelReader(read, () => 1_000);
+
+    reader.refresh();
+    reader.refresh();
+    expect(read).toHaveBeenCalledTimes(1);
+
+    finish(1);
+    await settle();
+    reader.refresh();
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a read that lands after dispose out of the cache', async () => {
+    let finish: (level: number) => void = () => {};
+    const reader = createPressureLevelReader(() => new Promise<number>((resolve) => { finish = resolve; }), () => 1_000);
+
+    reader.refresh();
+    reader.dispose();
+    finish(4);
+    await settle();
+
+    expect(reader.current(1_000, 120_000)).toBeNull();
   });
 });
 

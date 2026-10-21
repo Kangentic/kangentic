@@ -889,6 +889,15 @@
     listeners.forEach(function (fn) { fn(event); });
   };
 
+  // Low-memory agent pause test hooks: one push per agent main paused while
+  // it waited on the user (src/main/diagnostics/idle-agent-pause.ts). Same
+  // eager pattern as the two above.
+  window.__mockHostMemoryAgentPausedListeners = [];
+  window.__mockFireHostMemoryAgentPaused = function (event) {
+    var listeners = window.__mockHostMemoryAgentPausedListeners.slice();
+    listeners.forEach(function (fn) { fn(event); });
+  };
+
   // Announcements test hooks: installed eagerly for the same reason as the
   // update-downloaded hooks above. `__mockFireAnnouncementsChanged(active,
   // history)` also updates `__mockActiveAnnouncements` /
@@ -5048,6 +5057,14 @@
         window.__mockHostMemoryRecoveryListeners.push(callback);
         return function () {
           var listeners = window.__mockHostMemoryRecoveryListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onAgentPaused: function (callback) {
+        window.__mockHostMemoryAgentPausedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockHostMemoryAgentPausedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
