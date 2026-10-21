@@ -175,14 +175,23 @@ async function focusedTaskId(page: Page): Promise<string | null> {
  *  Tab's own default action. A script `focus()` alone is pointer-or-script
  *  placed by the sensor's rule, so Shift+Tab steps off the element and Tab
  *  steps back on. Every element this spec targets has a previous Tab stop (a
- *  column header control, or the card before it). */
+ *  column header control, or the card before it).
+ *
+ *  The placement is retried as ONE unit. A late focus move from elsewhere (a
+ *  terminal's arrival focus landing after the spec saw it settle, which a slow
+ *  runner stretches) can take focus between the Shift+Tab and the Tab, so the Tab
+ *  goes to the terminal and the target never regains focus. Retrying only the
+ *  last poll cannot recover from that; redoing the whole sequence does, and a
+ *  placement that never works still fails once the budget is spent. */
 async function focusByKeyboard(page: Page, selector: string): Promise<void> {
   const isFocused = () => page.locator(selector).evaluate((element) => element === document.activeElement);
-  await page.locator(selector).evaluate((element) => (element as HTMLElement).focus());
-  await page.keyboard.press('Shift+Tab');
-  await expect.poll(isFocused).toBe(false);
-  await page.keyboard.press('Tab');
-  await expect.poll(isFocused).toBe(true);
+  await expect(async () => {
+    await page.locator(selector).evaluate((element) => (element as HTMLElement).focus());
+    await page.keyboard.press('Shift+Tab');
+    await expect.poll(isFocused, { timeout: 2000 }).toBe(false);
+    await page.keyboard.press('Tab');
+    await expect.poll(isFocused, { timeout: 2000 }).toBe(true);
+  }).toPass({ timeout: 15000 });
 }
 
 async function focusCardByKeyboard(page: Page): Promise<void> {
