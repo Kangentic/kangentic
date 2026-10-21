@@ -23,7 +23,7 @@
  *         answer exactly the same calls:
  *         {
  *           launch: { toolField, tools, when, unless, idSources, commandPath,
- *                     idPattern, optOutFlag },
+ *                     optOutFlag },
  *           reply: object
  *         }
  *
@@ -47,8 +47,6 @@
  */
 
 const MAX_STDIN_CHARACTERS = 1024 * 1024;
-// Mirrors `looksLikeShellId` (src/main/activity-engine/background-shell/looks-like-shell-id.ts).
-const SHELL_ID_PATTERN = /^[\w-]{1,64}$/;
 const SHELL_ID_PLACEHOLDER = '{{shellId}}';
 
 const [, , encodedSpec] = process.argv;
@@ -59,6 +57,9 @@ const [, , encodedSpec] = process.argv;
 // BackgroundCallMatch in src/shared/background-command-spec.ts.
 // tests/unit/background-call-match-parity.test.ts keeps the two copies equal.
 const BACKGROUND_MATCH_SCAN_CAP = 64 * 1024;
+// Mirrors `looksLikeShellId` (src/main/activity-engine/background-shell/looks-like-shell-id.ts).
+// A literal, so no id regex is built from argv; the parity test pins it to SHELL_ID_PATTERN_SOURCE.
+const SHELL_ID_PATTERN = /^[\w-]{1,64}$/;
 
 function valueAtPath(root, pathSegments) {
   if (!Array.isArray(pathSegments) || pathSegments.length === 0) return undefined;
@@ -73,14 +74,8 @@ function conditionHolds(root, condition) {
   return Boolean(condition) && valueAtPath(root, condition.path) === condition.equals;
 }
 
-function idFromSources(root, sources, idPattern) {
-  if (!Array.isArray(sources) || typeof idPattern !== 'string') return null;
-  let shape;
-  try {
-    shape = new RegExp(idPattern);
-  } catch {
-    return null;
-  }
+function idFromSources(root, sources) {
+  if (!Array.isArray(sources)) return null;
   for (const source of sources) {
     if (!source) continue;
     const value = valueAtPath(root, source.path);
@@ -96,13 +91,13 @@ function idFromSources(root, sources, idPattern) {
     } else if (typeof value === 'string' || typeof value === 'number') {
       candidate = String(value);
     }
-    if (candidate && shape.test(candidate)) return candidate;
+    if (candidate && SHELL_ID_PATTERN.test(candidate)) return candidate;
   }
   return null;
 }
 
 /** The id of a call `match` names, or null. Never throws. */
-function matchBackgroundCall(root, match, idPattern) {
+function matchBackgroundCall(root, match) {
   if (!root || typeof root !== 'object' || !match || typeof match !== 'object') return null;
   if (typeof match.toolField !== 'string' || !Array.isArray(match.tools)) return null;
   const tool = root[match.toolField];
@@ -111,7 +106,7 @@ function matchBackgroundCall(root, match, idPattern) {
   const unless = Array.isArray(match.unless) ? match.unless : [];
   if (!when.every((condition) => conditionHolds(root, condition))) return null;
   if (unless.some((condition) => conditionHolds(root, condition))) return null;
-  const id = idFromSources(root, match.idSources, idPattern);
+  const id = idFromSources(root, match.idSources);
   return id ? { tool, id } : null;
 }
 
@@ -160,7 +155,7 @@ function legacyLaunchId(spec, context) {
 
 /** v2: the launch match the event bridge reads. The id of a background launch, or null. */
 function launchId(launch, context) {
-  const match = matchBackgroundCall(context, launch, launch.idPattern);
+  const match = matchBackgroundCall(context, launch);
   if (!match) return null;
   if (commandCarries(context, launch.commandPath, launch.optOutFlag)) return null;
   return match.id;

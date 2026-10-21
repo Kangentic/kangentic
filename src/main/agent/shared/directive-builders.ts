@@ -273,17 +273,14 @@ export function emitOnlyWhenDetailMatches(pattern: string): string {
   return encodeDirective('emitOnlyWhenDetailMatches', { pattern });
 }
 
-/** `appendBackgroundLaunch`'s payload: the launch match plus what the bridge needs beside it. */
+/**
+ * `appendBackgroundLaunch`'s payload: the launch match plus the opt-out flag.
+ * The id shape is not sent: the bridge holds it as a literal, pinned to
+ * `SHELL_ID_PATTERN_SOURCE` by `background-call-match-parity.test.ts`.
+ */
 export interface BackgroundLaunchDirective extends BackgroundLaunchMatch {
-  /** The id shape (`SHELL_ID_PATTERN_SOURCE`); an id that does not match is no launch. */
-  idPattern: string;
   /** A command carrying this lands exempt (`SessionEvent.noActivityHold`). */
   optOutFlag: string;
-}
-
-/** `appendBackgroundStop`'s payload. */
-export interface BackgroundStopDirective extends BackgroundCallMatch {
-  idPattern: string;
 }
 
 /**
@@ -308,6 +305,6 @@ export function appendBackgroundLaunch(match: BackgroundLaunchDirective): string
  * the id it names before the hook's own event. Register it on the stop tool's
  * post-tool SUCCESS hook only. Its own kind, for the same stale-copy reason.
  */
-export function appendBackgroundStop(match: BackgroundStopDirective): string {
+export function appendBackgroundStop(match: BackgroundCallMatch): string {
   return encodeDirective('appendBackgroundStop', match);
 }

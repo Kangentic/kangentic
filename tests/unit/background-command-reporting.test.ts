@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventType } from '../../src/shared/types';
-import { SHELL_ID_PATTERN_SOURCE, type BackgroundCommandSpec } from '../../src/shared/background-command-spec';
+import type { BackgroundCommandSpec } from '../../src/shared/background-command-spec';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 import {
@@ -348,7 +348,6 @@ describe('appendBackgroundLaunch in the real bridge', () => {
     unless: [],
     idSources: [{ path: ['result', 'id'] }],
     commandPath: ['input', 'command'],
-    idPattern: SHELL_ID_PATTERN_SOURCE,
     optOutFlag: NO_ACTIVITY_HOLD_FLAG,
   };
 

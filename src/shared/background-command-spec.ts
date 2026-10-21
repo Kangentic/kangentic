@@ -11,8 +11,10 @@
 
 /**
  * What an id must look like for the engine to track a shell by name
- * (`looksLikeShellId`). One source: the engine, both bridges (sent in each
- * directive's payload) and the MCP tool read it from here.
+ * (`looksLikeShellId`). The engine, Kimi's wire parser and the MCP tool read it
+ * from here. The two bridges are bare scripts that import nothing, so each holds
+ * it as a literal in its shared matcher block, and
+ * `tests/unit/background-call-match-parity.test.ts` pins that literal to this.
  */
 export const SHELL_ID_PATTERN_SOURCE = '^[\\w-]{1,64}$';
 
