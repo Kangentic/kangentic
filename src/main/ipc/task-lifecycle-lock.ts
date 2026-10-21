@@ -30,10 +30,13 @@ import PQueue from 'p-queue';
  * Do NOT wrap long-running I/O that is already serialized elsewhere:
  *
  * - `ensureTaskWorktree` / `ensureTaskBranchCheckout` / `deleteTaskWorktree` /
- *   `cleanupTaskResources` are already serialized per project by
- *   `WorktreeManager.projectQueues` (a p-queue keyed on project path,
- *   concurrency=1). Holding `withTaskLock` across these adds only extra
- *   wall-clock to concurrent same-task operations without adding safety.
+ *   `cleanupTaskResources` are already serialized: their git work per project
+ *   by `WorktreeManager.projectQueues` (a priority queue keyed on project
+ *   path, one job at a time), and a new worktree's setup script, which runs
+ *   after that, per worktree path by the creation registry
+ *   (`worktree-creation-registry.ts`). Holding `withTaskLock` across these
+ *   adds only extra wall-clock to concurrent same-task operations without
+ *   adding safety.
  *
  * Pure read-only handlers and synchronous-only paths do NOT need the lock.
  * Node is single-threaded; if you never `await`, you cannot race.

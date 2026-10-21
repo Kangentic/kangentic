@@ -13,6 +13,17 @@ import { spawnOffMainCli, type CliChildProcess } from '../utility-process/off-ma
  */
 const MAX_CAPTURED_OUTPUT_CHARS = 1_000_000;
 
+/**
+ * How long an aborted shell command (the post-worktree init script) may take to
+ * close after its tree is killed before the call settles anyway. The settle
+ * waits for the close because a creation that has settled is what lets a
+ * removal or a new creation at the same worktree path go ahead
+ * (`worktree-creation-registry.ts`), and `taskkill /T` is itself a process that
+ * takes a moment. The bound covers a descendant that escaped the tree kill and
+ * still holds the output pipes.
+ */
+export const TREE_EXIT_WAIT_MS = 5_000;
+
 export interface SpawnWithAbortOptions {
   /** Wall-clock cap. On expiry the child is killed via the internal AbortController. */
   timeoutMs: number;
@@ -205,6 +216,11 @@ export function spawnWithAbort(
     // timeout, the way the run-script automation's script does. A binary (git)
     // keeps Node's own kill.
     const killsTree = args === undefined;
+    // Set once the abort listener below has killed the tree: from then on the
+    // close settles with the abort's wording, whatever exit code the kill left,
+    // and clears the bound on that wait.
+    let treeKilled = false;
+    let treeExitWait: ReturnType<typeof setTimeout> | undefined;
     const spawnOptions: SpawnOptions = {
       cwd,
       shell: launch.shell,
@@ -222,15 +238,31 @@ export function spawnWithAbort(
     if (killsTree) {
       // Kill the tree instead of the shell, never after it: `taskkill /T` finds
       // the children through their parent, which a dead shell no longer is.
+      // Settle when the killed shell closes (every holder of its output pipes is
+      // gone), or at TREE_EXIT_WAIT_MS, so an aborted call returns only once
+      // nothing it started is still running in its directory.
       controller.signal.addEventListener('abort', () => {
-        if (child.pid !== undefined) killChildTreeByPid(child.pid);
-        settleReject(abortedError());
+        if (child.pid === undefined) {
+          settleReject(abortedError());
+          return;
+        }
+        treeKilled = true;
+        killChildTreeByPid(child.pid);
+        treeExitWait = setTimeout(() => settleReject(abortedError()), TREE_EXIT_WAIT_MS);
+        treeExitWait.unref?.();
       }, { once: true });
     }
 
     child.stdout?.on('data', onStdout);
     child.stderr?.on('data', onStderr);
     child.on('error', onError);
-    child.on('close', onClose);
+    child.on('close', (code: number | null, signalName: NodeJS.Signals | null) => {
+      if (treeKilled) {
+        clearTimeout(treeExitWait);
+        settleReject(abortedError());
+        return;
+      }
+      onClose(code, signalName);
+    });
   });
 }

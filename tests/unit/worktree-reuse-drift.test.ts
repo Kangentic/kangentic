@@ -31,11 +31,14 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
     static withGitLock<T>(_projectPath: string, operation: () => Promise<T>): Promise<T> { return operation(); }
     withLock<T>(operation: () => Promise<T>): Promise<T> { return operation(); }
     ensureWorktree(...args: unknown[]): unknown { return mockEnsureWorktree(...args); }
+    setUpWorktree(): Promise<void> { return Promise.resolve(); }
   },
+  prepareStaleWorktreeForCreation: vi.fn(async () => false),
 }));
 
 vi.mock('../../src/main/git/task-worktree-folder', () => ({
   prepareWorktreeFolder: vi.fn(),
+  taskWorktreePathFor: vi.fn((task: { display_id: number }, projectPath: string) => `${projectPath}/.kangentic/worktrees/${task.display_id}`),
 }));
 
 vi.mock('../../src/main/git/git-checks', () => ({

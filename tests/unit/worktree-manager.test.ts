@@ -27,7 +27,7 @@ vi.mock('node:fs', () => ({
     rmSync: vi.fn(),
     copyFileSync: vi.fn(),
     // Async fs used by createWorktree's non-blocking worktrees-dir creation
-    // and copyFiles loop. access() resolves by default (treat source as
+    // and setUpWorktree's copy loop. access() resolves by default (treat source as
     // present); mkdir/copyFile resolve to undefined.
     promises: {
       mkdir: vi.fn(),
@@ -57,16 +57,17 @@ const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
   // spawn is called with two different signatures in this file:
   //
   //   runGitWithTimeout: spawn('git', [...args], { signal, ... })  -- 3 positional args
-  //   runInitScript:     spawn(script,            { signal, ... })  -- 2 positional args
+  //   runInitScript:     spawn(script,            { detached, ... }) -- 2 positional args
   //                                                (options lands in the 'args' slot)
   //
   // The mock uses the `args` parameter for both cases: for git calls it is a real
-  // readonly string[], for init-script calls it is the options object. We read
-  // `signal` defensively from both: (a) if 3-arg form, it's in the 3rd positional
-  // (not captured here); (b) if 2-arg form, it's in args as an object field.
-  // To keep existing tests unchanged the 3-arg git form's options are ignored
-  // (git spawns in this file have no signal). Only the 2-arg init-script form
-  // has a live signal that should drive abort simulation.
+  // readonly string[], for init-script calls it is the options object. The 3-arg
+  // git form's options are ignored (git spawns in this file have no signal). The
+  // init-script form carries no `signal` either: spawnWithAbort kills a shell
+  // command's tree itself. The fake child has no pid, so an aborted script
+  // settles at once (spawn-with-abort.ts's `child.pid === undefined` branch);
+  // run-init-script.test.ts drives the kill-then-close path. The `signal` read
+  // below is kept for a spawn that passes one.
   const mockSpawn = vi.fn((
     command: string,
     args: readonly string[] | { signal?: AbortSignal; [key: string]: unknown },
@@ -179,15 +180,18 @@ import {
   WorktreeManager,
   GitQueuePriority,
   setWorktreeRemovedListener,
+  prepareStaleWorktreeForCreation,
   type WorktreeRemovalOutcome,
 } from '../../src/main/git/worktree-manager';
 import type { WorktreeHolder } from '../../src/main/git/zombie-reaper';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
-import { linkNodeModules } from '../../src/main/git/node-modules-link';
+import { linkNodeModules, removeNodeModulesPath } from '../../src/main/git/node-modules-link';
 import { getInstalledGitVersion } from '../../src/main/git/git-version';
 import { isAbortError } from '../../src/shared/abort-utils';
 import { worktreeFolderFromPath } from '../../src/shared/worktree-folder';
+import { runWorktreeCreation } from '../../src/main/git/worktree-creation-registry';
+import { taskWorktreePathFor } from '../../src/main/git/task-worktree-folder';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -204,7 +208,7 @@ function worktreeTask(
   return { id, title, display_id: 7, ...overrides };
 }
 
-/** Set up mocks so createWorktree succeeds and reaches sparse-checkout / copyFiles. */
+/** Set up mocks so createWorktree succeeds and reaches sparse-checkout, and setUpWorktree copies. */
 function setupCreateWorktreeMocks() {
   // fs.existsSync: true for .git check and worktrees dir, false for stale worktree path check
   vi.mocked(fs.existsSync).mockImplementation((checkPath: fs.PathLike) => {
@@ -306,7 +310,8 @@ describe('WorktreeManager -- sparse-checkout', () => {
     ));
 
     const worktreeManager = new WorktreeManager('/project');
-    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
+    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main');
+    await worktreeManager.setUpWorktree(result.worktreePath, { copyFiles: ['README.md'] });
 
     expect(result.worktreePath).toBeDefined();
     expect(fs.promises.copyFile).toHaveBeenCalledTimes(1);
@@ -315,8 +320,9 @@ describe('WorktreeManager -- sparse-checkout', () => {
   it('sparse-checkout runs before copyFiles', async () => {
     setupCreateWorktreeMocks();
 
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', ['README.md']);
+    const worktreeManager = new WorktreeManager('/project');
+    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main');
+    await worktreeManager.setUpWorktree(result.worktreePath, { copyFiles: ['README.md'] });
 
     // Cross-mock order: the sparse `set` must land before the first copied file,
     // or a later sparse pass could act on a tree copyFiles already wrote into.
@@ -334,12 +340,14 @@ describe('WorktreeManager -- sparse-checkout', () => {
   it('skips .claude/ entries in copyFiles', async () => {
     setupCreateWorktreeMocks();
 
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [
-      '.claude/settings.local.json',
-      '.claude\\commands\\review.md',
-      'README.md',
-    ]);
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree('/project/.kangentic/worktrees/7', {
+      copyFiles: [
+        '.claude/settings.local.json',
+        '.claude\\commands\\review.md',
+        'README.md',
+      ],
+    });
 
     // Only README.md should be copied (2 .claude/ entries skipped)
     expect(fs.promises.copyFile).toHaveBeenCalledTimes(1);
@@ -352,10 +360,9 @@ describe('WorktreeManager -- sparse-checkout', () => {
   it('no skip-worktree or update-index calls', async () => {
     setupCreateWorktreeMocks();
 
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [
-      '.claude/settings.local.json',
-    ]);
+    const worktreeManager = new WorktreeManager('/project');
+    const result = await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main');
+    await worktreeManager.setUpWorktree(result.worktreePath, { copyFiles: ['.claude/settings.local.json'] });
 
     // No update-index, ls-files, or skip-worktree calls
     const forbiddenCalls = mockWorktreeGit.raw.mock.calls.filter(
@@ -458,9 +465,11 @@ describe('WorktreeManager -- parallel checkout workers', () => {
   });
 });
 
-// ── initScript + linkNodeModules ──────────────────────────────────────────
+// ── setUpWorktree: copyFiles, linkNodeModules, initScript ──────────────────
 
-describe('WorktreeManager -- initScript and node_modules linking', () => {
+describe('WorktreeManager - setUpWorktree (initScript and node_modules linking)', () => {
+  const setupWorktreePath = '/project/.kangentic/worktrees/7';
+
   beforeEach(() => {
     vi.clearAllMocks();
     clearFetchCache();
@@ -469,114 +478,179 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
     setupCreateWorktreeMocks();
   });
 
-  it('runs the initScript in the new worktree after creation', async () => {
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, {
-      initScript: 'echo setup',
-    });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Yield until the named script has been spawned, proving setup reached it. */
+  async function untilScriptSpawned(command: string): Promise<void> {
+    for (let flushCount = 0; flushCount < 20; flushCount++) {
+      if (recordedSpawnCalls.some((call) => call.command === command)) return;
+      await Promise.resolve();
+    }
+  }
+
+  it('createWorktree runs no copy, no link and no script: those are the setup phase', async () => {
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main');
+
+    expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
+    expect(fs.promises.copyFile).not.toHaveBeenCalled();
+    expect(recordedSpawnCalls.filter((call) => call.command !== 'git')).toHaveLength(0);
+  });
+
+  it('runs the initScript in the worktree', async () => {
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: 'echo setup' });
 
     const initCall = recordedSpawnCalls.find((call) => call.command === 'echo setup');
     expect(initCall).toBeDefined();
   });
 
-  it('fails worktree creation when the initScript exits non-zero (fatal)', async () => {
+  it('copies, then links, then runs the script', async () => {
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: ['README.md'], initScript: 'echo setup' });
+
+    const copyOrder = vi.mocked(fs.promises.copyFile).mock.invocationCallOrder[0];
+    const linkOrder = vi.mocked(linkNodeModules).mock.invocationCallOrder[0];
+    const scriptIndex = recordedSpawnCalls.findIndex((call) => call.command === 'echo setup');
+    const scriptOrder = mockSpawn.mock.invocationCallOrder[scriptIndex];
+    expect(copyOrder).toBeLessThan(linkOrder);
+    expect(linkOrder).toBeLessThan(scriptOrder);
+  });
+
+  it('fails the setup when the initScript exits non-zero (fatal)', async () => {
     spawnOverrides.push({
       match: (_args, command) => command === 'failing-script',
       behavior: { exitCode: 1, stderr: 'boom' },
     });
 
-    const mgr = new WorktreeManager('/project');
+    const worktreeManager = new WorktreeManager('/project');
     await expect(
-      mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { initScript: 'failing-script' }),
+      worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: 'failing-script' }),
     ).rejects.toThrow(/boom/);
   });
 
   it('skips the initScript when it is empty or whitespace', async () => {
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { initScript: '   ' });
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: '   ' });
 
-    // Only git spawns (fetch); no shell command spawned for the blank script.
-    const nonGitSpawns = recordedSpawnCalls.filter((call) => call.command !== 'git');
-    expect(nonGitSpawns).toHaveLength(0);
+    expect(recordedSpawnCalls).toHaveLength(0);
   });
 
   it('links node_modules by default (option omitted)', async () => {
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'));
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [] });
 
     expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledWith(setupWorktreePath, '/project');
   });
 
   it('links node_modules when linkNodeModules is true', async () => {
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { linkNodeModules: true });
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], linkNodeModules: true });
 
     expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
   });
 
   it('does NOT link node_modules when linkNodeModules is false', async () => {
-    const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null, { linkNodeModules: false });
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], linkNodeModules: false });
 
     expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
   });
 
-  it('propagates an external abort signal through createWorktree to runInitScript, rejecting creation', async () => {
-    // Gap: an AbortSignal passed to createWorktree (via options.signal) must
-    // propagate all the way through to runInitScript so a superseding task move
-    // or app shutdown can cancel a long-running init script (e.g. npm install).
-    //
-    // The mock's signal detection reads from whichever positional argument holds
-    // the options object. For runInitScript's spawn call that is the 2nd argument
-    // (no args array); for runGitWithTimeout's spawn call it is the 3rd. The
-    // updated mockSpawn checks Array.isArray(args) to distinguish them and wires
-    // the signal listener only for the 2-arg (init-script) form.
-    //
-    // Timing note: createWorktree does several async git operations (fetch, rev-
-    // parse, git.raw) before reaching runInitScript. All those operations are
-    // mocked as queueMicrotask. We wait for an init-script spawn to appear in
-    // recordedSpawnCalls (proof createWorktree has reached that phase) before
-    // aborting, ensuring the abort flows through the init-script path and not an
-    // earlier throwIfAborted() guard.
+  it('does nothing when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const worktreeManager = new WorktreeManager('/project');
+
+    const rejection = await worktreeManager.setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: ['README.md'], initScript: 'echo setup' },
+      { signal: controller.signal },
+    ).catch((error: unknown) => error);
+
+    expect(isAbortError(rejection)).toBe(true);
+    expect(fs.promises.copyFile).not.toHaveBeenCalled();
+    expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
+    expect(recordedSpawnCalls).toHaveLength(0);
+  });
+
+  it('stops after the copy loop when the signal aborts during a copy: no link, no script', async () => {
+    // Reverting the signal.throwIfAborted() that follows the copy loop would go
+    // on to link node_modules (and start the script) for a cancelled creation.
+    const controller = new AbortController();
+    vi.mocked(fs.promises.copyFile).mockImplementationOnce(async () => { controller.abort(); });
+    const onProgress = vi.fn();
+    const worktreeManager = new WorktreeManager('/project');
+
+    const rejection = await worktreeManager.setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: ['README.md'], initScript: 'echo setup' },
+      { signal: controller.signal, onProgress },
+    ).catch((error: unknown) => error);
+
+    // The abort came from inside the copy, not from before the setup began.
+    expect(fs.promises.copyFile).toHaveBeenCalledTimes(1);
+    expect(isAbortError(rejection)).toBe(true);
+    expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(recordedSpawnCalls).toHaveLength(0);
+  });
+
+  it('stops after the link when the signal aborts during it: the script never starts', async () => {
+    // Reverting the signal.throwIfAborted() that follows the link would still
+    // reject as an AbortError with no spawn, because the script runner refuses
+    // an already-aborted signal and the catch maps that to an AbortError. What
+    // it would NOT do is skip the script block, so the 'init-script' phase
+    // report is the signal that the throw is in place.
+    const controller = new AbortController();
+    vi.mocked(linkNodeModules).mockImplementationOnce(async () => { controller.abort(); });
+    const onProgress = vi.fn();
+    const worktreeManager = new WorktreeManager('/project');
+
+    const rejection = await worktreeManager.setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: [], initScript: 'echo setup' },
+      { signal: controller.signal, onProgress },
+    ).catch((error: unknown) => error);
+
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+    expect(isAbortError(rejection)).toBe(true);
+    expect(onProgress).not.toHaveBeenCalled();
+    expect(recordedSpawnCalls).toHaveLength(0);
+  });
+
+  it('propagates an external abort signal to runInitScript, rejecting the setup as an AbortError', async () => {
+    // A superseding task move or app shutdown cancels a long-running init
+    // script (e.g. npm install) through the signal it handed the setup.
     spawnOverrides.push({
-      // Match the init-script command; git calls are matched by 'git' command string.
       match: (_args, command) => command === 'hang-script',
       behavior: { hang: true },
     });
 
     const controller = new AbortController();
-    const mgr = new WorktreeManager('/project');
-
-    const creationPromise = mgr.createWorktree(worktreeTask('abcd1234-0000', 'Test task'),
-      'main',
-      [],
-      null,
-      { initScript: 'hang-script', signal: controller.signal },
+    const worktreeManager = new WorktreeManager('/project');
+    const setupPromise = worktreeManager.setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: [], initScript: 'hang-script' },
+      { signal: controller.signal },
     );
 
-    // Drain all queued microtasks until the init-script spawn is visible.
-    // Each await flushes one layer of microtasks / resolved promise continuations.
-    // The git phases (fetch, rev-parse, raw) each have one async step, so a handful
-    // of yields is sufficient to advance createWorktree to the init-script await.
-    for (let flushCount = 0; flushCount < 20; flushCount++) {
-      const initScriptSpawned = recordedSpawnCalls.some((call) => call.command === 'hang-script');
-      if (initScriptSpawned) break;
-      await Promise.resolve();
-    }
-
-    // The init-script spawn must be visible before we abort (proving we reached
-    // that phase, not an earlier throwIfAborted guard).
+    await untilScriptSpawned('hang-script');
     expect(recordedSpawnCalls.some((call) => call.command === 'hang-script')).toBe(true);
 
     controller.abort();
 
     // The abort reaches runInitScript, which rejects with "external abort", and
-    // createWorktree reports it as an AbortError, NOT a failure. Callers skip
-    // their failure handling for an AbortError; task-move's failure handling
-    // queues a stale cleanup that ran after the superseding move's own create
-    // job and deleted the worktree and branch it had just made (reproduced in
-    // /preview, twice in two runs).
-    const rejection = await creationPromise.catch((error: unknown) => error);
+    // the setup reports it as an AbortError, NOT a failure. Callers skip their
+    // failure handling for an AbortError; task-move's failure handling queues a
+    // stale cleanup that ran after the superseding move's own create job and
+    // deleted the worktree and branch it had just made (reproduced in /preview,
+    // twice in two runs).
+    const rejection = await setupPromise.catch((error: unknown) => error);
     expect(isAbortError(rejection)).toBe(true);
   });
 
@@ -586,13 +660,221 @@ describe('WorktreeManager -- initScript and node_modules linking', () => {
       behavior: { exitCode: 1, stderr: 'boom' },
     });
 
-    const rejection = await new WorktreeManager('/project').createWorktree(
-      worktreeTask('abcd1234-0000', 'Test task'), 'main', [], null,
-      { initScript: 'failing-script', signal: new AbortController().signal },
+    const rejection = await new WorktreeManager('/project').setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: [], initScript: 'failing-script' },
+      { signal: new AbortController().signal },
     ).catch((error: unknown) => error);
 
     expect(isAbortError(rejection)).toBe(false);
     expect(String(rejection)).toMatch(/code 1.*boom/s);
+  });
+
+  it('stops re-emitting the init-script label the moment the setup is aborted', async () => {
+    // The script's tree can take seconds to die after an abort. A heartbeat tick
+    // in that window would put "Running setup script..." back over the label of
+    // the move that superseded this one.
+    vi.useFakeTimers();
+    spawnOverrides.push({
+      match: (_args, command) => command === 'hang-script',
+      behavior: { hang: true },
+    });
+    const onProgress = vi.fn();
+    const controller = new AbortController();
+    const setupPromise = new WorktreeManager('/project').setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: [], initScript: 'hang-script' },
+      { signal: controller.signal, onProgress },
+    );
+    const settled = setupPromise.catch((error: unknown) => error);
+
+    await untilScriptSpawned('hang-script');
+    expect(onProgress).toHaveBeenCalledWith('init-script');
+    await vi.advanceTimersByTimeAsync(30_000);
+    const ticksBeforeAbort = onProgress.mock.calls.length;
+    expect(ticksBeforeAbort).toBeGreaterThanOrEqual(2);
+
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(onProgress).toHaveBeenCalledTimes(ticksBeforeAbort);
+    expect(isAbortError(await settled)).toBe(true);
+  });
+
+  it('logs each setup step and the script\'s elapsed time', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const worktreeManager = new WorktreeManager('/project');
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: ['README.md'], initScript: 'echo setup' });
+
+    const lines = logSpy.mock.calls.map((call) => String(call[0]));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=copy-files done in \d+ms \(files=1\)$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=link-node-modules done in \d+ms$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[WORKTREE\] create step=init-script done in \d+ms$/));
+    expect(lines).toContainEqual(expect.stringMatching(/^\[INIT-SCRIPT\] Post-worktree script completed in \d+ms$/));
+  });
+
+  it('logs the elapsed time on a failed and on a stopped script', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    spawnOverrides.push(
+      { match: (_args, command) => command === 'failing-script', behavior: { exitCode: 1, stderr: 'boom' } },
+      { match: (_args, command) => command === 'hang-script', behavior: { hang: true } },
+    );
+    const worktreeManager = new WorktreeManager('/project');
+
+    await worktreeManager.setUpWorktree(setupWorktreePath, { copyFiles: [], initScript: 'failing-script' }).catch(() => undefined);
+    expect(errorSpy.mock.calls.map((call) => String(call[0]))).toContainEqual(
+      expect.stringMatching(/^\[INIT-SCRIPT\] Post-worktree script failed in .+ after \d+ms:$/),
+    );
+
+    const controller = new AbortController();
+    const stopped = worktreeManager.setUpWorktree(
+      setupWorktreePath,
+      { copyFiles: [], initScript: 'hang-script' },
+      { signal: controller.signal },
+    ).catch(() => undefined);
+    await untilScriptSpawned('hang-script');
+    controller.abort();
+    await stopped;
+    expect(logSpy.mock.calls.map((call) => String(call[0]))).toContainEqual(
+      expect.stringMatching(/^\[INIT-SCRIPT\] Post-worktree script stopped in .+ after \d+ms: creation was aborted$/),
+    );
+  });
+});
+
+describe('WorktreeManager - createWorktree step timings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearFetchCache();
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
+    setupCreateWorktreeMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('logs fetch, worktree-add and configure in the removal path\'s step format', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await new WorktreeManager('/project').createWorktree(worktreeTask('abcd1234-0000', 'Test task'), 'main');
+
+    const lines = logSpy.mock.calls.map((call) => String(call[0]));
+    for (const step of ['fetch', 'worktree-add', 'configure']) {
+      expect(lines).toContainEqual(expect.stringMatching(new RegExp(`^\\[WORKTREE\\] create step=${step} done in \\d+ms$`)));
+    }
+  });
+});
+
+describe('prepareStaleWorktreeForCreation', () => {
+  const projectPath = '/project';
+  const staleTask = { display_id: 7, worktree_path: null, worktree_folder: null, use_worktree: null };
+  const gitConfig = { worktreesEnabled: true };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // No `.git` file anywhere: `isInsideWorktree` reads false.
+    vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('clears the node_modules of a stale directory at the path the creation will use, and reports the phase first', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    const onProgress = vi.fn();
+
+    const found = await prepareStaleWorktreeForCreation(staleTask, projectPath, gitConfig, onProgress);
+
+    expect(found).toBe(true);
+    expect(vi.mocked(removeNodeModulesPath)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(removeNodeModulesPath).mock.calls[0][0])).toMatch(/\.kangentic[\\/]worktrees[\\/]7[\\/]node_modules$/);
+    expect(onProgress).toHaveBeenCalledWith('creating-worktree');
+    expect(onProgress.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(removeNodeModulesPath).mock.invocationCallOrder[0]);
+  });
+
+  it('does nothing when no directory is at the path', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+
+    expect(await prepareStaleWorktreeForCreation(staleTask, projectPath, gitConfig)).toBe(false);
+    expect(vi.mocked(removeNodeModulesPath)).not.toHaveBeenCalled();
+  });
+
+  it('never touches a live worktree the creation would reuse', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    // A `.git` FILE: the directory is a live linked worktree.
+    vi.mocked(fs.statSync).mockReturnValue({ isFile: () => true } as fs.Stats);
+    const liveTask = { ...staleTask, worktree_path: '/project/.kangentic/worktrees/7' };
+
+    expect(await prepareStaleWorktreeForCreation(liveTask, projectPath, gitConfig)).toBe(false);
+    expect(vi.mocked(removeNodeModulesPath)).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when worktrees are off for the task', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+
+    expect(await prepareStaleWorktreeForCreation(staleTask, projectPath, { worktreesEnabled: false })).toBe(false);
+    expect(vi.mocked(removeNodeModulesPath)).not.toHaveBeenCalled();
+  });
+
+  /** Path text with forward slashes, so a mock matches `path.join` output on any OS. */
+  const withForwardSlashes = (value: fs.PathLike): string => String(value).replace(/\\/g, '/');
+
+  it('does nothing when the project is not a git repo, even with a directory at the creation path', async () => {
+    // Everything exists except <project>/.git: the stale directory is there, the
+    // repo is not. Dropping the not-a-repo check from the shared guard
+    // (worktreeSkipBeforeBase) would clear the node_modules of a creation that
+    // ensureWorktree skips with 'not-a-repo'.
+    vi.mocked(fs.existsSync).mockImplementation((checkPath) => withForwardSlashes(checkPath) !== '/project/.git');
+    const onProgress = vi.fn();
+
+    expect(await prepareStaleWorktreeForCreation(staleTask, projectPath, gitConfig, onProgress)).toBe(false);
+
+    expect(vi.mocked(fs.existsSync).mock.calls.map((call) => withForwardSlashes(call[0]))).toContain('/project/.git');
+    expect(vi.mocked(removeNodeModulesPath)).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the project is itself a worktree, with the task\'s own worktree_path null', async () => {
+    // <project>/.git is a FILE (a linked worktree) while the task has no worktree
+    // of its own. Dropping the nested-worktree check from the shared guard would
+    // clear the node_modules of a creation that ensureWorktree skips with
+    // 'nested-worktree'.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.statSync).mockImplementation((checkPath) => {
+      if (withForwardSlashes(checkPath) === '/project/.git') return { isFile: () => true } as fs.Stats;
+      throw new Error('ENOENT');
+    });
+    const onProgress = vi.fn();
+
+    expect(await prepareStaleWorktreeForCreation(staleTask, projectPath, gitConfig, onProgress)).toBe(false);
+
+    expect(vi.mocked(removeNodeModulesPath)).not.toHaveBeenCalled();
+    expect(onProgress).not.toHaveBeenCalled();
+  });
+
+  it('bounds the node_modules clear with the in-queue step\'s budget, not the thorough profile\'s full one', async () => {
+    // Mirrors NODE_MODULES_REMOVAL_BUDGET_MS in worktree-manager.ts, which is not
+    // exported. The thorough profile's own budget is 30 s, so passing the profile
+    // through unnarrowed (or passing no removeOptions at all) would fail this: a
+    // superseding move and a Done move's removal both wait on the registry hold
+    // this clear runs inside, so it needs the smaller cap.
+    const nodeModulesBudgetMs = 10_000;
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+
+    await prepareStaleWorktreeForCreation(staleTask, projectPath, gitConfig);
+
+    expect(vi.mocked(removeNodeModulesPath)).toHaveBeenCalledTimes(1);
+    const removeOptions = vi.mocked(removeNodeModulesPath).mock.calls[0][1]?.removeOptions;
+    expect(removeOptions).toBeDefined();
+    const budgetMs = removeOptions?.budgetMs ?? Number.NaN;
+    expect(Number.isFinite(budgetMs)).toBe(true);
+    // Counted down from the moment the deadline was set, so it can only fall short
+    // of the cap by the time the setup took; the tolerance absorbs a slow runner.
+    expect(budgetMs).toBeLessThanOrEqual(nodeModulesBudgetMs);
+    expect(budgetMs).toBeGreaterThan(nodeModulesBudgetMs - 1_000);
   });
 });
 
@@ -680,7 +962,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     const outcomes: Array<{ kind: string; reason?: string }> = [];
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome test'), 'main', [], null, {
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome test'), 'main', null, {
       verifiedStartPoint: 'origin/main',
       onFetchOutcome: (outcome) => outcomes.push(outcome),
     });
@@ -709,7 +991,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     const outcomes: Array<{ kind: string }> = [];
     const mgr = new WorktreeManager('/project');
-    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome ok test'), 'develop', [], null, {
+    await mgr.createWorktree(worktreeTask('abcd1234-0000', 'Outcome ok test'), 'develop', null, {
       onFetchOutcome: (outcome) => outcomes.push(outcome),
     });
 
@@ -833,6 +1115,26 @@ describe('WorktreeManager -- removal', () => {
   // was removed when removeWorktree switched to fs.promises.rm + built-in
   // maxRetries, and had nothing more to assert beyond what the dedicated
   // file already covers.
+
+  it('removeWorktree refuses a path whose creation is in flight, without waiting for it', async () => {
+    // The creation's setup script runs outside the git queue, and this removal
+    // runs inside it: deleting would pull the directory out from under the
+    // script, and waiting would hold the queue for the script's whole run.
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const worktreePath = '/project/.kangentic/worktrees/test-abcd1234';
+    let finishCreation: () => void = () => undefined;
+    const creation = runWorktreeCreation(worktreePath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+    await Promise.resolve();
+
+    const mgr = new WorktreeManager('/project');
+    const removed = await mgr.removeWorktree(worktreePath);
+
+    expect(removed).toBe(false);
+    expect(recordedSpawnCalls.some((call) => call.args[0] === 'worktree' && call.args[1] === 'remove')).toBe(false);
+    finishCreation();
+    await creation;
+  });
 
   it('removeWorktree no-ops when path does not exist', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
@@ -1175,7 +1477,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
     );
 
     expect(createSpy).toHaveBeenCalledTimes(1);
-    const forwardedOptions = createSpy.mock.calls[0][4] as { onFetchOutcome?: unknown };
+    const forwardedOptions = createSpy.mock.calls[0][3] as { onFetchOutcome?: unknown };
     expect(forwardedOptions.onFetchOutcome).toBe(onFetchOutcome);
   });
 });
@@ -1327,6 +1629,27 @@ describe('WorktreeManager -- stale branch recovery', () => {
     );
     expect(removeCall).toBeDefined();
     expect(worktreeFolderFromPath(String(removeCall!.args[2]))).toBe('7');
+  });
+
+  it('clears its own stale directory while its creation holds the path in the registry', async () => {
+    // ensureTaskWorktree holds the path for the whole creation, and an in-lock
+    // removal refuses a held path. The creation's own stale-directory clear is
+    // the one removal that must still go ahead.
+    recordedSpawnCalls.length = 0;
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    mockProjectGit.raw.mockImplementation((args: string[]) => (
+      args[0] === 'rev-parse' && args[1] === '--verify'
+        ? Promise.reject(new Error('not found'))
+        : Promise.resolve('')
+    ));
+    const task = worktreeTask('abcd1234-0000', 'Test task');
+    const mgr = new WorktreeManager('/project');
+
+    await runWorktreeCreation(taskWorktreePathFor(task, '/project'), undefined, () => mgr.createWorktree(task));
+
+    expect(recordedSpawnCalls.some(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
+    )).toBe(true);
   });
 
   it('does not fire the worktree-removed listener when clearing a stale husk (real removeWorktreeInternal, not the stub)', async () => {
@@ -1519,7 +1842,7 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
     });
 
     // Move-out feeds the preserved branch_name back as customBranchName.
-    const result = await mgr.createWorktree(legacy, 'main', [], 'dns-setup-4e41b16b');
+    const result = await mgr.createWorktree(legacy, 'main', 'dns-setup-4e41b16b');
 
     expect(result.worktreeFolder).toBe('dns-setup-4e41b16b');
     expect(result.worktreePath.endsWith('dns-setup-4e41b16b')).toBe(true);
@@ -1553,8 +1876,8 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
     // Each subsequent creation is fed back the pinned folder, as the real
     // callers do once they have persisted it.
     const pinned = worktreeTask(taskId, title, { display_id: 460, worktree_folder: first.worktreeFolder });
-    const second = await mgr.createWorktree(pinned, 'main', [], first.branchName);
-    const third = await mgr.createWorktree(pinned, 'main', [], second.branchName);
+    const second = await mgr.createWorktree(pinned, 'main', first.branchName);
+    const third = await mgr.createWorktree(pinned, 'main', second.branchName);
 
     expect(second.worktreePath).toBe(first.worktreePath);
     expect(third.worktreePath).toBe(first.worktreePath);
@@ -1591,7 +1914,6 @@ describe('WorktreeManager -- folder-name stability across Done round-trip', () =
     const result = await mgr.createWorktree(
       worktreeTask('abcd1234-0000-0000-0000-000000000000', 'Some Title', { display_id: 9 }),
       'main',
-      [],
       'feature/login',
     );
 

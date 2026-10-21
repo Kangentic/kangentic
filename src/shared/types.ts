@@ -3943,7 +3943,13 @@ export interface AppConfig {
     defaultBaseBranch: string;
     copyFiles: string[];
     initScript: string | null;
-    /** Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let initScript own the worktree's deps. */
+    /**
+     * Symlink the root node_modules into each worktree so agents skip a fresh
+     * install. Disable to let initScript own the worktree's deps, which a
+     * workspace repo needs: its package links resolve to the main checkout's
+     * source, and pnpm keeps a node_modules in every package, which the link
+     * does not cover.
+     */
     linkNodeModules: boolean;
     /**
      * Keep the open project's PRs current in the background. On, each PR whose

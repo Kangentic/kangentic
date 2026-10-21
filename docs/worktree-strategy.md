@@ -144,6 +144,17 @@ All git-mutating operations (create, remove, branch delete, prune, checkout, ren
 
 The bound matters beyond the wait: it is what makes the reap below reachable at all. The reap runs only on `tryGitRemoval`'s failure, and without a clock attempt 1 never returned, so the recovery code sat behind a call that never came back.
 
+#### Creation holds the queue for its git phase only
+
+A worktree creation (`ensureTaskWorktree`, the one entry point every spawn path uses) runs in two phases. The git phase (fetch, the stale-directory clear, `worktree add`, sparse-checkout, the config writes) is one `create-worktree:<id8>` job on the queue. The setup phase (copy files, the `node_modules` link, the Post-Worktree Script) runs after that job ends, still before the agent spawns. The script used to run inside the job, so one `pnpm install` held every other git operation in the project: another task's creation, a Done move's removal, auto-fetch. In one project's logs a second task waited 11 s for the first task's 9.8 s install, and a 21.6 s install held the queue alone. N tasks starting together ran N scripts back to back.
+
+Two things now do what the queue used to do for the setup phase.
+
+- **The creation registry** (`src/main/git/worktree-creation-registry.ts`) holds a task's worktree path from the start of `ensureTaskWorktree` until the setup ends. A second creation for the same task waits for the first, then re-reads the task row, so it reuses the worktree the first one recorded instead of clearing it as a stale directory. A removal that runs outside the queue (`prepareWorktreeForRemoval`: the Done move, the To Do move, a delete from the board, an MCP delete, a project delete) waits for the hold to end. It runs only for a worktree its task has recorded, so a Done or To Do move during a first creation's script waits for nothing. When that creation came from an earlier move, the new move aborts it, and the next creation at the path clears the unrecorded directory it leaves. A removal inside the queue (`removeWorktree`: the move-failure stale cleanup, the startup retry) refuses a held path with a `remove skipped` line and never waits (the waiting removal logs `remove step=creation-wait done in <n>ms`), so it cannot hold the queue for a script's run. The move-failure stale cleanup and the backlog pass each skip a task whole, branch and row included, when a creation holds one of its candidate paths. The orphan-directory sweep skips a held path, and asks again just before it deletes. `withTaskLock` could not do this: four callers already hold it across `ensureTaskWorktree`, and it is not reentrant.
+- **An aborted script settles only once its tree is gone.** `spawnWithAbort` kills the tree and then waits for the shell's `close` (every holder of its output pipes has exited), at most `TREE_EXIT_WAIT_MS` (5 s), before it rejects. Until then the creation, and so the registry hold, has not ended. A removal or a new creation at the path never starts while the script is still writing there.
+
+A stale directory's real `node_modules` (an install an aborted creation left behind) is the slow part of clearing it: one create job spent 15.8 s in `remove step=node-modules`. `prepareStaleWorktreeForCreation` clears it before the git phase, outside the queue, so the in-queue clear finds only the checkout. It runs only when worktrees are on for the task and there is no live worktree to reuse.
+
 ### Reaping processes that pin a worktree
 
 A process still running inside a worktree blocks its removal on Windows, which will not delete a directory that is a live process's current directory. That leaves a husk with no git admin entry, and the next worktree creation on that path hangs. Two mechanisms clear it, and they cover different failure modes.
@@ -397,6 +408,10 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
 
 ### Creation Flow
 
+Before the git phase, outside the queue: wait for any creation this task already has in flight, then clear a stale directory's `node_modules` (see [Creation holds the queue for its git phase only](#creation-holds-the-queue-for-its-git-phase-only)).
+
+The git phase, steps 1 to 9, is one `create-worktree:<id8>` job on the per-project queue, opened by `ensureTaskWorktree` around `ensureWorktree`, whose body is `createWorktree`:
+
 1. Create `.kangentic/worktrees/` directory
 2. `git fetch --no-auto-gc origin <baseBranch>` (best-effort). `--no-auto-gc` skips the
    `git maintenance run --auto` a fetch ends with. Windows cannot detach that maintenance, so a gc
@@ -426,9 +441,14 @@ Both name what failed and what to do about it, rather than surfacing git's raw e
 8. Set up sparse-checkout (see below)
 9. `git config --worktree kangentic.baseBranch <baseBranch>`, after sparse-checkout because that
    step enables per-worktree config (see the base-branch section above)
+
+The setup phase, steps 10 to 12, runs after the job ends (`setUpWorktree`). The worktree is recorded on its task only once step 12 succeeds:
+
 10. Copy optional files from repo root (configured via `config.git.copyFiles`)
 11. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
 12. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
+
+Each step logs its time in the removal path's format, `[WORKTREE] create step=<name> done in <n>ms`: `stale-node-modules` (before the job), `fetch`, `stale-dir`, `worktree-add` and `configure` (in it), then `copy-files`, `link-node-modules` and `init-script` (after it). The job's own `[GIT_QUEUE] done create-worktree:<id8> in <n>ms` line is the git phase's total.
 
 Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](agent-integration.md#trust-management)).
 
@@ -456,13 +476,26 @@ By default Kangentic symlinks (junction on Windows, directory symlink on POSIX) 
 
 The shared link has a trade-off: the worktree runs the *root's* dependencies, not the branch's, and a worktree `npm install` writes back through the link into the main repo. For a branch that changes dependencies, set `config.git.linkNodeModules` to `false` to skip linking, then use the Post-Worktree Script to install the worktree's own dependencies.
 
-The **Post-Worktree Script** (`config.git.initScript`, surfaced as "Post-Worktree Script" in Git settings) runs once in each new worktree, after files are copied and `node_modules` is linked (or deliberately skipped). It runs through the platform shell - `cmd.exe` on Windows, `/bin/sh` on POSIX - so the same configured command works cross-platform for simple cases like `npm install`. While it runs, the task card shows a "Running setup script..." phase.
+A workspace repo (npm, Yarn or pnpm workspaces) should turn linking off, for two more reasons:
+
+- **Workspace packages resolve to the main checkout's source.** A workspace package's entry in the root `node_modules` is a junction (a symlink on POSIX) to that package's folder in the main checkout. Through the linked `node_modules`, a worktree imports main's code for every workspace package, not the branch's. Kangentic itself escapes this only because `tsconfig.json` paths and the `vite.config.mts` alias send `@kangentic/protocol` to the worktree's own `packages/protocol/src`; a repo without such aliases runs main's packages.
+- **pnpm keeps a `node_modules` in every workspace package.** Linking covers only the root one, so each package in the worktree has none.
+
+Such a repo sets `linkNodeModules` to `false` and installs in the Post-Worktree Script (`pnpm install --frozen-lockfile`, `npm ci`).
+
+The **Post-Worktree Script** (`config.git.initScript`, surfaced as "Post-worktree script" in Git settings) runs once in each new worktree, after files are copied and `node_modules` is linked (or deliberately skipped). It runs through the platform shell - `cmd.exe` on Windows, `/bin/sh` on POSIX - so the same configured command works cross-platform for simple cases like `npm install`. While it runs, the task card shows a "Running setup script..." phase, and the agent starts only after it succeeds.
+
+The script runs after the creation's git phase has left the per-project git queue (see [Creation holds the queue for its git phase only](#creation-holds-the-queue-for-its-git-phase-only)), so a slow install no longer stalls other tasks' worktree creation, Done cleanup or auto-fetch. The `[INIT-SCRIPT]` completed, failed and stopped lines each carry the script's elapsed time.
+
+**A script that runs git** (`git submodule update`, `git lfs pull`) runs alongside Kangentic's own git work in the project, not inside the queue. git's lock files keep the two from corrupting each other's state. When both want the same lock at once, the command that loses fails with git's `Unable to create '...lock': File exists`. If the script's command loses, the script fails, and so does the creation, like any non-zero exit; moving the task again retries it. There is no setting to put the script back inside the queue: one would bring back the wait this change removed, for every task in the project.
 
 The script is **fatal**: a non-zero exit or a timeout (10-minute cap) rejects worktree creation and fails the task move / agent spawn, surfacing the captured output. The worktree directory is left on disk on failure, exactly as a failed file copy is; the next attempt reuses or recreates it.
 
 A cancellation (a superseding move, a cancelled spawn, app shutdown) is not a failure: creation rejects with an `AbortError`, which every caller treats as an abort. That matters for a superseding move. Treated as a failure, the old move's stale-resource cleanup queued behind the new move's own create job on the per-project git lock, ran after it, and deleted the worktree and auto-generated branch the new move had just made (reproduced twice in `/preview`). The half-made worktree an abort leaves is never recorded, so the next creation at that path clears it. Its auto-generated branch survives and the next creation attaches to it. While that branch still sits at the resolved start point, the creation reports its base as it would for a new branch, so `resolved_base_branch` is still recorded.
 
-On abort or timeout the script's whole process tree is killed, not only the shell: `taskkill /T /F` on Windows, where cmd.exe always runs the script as a child, and a process-group `SIGKILL` on POSIX, where the script leads its own group. Killing only the shell left whatever the script started (an `npm install`) running in the worktree; on Windows it held the directory open and stalled the next creation at that path by 12 s.
+The ordering that used to protect a superseding move came from the queue: the old move's create job, script included, held it, so nothing at that path ran until the old script was dead. With the script outside the queue, the creation registry gives the same order. The new move's creation waits for the old creation's hold to end before it touches the path, and that hold ends only once the old script's tree is gone. A failure of the old creation that lands after the new one took the path no longer cleans anything: its stale cleanup finds the newer hold and skips, so it cannot delete the worktree or branch the new move made.
+
+On abort or timeout the script's whole process tree is killed, not only the shell: `taskkill /T /F` on Windows, where cmd.exe always runs the script as a child, and a process-group `SIGKILL` on POSIX, where the script leads its own group. Killing only the shell left whatever the script started (an `npm install`) running in the worktree; on Windows it held the directory open and stalled the next creation at that path by 12 s. The abort settles once the killed shell closes, at most 5 s after the kill (`TREE_EXIT_WAIT_MS`), so the creation does not end while the tree is still dying.
 
 ## Sparse-Checkout
 
@@ -663,7 +696,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** - Kills PTY, deletes session DB records, removes session directory, removes worktree (serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`cleanupTaskResources()`** - Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
 
 ## Safety
 
@@ -719,6 +752,18 @@ Uses real temp files with mocked `os.homedir()`.
 - An abort during the script rejects creation with an `AbortError`; a script's own failure stays a failure
 - The next creation attaches to the leftover branch and still reports its base while it sits at the start point (`worktree-base-branch.test.ts`)
 - Abort and timeout kill the script's whole process tree (`run-init-script.test.ts`; real processes in `run-init-script-tree-kill.test.ts`)
+- An abort settles on the killed shell's `close`, or at `TREE_EXIT_WAIT_MS` when it never comes (`run-init-script.test.ts`)
+- The init-script heartbeat stops the moment the setup is aborted
+
+**Setup phase outside the git queue:**
+- `createWorktree` copies no files, links no `node_modules` and runs no script; `setUpWorktree` copies, then links, then runs the script
+- Each step logs `create step=<name> done in <n>ms`, and the `[INIT-SCRIPT]` completed, failed and stopped lines carry the elapsed time
+- `prepareStaleWorktreeForCreation` clears only a stale directory, never a live worktree, and nothing with worktrees off
+- `removeWorktree` refuses a path whose creation is in flight; `createWorktree`'s own stale-directory clear still runs while its creation holds the path
+- `ensureTaskWorktree` sets up after the lock is released and records only after the setup succeeds; a second same-task creation waits and reuses (`task-git-remote-worktree-skip.test.ts`)
+- With a real repo and a real blocking script (`worktree-setup-outside-queue.test.ts`): another task's creation, a Done-move removal and auto-fetch all finish while the script runs; an in-queue removal refuses and an outside-queue one waits; an abort kills the script before the creation settles
+- The move-failure stale cleanup skips whole while a newer creation holds a candidate path (`task-move-stale-branch-cleanup.test.ts`); the backlog pass skips a held task whole, and the orphan sweep skips a held path, including one claimed while it runs (`resource-cleanup.test.ts`, `prune-orphaned-dirs.test.ts`)
+- The MCP delete and the project delete wait for a creation at the path before they remove it (`mcp-project-context.test.ts`)
 
 **Removal:**
 - `removeWorktree` calls `git worktree remove --force`

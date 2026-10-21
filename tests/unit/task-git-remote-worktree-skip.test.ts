@@ -23,17 +23,31 @@ import { ensureTaskWorktree, ensureTaskBranchCheckout } from '../../src/main/ipc
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Task, AppConfig, Project } from '../../src/shared/types';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
+import { isAbortError } from '../../src/shared/abort-utils';
 
 const ensureWorktreeMock = vi.fn().mockResolvedValue({ worktreePath: '/local/worktree/feature-x-abcd1234', branchName: 'feature-x' });
+const setUpWorktreeMock = vi.fn().mockResolvedValue(undefined);
 const checkoutBranchMock = vi.fn().mockResolvedValue(undefined);
-const withLockMock = vi.fn((fn: () => unknown) => fn());
+// Tracks whether the git queue is held, so a test can tell where setup ran.
+let insideGitLock = false;
+const withLockMock = vi.fn(async (fn: () => unknown) => {
+  insideGitLock = true;
+  try {
+    return await fn();
+  } finally {
+    insideGitLock = false;
+  }
+});
+const prepareStaleWorktreeForCreationMock = vi.fn().mockResolvedValue(false);
 
 vi.mock('../../src/main/git/worktree-manager', () => ({
   WorktreeManager: vi.fn().mockImplementation(function MockWorktreeManager(this: Record<string, unknown>) {
     this.withLock = withLockMock;
     this.ensureWorktree = ensureWorktreeMock;
+    this.setUpWorktree = setUpWorktreeMock;
     this.checkoutBranch = checkoutBranchMock;
   }),
+  prepareStaleWorktreeForCreation: (...args: unknown[]) => prepareStaleWorktreeForCreationMock(...args),
 }));
 
 // hasCommits defaults to true (a normal, already-committed repo) so the pre-existing
@@ -327,6 +341,257 @@ describe('ensureTaskWorktree - ensureWorktree result passthrough', () => {
         '/project',
       ),
     ).rejects.toThrow("Cannot create worktree: this task's base branch 'release-2.0' does not exist");
+  });
+});
+
+describe('ensureTaskWorktree - setup phase outside the git queue', () => {
+  /** Flush microtasks until `condition` holds, at most 20 times. */
+  async function flushUntil(condition: () => boolean): Promise<void> {
+    for (let flushCount = 0; flushCount < 20 && !condition(); flushCount++) await Promise.resolve();
+  }
+
+  const created = {
+    worktreePath: '/project/.kangentic/worktrees/1',
+    branchName: 'fix-the-bug-task-001',
+    worktreeFolder: '1',
+    baseBranch: 'main',
+  };
+
+  beforeEach(() => {
+    ensureWorktreeMock.mockReset().mockResolvedValue(created);
+    setUpWorktreeMock.mockReset().mockResolvedValue(undefined);
+    withLockMock.mockClear();
+    prepareStaleWorktreeForCreationMock.mockReset().mockResolvedValue(false);
+    isGitRepoMock.mockReset().mockReturnValue(true);
+  });
+
+  it('sets the worktree up after the git lock is released, then records it', async () => {
+    let setupRanInsideLock: boolean | null = null;
+    setUpWorktreeMock.mockImplementation(async () => { setupRanInsideLock = insideGitLock; });
+    const config = makeConfig();
+    const task = makeTask();
+    const repo = makeTaskRepoStub(task);
+
+    await ensureTaskWorktree(makeContext(config), task, repo as never, '/project');
+
+    expect(withLockMock).toHaveBeenCalledTimes(1);
+    expect(setUpWorktreeMock).toHaveBeenCalledWith(created.worktreePath, config.git, expect.anything());
+    expect(setupRanInsideLock).toBe(false);
+    expect(repo.recordWorktree).toHaveBeenCalledWith('task-001', created.worktreePath, created.branchName, created.worktreeFolder, created.baseBranch);
+    expect(setUpWorktreeMock.mock.invocationCallOrder[0]).toBeLessThan(repo.recordWorktree.mock.invocationCallOrder[0]);
+  });
+
+  it('records nothing when the setup fails, so the half-made worktree is never the task\'s', async () => {
+    setUpWorktreeMock.mockRejectedValueOnce(new Error('init script exited with code 1: boom'));
+    const task = makeTask();
+    const repo = makeTaskRepoStub(task);
+
+    await expect(ensureTaskWorktree(makeContext(makeConfig()), task, repo as never, '/project')).rejects.toThrow(/boom/);
+    expect(repo.recordWorktree).not.toHaveBeenCalled();
+  });
+
+  it('runs no setup for a reused or skipped worktree', async () => {
+    ensureWorktreeMock.mockResolvedValueOnce({ skipped: true, reason: 'reused' });
+    const task = makeTask({ worktree_path: created.worktreePath });
+    await ensureTaskWorktree(makeContext(makeConfig()), task, makeTaskRepoStub(task) as never, '/project');
+
+    ensureWorktreeMock.mockResolvedValueOnce(SKIPPED_DISABLED);
+    const skippedTask = makeTask();
+    await ensureTaskWorktree(makeContext(makeConfig()), skippedTask, makeTaskRepoStub(skippedTask) as never, '/project');
+
+    expect(setUpWorktreeMock).not.toHaveBeenCalled();
+  });
+
+  it('clears a stale directory\'s node_modules before it takes the git lock', async () => {
+    let preClearRanInsideLock: boolean | null = null;
+    prepareStaleWorktreeForCreationMock.mockImplementation(async () => {
+      preClearRanInsideLock = insideGitLock;
+      return true;
+    });
+    const task = makeTask();
+
+    await ensureTaskWorktree(makeContext(makeConfig()), task, makeTaskRepoStub(task) as never, '/project');
+
+    expect(prepareStaleWorktreeForCreationMock).toHaveBeenCalledTimes(1);
+    expect(preClearRanInsideLock).toBe(false);
+    expect(prepareStaleWorktreeForCreationMock.mock.invocationCallOrder[0]).toBeLessThan(withLockMock.mock.invocationCallOrder[0]);
+  });
+
+  it('a second creation for the same task waits for the first, then reuses what it recorded', async () => {
+    let finishFirstSetup: () => void = () => undefined;
+    setUpWorktreeMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSetup = resolve; }));
+    const task = makeTask();
+    const secondCopy = makeTask();
+    const recordedRow = makeTask({ worktree_path: created.worktreePath, worktree_folder: '1', branch_name: created.branchName });
+    const repo = makeTaskRepoStub(task, {
+      // The first creation's write lands; every read after it sees the worktree.
+      recordWorktree: vi.fn(() => { repo.getById.mockReturnValue(recordedRow); }),
+    });
+    ensureWorktreeMock.mockImplementation(async (taskArgument: Task) => (
+      taskArgument.worktree_path ? { skipped: true, reason: 'reused' } : created
+    ));
+
+    const first = ensureTaskWorktree(makeContext(makeConfig()), task, repo as never, '/project');
+    await flushUntil(() => setUpWorktreeMock.mock.calls.length > 0);
+    const second = ensureTaskWorktree(makeContext(makeConfig()), secondCopy, repo as never, '/project');
+    await flushUntil(() => false);
+
+    // The second creation is parked: it has not entered the git phase.
+    expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
+
+    finishFirstSetup();
+    await first;
+    await second;
+
+    expect(ensureWorktreeMock).toHaveBeenCalledTimes(2);
+    expect(secondCopy.worktree_path).toBe(created.worktreePath);
+    expect(setUpWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(repo.recordWorktree).toHaveBeenCalledTimes(1);
+  });
+
+  it('a waiting second creation gives up on its own abort, before entering the git phase', async () => {
+    let finishFirstSetup: () => void = () => undefined;
+    setUpWorktreeMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSetup = resolve; }));
+    const task = makeTask();
+    const repo = makeTaskRepoStub(task);
+
+    const first = ensureTaskWorktree(makeContext(makeConfig()), task, repo as never, '/project');
+    await flushUntil(() => setUpWorktreeMock.mock.calls.length > 0);
+    const controller = new AbortController();
+    const second = ensureTaskWorktree(makeContext(makeConfig()), makeTask(), repo as never, '/project', { signal: controller.signal });
+    controller.abort();
+
+    await expect(second).rejects.toThrow();
+    expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
+    finishFirstSetup();
+    await first;
+  });
+
+  it('a second creation for the same task reports creating-worktree before it waits, and a first creation does not', async () => {
+    // Reverting the `isWorktreeCreationInFlight` check ahead of
+    // `runWorktreeCreation` leaves the waiting card on its superseded label, so
+    // the second spy below is never called. Making the call unconditional fails
+    // the first spy's check.
+    let finishFirstSetup: () => void = () => undefined;
+    setUpWorktreeMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSetup = resolve; }));
+    const task = makeTask();
+    const repo = makeTaskRepoStub(task);
+    const firstProgress = vi.fn();
+    const secondProgress = vi.fn();
+
+    const first = ensureTaskWorktree(makeContext(makeConfig()), task, repo as never, '/project', { onProgress: firstProgress });
+    let second: Promise<void> = Promise.resolve();
+    try {
+      await flushUntil(() => setUpWorktreeMock.mock.calls.length > 0);
+      second = ensureTaskWorktree(makeContext(makeConfig()), makeTask(), repo as never, '/project', { onProgress: secondProgress });
+
+      // No flush on purpose: the check and the call run synchronously, before
+      // the creation's first await, and the first creation is still held.
+      expect(secondProgress.mock.calls).toEqual([['creating-worktree']]);
+      expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
+      // The first creation found the path free, so it had nothing to report.
+      expect(firstProgress).not.toHaveBeenCalledWith('creating-worktree');
+    } finally {
+      finishFirstSetup();
+      await first;
+      await second;
+    }
+  });
+
+  it('a waiting second creation stops on an abort that lands in its re-read after the wait, before the git phase', async () => {
+    // Between the registry's own post-wait abort check and the body's check
+    // there is no await, and the waited re-read of the row is the only code in
+    // that window. The second creation's repository therefore aborts from inside
+    // that read. Reverting the body's `throwIfAborted` after the re-read lets the
+    // second creation run its git phase after its own abort: the stale-directory
+    // clear and `ensureWorktree` each run a second time and it resolves.
+    let finishFirstSetup: () => void = () => undefined;
+    setUpWorktreeMock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishFirstSetup = resolve; }));
+    const controller = new AbortController();
+    const task = makeTask();
+    const secondCopy = makeTask();
+    const firstRepo = makeTaskRepoStub(task);
+    const secondRepo = makeTaskRepoStub(secondCopy, {
+      getById: vi.fn(() => {
+        controller.abort();
+        return secondCopy;
+      }),
+    });
+
+    const first = ensureTaskWorktree(makeContext(makeConfig()), task, firstRepo as never, '/project');
+    let secondOutcome: Promise<unknown> | undefined;
+    try {
+      await flushUntil(() => setUpWorktreeMock.mock.calls.length > 0);
+      secondOutcome = ensureTaskWorktree(
+        makeContext(makeConfig()), secondCopy, secondRepo as never, '/project', { signal: controller.signal },
+      ).then(() => 'resolved', (error: unknown) => error);
+      await flushUntil(() => false);
+      // Parked behind the first creation: it has not re-read the row yet.
+      expect(secondRepo.getById).not.toHaveBeenCalled();
+    } finally {
+      finishFirstSetup();
+      await first;
+    }
+
+    expect(isAbortError(await secondOutcome)).toBe(true);
+    // The abort landed in the re-read, not earlier.
+    expect(secondRepo.getById).toHaveBeenCalledTimes(1);
+    // The stale-directory clear is the first call after the body's check.
+    expect(prepareStaleWorktreeForCreationMock).toHaveBeenCalledTimes(1);
+    expect(ensureWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(setUpWorktreeMock).toHaveBeenCalledTimes(1);
+    expect(firstRepo.recordWorktree).toHaveBeenCalledTimes(1);
+    expect(secondRepo.recordWorktree).not.toHaveBeenCalled();
+  });
+
+  it('a waiting second creation adopts nothing from a row the failed first creation never recorded, and runs its own git phase', async () => {
+    // Reverting the `current?.worktree_path` condition makes the re-read adopt
+    // any row it finds. The row below carries a different title and no worktree,
+    // so the second creation's git phase would then see that title instead of
+    // its own. The argument is snapshotted inside the mock: after a successful
+    // creation the task is overwritten from the row anyway, so reading the call
+    // arguments at the end would show the row's title even in correct code.
+    let failFirstSetup: (error: Error) => void = () => undefined;
+    setUpWorktreeMock.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => { failFirstSetup = reject; }));
+    const task = makeTask();
+    const secondCopy = makeTask();
+    const unrecordedRow = makeTask({ title: 'Title from a row nothing recorded', worktree_path: null });
+    const repo = makeTaskRepoStub(task, { getById: vi.fn().mockReturnValue(unrecordedRow) });
+    const gitPhaseSnapshots: Array<{ title: string; worktreePath: string | null; rowReadsSoFar: number }> = [];
+    ensureWorktreeMock.mockImplementation(async (taskArgument: Task) => {
+      gitPhaseSnapshots.push({
+        title: taskArgument.title,
+        worktreePath: taskArgument.worktree_path,
+        rowReadsSoFar: repo.getById.mock.calls.length,
+      });
+      return created;
+    });
+
+    const firstOutcome = ensureTaskWorktree(makeContext(makeConfig()), task, repo as never, '/project')
+      .then(() => 'resolved', (error: unknown) => error);
+    let second: Promise<void> = Promise.resolve();
+    try {
+      await flushUntil(() => setUpWorktreeMock.mock.calls.length > 0);
+      second = ensureTaskWorktree(makeContext(makeConfig()), secondCopy, repo as never, '/project');
+      await flushUntil(() => false);
+      // Parked: the first creation is the only one that has reached the git phase.
+      expect(gitPhaseSnapshots).toHaveLength(1);
+    } finally {
+      failFirstSetup(new Error('init script exited with code 1: boom'));
+      await firstOutcome;
+      await second;
+    }
+
+    expect(await firstOutcome).toEqual(expect.objectContaining({ message: expect.stringMatching(/boom/) }));
+    // Nothing was recorded for the first creation, so the second runs a full
+    // creation of its own: its own git phase, its own setup, its own record.
+    expect(gitPhaseSnapshots).toEqual([
+      { title: 'Fix the bug', worktreePath: null, rowReadsSoFar: 0 },
+      // One read: the re-read after the wait. It ran, and adopted nothing.
+      { title: 'Fix the bug', worktreePath: null, rowReadsSoFar: 1 },
+    ]);
+    expect(setUpWorktreeMock).toHaveBeenCalledTimes(2);
+    expect(repo.recordWorktree).toHaveBeenCalledTimes(1);
   });
 });
 

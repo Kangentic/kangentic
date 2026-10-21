@@ -21,6 +21,15 @@ vi.mock('../../src/main/git/worktree-head', () => ({
   readLocalBranchSha: mockReadLocalBranchSha,
 }));
 
+// The real removal, unless a test overrides it: with this file's fs mock the real
+// one only logs a warning. A spy lets a test start a worktree creation from
+// inside the slow node_modules step, which is the window the To Do sweep
+// re-checks the registry after.
+vi.mock('../../src/main/git/node-modules-link', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/git/node-modules-link')>();
+  return { ...actual, removeNodeModulesPath: vi.fn(actual.removeNodeModulesPath) };
+});
+
 vi.mock('node:fs', () => ({
   default: {
     existsSync: mockExistsSync,
@@ -35,6 +44,8 @@ vi.mock('node:fs', () => ({
 vi.mock('node:path', () => ({
   default: {
     join: (...segments: string[]) => segments.join('/'),
+    // The worktree creation registry keys its paths through resolve.
+    resolve: (...segments: string[]) => segments.join('/'),
   },
 }));
 
@@ -59,6 +70,8 @@ import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktre
 // The REAL per-task lock, not mocked: the To Do sweep takes it for each task,
 // so a test can hold it to stand in for a move that is still running.
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
+import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -755,6 +768,131 @@ describe('cleanupStaleResources', () => {
     expect(mockRm).not.toHaveBeenCalled();
     const gitCalls = mockExecFile.mock.calls.map((call) => (call[1] as string[]).join(' '));
     expect(gitCalls.filter((args) => args.startsWith('worktree remove') || args.startsWith('branch -D'))).toEqual([]);
+  });
+
+  it('skips a candidate directory a creation is still setting up', async () => {
+    // This pass runs raw git with neither the task's creation registry hold nor
+    // the git queue, so it must check the registry itself: the creation's setup
+    // script may still be writing in the directory.
+    const task = createMockTask({
+      id: 'cccc3333-0000-0000-0000-000000000000',
+      title: 'Add dark mode',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+    const settingUpPath = '/home/dev/my-project/.kangentic/worktrees/add-dark-mode-cccc3333';
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === settingUpPath);
+    setupExecFile(() => { throw new Error('not found'); });
+    let finishCreation: () => void = () => undefined;
+    const creation = runWorktreeCreation(settingUpPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+
+    try {
+      await cleanupStaleResources(
+        projectPath,
+        taskRepo as never,
+        taskMoveRepo as never,
+        swimlaneRepo as never,
+        sessionRepo as never,
+        sessionManager as never,
+      );
+
+      expect(execFileCalls()).not.toContainEqual(['git', ['worktree', 'remove', '--force', settingUpPath], projectPath]);
+    } finally {
+      finishCreation();
+      await creation;
+    }
+  });
+
+  it('leaves the whole task alone when a creation holds one of its paths: session, records, row and branches included', async () => {
+    // The worktree, branch and row a creation is about to record are its own, so
+    // the skip covers the task, not just the directory. Reverting the early
+    // `heldPath` skip narrows it to the directory (the per-path check after the
+    // node_modules step still protects that): the session is removed, its records
+    // deleted, the row's fields nulled and both branches dropped. The same
+    // fixture with no hold is cleaned by 'cleans task with stale DB fields'.
+    const heldPath = '/home/dev/my-project/.kangentic/worktrees/7';
+    const task = createMockTask({
+      id: 'cccc3333-0000-0000-0000-000000000000',
+      title: 'Add dark mode',
+      worktree_path: heldPath,
+      branch_name: 'custom-branch-cccc3333',
+      session_id: 'session-held',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === heldPath);
+    let finishCreation: () => void = () => undefined;
+    const creation = runWorktreeCreation(heldPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+
+    try {
+      await cleanupStaleResources(
+        projectPath,
+        taskRepo as never,
+        taskMoveRepo as never,
+        swimlaneRepo as never,
+        sessionRepo as never,
+        sessionManager as never,
+      );
+
+      expect(sessionManager.remove).not.toHaveBeenCalled();
+      expect(sessionRepo.deleteByTaskId).not.toHaveBeenCalled();
+      expect(taskRepo.update).not.toHaveBeenCalled();
+      // No directory removal, no prune, and neither the recorded branch nor the
+      // title-derived one is deleted.
+      const mutatingGitCalls = execFileCalls().filter(([, args]) => args[0] === 'worktree' || (args[0] === 'branch' && args[1] === '-D'));
+      expect(mutatingGitCalls).toEqual([]);
+      expect(mockRm).not.toHaveBeenCalled();
+    } finally {
+      finishCreation();
+      await creation;
+    }
+  });
+
+  it('stops cleaning the task when a creation claims a path during the slow node_modules step', async () => {
+    // Nothing holds the path when the pass looks, so it goes on to clear
+    // node_modules first. A creation that takes no task lock (a branch switch)
+    // can start while that runs, so the pass asks the registry again before it
+    // removes the directory, and stops there. Reverting the second ask removes
+    // a worktree whose setup script has just started; turning its stop back
+    // into a skip of that one directory still deletes the task's branch.
+    const task = createMockTask({
+      id: 'cccc3333-0000-0000-0000-000000000000',
+      title: 'Add dark mode',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+    const lateClaimedPath = '/home/dev/my-project/.kangentic/worktrees/7';
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === lateClaimedPath);
+    setupExecFile(() => { throw new Error('not found'); });
+    let finishCreation: () => void = () => undefined;
+    let creation: Promise<void> = Promise.resolve();
+    vi.mocked(removeNodeModulesPath).mockImplementationOnce(async (targetPath: string) => {
+      if (targetPath !== `${lateClaimedPath}/node_modules`) return;
+      creation = runWorktreeCreation(lateClaimedPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+    });
+
+    try {
+      // Nothing holds the path when the pass starts.
+      expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(false);
+      await cleanupStaleResources(
+        projectPath,
+        taskRepo as never,
+        taskMoveRepo as never,
+        swimlaneRepo as never,
+        sessionRepo as never,
+        sessionManager as never,
+      );
+
+      // The pass reached the node_modules step for this directory, and the
+      // creation is the one that started during it.
+      expect(removeNodeModulesPath).toHaveBeenCalledWith(`${lateClaimedPath}/node_modules`);
+      expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(true);
+      expect(execFileCalls()).not.toContainEqual(['git', ['worktree', 'remove', '--force', lateClaimedPath], projectPath]);
+      expect(mockRm).not.toHaveBeenCalledWith(lateClaimedPath, expect.anything());
+      expect(execFileCalls().filter(([, args]) => args[0] === 'branch' && args[1] === '-D')).toEqual([]);
+    } finally {
+      finishCreation();
+      await creation;
+      // Back to the delegating implementation, in case the loop never ran.
+      vi.mocked(removeNodeModulesPath).mockReset();
+    }
   });
 
   it('cleans task with null DB fields but stale directory on disk (core bug fix)', async () => {

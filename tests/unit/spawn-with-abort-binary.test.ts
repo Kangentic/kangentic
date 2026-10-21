@@ -138,8 +138,11 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect(options.detached).toBe(process.platform !== 'win32');
 
     external.abort();
-    await outcome;
     expect(killChildTreeByPidMock).toHaveBeenCalledTimes(1);
     expect(killChildTreeByPidMock).toHaveBeenCalledWith(4242);
+    // The killed shell closes (taskkill leaves exit code 1 on Windows); the
+    // abort's wording stands rather than "exited with code 1".
+    child.emit('close', 1, null);
+    await outcome;
   });
 });
