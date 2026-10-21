@@ -172,8 +172,11 @@ const tabsSpan = (page: Page): Promise<number> => page.evaluate(() => {
  * Hands the page a way to set the tablist's own width through its row, so the
  * widths a test picks do not depend on how wide the window is. The row is first
  * given room (3000px) and the list's padding is read from layout pixels there.
+ * It waits for the tablist first: right after the window opens the row may not
+ * be mounted yet, and a CI run read it as null.
  */
 async function installListWidthSetter(page: Page): Promise<void> {
+  await expect(tabRow(page).getByRole('tablist')).toBeVisible();
   await page.evaluate(() => {
     const scope = window as unknown as { __setListWidth: (width: number) => number };
     const row = document.querySelector<HTMLElement>('[data-testid="conversation-route-tabs"]')!;
