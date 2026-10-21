@@ -43,6 +43,21 @@ hung and the hard failsafe force-killed the process), or `abrupt` (nothing was r
 kill, a power loss). Uptime is wall-clock and includes time asleep. Aptabase's own session
 duration is coarse by comparison, since heartbeats are the only events a long agent run emits.
 
+A dev build also writes the previous run's ending to the local log, once per launch, after the boot
+opens its project: `[startup] previous run: exit=abrupt uptime=4h12m lastAliveAt=<iso>` (or
+`none`; `lastAliveAt=unknown` for a record written before `at` existed). It lands in that
+project's `.kangentic/logs/<date>.log`, beside the previous run's `[SHUTDOWN]` lines, or in
+`<configDir>/logs/` when no project opened. Like the `[SHUTDOWN]` lines it is a `log`-level line,
+so it is persisted while `developer.persistConsoleLogs` is on, which is the dev default. A
+production build has neither the line nor the exit drain below.
+
+In a dev build the signal routes (Ctrl+C, a closed hosting terminal, and SIGTERM on macOS and
+Linux) write the log lines still queued before `process.exit`, through `drainQueuedAppendsSync` in
+`src/main/diagnostics/async-file-queue.ts`, and so do a `process.on('exit')` listener and the hard
+failsafe's callback. Without it every line the shutdown logged was lost, and a closed terminal left
+the same log as a crash. The drain also writes the batch a flush had already taken off the queue.
+If that flush's write was already running, the batch can appear twice in the log.
+
 Each write also stamps `at`, the wall-clock moment of that write, so the last record on disk says
 when the run was last known alive. For a `clean` or `failsafe` exit that is the exit itself; for an
 `abrupt` one it is the final checkpoint, which is the only clock an abrupt ending leaves behind.

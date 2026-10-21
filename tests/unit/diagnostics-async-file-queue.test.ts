@@ -9,6 +9,8 @@
  *   - Error swallowing (a failed appendFile does not poison the queue)
  *   - resetForTest clears in-memory state
  *   - Per-path isolation (writes to two paths flush independently)
+ *   - Exit drain (drainQueuedAppendsSync writes queued and in-flight batches
+ *     synchronously, and the flush skips a batch the drain claimed)
  *
  * Tests use `resetForTest()` in beforeEach instead of `vi.resetModules()`
  * because the queue's resetForTest is purpose-built for this and avoids
@@ -23,6 +25,7 @@ import {
   queueAppend,
   queueAppendWithRotation,
   resetRotationState,
+  drainQueuedAppendsSync,
   flushAllForTest,
   resetForTest,
 } from '../../src/main/diagnostics/async-file-queue';
@@ -314,6 +317,298 @@ describe('async-file-queue: queueAppendWithRotation', () => {
     await flushAllForTest();
     expect(readRaw(filePath)).toBe('fresh\n');
     expect(readRaw(filePath + '.1')).toBe('x'.repeat(20) + '\n');
+  });
+});
+
+/**
+ * The exit drain. The signal handlers call it right before process.exit, so
+ * every assertion here reads the file with no await in between. A line that
+ * needs a loop turn to land is a line the real exit loses.
+ */
+describe('async-file-queue: drainQueuedAppendsSync', () => {
+  function readRaw(filePath: string): string {
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
+  }
+
+  /** One turn of the check phase, after the flush's own setImmediate. */
+  function nextImmediate(): Promise<void> {
+    return new Promise<void>((resolve) => setImmediate(resolve));
+  }
+
+  it('writes queued lines synchronously and in order', async () => {
+    const filePath = path.join(tempDirectory, 'drain.log');
+    queueAppend(filePath, 'first\n');
+    queueAppend(filePath, 'second\n');
+    queueAppend(filePath, 'third\n');
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(filePath)).toEqual(['first', 'second', 'third']);
+    // The flush scheduled by those appends then finds nothing left to write.
+    await flushAllForTest();
+    expect(readFileLines(filePath)).toEqual(['first', 'second', 'third']);
+  });
+
+  it('creates a missing directory', () => {
+    const filePath = path.join(tempDirectory, 'nested', 'deeper', 'drain.log');
+    queueAppend(filePath, 'line\n');
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(filePath)).toEqual(['line']);
+  });
+
+  it('keeps each file in its own order', () => {
+    const fileA = path.join(tempDirectory, 'a.log');
+    const fileB = path.join(tempDirectory, 'b.log');
+    queueAppend(fileA, 'a-1\n');
+    queueAppend(fileB, 'b-1\n');
+    queueAppend(fileA, 'a-2\n');
+    queueAppend(fileB, 'b-2\n');
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(fileA)).toEqual(['a-1', 'a-2']);
+    expect(readFileLines(fileB)).toEqual(['b-1', 'b-2']);
+  });
+
+  it('writes nothing when nothing is queued, including after a completed flush', async () => {
+    drainQueuedAppendsSync();
+    expect(fs.readdirSync(tempDirectory)).toEqual([]);
+
+    const filePath = path.join(tempDirectory, 'flushed.log');
+    queueAppend(filePath, 'already-written\n');
+    await flushAllForTest();
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(filePath)).toEqual(['already-written']);
+  });
+
+  it('does not throw when a write fails, and still writes the other files', () => {
+    const blockingFile = path.join(tempDirectory, 'blocker');
+    fs.writeFileSync(blockingFile, 'data');
+    // path.dirname is a regular file, so the mkdir fails.
+    const blockedPath = path.join(blockingFile, 'inner', 'log.log');
+    const healthyPath = path.join(tempDirectory, 'healthy.log');
+    queueAppend(blockedPath, 'never-written\n');
+    queueAppend(healthyPath, 'written\n');
+
+    expect(() => drainQueuedAppendsSync()).not.toThrow();
+
+    expect(fs.existsSync(blockedPath)).toBe(false);
+    expect(readFileLines(healthyPath)).toEqual(['written']);
+  });
+
+  it('writes a batch a flush already took off the queue ahead of later lines, and the flush does not write it again', async () => {
+    const filePath = path.join(tempDirectory, 'in-flight', 'drain.log');
+    // Park the flush in its first await (the per-directory mkdir), after it
+    // spliced 'first' off the queue and before it could append it.
+    let releaseMkdir: () => void = () => undefined;
+    const mkdirGate = new Promise<void>((resolve) => { releaseMkdir = resolve; });
+    const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockImplementationOnce(async () => {
+      await mkdirGate;
+      return undefined;
+    });
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile');
+
+    queueAppend(filePath, 'first\n');
+    await nextImmediate();
+    expect(mkdirSpy, 'the flush must be parked with its batch taken').toHaveBeenCalledTimes(1);
+    queueAppend(filePath, 'second\n');
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(filePath)).toEqual(['first', 'second']);
+
+    releaseMkdir();
+    await flushAllForTest();
+
+    expect(appendSpy, 'the flush must skip a batch the drain already wrote').not.toHaveBeenCalled();
+    expect(readFileLines(filePath)).toEqual(['first', 'second']);
+  });
+
+  it('writes a batch whose append is already in flight ahead of later lines', async () => {
+    const filePath = path.join(tempDirectory, 'dispatched.log');
+    // An append that has reached the thread pool cannot be recalled, so the
+    // drain writes the batch itself rather than risk it landing after the
+    // later lines. This stand-in append never writes, so the file shows the
+    // drain's copy alone.
+    let releaseAppend: () => void = () => undefined;
+    const appendGate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(async () => {
+      await appendGate;
+    });
+
+    queueAppend(filePath, 'first\n');
+    await vi.waitFor(() => expect(appendSpy).toHaveBeenCalledTimes(1));
+    queueAppend(filePath, 'second\n');
+
+    drainQueuedAppendsSync();
+
+    expect(readFileLines(filePath)).toEqual(['first', 'second']);
+
+    releaseAppend();
+    await flushAllForTest();
+    expect(readFileLines(filePath)).toEqual(['first', 'second']);
+  });
+
+  it('drops the rotation byte count, so the next flush reseeds it from the file', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 30;
+    queueAppendWithRotation(filePath, 'older-content\n', cap); // 14 bytes counted
+    await flushAllForTest();
+    // The drain ignores the cap for its one write: 14 + 16 = 30 on disk.
+    queueAppendWithRotation(filePath, 'drained-line-xx\n', cap);
+    drainQueuedAppendsSync();
+    expect(readRaw(filePath)).toBe('older-content\ndrained-line-xx\n');
+    await flushAllForTest();
+
+    // A stale count of 14 would take this 2-byte line (16, under the cap).
+    // Reseeded from the 30-byte file, 32 is over the cap, so it rotates first.
+    queueAppendWithRotation(filePath, 'n\n', cap);
+    await flushAllForTest();
+
+    expect(readRaw(filePath)).toBe('n\n');
+    expect(readRaw(filePath + '.1')).toBe('older-content\ndrained-line-xx\n');
+  });
+
+  it('does not rotate the file the drain just wrote when the claimed flush resumes from its mkdir', async () => {
+    const filePath = path.join(tempDirectory, 'claimed-early', 'rot.jsonl');
+    const cap = 30;
+    // Park the flush at the per-directory mkdir, after it took 'first-line-xx'
+    // (14 bytes) off the queue.
+    let releaseMkdir: () => void = () => undefined;
+    const mkdirGate = new Promise<void>((resolve) => { releaseMkdir = resolve; });
+    const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockImplementationOnce(async () => {
+      await mkdirGate;
+      return undefined;
+    });
+    const renameSpy = vi.spyOn(fs.promises, 'rename');
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile');
+
+    queueAppendWithRotation(filePath, 'first-line-xx\n', cap);
+    await nextImmediate();
+    expect(mkdirSpy, 'the flush must be parked with its batch taken').toHaveBeenCalledTimes(1);
+    queueAppendWithRotation(filePath, 'second-line\n', cap); // 12 bytes
+
+    drainQueuedAppendsSync();
+
+    // The drain put 26 bytes on disk, under the 30 byte cap. Counting the
+    // claimed 14 byte batch again would make 40, which is over the cap.
+    expect(readRaw(filePath)).toBe('first-line-xx\nsecond-line\n');
+
+    releaseMkdir();
+    await flushAllForTest();
+
+    expect(renameSpy, 'a claimed batch must not trigger a rotation').not.toHaveBeenCalled();
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
+    expect(appendSpy).not.toHaveBeenCalled();
+    expect(readRaw(filePath)).toBe('first-line-xx\nsecond-line\n');
+  });
+
+  it('skips its own append when the drain claims the batch while the flush is parked inside the rotation', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 20;
+    queueAppendWithRotation(filePath, 'older-content\n', cap); // 14 bytes counted
+    await flushAllForTest();
+
+    // Park the next flush inside maybeRotate, on the rename. The stat and the
+    // mkdir are behind it, so the claim check right after them has already
+    // passed and only the check after the rotation can catch the drain.
+    const realRename = fs.promises.rename;
+    let releaseRename: () => void = () => undefined;
+    const renameGate = new Promise<void>((resolve) => { releaseRename = resolve; });
+    const renameSpy = vi.spyOn(fs.promises, 'rename').mockImplementationOnce(async (oldPath, newPath) => {
+      await renameGate;
+      return realRename(oldPath, newPath);
+    });
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile');
+
+    // 14 + 13 = 27 is over the 20 byte cap, so a rotation is due.
+    queueAppendWithRotation(filePath, 'batch-two-xx\n', cap);
+    await vi.waitFor(() => expect(renameSpy).toHaveBeenCalledTimes(1));
+    queueAppendWithRotation(filePath, 'batch-three\n', cap);
+
+    drainQueuedAppendsSync();
+
+    const allLines = 'older-content\nbatch-two-xx\nbatch-three\n';
+    expect(readRaw(filePath)).toBe(allLines);
+
+    releaseRename();
+    await flushAllForTest();
+
+    // The released rename moves the drained file to .1 whole. The flush must
+    // not append the claimed batch to the fresh primary a second time.
+    expect(appendSpy, 'the flush must skip a batch the drain already wrote').not.toHaveBeenCalled();
+    expect(readRaw(filePath + '.1')).toBe(allLines);
+    expect(readRaw(filePath)).toBe('');
+  });
+
+  it('does not add a claimed batch back onto the rotation byte count after its append settles', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 16;
+    // Hold the first batch's append open so it is already dispatched when the
+    // drain runs. This stand-in append never writes, so the file holds the
+    // drain's copy alone.
+    let releaseAppend: () => void = () => undefined;
+    const appendGate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(async () => {
+      await appendGate;
+    });
+
+    queueAppendWithRotation(filePath, 'first\n', cap); // 6 bytes
+    await vi.waitFor(() => expect(appendSpy).toHaveBeenCalledTimes(1));
+    queueAppendWithRotation(filePath, 'second\n', cap); // 7 bytes
+
+    drainQueuedAppendsSync();
+
+    // The drain wrote 13 bytes and dropped the byte count.
+    expect(readRaw(filePath)).toBe('first\nsecond\n');
+
+    releaseAppend();
+    await flushAllForTest();
+
+    // Reseeded from the 13 byte file, 13 + 5 = 18 is over the 16 byte cap and
+    // rotates first. A count of 6 re-added by the settled flush would make
+    // 11, which fits, so the line would land on the old primary instead.
+    queueAppendWithRotation(filePath, 'abcd\n', cap);
+    await flushAllForTest();
+
+    expect(readRaw(filePath + '.1')).toBe('first\nsecond\n');
+    expect(readRaw(filePath)).toBe('abcd\n');
+  });
+
+  it('writes nothing for a batch whose flush resetForTest orphaned', async () => {
+    const filePath = path.join(tempDirectory, 'orphaned.log');
+    // The gated mkdir never creates a directory, so the file sits directly in
+    // the temp directory that already exists.
+    let releaseMkdir: () => void = () => undefined;
+    const mkdirGate = new Promise<void>((resolve) => { releaseMkdir = resolve; });
+    const mkdirSpy = vi.spyOn(fs.promises, 'mkdir').mockImplementationOnce(async () => {
+      await mkdirGate;
+      return undefined;
+    });
+    const appendSpy = vi.spyOn(fs.promises, 'appendFile');
+
+    queueAppend(filePath, 'first\n');
+    await nextImmediate();
+    expect(mkdirSpy, 'the flush must be parked with its batch taken').toHaveBeenCalledTimes(1);
+
+    try {
+      // The reset forgets the parked batch, so it is no longer the drain's to write.
+      resetForTest();
+      drainQueuedAppendsSync();
+      expect(readRaw(filePath)).toBe('');
+    } finally {
+      releaseMkdir();
+    }
+
+    // resetForTest also dropped the pending flush, so flushAllForTest cannot
+    // wait for the orphan. Wait for its append to settle here, so its late write
+    // cannot run into afterEach or the next test.
+    await vi.waitFor(() => expect(appendSpy).toHaveBeenCalledTimes(1));
+    await appendSpy.mock.results[0].value;
   });
 });
 

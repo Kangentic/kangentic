@@ -10,6 +10,7 @@ import {
   previousRunLaunchProps,
   peekPreviousRun,
   previousRunLastAliveAt,
+  previousRunLogLine,
   bucketUptimeSeconds,
   resetRunUptimeForTests,
   RUN_UPTIME_CHECKPOINT_INTERVAL_MS,
@@ -276,6 +277,68 @@ describe('previousRunLastAliveAt', () => {
     relaunch();
 
     expect(previousRunLastAliveAt()).toBe(new Date(START_MS + 3_600_000).toISOString());
+  });
+});
+
+describe('previousRunLogLine', () => {
+  it('says none on a first launch', () => {
+    initRunUptimeTracking(runPath, START_MS);
+
+    expect(previousRunLogLine()).toBe('[startup] previous run: none');
+  });
+
+  it('names a clean exit with its uptime and the exit instant', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    recordRunExit('clean', START_MS + 15_120_000);
+
+    relaunch();
+
+    expect(previousRunLogLine()).toBe(
+      `[startup] previous run: exit=clean uptime=4h12m lastAliveAt=${new Date(START_MS + 15_120_000).toISOString()}`,
+    );
+  });
+
+  it('names an abrupt exit with the last checkpoint as the moment the run was last alive', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    checkpointRunUptime(START_MS + 725_000);
+    // No recordRunExit: the process died after this checkpoint.
+
+    relaunch();
+
+    expect(previousRunLogLine()).toBe(
+      `[startup] previous run: exit=abrupt uptime=12m5s lastAliveAt=${new Date(START_MS + 725_000).toISOString()}`,
+    );
+  });
+
+  it('names a failsafe exit', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    recordRunExit('clean', START_MS + 39_000);
+    recordRunExit('failsafe', START_MS + 45_000);
+
+    relaunch();
+
+    expect(previousRunLogLine()).toBe(
+      `[startup] previous run: exit=failsafe uptime=45s lastAliveAt=${new Date(START_MS + 45_000).toISOString()}`,
+    );
+  });
+
+  it('says lastAliveAt=unknown for a pre-upgrade record with no at key', () => {
+    fs.writeFileSync(runPath, JSON.stringify({ uptimeSeconds: 3600, exit: 'clean' }));
+
+    initRunUptimeTracking(runPath, START_MS);
+
+    expect(previousRunLogLine()).toBe('[startup] previous run: exit=clean uptime=1h0m lastAliveAt=unknown');
+  });
+
+  it('reads the record from before this run started, not the one init just wrote', () => {
+    initRunUptimeTracking(runPath, START_MS);
+    checkpointRunUptime(START_MS + 120_000);
+
+    relaunch();
+    // This run's own writes must not change what the line reports.
+    checkpointRunUptime(START_MS + 86_400_000 + 60_000);
+
+    expect(previousRunLogLine()).toContain('exit=abrupt uptime=2m0s');
   });
 });
 
