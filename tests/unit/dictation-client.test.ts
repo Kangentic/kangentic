@@ -29,6 +29,9 @@ import type { EngineSelection } from '../../src/main/transcription/engines/engin
 // window for a worker that has served a session (and so holds the accurate
 // model). A prewarm-only worker is recycled only once past the commit ceiling.
 const IDLE_SHUTDOWN_MS = 30 * 60_000;
+// Mirrors the private ENSURE_ENGINE_TIMEOUT_MS in dictation-client.ts: how long
+// a warm waits for the worker's reply before it rejects.
+const ENSURE_ENGINE_TIMEOUT_MS = 120_000;
 // Comfortably past the largest UtilityRestartPolicy backoff step.
 const BACKOFF_CLEAR_MS = 20_000;
 // Past the policy's decay window (5 min).
@@ -82,10 +85,12 @@ function lastRequestId(child: FakeChild): number {
 }
 
 /** Warm the client's worker: ensureWarm + the worker's result. Returns the
- *  child that served it. */
-async function warm(client: DictationClient, engineKey = ENGLISH_ENGINE_KEY): Promise<FakeChild> {
+ *  child that served it. A `pid` is given to the child before the result
+ *  arrives, so the commit read when the warm settles already sees it. */
+async function warm(client: DictationClient, engineKey = ENGLISH_ENGINE_KEY, pid?: number): Promise<FakeChild> {
   const promise = client.ensureWarm(fakeEnsureEngineRequest(engineKey));
   const child = lastChild();
+  if (pid !== undefined) child.pid = pid;
   child.emit('message', { type: 'result', id: lastRequestId(child) });
   await promise;
   return child;
@@ -642,11 +647,27 @@ describe('DictationClient', () => {
   });
 
   describe('commit ceiling', () => {
-    async function serveWithCommit(commitBytes: number | null): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
-      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+    /** A client whose commit reader reports the current figure for pid 4242,
+     *  the pid each test gives its worker, and null for any other pid. */
+    function clientWithCommit(initialCommitBytes: number | null): {
+      client: DictationClient;
+      recycled: ReturnType<typeof vi.fn>;
+      setCommitBytes: (commitBytes: number | null) => void;
+    } {
+      let currentCommitBytes = initialCommitBytes;
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? currentCommitBytes : null));
       const client = new DictationClient(undefined, { readCommitBytes });
       const recycled = vi.fn();
       client.on('recycled', recycled);
+      return {
+        client,
+        recycled,
+        setCommitBytes: (commitBytes) => { currentCommitBytes = commitBytes; },
+      };
+    }
+
+    async function serveWithCommit(commitBytes: number | null): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
+      const { client, recycled } = clientWithCommit(commitBytes);
       const child = await warm(client);
       child.pid = 4242;
       await serveSession(client);
@@ -709,10 +730,7 @@ describe('DictationClient', () => {
         commitBytes: number,
         secondEngineKey: string,
       ): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
-        const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
-        const client = new DictationClient(undefined, { readCommitBytes });
-        const recycled = vi.fn();
-        client.on('recycled', recycled);
+        const { client, recycled } = clientWithCommit(commitBytes);
         const child = await warm(client);
         child.pid = 4242;
         // A second prewarm on the same worker, never a session.
@@ -776,6 +794,63 @@ describe('DictationClient', () => {
           vi.useRealTimers();
         }
       });
+
+      // ensureWarm counts the engine key BEFORE the reply on purpose: a
+      // timed-out load can keep going in the worker, and a failed one can
+      // leave its arena reserved. A second engine that never finished warming
+      // therefore still earns the long idle window.
+      it('counts a second engine whose warm the worker answered with an error, and is recycled at the long window', async () => {
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          const { client, recycled } = clientWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+          const child = await warm(client, ENGLISH_ENGINE_KEY, 4242);
+
+          const failedWarm = client.ensureWarm(fakeEnsureEngineRequest(FRENCH_ENGINE_KEY));
+          const failure = expect(failedWarm).rejects.toThrow('load failed');
+          child.emit('message', { type: 'error', id: lastRequestId(child), message: 'load failed' });
+          await failure;
+
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 1);
+          expect(child.kill).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('engine-switch'));
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
+
+      it('counts a second engine whose warm timed out with no reply, and is recycled at the long window after the timeout settles', async () => {
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          const { client, recycled } = clientWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+          const child = await warm(client, ENGLISH_ENGINE_KEY, 4242);
+
+          const unansweredWarm = client.ensureWarm(fakeEnsureEngineRequest(FRENCH_ENGINE_KEY));
+          const timeout = expect(unansweredWarm).rejects.toThrow(/did not respond in time/);
+          // Not runAllTimersAsync: it would also drain the idle timers armed
+          // once the timeout settles, and the window boundary below is the point.
+          await vi.advanceTimersByTimeAsync(ENSURE_ENGINE_TIMEOUT_MS);
+          await timeout;
+          expect(child.kill).not.toHaveBeenCalled();
+
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 1);
+          expect(child.kill).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('engine-switch'));
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
     });
 
     // The ceiling used to be read only when a request settled. A worker can
@@ -785,18 +860,14 @@ describe('DictationClient', () => {
       it('one that served a session is recycled at the short window once it has passed the ceiling', async () => {
         vi.useFakeTimers();
         try {
-          let commitBytes = WORKER_COMMIT_CEILING_BYTES - 1;
-          const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
-          const client = new DictationClient(undefined, { readCommitBytes });
-          const recycled = vi.fn();
-          client.on('recycled', recycled);
+          const { client, recycled, setCommitBytes } = clientWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
           const child = await warm(client);
           child.pid = 4242;
           await serveSession(client);
           await finishSession(client, child);
 
           // Under at the settle; the late load lands afterwards.
-          commitBytes = WORKER_COMMIT_CEILING_BYTES + 1;
+          setCommitBytes(WORKER_COMMIT_CEILING_BYTES + 1);
           await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
           expect(child.kill).not.toHaveBeenCalled();
           await vi.advanceTimersByTimeAsync(1);
@@ -811,18 +882,10 @@ describe('DictationClient', () => {
       it('a prewarm-only one is recycled at the short window too, once it has passed the ceiling', async () => {
         vi.useFakeTimers();
         try {
-          let commitBytes = WORKER_COMMIT_CEILING_BYTES - 1;
-          const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
-          const client = new DictationClient(undefined, { readCommitBytes });
-          const recycled = vi.fn();
-          client.on('recycled', recycled);
-          const firstWarm = client.ensureWarm(fakeEnsureEngineRequest());
-          const child = lastChild();
-          child.pid = 4242;
-          child.emit('message', { type: 'result', id: lastRequestId(child) });
-          await firstWarm;
+          const { client, recycled, setCommitBytes } = clientWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+          const child = await warm(client, ENGLISH_ENGINE_KEY, 4242);
 
-          commitBytes = WORKER_COMMIT_CEILING_BYTES + 1;
+          setCommitBytes(WORKER_COMMIT_CEILING_BYTES + 1);
           await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS);
           expect(child.kill).toHaveBeenCalledTimes(1);
           expect(recycled).toHaveBeenCalledTimes(1);
@@ -844,6 +907,69 @@ describe('DictationClient', () => {
         vi.useRealTimers();
       }
     });
+
+    // A recycle shows only as a new pid otherwise, so the log line carries the
+    // reason and the commit given back. The parenthesized pair is asserted
+    // whole, so a swapped reason or a dropped unit fails too.
+    describe('the recycle log line', () => {
+      it('names the ceiling and the commit in whole MB, rounded the way the code rounds it', async () => {
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          // A fractional MB over the ceiling: a floor, a truncation, or logging
+          // the ceiling itself would each print a different figure.
+          const commitBytes = WORKER_COMMIT_CEILING_BYTES + 700 * 1024 * 1024 + 700 * 1024;
+          const expectedMegabytes = Math.round(commitBytes / (1024 * 1024));
+          const { client, child } = await serveWithCommit(commitBytes);
+
+          await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining(`(ceiling, commit ${expectedMegabytes} MB)`));
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
+
+      it('says the commit is unknown for a served-session worker with no pid, and never reads it', async () => {
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          // A reader that answers for any pid, so "unknown" can only come from
+          // the missing pid and not from a reading that was null.
+          const readCommitBytes = vi.fn(() => 1024 * 1024 * 1024);
+          const client = new DictationClient(undefined, { readCommitBytes });
+          const child = await serveAndFinish(client);
+          expect(child.pid).toBeUndefined();
+
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(readCommitBytes).not.toHaveBeenCalled();
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('(served-session, commit unknown)'));
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
+
+      it('says the commit is unknown for a served-session worker whose pid is missing from the process table', async () => {
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          const { client, child } = await serveWithCommit(null);
+
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('(served-session, commit unknown)'));
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
+    });
   });
 
   it('a crash clears the idle timer and the served-session mark, so the replacement prewarm-only worker is not recycled and no phantom recycled fires', async () => {
@@ -861,6 +987,38 @@ describe('DictationClient', () => {
       // ...and the replacement is prewarm-only.
       const replacement = await warm(client);
       await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 2);
+
+      expect(replacement.kill).not.toHaveBeenCalled();
+      expect(recycled).not.toHaveBeenCalled();
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a crash clears the warmed engine keys, so the replacement warming one engine is the baseline and not an engine switch', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new DictationClient();
+      const recycled = vi.fn();
+      client.on('recycled', recycled);
+
+      // Two engines warmed on one worker: it holds an engine-switch mark.
+      const crashedChild = await warm(client);
+      await warm(client, FRENCH_ENGINE_KEY);
+
+      // A crash with no prior kill. killChild() never ran, so onWorkerExit
+      // alone has to forget the keys (the engine-switch test emits its exit
+      // after recycle() already cleared them).
+      crashedChild.emit('exit', 1);
+      await vi.advanceTimersByTimeAsync(BACKOFF_CLEAR_MS);
+
+      // The replacement warms ONE engine. Were the old keys still held, it
+      // would count as a second and be recycled after IDLE_SHUTDOWN_MS.
+      const replacement = await warm(client);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
 
       expect(replacement.kill).not.toHaveBeenCalled();
       expect(recycled).not.toHaveBeenCalled();

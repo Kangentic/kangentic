@@ -15,10 +15,16 @@ import { app } from 'electron';
  * work (a sub-second release for dictation, a keyword-first query for
  * search). The ceiling sits above what one session's worth of use costs, so
  * a worker is never recycled for having done its job once.
+ *
+ * The ceiling is read twice per quiet spell: when the last request settles,
+ * and again at HEAVY_IDLE_SHUTDOWN_MS, because a worker can keep growing after
+ * its last request settled (a load that outlived its request's timeout). Only
+ * a worker still under it then waits out the rest of IDLE_SHUTDOWN_MS.
  */
 export const WORKER_COMMIT_CEILING_BYTES = 1.5 * 1024 * 1024 * 1024;
 
-/** The idle window a worker over the ceiling gets. */
+/** The idle window a worker over the ceiling gets, and the point at which a
+ *  worker under it at the settle has its commit read again. */
 export const HEAVY_IDLE_SHUTDOWN_MS = 2 * 60_000;
 
 /**

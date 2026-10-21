@@ -1110,6 +1110,19 @@ What to expect while it is off:
 Only a graphics process that actually fails counts. Shutting down or restarting the computer with
 Kangentic open, ending it from Task Manager, or running out of memory does not turn acceleration off.
 
+Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
+failed at boot, the failures started seconds in, before any agent or terminal existed. A display
+driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
+the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
+the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
+useful thing to attach to a bug report. A record whose message ends in "(not a GPU fault)" was a kill
+or a shutdown, not a failure. When the graphics process could not be started at all,
+there is no such record: Chromium never reports a failed start to the app, and only the fallback
+itself is recorded.
+
+Unrelated, despite the similar name: **Model acceleration** in Settings > Knowledge Graph controls where
+the local search model runs, not app rendering. The two are independent.
+
 ## Low memory warning (Windows)
 
 Windows keeps a second memory budget besides RAM: commit, the memory programs have reserved. Every
@@ -1148,19 +1161,6 @@ installed command, so no `npx` process sits beside each agent.
 
 The warning shows how long ago the reading was taken, and it clears by itself once the room climbs
 back past twice the line.
-
-Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
-failed at boot, the failures started seconds in, before any agent or terminal existed. A display
-driver is the usual culprit for that shape, so updating yours is the first thing worth trying, but
-the app has no way to confirm that from the inside and will not claim it did. If it keeps happening,
-the local crash records under `<project>/.kangentic/logs/crashes/` (kind `gpu-process-gone`) are the
-useful thing to attach to a bug report. A record whose message ends in "(not a GPU fault)" was a kill
-or a shutdown, not a failure. When the graphics process could not be started at all,
-there is no such record: Chromium never reports a failed start to the app, and only the fallback
-itself is recorded.
-
-Unrelated, despite the similar name: **Model acceleration** in Settings > Knowledge Graph controls where
-the local search model runs, not app rendering. The two are independent.
 
 ## Conversation Memory
 

@@ -633,7 +633,7 @@ describe('Config Manager -- terminal.scrollbackLines global migration', () => {
   });
 });
 
-describe('Config Manager -- agent.queueOverflow removal', () => {
+describe('Config Manager - agent.queueOverflow removal', () => {
   // The Reject choice was never read, so a request at the cap always queued.
   // The setting was removed, and load() strips the key a file written before
   // the removal still carries.
@@ -652,6 +652,31 @@ describe('Config Manager -- agent.queueOverflow removal', () => {
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     expect(raw.agent).not.toHaveProperty('queueOverflow');
     expect(raw.agent.maxConcurrentSessions).toBe(20);
+  });
+
+  it('drops queueOverflow and cliPath when migrating a legacy claude.* project override, and rewrites the file without them', async () => {
+    const projectDir = path.join(tmpDir, 'proj-legacy-claude');
+    const overridesPath = path.join(projectDir, '.kangentic', 'config.json');
+    fs.mkdirSync(path.join(projectDir, '.kangentic'), { recursive: true });
+    fs.writeFileSync(overridesPath, JSON.stringify({
+      claude: { permissionMode: 'plan', queueOverflow: 'reject', cliPath: '/usr/bin/claude' },
+    }));
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    // The migration ran (claude became agent, with its sibling key carried)...
+    expect(overrides).not.toHaveProperty('claude');
+    expect(overrides?.agent?.permissionMode).toBe('plan');
+    // ...and the removed setting did not come along with it.
+    expect(overrides?.agent).not.toHaveProperty('queueOverflow');
+    expect(overrides?.agent).not.toHaveProperty('cliPath');
+
+    const raw = JSON.parse(fs.readFileSync(overridesPath, 'utf-8'));
+    expect(raw.claude).toBeUndefined();
+    expect(raw.agent.permissionMode).toBe('plan');
+    expect(raw.agent).not.toHaveProperty('queueOverflow');
+    expect(raw.agent).not.toHaveProperty('cliPath');
   });
 });
 
