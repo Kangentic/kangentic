@@ -2783,6 +2783,17 @@
         if (Object.prototype.hasOwnProperty.call(taskReportCache, taskId)) return taskReportCache[taskId];
         return hydrateSeededTaskReport(taskId) || buildMockTaskReport(taskId);
       },
+      // The route the report's Route card draws, read through the bridge's
+      // getTaskReport at call time (not a closure, and not `this`, so it holds
+      // however the method is bound) so a spec's or the web demo's report
+      // override feeds the conversation window's tabs too. A spec that wants a
+      // route with no report behind it sets window.__mockTaskRoutes[taskId].
+      getTaskRoute: async function (projectId, taskId) {
+        var routes = window.__mockTaskRoutes;
+        if (routes && Object.prototype.hasOwnProperty.call(routes, taskId)) return routes[taskId];
+        var report = await window.electronAPI.sessions.getTaskReport(projectId, taskId);
+        return (report && report.route) || [];
+      },
       getTaskLastMessage: async function (_projectId, taskId) {
         return Object.prototype.hasOwnProperty.call(taskLastMessages, taskId) ? taskLastMessages[taskId] : null;
       },

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { assembleTaskReport, type TaskReportInput } from '../../src/main/ipc/helpers/task-report-assemble';
+import { assembleTaskReport, assembleTaskRoute, type TaskReportInput } from '../../src/main/ipc/helpers/task-report-assemble';
 import type { TaskBackgroundCallRow } from '../../src/main/db/repositories/background-call-repository';
 import type { AutomationRun, SessionRecord, Swimlane, TaskMoveRecord } from '../../src/shared/types';
 
@@ -122,6 +122,21 @@ const SESSIONS_797 = [
   session({ id: 'review-run', agent_session_id: 'review', isolated_swimlane_id: 'review', started_at: at(83), exited_at: at(107), total_cost_usd: 16.74, total_duration_ms: 24 * MINUTE, tool_call_count: 274, permission_mode: 'auto' }),
   session({ id: 'leg-3', agent_session_id: 'main', started_at: at(107), suspended_at: at(123), total_cost_usd: 30.84, total_duration_ms: 93 * MINUTE, tool_call_count: 92, model_id: 'claude-sonnet-5-5', model_display_name: 'Sonnet 5.5', applied_effort: 'high' }),
 ];
+
+describe('assembleTaskRoute (sessions.getTaskRoute)', () => {
+  it('is the report\'s own route, so the conversation window\'s tabs match the Route card\'s pills', () => {
+    const input = baseInput({ moves: MOVES_797, sessions: SESSIONS_797 });
+
+    expect(assembleTaskRoute(input)).toEqual(assembleTaskReport(input).route);
+  });
+
+  it('reads only the moves and the columns: no sessions, ledger or index', () => {
+    const route = assembleTaskRoute({ swimlanes: SWIMLANES, moves: MOVES_797, nowMs: T0 + 1_000 * MINUTE });
+
+    expect(route.map((column) => column.name)).toEqual(['Planning', 'Executing', 'Code Review', 'Testing', 'Merge']);
+    expect(route[1].visits).toEqual([{ startedAt: at(24), durationMs: 59 * MINUTE }]);
+  });
+});
 
 describe('assembleTaskReport', () => {
   it('spans the first move into a working column to the last move into Done', () => {

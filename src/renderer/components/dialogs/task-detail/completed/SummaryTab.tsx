@@ -8,21 +8,35 @@ import { knowledgeGraphOn, knowledgeGraphSupported } from '../../../../lib/knowl
 import { useConfigStore } from '../../../../stores/config-store';
 import { agentJobChoice, answerSetupGap } from '../../../../../shared/answer-agent';
 import { formatSpan, formatSpanCompact } from '../../../../utils/format-session';
-import { formatDateTime, formatMonthDay, formatMonthDayTime, formatTimeAgo } from '../../../../lib/datetime';
-import { ColumnPill, LinkButton, ReportCard } from './report-parts';
+import { formatDateTime, formatMonthDayTime, formatTimeAgo } from '../../../../lib/datetime';
+import { ColumnPill, LinkButton, OPENS_CONVERSATION_DETAIL, ReportCard } from './report-parts';
 import { useTaskLastMessage } from './useTaskReport';
-import type { TaskReport, TaskReportKnowledge, TaskReportRouteColumn, TaskReportSummaryState } from '../../../../../shared/types';
+import type {
+  ConversationTabRequest,
+  TaskReport,
+  TaskReportKnowledge,
+  TaskReportRouteColumn,
+  TaskReportSummaryState,
+} from '../../../../../shared/types';
 
 /** A visit shorter than this is a pass through the column, not a stay worth a card. */
 const VISIT_CARD_MIN_MS = 60_000;
 /** Changed files listed before "Show all". */
 const FILES_SHOWN = 8;
 
-export function SummaryTab({ report, projectId, taskId }: { report: TaskReport; projectId: string; taskId: string }) {
+const STAY_ROW_CLASS = 'flex h-[30px] w-full items-center whitespace-nowrap rounded-md border px-2.5 text-xs tabular-nums';
+
+export function SummaryTab({ report, projectId, taskId, onOpenConversation }: {
+  report: TaskReport;
+  projectId: string;
+  taskId: string;
+  /** Opens the task's conversation on a part of it; null where the host cannot show the viewer. */
+  onOpenConversation: ((target: ConversationTabRequest) => void) | null;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <TaskSummaryCard state={report.summaryState} projectId={projectId} taskId={taskId} />
-      {report.route.length > 0 && <RouteCard route={report.route} startedAt={report.startedAt} />}
+      {report.route.length > 0 && <RouteCard route={report.route} onOpenConversation={onOpenConversation} />}
       {report.knowledge && report.knowledge.commits.length > 0 && <CommitsCard knowledge={report.knowledge} />}
       {report.knowledge && report.knowledge.changedFiles.length > 0 && <FilesChangedCard knowledge={report.knowledge} />}
     </div>
@@ -144,18 +158,16 @@ function ClampedMarkdown({ text }: { text: string }) {
  * time. A column it came back to with two or more real stays lists each one
  * under its pill, with the full date, since the stays can be days apart.
  *
- * The move log began after many tasks had already run, so a task whose first
- * logged move comes well after it started says where its route begins.
+ * Where the host can show the conversation viewer, a pill opens it on that
+ * column's tab, and a stay row on that tab scrolled to the stay; a window
+ * already open switches its tab.
  */
-function RouteCard({ route, startedAt }: { route: TaskReportRouteColumn[]; startedAt: string | null }) {
-  const firstLoggedMs = Math.min(...route.flatMap((column) => column.visits.map((visit) => Date.parse(visit.startedAt))));
-  const partial = startedAt !== null && firstLoggedMs - Date.parse(startedAt) > VISIT_CARD_MIN_MS;
+function RouteCard({ route, onOpenConversation }: {
+  route: TaskReportRouteColumn[];
+  onOpenConversation: ((target: ConversationTabRequest) => void) | null;
+}) {
   return (
-    <ReportCard
-      title="Route"
-      aside={partial ? `Moves logged from ${formatMonthDay(new Date(firstLoggedMs).toISOString())}` : undefined}
-      testId="completed-route"
-    >
+    <ReportCard title="Route" testId="completed-route">
       <div className="flex items-start gap-[3px] overflow-x-auto">
         {route.map((column) => {
           const stays = column.visits.filter((visit) => visit.durationMs >= VISIT_CARD_MIN_MS);
@@ -165,19 +177,39 @@ function RouteCard({ route, startedAt }: { route: TaskReportRouteColumn[]; start
                 column={column}
                 label={formatSpanCompact(column.totalMs)}
                 tip={`${column.name}: ${formatSpan(column.totalMs)}`}
+                onClick={onOpenConversation ? () => onOpenConversation({ swimlaneId: column.swimlaneId }) : undefined}
               />
-              {stays.length >= 2 && stays.map((visit) => (
-                <Tooltip key={visit.startedAt} label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}>
-                  <div
-                    className="flex h-[30px] items-center whitespace-nowrap rounded-md border px-2.5 text-xs tabular-nums"
-                    style={{ borderColor: column.color }}
-                    data-testid="route-visit"
-                  >
+              {stays.length >= 2 && stays.map((visit) => {
+                const stayContent = (
+                  <>
                     <span className="text-fg-muted">{formatMonthDayTime(visit.startedAt)}</span>
                     <span className="ml-auto pl-3.5 font-medium text-fg-secondary">{formatSpanCompact(visit.durationMs)}</span>
-                  </div>
-                </Tooltip>
-              ))}
+                  </>
+                );
+                return (
+                  <Tooltip
+                    key={visit.startedAt}
+                    label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}
+                    detail={onOpenConversation ? OPENS_CONVERSATION_DETAIL : undefined}
+                  >
+                    {onOpenConversation ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenConversation({ swimlaneId: column.swimlaneId, visitStartedAt: visit.startedAt })}
+                        className={`${STAY_ROW_CLASS} cursor-pointer transition-colors hover:bg-surface-hover/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
+                        style={{ borderColor: column.color }}
+                        data-testid="route-visit"
+                      >
+                        {stayContent}
+                      </button>
+                    ) : (
+                      <div className={STAY_ROW_CLASS} style={{ borderColor: column.color }} data-testid="route-visit">
+                        {stayContent}
+                      </div>
+                    )}
+                  </Tooltip>
+                );
+              })}
             </div>
           );
         })}

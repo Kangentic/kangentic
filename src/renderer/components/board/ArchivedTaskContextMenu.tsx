@@ -1,13 +1,14 @@
 import React, { useEffect, useRef } from 'react';
-import { Trash2, FolderOpen, Copy, GitCompare, RotateCcw } from 'lucide-react';
+import { Trash2, FolderOpen, Copy, GitCompare, RotateCcw, MessageSquare } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 
 /**
- * Inline context menu shown on right-click of an archived task card.
- * Offers copy-id, open (read-only detail), show-changes (if worktree
- * still exists), restore-to (for every non-Done non-archived non-ghost
- * target lane), and delete-permanently.
+ * Inline context menu shown on right-click of an archived task card, in the
+ * Done lane preview and in the Completed Tasks dialog. Offers copy-id, open
+ * (read-only detail), view conversation (the conversation window on All),
+ * show-changes (if worktree still exists), restore-to (for every non-Done
+ * non-archived non-ghost target lane), and delete (the host confirms first).
  *
  * Positions itself at the click coordinates, clamped to stay fully
  * visible in the viewport. Closes on outside click or Escape.
@@ -17,6 +18,7 @@ export function ArchivedTaskContextMenu({
   task,
   swimlanes,
   onOpen,
+  onViewConversation,
   onShowChanges,
   onRestoreTo,
   onDelete,
@@ -26,6 +28,7 @@ export function ArchivedTaskContextMenu({
   task: Task;
   swimlanes: Swimlane[];
   onOpen: () => void;
+  onViewConversation: () => void;
   onShowChanges: () => void;
   onRestoreTo: (targetSwimlaneId: string) => void;
   onDelete: () => void;
@@ -89,6 +92,15 @@ export function ArchivedTaskContextMenu({
         <FolderOpen size={14} className="text-fg-faint" />
         Open
       </button>
+      <button
+        type="button"
+        onClick={() => { onViewConversation(); onClose(); }}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        data-testid="archived-context-view-conversation"
+      >
+        <MessageSquare size={14} className="text-fg-faint" />
+        View conversation
+      </button>
 
       {task.worktree_path && (
         <button
@@ -136,7 +148,7 @@ export function ArchivedTaskContextMenu({
         data-testid="archived-context-delete-task"
       >
         <Trash2 size={14} />
-        Delete permanently
+        Delete
       </button>
     </div>
   );

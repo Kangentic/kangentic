@@ -33,7 +33,7 @@ import type { TileInsertSide } from '../tiling/tree-ops';
 import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
 import { findWindowTreeViolations } from './tree-invariants';
 import { monitorAnchorToTaskId } from './monitor-anchor';
-import type { SerializedWorkspace } from '../../../shared/types';
+import type { ConversationTabRequest, SerializedWorkspace } from '../../../shared/types';
 
 /** The whole overlay: the default tiling footprint (edge-snap pairs fill it). */
 const FULL_TILE_RECT: FractionalRect = { x: 0, y: 0, w: 1, h: 1 };
@@ -214,6 +214,9 @@ interface OpenWindowInput {
   /** Open a `conversation` window at this turn (see `ManagedWindow.scrollToTurnUuid`).
    *  An already-open window for the anchor is re-aimed at it. */
   scrollToTurnUuid?: string;
+  /** Open a `conversation` window on this tab (see `ManagedWindow.conversationTab`).
+   *  An already-open window for the anchor switches to it. */
+  conversationTab?: ConversationTabRequest;
   /** The project the conversation belongs to (see `ManagedWindow.projectId`). */
   projectId?: string;
 }
@@ -237,6 +240,8 @@ export interface WindowStoreState {
   openWindow: (input: OpenWindowInput) => string;
   /** Drop a window's one-shot scroll target once it has scrolled there. */
   clearWindowScrollTarget: (id: string) => void;
+  /** Drop a conversation window's one-shot tab request once it has switched. */
+  clearConversationTab: (id: string) => void;
   /** Unconditional removal. A USER close on the board goes through the layer's
    *  policy in `WindowFrame` (`shouldParkOnClose`), which parks a window whose
    *  Browser pane must outlive the close; a direct caller of this is declaring
@@ -388,13 +393,23 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // the user's pointer-down that normally calls it), so stamping first
         // would be undone by the very next line.
         if (input.openedByAgent) get().markAgentOpened(existing.id);
-        // Re-aim an open conversation at the passage now asked for.
+        // Re-aim an open conversation at the passage, or the tab, now asked for.
         const turnUuid = input.scrollToTurnUuid;
-        if (turnUuid) {
+        const conversationTab = input.conversationTab;
+        if (turnUuid || conversationTab) {
           set((current) => {
             const target = current.windows[existing.id];
             if (!target) return current;
-            return { windows: { ...current.windows, [existing.id]: { ...target, scrollToTurnUuid: turnUuid } } };
+            return {
+              windows: {
+                ...current.windows,
+                [existing.id]: {
+                  ...target,
+                  ...(turnUuid ? { scrollToTurnUuid: turnUuid } : {}),
+                  ...(conversationTab ? { conversationTab } : {}),
+                },
+              },
+            };
           });
         }
         return existing.id;
@@ -424,6 +439,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         // user path can never inherit an agent stamp by forgetting to clear it.
         ...(input.openedByAgent ? { openedByAgent: true as const } : {}),
         ...(input.scrollToTurnUuid ? { scrollToTurnUuid: input.scrollToTurnUuid } : {}),
+        ...(input.conversationTab ? { conversationTab: input.conversationTab } : {}),
         ...(input.projectId ? { projectId: input.projectId } : {}),
       };
 
@@ -441,6 +457,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         const target = current.windows[id];
         if (!target || target.scrollToTurnUuid === undefined) return current;
         const { scrollToTurnUuid: _consumed, ...rest } = target;
+        return { windows: { ...current.windows, [id]: rest } };
+      });
+    },
+
+    clearConversationTab: (id) => {
+      set((current) => {
+        const target = current.windows[id];
+        if (!target || target.conversationTab === undefined) return current;
+        const { conversationTab: _consumed, ...rest } = target;
         return { windows: { ...current.windows, [id]: rest } };
       });
     },

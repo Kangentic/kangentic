@@ -11,6 +11,8 @@
  * render time against the overlay's measured size (see `geometry.ts`).
  */
 
+import type { ConversationTabRequest } from '../../../shared/types';
+
 /** A rectangle expressed as fractions (0..1) of the overlay rect. */
 export interface FractionalRect {
   x: number;
@@ -130,6 +132,10 @@ export interface ManagedWindow {
    *  `conversationSessionId`; setting that from the graph would open a second
    *  window on the board layer, under the graph. */
   scrollToTurnUuid?: string;
+  /** Transient, never persisted: the tab a `conversation` window was last asked
+   *  to show (a Route pill's column, or All), consumed once the window has
+   *  switched to it. A restored window opens on All. */
+  conversationTab?: ConversationTabRequest;
   /** Transient, never persisted: the project a `conversation` window's
    *  transcript belongs to, when it is not the open one. The Knowledge Graph
    *  opens conversations from every project it shows; absent means the open

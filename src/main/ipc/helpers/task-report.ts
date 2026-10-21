@@ -10,7 +10,7 @@
  * turns the rows into the report.
  */
 
-import type { AppConfig, TaskLastMessage, TaskReport, TaskReportSummaryState } from '../../../shared/types';
+import type { AppConfig, TaskLastMessage, TaskReport, TaskReportRouteColumn, TaskReportSummaryState } from '../../../shared/types';
 import { taskSummariesOn } from '../../../shared/answer-agent';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
@@ -18,7 +18,7 @@ import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectRepos } from './project-repos';
-import { assembleTaskReport } from './task-report-assemble';
+import { assembleTaskReport, assembleTaskRoute } from './task-report-assemble';
 import type { IpcContext } from '../ipc-context';
 
 /** How long the view waits on the index before it shows the report without it. */
@@ -97,6 +97,21 @@ export async function readTaskReport(context: IpcContext, projectId: string, tas
     ledger,
     knowledge: knowledgeByTask?.get(taskId) ?? null,
     summaryState,
+    nowMs: Date.now(),
+  });
+}
+
+/**
+ * The task's route alone (`sessions.getTaskRoute`): the conversation window's
+ * column tabs. Database rows only, so it is cheap enough to re-read on every
+ * new transcript revision of a live task, where `readTaskReport` waits on the
+ * index.
+ */
+export function readTaskRoute(context: IpcContext, projectId: string, taskId: string): TaskReportRouteColumn[] {
+  const repos = getProjectRepos(context, projectId);
+  return assembleTaskRoute({
+    swimlanes: repos.swimlanes.list(),
+    moves: repos.taskMoves.listForTask(taskId),
     nowMs: Date.now(),
   });
 }

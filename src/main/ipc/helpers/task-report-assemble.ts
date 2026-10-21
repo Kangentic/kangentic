@@ -103,6 +103,20 @@ function routeOf(intervals: ReadonlyArray<Interval>, swimlanes: ReadonlyArray<Sw
   return [...byColumn.values()].sort((first, second) => (positionOf.get(first.swimlaneId) ?? 0) - (positionOf.get(second.swimlaneId) ?? 0));
 }
 
+/** What a route is built from, and nothing the report's other sections read. */
+export type TaskRouteInput = Pick<TaskReportInput, 'swimlanes' | 'moves' | 'nowMs'>;
+
+/**
+ * The task's route on its own (`sessions.getTaskRoute`), which the conversation
+ * window reads for its column tabs without paying for the whole report. The
+ * report's Route card is built by this same function, so the card's pills and
+ * the window's tabs can never disagree.
+ */
+export function assembleTaskRoute(input: TaskRouteInput): TaskReportRouteColumn[] {
+  const columnsById = new Map(input.swimlanes.map((swimlane) => [swimlane.id, toColumn(swimlane)]));
+  return routeOf(stays(input.moves, columnsById, input.nowMs), input.swimlanes);
+}
+
 /** The base model's label for a session row, or null when it reported none. */
 function modelLabelOf(record: TaskReportSessionRecord): string | null {
   if (!record.model_id && !record.model_display_name) return null;
@@ -465,7 +479,7 @@ export function assembleTaskReport(input: TaskReportInput): TaskReport {
     summary: input.summary,
     startedAt: span.startedAt,
     endedAt: span.endedAt,
-    route: routeOf(intervals, input.swimlanes),
+    route: assembleTaskRoute(input),
     conversations,
     models,
     modelFallback: modelFallbackOf(input.sessions),

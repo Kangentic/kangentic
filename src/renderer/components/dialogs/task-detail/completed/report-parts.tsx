@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ChevronDown, Wrench } from 'lucide-react';
+import { Check, ChevronDown, Wrench } from 'lucide-react';
 import { ColumnGlyph } from '../../../../utils/swimlane-icons';
 import { prefersDarkText, readableTextOn } from '../../../../utils/readable-text';
 import { ToolBreakdownPopover } from '../../../terminal/ToolBreakdownPopover';
@@ -49,6 +49,37 @@ export function LinkButton({ children, onClick, testId }: { children: ReactNode;
   );
 }
 
+/**
+ * A run's conversation in the Runs table: its short id in a muted pill, the
+ * same on every run of one conversation, so two rows with one pill read as one
+ * conversation. A click copies the full id, and the check shows only once the
+ * id is on the clipboard (a write the window is refused leaves the id).
+ */
+export function SessionPill({ conversationId }: { conversationId: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Tooltip label="Copy conversation ID" detail={conversationId}>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(conversationId).then(
+            () => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            },
+            (error: unknown) => console.warn('[completed-task] conversation id copy failed:', error),
+          );
+        }}
+        className="inline-flex h-[22px] items-center gap-1 rounded-full border border-edge/60 bg-surface-hover/60 px-2 font-mono text-[11px] text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        data-testid="completed-copy-conversation-id"
+      >
+        {copied && <Check size={11} className="text-green-400" />}
+        {conversationId.slice(0, 8)}
+      </button>
+    </Tooltip>
+  );
+}
+
 /** A recorded value (model, effort, permission mode) in a table cell. */
 export function ValuePill({ children }: { children: ReactNode }) {
   return (
@@ -92,30 +123,56 @@ export function ColumnLabel({ column }: { column: TaskReportColumn }) {
   );
 }
 
+/** The tooltip line a Route pill or stay row adds once it opens the conversation. */
+export const OPENS_CONVERSATION_DETAIL = 'Opens this part of the conversation';
+
+const COLUMN_PILL_CLASS = 'flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums';
+
 /**
  * A column's pill on the route: filled with the column's color, its glyph on a
  * lighter disc, the text black or white by contrast.
  */
-export function ColumnPill({ column, label, tip }: { column: TaskReportColumn; label: string; tip: string }) {
+export function ColumnPill({ column, label, tip, onClick }: {
+  column: TaskReportColumn;
+  label: string;
+  tip: string;
+  /** Makes the pill a button that opens this column's part of the conversation. */
+  onClick?: () => void;
+}) {
   const darkText = prefersDarkText(column.color);
   const textColor = readableTextOn(column.color);
-  return (
-    <Tooltip label={tip}>
-      <div
-        className="flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums"
-        style={{ backgroundColor: column.color, color: textColor }}
-        data-testid="route-column-pill"
-        data-swimlane-name={column.name}
+  // What the pill is, whichever element carries it.
+  const pillProps = {
+    style: { backgroundColor: column.color, color: textColor },
+    'data-testid': 'route-column-pill',
+    'data-swimlane-name': column.name,
+  };
+  const content = (
+    <>
+      <span
+        className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
+        style={{ backgroundColor: darkText ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.2)' }}
       >
-        <span
-          className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full"
-          style={{ backgroundColor: darkText ? 'rgba(255, 255, 255, 0.42)' : 'rgba(255, 255, 255, 0.2)' }}
+        <ColumnGlyph column={column} size={12} color={textColor} />
+      </span>
+      <span className="font-medium">{column.name}</span>
+      <span className="ml-auto pl-3.5 font-semibold">{label}</span>
+    </>
+  );
+  return (
+    <Tooltip label={tip} detail={onClick ? OPENS_CONVERSATION_DETAIL : undefined}>
+      {onClick ? (
+        <button
+          type="button"
+          onClick={onClick}
+          className={`${COLUMN_PILL_CLASS} w-full cursor-pointer transition-[filter,box-shadow] hover:brightness-110 hover:ring-2 hover:ring-fg/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
+          {...pillProps}
         >
-          <ColumnGlyph column={column} size={12} color={textColor} />
-        </span>
-        <span className="font-medium">{column.name}</span>
-        <span className="ml-auto pl-3.5 font-semibold">{label}</span>
-      </div>
+          {content}
+        </button>
+      ) : (
+        <div className={COLUMN_PILL_CLASS} {...pillProps}>{content}</div>
+      )}
     </Tooltip>
   );
 }

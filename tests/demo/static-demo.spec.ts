@@ -456,9 +456,11 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
   'completed-task-usage': async (page) => {
     const rowSummary = DEMO_COMPLETED_TASK_SUMMARY;
     await expect(page.locator('[data-testid="completed-panel-usage"]')).toBeVisible();
-    // Two conversations, the main one and Code Review's isolated one, over every run.
-    await expect(page.locator('[data-testid="completed-conversation-header"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.conversations.length);
+    // Every run, each naming its conversation in a Session pill: two distinct pills, the main
+    // conversation and Code Review's isolated one.
     await expect(page.locator('[data-testid="completed-run-row"]')).toHaveCount(DEMO_COMPLETED_TASK_REPORT.conversations.reduce((sum, conversation) => sum + conversation.runs.length, 0));
+    const sessionPills = await page.locator('[data-testid="completed-copy-conversation-id"]').allTextContents();
+    expect(new Set(sessionPills).size).toBe(DEMO_COMPLETED_TASK_REPORT.conversations.length);
     // The Runs Total adds back to the row's cost.
     await expect(page.locator('[data-testid="completed-runs-total"]')).toContainText(formatCost(rowSummary.costUsd));
     // The ledger card, never the derived report's fallback card.

@@ -10,6 +10,7 @@ import type {
 import type { TaskChangesPanelSlice } from './task-changes-panel-slice';
 import type { TransientSessionSlice } from './transient-session-slice';
 import type { RateLimitSnapshot } from '../../utils/rate-limit-window';
+import type { ConversationTabRequest } from '../../../shared/types';
 
 /** A one-shot capture of a task's terminal scrollback viewport at the moment
  *  its conversation viewer was opened. See `pendingTuiAnchor` below. */
@@ -97,6 +98,14 @@ export interface CoreSessionSlice {
    *  a window for it, and mirrors the window's close back to null. Mirrors
    *  `detailTaskId` for the task-detail bridge. */
   conversationSessionId: string | null;
+  /** One-shot: the tab the latest open asked for (a Route pill's column, or
+   *  All). The bridge hands it to the window and clears it here. Null leaves an
+   *  open window's tab as it is. */
+  conversationTab: ConversationTabRequest | null;
+  /** Bumped by every non-null `setConversationSessionId`, so asking again for a
+   *  conversation that is already open still reaches the bridge, which then
+   *  focuses the window and switches its tab. */
+  conversationRequestId: number;
   /** One-shot: the `TranscriptEntry.uuid` the conversation viewer should scroll to
    *  on next load, then clear (consumed via `onConsumedScroll`). Set alongside
    *  `conversationSessionId` by a conversation search hit. Transient nav signal. */
@@ -214,7 +223,7 @@ export interface CoreSessionSlice {
    *  disarm. See `pendingDetailWindowsProjectId`. */
   setPendingDetailWindowsProjectId: (projectId: string | null) => void;
   setScrollToEventKey: (key: string | null) => void;
-  setConversationSessionId: (id: string | null) => void;
+  setConversationSessionId: (id: string | null, tab?: ConversationTabRequest | null) => void;
   setScrollToTurnUuid: (uuid: string | null) => void;
   setPendingOpenConversation: (id: string | null) => void;
   setPendingScrollToTurnUuid: (uuid: string | null) => void;
