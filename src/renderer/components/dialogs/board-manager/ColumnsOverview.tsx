@@ -215,12 +215,13 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
   // realistic per-column setup reads whole at the site's 1600px frame: an agent
   // as long as "GitHub Copilot CLI", a label as long as "Plan (Read-Only)",
   // with room left for a font wider than Segoe UI (the posters are shot on
-  // Linux). Anything longer ellipsizes in OverviewCell.
+  // Linux). Session is 10% so "Isolated" reads whole beside the Split icon that
+  // leads it. Anything longer ellipsizes in OverviewCell.
   const columns: DataTableColumn<OverviewRow>[] = [
     {
       key: 'name',
       label: 'Column',
-      width: 'w-[13%]',
+      width: 'w-[12%]',
       render: (row) => (
         <span className="flex items-center gap-2 min-w-0">
           <OverviewColumnIcon row={row} />
@@ -238,11 +239,11 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     },
     { key: 'autoSpawn', label: 'Start', width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
     { key: 'agent', label: 'Agent', width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
-    { key: 'model', label: 'Model', width: 'w-[11%]', render: (row) => <OverviewCell value={row.model} /> },
+    { key: 'model', label: 'Model', width: 'w-[10%]', render: (row) => <OverviewCell value={row.model} /> },
     { key: 'effort', label: 'Effort', width: 'w-[7%]', render: (row) => <OverviewCell value={row.effort} /> },
     { key: 'permission', label: 'Permissions', width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
     { key: 'handoff', label: 'Handoff', width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
-    { key: 'session', label: 'Session', width: 'w-[8%]', render: (row) => <OverviewCell value={row.session} /> },
+    { key: 'session', label: 'Session', width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
     {
       key: 'onEnter',
       label: 'On enter',
