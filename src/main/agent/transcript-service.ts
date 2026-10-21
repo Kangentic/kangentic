@@ -703,7 +703,7 @@ export async function resolveTaskTranscript(
   const depsFingerprint = depsParts.join('|');
   const conversations = uniqueExtents(resolvedBySession);
 
-  // The expensive part (dedup by uuid, chronological sort, boundary-divider
+  // The expensive part (dedup by `transcriptEntryKey`, chronological sort, boundary-divider
   // insertion) is memoized per task: when every contributing session's
   // entries array is unchanged (same reference, per the token above), skip
   // straight to the SAME stitched `entries` array and `revision` - this is

@@ -175,7 +175,13 @@ function indexOfCursor(extents: ReadonlyArray<MessageExtent>, cursor: string | u
   const match = cursor ? /^o:(-?\d+):(.*)$/.exec(cursor) : null;
   if (!match) return null;
   const timeCreated = Number(match[1]);
-  const id = decodeURIComponent(match[2]);
+  let id: string;
+  try {
+    id = decodeURIComponent(match[2]);
+  } catch {
+    // A malformed escape names no message: the caller answers `reset`.
+    return null;
+  }
   const index = extents.findIndex((extent) => extent.id === id && extent.timeCreated === timeCreated);
   return index < 0 ? null : index;
 }
@@ -211,7 +217,10 @@ export function readOpenCodeTranscriptPage(
   sessionId: string,
   request: TranscriptPageReadRequest,
 ): TranscriptPageReadResult {
-  const unavailable: TranscriptPageReadResult = { status: 'unavailable', reason: 'file_missing' };
+  // An absent database is a missing source (the caller tries the archive); one
+  // that is there but fails to open or read is a failed read the viewer retries.
+  if (!fs.existsSync(dbPath)) return { status: 'unavailable', reason: 'file_missing' };
+  const unavailable: TranscriptPageReadResult = { status: 'unavailable', reason: 'read_failed' };
   return withDatabase<TranscriptPageReadResult>(dbPath, unavailable, (database) => {
     const extents = messageExtents(database, sessionId);
     if (extents.length === 0) return { status: 'unavailable', reason: 'not_found' };

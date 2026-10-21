@@ -205,13 +205,28 @@ const timelineCacheOptions = {
 };
 
 /**
+ * How long one timeline build may probe, the budget a locate call has. A probe
+ * skips any line longer than itself, so a file of huge lines could otherwise
+ * hold the history queue for 64 page budgets.
+ */
+const TIMELINE_MAX_MS = 6_000;
+
+/** A cached timeline is reused until the source has grown by this factor. */
+const TIMELINE_REUSE_GROWTH = 1.25;
+
+/**
  * A coarse position-to-time map of one conversation, for the scrollbar's drag
  * label and for finding a turn by its time: 64 probes of at most 64 KiB through
  * the adapter's page read, at most about 4 MiB of reads. Reused while the source keeps its
  * token and has grown less than a quarter since, since an append moves no
- * earlier sample.
+ * earlier sample. A build cut short by `deadline` answers the samples it has
+ * and is not cached.
  */
-export async function readHistoryTimeline(db: Database.Database, conversationId: string): Promise<TranscriptTimelineResponse> {
+export async function readHistoryTimeline(
+  db: Database.Database,
+  conversationId: string,
+  deadline: number = Date.now() + TIMELINE_MAX_MS,
+): Promise<TranscriptTimelineResponse> {
   const conversation = resolveConversation(db, conversationId);
   if (!conversation) return { status: 'unavailable', reason: 'not_found' };
   const { adapter, agentSessionId } = conversation;
@@ -225,12 +240,12 @@ export async function readHistoryTimeline(db: Database.Database, conversationId:
   }
 
   const cached = timelineByConversation.get(conversation.conversationId);
-  if (cached && totalPosition >= cached.totalPosition && totalPosition < cached.totalPosition * 1.25) {
+  if (cached && totalPosition >= cached.totalPosition && totalPosition < cached.totalPosition * TIMELINE_REUSE_GROWTH) {
     // A probe-sized read, never a tiny one: a page skips any line longer than
     // itself, so a 1-byte check walked the whole file a byte at a time and held
     // the worker's history queue until main killed the worker.
     const check = await adapter.readTranscriptPage(agentSessionId, conversation.cwd, {
-      direction: 'around', position: 0, maxBytes: timelineProbeBytes(totalPosition), sourceToken: cached.sourceToken,
+      direction: 'around', position: 0, maxBytes: timelineProbeBytes(totalPosition), sourceToken: cached.sourceToken, probe: true,
     });
     if (check.status !== 'reset') {
       touchBounded(timelineByConversation, conversation.conversationId, cached, timelineCacheOptions);
@@ -240,11 +255,16 @@ export async function readHistoryTimeline(db: Database.Database, conversationId:
 
   const samples: Array<{ position: number; ts: number }> = [];
   let sourceToken: string | null = null;
+  let complete = true;
   const probeBytes = timelineProbeBytes(totalPosition);
   for (let probe = 0; probe < TIMELINE_PROBES; probe += 1) {
+    if (Date.now() >= deadline) {
+      complete = false;
+      break;
+    }
     const position = Math.floor((totalPosition * probe) / TIMELINE_PROBES);
     const result = await adapter.readTranscriptPage(agentSessionId, conversation.cwd, {
-      direction: 'around', position, maxBytes: probeBytes, untilPosition: totalPosition,
+      direction: 'around', position, maxBytes: probeBytes, untilPosition: totalPosition, probe: true,
     });
     if (result.status !== 'ok') continue;
     sourceToken ??= result.page.sourceToken;
@@ -260,7 +280,7 @@ export async function readHistoryTimeline(db: Database.Database, conversationId:
   if (tailDated?.origin && (samples.length === 0 || tailDated.origin.position > samples[samples.length - 1].position)) {
     samples.push({ position: tailDated.origin.position, ts: tailDated.ts });
   }
-  if (sourceToken) {
+  if (sourceToken && complete) {
     touchBounded(timelineByConversation, conversation.conversationId, { sourceToken, totalPosition, samples }, timelineCacheOptions);
   }
   return { status: 'ok', conversationId: conversation.conversationId, samples };
@@ -385,18 +405,19 @@ export async function locateHistoryTurn(db: Database.Database, request: LocateRe
     const until = extent.tailStartPosition;
 
     if (turnTs !== null && extent.hasTimestamps) {
-      const timeline = await readHistoryTimeline(db, conversationId);
+      // The timeline shares the locate call's deadline rather than adding its own.
+      const timeline = await readHistoryTimeline(db, conversationId, startedAt + LOCATE_MAX_MS);
       const position = timeline.status === 'ok' ? positionForTime(timeline.samples, turnTs) : null;
-      if (position !== null) {
+      if (position !== null && !outOfTime()) {
         const around = pageOf(await readHistoryPage(db, {
           conversationId, direction: 'around', position: Math.min(position, until), untilPosition: until,
         }));
         if (holds(around, request.turnUuid)) return { status: 'found', page: around! };
-        if (around && !around.reachedStart) {
+        if (around && !around.reachedStart && !outOfTime()) {
           const before = pageOf(await readHistoryPage(db, { conversationId, direction: 'before', cursor: around.startCursor, untilPosition: until }));
           if (holds(before, request.turnUuid)) return { status: 'found', page: before! };
         }
-        if (around && !around.reachedEnd) {
+        if (around && !around.reachedEnd && !outOfTime()) {
           const after = pageOf(await readHistoryPage(db, { conversationId, direction: 'after', cursor: around.endCursor, untilPosition: until }));
           if (holds(after, request.turnUuid)) return { status: 'found', page: after! };
         }

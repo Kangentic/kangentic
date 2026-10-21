@@ -67,8 +67,8 @@ function preConfig(): string {
         id: '${PROJECT_ID}', name: 'Paging Project', path: '/mock/convpaging',
         github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
       });
-      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
-        state.swimlanes.push(Object.assign({}, s, { id: 'lane-convpaging-' + i, position: i, created_at: ts }));
+      state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
+        state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-convpaging-' + index, position: index, created_at: ts }));
       });
       state.tasks.push({
         id: '${TASK_ID}', title: 'Paging fixture task', description: '',
@@ -161,13 +161,19 @@ async function launch(viewport = { width: 1920, height: 1080 }): Promise<{ brows
   return { browser, page };
 }
 
-async function openConversation(page: Page, sessionId: string, tab: { swimlaneId: string } | null = null): Promise<void> {
+/** Ask for the Conversation window without waiting for its view: a jump still out shows a skeleton in its place. */
+async function requestConversation(page: Page, sessionId: string, tab: { swimlaneId: string } | null = null): Promise<void> {
   await page.evaluate(({ sid, request }) => {
     const stores = (window as unknown as {
       __zustandStores?: { session: { getState: () => { setConversationSessionId: (id: string, tab?: unknown) => void } } };
     }).__zustandStores;
     stores?.session.getState().setConversationSessionId(sid, request ?? undefined);
   }, { sid: sessionId, request: tab });
+  await expect(page.getByTestId('conversation-titlebar')).toBeVisible({ timeout: 5000 });
+}
+
+async function openConversation(page: Page, sessionId: string, tab: { swimlaneId: string } | null = null): Promise<void> {
+  await requestConversation(page, sessionId, tab);
   await expect(page.getByTestId('conversation-view')).toBeVisible({ timeout: 5000 });
 }
 
@@ -203,6 +209,34 @@ async function takeOver(page: Page): Promise<void> {
   await page.getByTestId('conversation-scroll-container').evaluate((element) => {
     element.dispatchEvent(new WheelEvent('wheel', { deltaY: 0 }));
   });
+}
+
+/** The recorded page reads in one direction. */
+async function pageCallsIn(page: Page, direction: PageCall['direction']): Promise<PageCall[]> {
+  return (await pageCalls(page)).filter((call) => call.direction === direction);
+}
+
+async function locateCallCount(page: Page): Promise<number> {
+  return page.evaluate(() => (window as unknown as { __mockTranscriptLocateCalls?: unknown[] }).__mockTranscriptLocateCalls?.length ?? 0);
+}
+
+/** Open the titlebar's Actions menu and take Jump to start. */
+async function jumpToStartFromMenu(page: Page): Promise<void> {
+  await page.getByTestId('conversation-titlebar').getByRole('button', { name: 'Actions' }).click();
+  await page.getByTestId('conversation-jump-to-start').click();
+}
+
+/** Mark the scroll container, so a remount (a new element, which a jump makes) shows. */
+async function markScrollContainer(page: Page): Promise<void> {
+  await page.getByTestId('conversation-scroll-container').evaluate((element) => {
+    (element as HTMLElement & { __pagingMark?: boolean }).__pagingMark = true;
+  });
+}
+
+/** Whether the scroll container on screen is the one `markScrollContainer` marked. */
+async function scrollContainerIsMarked(page: Page): Promise<boolean> {
+  return page.getByTestId('conversation-scroll-container').evaluate((element) =>
+    (element as HTMLElement & { __pagingMark?: boolean }).__pagingMark === true);
 }
 
 /** The viewport top of one turn's message box, what the reader sees, or null when it is not rendered. */
@@ -360,6 +394,91 @@ test.describe('Conversation Viewer - history paging', () => {
     }
   });
 
+  test('an edge read the worker was too busy for is asked again after a wait, and shows no failure meanwhile', async () => {
+    // Two busy answers cost two BUSY_RETRY_MS waits (1s each) of the product's own timer.
+    test.slow();
+    const { browser, page } = await launch();
+    try {
+      // The first two reads above the tail find the worker's queue full; the third is held.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => unknown;
+          __mockTranscriptsPageOverride: (input: { direction: string }) => unknown;
+          __releasePage?: () => void;
+        };
+        let readsAbove = 0;
+        host.__mockTranscriptsPageOverride = (input) => {
+          if (input.direction !== 'before') return host.__pagingAnswer(input);
+          readsAbove += 1;
+          if (readsAbove <= 2) return { status: 'busy' };
+          return new Promise((resolve) => {
+            host.__releasePage = () => resolve(host.__pagingAnswer(input));
+          });
+        };
+      });
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await scrollToTop(page);
+
+      // The third read going out means the first two busy answers were waited out and asked again.
+      await expect.poll(async () => page.evaluate(() => typeof (window as unknown as { __releasePage?: () => void }).__releasePage),
+        { timeout: 10_000 }).toBe('function');
+      expect((await pageCallsIn(page, 'before')).length).toBeGreaterThanOrEqual(3);
+      // It is still a read in progress, not a failure to retry by hand.
+      await expect(page.getByTestId('conversation-edge-top')).toContainText('Loading earlier messages');
+      await expect(page.getByTestId('conversation-edge-top-retry')).toHaveCount(0);
+
+      await page.evaluate(() => (window as unknown as { __releasePage: () => void }).__releasePage());
+      await expect(page.locator('[data-turn-uuid="paged-turn-149"]')).toHaveCount(1);
+      await expect(page.getByTestId('conversation-edge-top-retry')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('an edge read answered reset, the source rewritten, drops the loaded pages and returns to the tail', async () => {
+    const { browser, page } = await launch();
+    try {
+      // The first read above the tail lands a page; the second finds the source rewritten.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => unknown;
+          __mockTranscriptsPageOverride: (input: { direction: string }) => unknown;
+        };
+        let readsAbove = 0;
+        host.__mockTranscriptsPageOverride = (input) => {
+          if (input.direction !== 'before') return host.__pagingAnswer(input);
+          readsAbove += 1;
+          return readsAbove === 2 ? { status: 'reset', conversationId: 'agent-conv-paging' } : host.__pagingAnswer(input);
+        };
+      });
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await scrollToTop(page);
+      await expect(page.locator('[data-turn-uuid="paged-turn-149"]')).toHaveCount(1);
+      await markScrollContainer(page);
+
+      // Back at the top of what is loaded now, the next read is the one answered reset.
+      await scrollToTop(page);
+      await expect.poll(async () => (await pageCallsIn(page, 'before')).length).toBe(2);
+      expect((await pageCallsIn(page, 'before'))[1].cursor).toBe('j:11000');
+      // The view is a new one, open at the tail. (Not "turn 149 is gone": a
+      // virtualized list holds no row far from the reader whatever it loaded.)
+      await expect.poll(async () => scrollContainerIsMarked(page)).toBe(false);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeInViewport();
+      // A reset is not a failure: no error row, and the usual loading row above the tail is back.
+      await expect(page.getByTestId('conversation-edge-top-retry')).toHaveCount(0);
+      await expect(page.getByTestId('conversation-edge-top')).toContainText('Loading earlier messages');
+
+      // The loaded page went with the reset: reaching the top again reads from the tail's cursor, not the dropped page's.
+      await scrollToTop(page);
+      await expect.poll(async () => (await pageCallsIn(page, 'before')).length).toBe(3);
+      expect((await pageCallsIn(page, 'before'))[2].cursor).toBe('j:15000');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Jump to start opens at the first turn, and Jump to latest goes back to the tail', async () => {
     const { browser, page } = await launch();
     try {
@@ -377,6 +496,134 @@ test.describe('Conversation Viewer - history paging', () => {
       await page.getByTestId('conversation-jump-to-latest').click();
       await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
       await expect(page.getByTestId('conversation-edge-bottom')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Jump to start taken while a search hit is still being looked up settles the lookup, so the skeleton goes', async () => {
+    const { browser, page } = await launch();
+    try {
+      // A hit in history that neither the start page (turns 0 to 39) nor the
+      // tail holds, with its lookup held until the test lets it answer.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => { status: string } & Record<string, unknown>;
+          __mockTranscriptsLocateOverride: (input: unknown) => unknown;
+          __releaseLocate?: () => void;
+        };
+        host.__mockTranscriptsLocateOverride = () => new Promise((resolve) => {
+          host.__releaseLocate = () => {
+            const { status: _status, ...found } = host.__pagingAnswer({ conversationId: 'agent-conv-paging', direction: 'around', position: 10000 });
+            resolve({ status: 'found', page: found });
+          };
+        });
+        const stores = (window as unknown as {
+          __zustandStores: { session: { getState: () => { setScrollToTurnUuid: (uuid: string | null) => void } } };
+        }).__zustandStores;
+        stores.session.getState().setScrollToTurnUuid('paged-turn-100');
+      });
+      await requestConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByTestId('conversation-skeleton')).toBeVisible();
+      await expect.poll(async () => locateCallCount(page)).toBe(1);
+      // The skeleton stands in for the whole view, and the Jump to latest pill lives in the view.
+      await expect(page.getByTestId('conversation-jump-to-latest')).toHaveCount(0);
+
+      await jumpToStartFromMenu(page);
+      // The lookup is still out: the jump alone settles it.
+      await expect(page.getByText('PAGED_TURN_0 ', { exact: false })).toBeVisible();
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+
+      // The lookup answers late and changes nothing. A new view would be a new
+      // element, and it cannot be polled for: this is an intentional point read.
+      await markScrollContainer(page);
+      await page.evaluate(() => (window as unknown as { __releaseLocate?: () => void }).__releaseLocate?.());
+      await expect(page.getByText('PAGED_TURN_0 ', { exact: false })).toBeVisible();
+      expect(await scrollContainerIsMarked(page)).toBe(true);
+      expect(await locateCallCount(page)).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Jump to start with the start already loaded settles a lookup the same way, with no new read', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      // The first jump loads the start (turns 0 to 39), so position 0 is held from here on.
+      await jumpToStartFromMenu(page);
+      await expect(page.getByText('PAGED_TURN_0 ', { exact: false })).toBeVisible();
+
+      // A hit in history neither the start page nor the tail holds: its lookup is held.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => { status: string } & Record<string, unknown>;
+          __mockTranscriptsLocateOverride: (input: unknown) => unknown;
+          __releaseLocate?: () => void;
+        };
+        host.__mockTranscriptsLocateOverride = () => new Promise((resolve) => {
+          host.__releaseLocate = () => {
+            const { status: _status, ...found } = host.__pagingAnswer({ conversationId: 'agent-conv-paging', direction: 'around', position: 10000 });
+            resolve({ status: 'found', page: found });
+          };
+        });
+        const stores = (window as unknown as {
+          __zustandStores: { session: { getState: () => { setScrollToTurnUuid: (uuid: string | null) => void } } };
+        }).__zustandStores;
+        stores.session.getState().setScrollToTurnUuid('paged-turn-100');
+      });
+      await expect(page.getByTestId('conversation-skeleton')).toBeVisible();
+      await expect.poll(async () => locateCallCount(page)).toBe(1);
+
+      // Position 0 is held, so there is nothing to read: the jump re-opens the start on what is loaded.
+      const aroundBefore = (await pageCallsIn(page, 'around')).length;
+      await jumpToStartFromMenu(page);
+      await expect(page.getByText('PAGED_TURN_0 ', { exact: false })).toBeVisible();
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+      expect((await pageCallsIn(page, 'around')).length).toBe(aroundBefore);
+
+      // Let the held lookup go, so nothing is left pending when the page closes.
+      await page.evaluate(() => (window as unknown as { __releaseLocate?: () => void }).__releaseLocate?.());
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Jump to start taken while a column tab still owes its opening stay settles it, so the skeleton goes', async () => {
+    const { browser, page } = await launch();
+    try {
+      // The read around the tab's first stay is held; every read after it answers.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => unknown;
+          __mockTranscriptsPageOverride: (input: unknown) => unknown;
+          __releaseOwedRead?: () => void;
+        };
+        let holdFirstRead = true;
+        host.__mockTranscriptsPageOverride = (input) => {
+          if (!holdFirstRead) return host.__pagingAnswer(input);
+          holdFirstRead = false;
+          return new Promise((resolve) => {
+            host.__releaseOwedRead = () => resolve(host.__pagingAnswer(input));
+          });
+        };
+      });
+      await requestConversation(page, PAGED_SESSION_ID, { swimlaneId: 'lane-paging-executing' });
+      await expect.poll(async () => (await pageCalls(page)).length).toBe(1);
+      await expect(page.getByTestId('conversation-skeleton')).toBeVisible();
+
+      await jumpToStartFromMenu(page);
+      // The stay's read is still out: the jump alone settles what it owed.
+      await expect(page.getByText('PAGED_TURN_5 ', { exact: false })).toBeVisible();
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+
+      // The held read answers late: its page is not wanted, so the view is the one already on screen.
+      await markScrollContainer(page);
+      await page.evaluate(() => (window as unknown as { __releaseOwedRead?: () => void }).__releaseOwedRead?.());
+      await expect(page.getByText('PAGED_TURN_5 ', { exact: false })).toBeVisible();
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+      expect(await scrollContainerIsMarked(page)).toBe(true);
     } finally {
       await browser.close();
     }
@@ -468,6 +715,60 @@ test.describe('Conversation Viewer - history paging', () => {
       expect(Math.min(...shownTurns)).toBeLessThan(TAIL_FROM_TURN);
       await page.mouse.up();
       expect((await pageCalls(page)).filter((call) => call.direction === 'around')).toHaveLength(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('each far drag gets its own retry for a read that keeps failing, not just the first drag', async () => {
+    // Each held drag waits out FAR_RETRY_MS (1s) of the product's own timer for its retry.
+    test.slow();
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await takeOver(page);
+      // Every read around a position fails, so a drag that asks again is seen asking.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: { direction: string }) => unknown;
+          __mockTranscriptsPageOverride: (input: { direction: string }) => unknown;
+        };
+        host.__mockTranscriptsPageOverride = (input) => input.direction === 'around'
+          ? { status: 'unavailable', reason: 'read_failed' }
+          : host.__pagingAnswer(input);
+      });
+      const rail = page.getByTestId('conversation-scrollbar-rail');
+      const thumb = page.getByTestId('conversation-scrollbar-thumb');
+      const skeleton = page.getByTestId('conversation-skeleton');
+
+      /** Press the thumb and hold past the rail's top end: the same logical position every drag. */
+      async function pressAtTrackTop(): Promise<void> {
+        const thumbBox = await thumb.boundingBox();
+        const railBox = await rail.boundingBox();
+        expect(thumbBox && railBox).toBeTruthy();
+        const startX = thumbBox!.x + thumbBox!.width / 2;
+        await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(startX, railBox!.y - 10);
+      }
+
+      // First drag: the rest asks, the failure is asked again once, then the release asks.
+      await pressAtTrackTop();
+      await expect.poll(async () => (await pageCallsIn(page, 'around')).length, { timeout: 8000 }).toBe(2);
+      await page.mouse.up();
+      await expect.poll(async () => (await pageCallsIn(page, 'around')).length, { timeout: 8000 }).toBe(3);
+      // The failed release lets the placeholders go, and the thumb is back where the rows are.
+      await expect(skeleton).toHaveCount(0);
+
+      // Second drag to the same end of the track: its read fails again, and it gets its own retry.
+      const callsBefore = (await pageCallsIn(page, 'around')).length;
+      await pressAtTrackTop();
+      await expect.poll(async () => (await pageCallsIn(page, 'around')).length, { timeout: 8000 }).toBe(callsBefore + 2);
+      // Same position every time, so the retry is not a matter of two drags landing on different ones.
+      const positions = (await pageCallsIn(page, 'around')).map((call) => call.position);
+      expect(new Set(positions).size).toBe(1);
+      await page.mouse.up();
     } finally {
       await browser.close();
     }

@@ -6,9 +6,12 @@ import {
   type UserTurnRecord,
 } from '../../shared/submitted-text-verifier';
 import { readJsonlWindow } from '../../shared/history-scan';
-import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { antigravityTranscriptPath } from './data-paths';
+
+/** Antigravity uuids come from each step's own `step_index`, so nothing counts lines. */
+const UUIDS_NUMBER_LINES = false;
 
 /**
  * Parser for Antigravity's per-conversation JSONL transcript at
@@ -142,15 +145,12 @@ export async function parseAntigravityTranscriptFile(
   // IPC and PTY flushing app-wide, and an async read of the unbounded file
   // still puts the whole thing on the heap, which is the part that OOM'd the
   // main process.
-  const window = await readJsonlWindow(sourcePath, { maxBytes: parseWindowBytes() });
+  const window = await readJsonlWindow(sourcePath, { maxBytes: parseWindowBytes(), countOmittedLines: UUIDS_NUMBER_LINES });
   if (window.totalBytes === 0) return { entries: [], sourcePath };
   const entries = parseAntigravityLines(splitJsonlLines(window.text, window.startByte, null), agentSessionId);
   // With a session id, the notice carries the cursor the Conversation viewer
-  // pages the left-out history from (`readAntigravityTranscriptPage`). Uuids
-  // come from each step's own `step_index`, so the cursor needs no line count.
-  const history = agentSessionId
-    ? { conversationId: agentSessionId, cursor: encodeJsonlCursor({ byte: window.startByte, line: null }) }
-    : undefined;
+  // pages the left-out history from (`readAntigravityTranscriptPage`).
+  const history = agentSessionId ? jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES) : undefined;
   return {
     entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, history),
     sourcePath,
@@ -173,7 +173,7 @@ export function readAntigravityTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: false,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseAntigravityLines(lines, agentSessionId),
   });
 }
@@ -259,9 +259,7 @@ function parseAntigravityLines(lines: ReadonlyArray<JsonlLine>, agentSessionId?:
         break;
     }
 
-    if (!agentSessionId) continue;
-    const origin = { conversationId: agentSessionId, position };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    if (agentSessionId) stampOrigin(entries, firstNew, agentSessionId, position);
   }
 
   return entries;

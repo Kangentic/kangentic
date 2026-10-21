@@ -6,7 +6,8 @@ whole-file reads at once on main. The read now runs in the `kangentic-retrieval`
 oversized read kills the worker instead. Every transcript read fails until the worker restarts, and
 after three crashes it stays off.
 
-**Verdict: yes for Claude, conditional on the checks listed under "Not measured".** Seven options
+**Verdict: yes, and C is built for every agent with a transcript. The checks under "Not measured"
+are still open.** Seven options
 follow, A to G. The recommended one, C, is a separate bounded page call that loads earlier history
 while the user scrolls up. One 8 MiB page costs the worker about half of today's tail read. This
 records the options, the measurements behind them and the recommended design. C was then built,
@@ -55,8 +56,8 @@ bound as B.
   the opposite of the goal.
 - **G. Open the raw file.** It shows JSONL, not a conversation.
 
-Whichever of B, C or D is picked, Claude goes first: it is the only agent with a windowed read and
-an archive today. Other agents follow per the costs under Q3.
+The plan was for Claude to go first, as the only agent with a windowed read and an archive, and for
+other agents to follow per the costs under Q3. As built, every agent pages (Stage 2 below).
 
 ## Measurements
 
@@ -123,11 +124,12 @@ past 256 KB. And these folders do not show the multiple full-size replay files t
 
 ### Not measured
 
-These were stopped because the rigs slowed the machine for other work. Run them before building:
+These were stopped because the rigs slowed the machine for other work, and the build did not run
+them. They are still open:
 
 - Renderer heap with pages loaded, in `/preview`. Estimate from the code: the renderer holds the
-  parsed entries plus one `DisplayRow` per entry whose `searchText` copies up to 16,000 characters
-  of the row, so roughly twice the "clamped entries held" figure. That is about 150 MB for the whole
+  parsed entries plus one `DisplayRow` per entry whose `searchText`, once a search reads it, copies
+  up to 16,000 characters of the row, so at most roughly twice the "clamped entries held" figure. That is about 150 MB for the whole
   548 MB history. For the cap of 8 pages of 8 MiB per window it is about 17 MB at the 548 MB file's
   average of 1.1 MB per window, and at most about 45 MB at the largest page measured (2.8 MB). Each
   open Conversation window adds its own. Mounted DOM rows stay bounded by the virtualizer (visible
@@ -233,16 +235,24 @@ span with a gap row above and below.
 
 ## Existing exposures
 
-These hold today, whatever is built:
+These held when the audit was written, and the build closed each one:
 
-- OpenCode's parser has no read cap and no notice. It reads the whole session from SQLite.
-- The file cache and the stitch memo charge a transcript's whole file size against their 192 MiB
-  budgets, though they hold only the 16 MiB tail. One 548 MB transcript evicts everything else.
-- An archive read keeps the row that crosses the cap, so it can reach about 24 MiB of source, not 16.
-- The MCP structured transcript skips the file cache and the per-span clamp.
-- The worker queues no requests, and the viewer's 2.5 s poll has no in-flight guard. A call that
-  passes 15 s kills the worker. As built, history reads share one queue whose every call answers
-  `busy` by 10 s, waiting or running, and a page read gives up after 4 s. A wait cap alone was not
-  enough: in `/preview` a timeline cache check read with a 1-byte page, skipped a 97 MB file one
-  byte at a time, and held the calls behind it until main killed the worker three times.
-- No UI test renders a `truncated` row, clicks Jump to latest, or checks anchoring on an insert.
+- OpenCode's parser had no read cap and no notice: it read the whole session from SQLite. A local
+  session's tail is now capped at the same window, and its notice pages the rest by message. A
+  remote session is capped too, but its notice carries no cursor, so its older history stays out
+  of the viewer.
+- The file cache and the stitch memo charged a transcript's whole file size against their 192 MiB
+  budgets, though they hold only the 16 MiB tail, so one 548 MB transcript evicted everything else.
+  They now charge at most twice the tail window (`retainedSourceBytes`).
+- An archive read kept the row that crossed the cap, so it could reach about 24 MiB of source, not
+  16. It now keeps rows while they fit, and always at least one.
+- The MCP structured transcript skipped the per-span clamp. It now applies `truncateEntries`, and
+  still reads around the file cache.
+- The worker queued no requests, and the viewer's 2.5 s poll had no in-flight guard. A call that
+  passes 15 s kills the worker. History reads now share one queue whose every call answers `busy`
+  by 10 s, waiting or running. A page read gives up after 4 s, a timeline build stops probing after
+  6 s, and the poll skips a tick while its last read is out. A wait cap alone was not enough: in
+  `/preview` a timeline cache check read with a 1-byte page, skipped a 97 MB file one byte at a
+  time, and held the calls behind it until main killed the worker three times.
+- No UI test rendered a `truncated` row, clicked Jump to latest, or checked anchoring on an insert.
+  `tests/ui/conversation-paging.spec.ts` does all three.

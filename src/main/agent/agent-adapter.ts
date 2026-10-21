@@ -75,6 +75,11 @@ export interface TranscriptPageReadRequest {
   untilPosition?: number;
   maxBytes: number;
   sourceToken?: string;
+  /** A timeline probe, which reads only its entries' `ts` and `origin.position`
+   *  and the page's `sourceToken` and positions. An adapter may skip work only
+   *  uuids need (a JSONL line count), so a probe's uuids and cursors' line
+   *  counts may not match the tail's. */
+  probe?: boolean;
 }
 
 export type TranscriptPageReadResult =
@@ -843,6 +848,8 @@ export interface AgentAdapter {
    * - `sourceToken` identifies the source the cursors belong to; a request
    *   carrying a different one answers `reset`, as does a cursor past the end.
    * - It must not throw: a failed read answers `unavailable`.
+   * - A `probe` request (the timeline's) is read only for its entries' times
+   *   and positions, so its uuids need not match the tail's.
    */
   readTranscriptPage?(
     agentSessionId: string,

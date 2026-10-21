@@ -33,7 +33,7 @@ with a crash policy and stderr capture:
   parse and stitch of agent transcripts for the Conversation window, the phone and MCP, the
   Conversation window's history pages, search-hit lookups and timelines (`transcript.page`,
   `transcript.locate`, `transcript.timeline`, one at a time through a queue with depth and wait
-  caps, so no read can run into main's call timer), the
+  caps and a whole-call deadline, so no read can run into main's call timer), the
   structured transcript archive (`archive.session` on a settled turn, a suspend or an exit, and the
   project-open `archive.sweep`, written whether or not `knowledgeGraph.indexingEnabled` is on), the
   recap tail a resume of a deleted conversation reads (`transcript.recapTail`), the

@@ -19,8 +19,11 @@ import {
   parseWindowBytes,
   prependTruncationMarker,
 } from '../../shared/transcript-truncation';
-import { encodeJsonlCursor, readJsonlHistoryPage, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
+
+/** Claude's entries carry their own uuids, so nothing counts lines. */
+const UUIDS_NUMBER_LINES = false;
 
 // Maximum slug length before Claude Code truncates and appends a hash suffix.
 // Matches the `jgH`/`NmK` constant in the shipped CLI (Claude Code 2.x).
@@ -288,30 +291,23 @@ function conversationIdOf(filePath: string): string {
 }
 
 /**
- * Parse whole lines starting at `startByte`, stamping each entry with the byte
- * its line starts at (`TranscriptEntry.origin`), which is where the viewer
- * places it on a scrollbar spanning the whole transcript. Lines are split on
- * `\n` with a trailing `\r` dropped, the same lines `split(/\r?\n/)` gives, and
- * measured in bytes as they go, since the text is decoded UTF-8.
+ * Parse whole lines, stamping each entry with the byte its line starts at
+ * (`TranscriptEntry.origin`), which is where the viewer places it on a
+ * scrollbar spanning the whole transcript. The tail, an append, the indexer's
+ * walk and a history page all split with `splitJsonlLines` and parse here, so
+ * all four mint the same entries and positions for a line.
  */
-function parseLinesWithOrigin(
-  text: string,
-  startByte: number,
+function parseClaudeLines(
+  lines: ReadonlyArray<JsonlLine>,
   entries: TranscriptEntry[],
   usageAttributedMessageIds: Set<string>,
   conversationId: string,
 ): void {
-  let byte = startByte;
-  for (const segment of text.split('\n')) {
-    const lineStart = byte;
-    byte += Buffer.byteLength(segment, 'utf8') + 1;
-    const line = segment.endsWith('\r') ? segment.slice(0, -1) : segment;
-    if (line.length === 0) continue;
+  for (const line of lines) {
+    if (line.text.length === 0) continue;
     const firstNew = entries.length;
-    parseTranscriptLine(line, entries, usageAttributedMessageIds);
-    if (entries.length === firstNew) continue;
-    const origin = { conversationId, position: lineStart };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    parseTranscriptLine(line.text, entries, usageAttributedMessageIds);
+    stampOrigin(entries, firstNew, conversationId, line.byte);
   }
 }
 
@@ -319,15 +315,7 @@ function parseLinesWithOrigin(
 function parseHistoryLines(lines: JsonlLine[], conversationId: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   // A fresh carry: the viewer shows no usage, and a page retains nothing.
-  const usageAttributedMessageIds = new Set<string>();
-  for (const line of lines) {
-    if (line.text.length === 0) continue;
-    const firstNew = entries.length;
-    parseTranscriptLine(line.text, entries, usageAttributedMessageIds);
-    if (entries.length === firstNew) continue;
-    const origin = { conversationId, position: line.byte };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
-  }
+  parseClaudeLines(lines, entries, new Set<string>(), conversationId);
   return entries;
 }
 
@@ -344,7 +332,7 @@ export function readClaudeTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: false,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseHistoryLines(lines, conversationId),
   });
 }
@@ -538,9 +526,8 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
       const { completeLinesText, carry } = splitCompleteLines(combined);
       if (completeLinesText.length > 0) {
         timeSyncWork('transcript:parse-append', () => {
-          parseLinesWithOrigin(
-            completeLinesText,
-            combinedStartByte,
+          parseClaudeLines(
+            splitJsonlLines(completeLinesText, combinedStartByte, null),
             previous.entries,
             previous.usageAttributedMessageIds,
             conversationIdOf(filePath),
@@ -564,7 +551,7 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
   // MAX_PARSE_SOURCE_BYTES from the TAIL rather than the whole file, so the
   // peak allocation of this branch is bounded no matter how large the
   // transcript has grown.
-  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes() });
+  const window = await readJsonlWindow(filePath, { maxBytes: parseWindowBytes(), countOmittedLines: UUIDS_NUMBER_LINES });
   if (window.totalBytes === 0) {
     incrementalStateByPath.delete(filePath);
     return [];
@@ -574,16 +561,13 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
   const usageAttributedMessageIds = new Set<string>();
   const conversationId = conversationIdOf(filePath);
   timeSyncWork('transcript:parse-tail', () => {
-    parseLinesWithOrigin(window.text, window.startByte, entries, usageAttributedMessageIds, conversationId);
+    parseClaudeLines(splitJsonlLines(window.text, window.startByte, null), entries, usageAttributedMessageIds, conversationId);
   });
 
   // Report the omission in-band rather than dropping turns silently, with the
   // cursor the Conversation viewer pages the left-out history from
   // (`readClaudeTranscriptPage`).
-  prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
-    conversationId,
-    cursor: encodeJsonlCursor({ byte: window.startByte, line: null }),
-  });
+  prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(conversationId, window, UUIDS_NUMBER_LINES));
 
   // A full parse just consumed everything available in the read, INCLUDING a
   // trailing line with no final newline (the split above parses it like any
@@ -666,7 +650,7 @@ export async function parseClaudeTranscriptWindow(
   const entries: TranscriptEntry[] = [];
   const conversationId = conversationIdOf(filePath);
   timeSyncWork('transcript:parse-walk', () => {
-    parseLinesWithOrigin(window.text, window.startByte, entries, attributedMessageIds, conversationId);
+    parseClaudeLines(splitJsonlLines(window.text, window.startByte, null), entries, attributedMessageIds, conversationId);
   });
   // Prune to the most recent ids. A Set iterates in insertion order, so the
   // front is the oldest - and the oldest is the safest to drop, because a

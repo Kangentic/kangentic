@@ -20,8 +20,13 @@
  * A line longer than one page is skipped without parsing, within a read budget
  * of bytes and of time; a stretch whose lines yield no entries is walked
  * through, a few windows at most. The time budget is what bounds a page smaller
- * than every line, which skips one window at a time to the end of the file. Agents whose entry uuids number lines carry a line count in the cursor,
- * so a page mints the same uuids as the tail parse.
+ * than every line, which skips one window at a time to the end of the file.
+ *
+ * Agents whose entry uuids number lines carry a line count in the cursor, so a
+ * page mints the same uuids as the tail parse. A page that starts from no
+ * counted line (`around`, or past a skipped line) counts the newlines before it
+ * once, from the start of the file; a timeline probe (`request.probe`) needs
+ * no uuids and skips that count.
  *
  * Retains nothing between calls: a page is read, parsed and returned.
  */
@@ -31,6 +36,7 @@ import { open, stat } from 'node:fs/promises';
 import type { TranscriptEntry } from '../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../agent-adapter';
 import { countNewlinesBefore, readJsonlWindow, type JsonlWindow } from './history-scan';
+import type { TruncatedHistory } from './transcript-truncation';
 
 /** A position in a JSONL file: a line-start byte, plus the physical lines
  *  before it when the adapter numbers its entries by line. */
@@ -51,7 +57,11 @@ export function decodeJsonlCursor(text: string | undefined): JsonlCursor | null 
 }
 
 /** One whole line of a window: its text (without the newline or a CR before
- *  it), the byte it starts at, and its physical line index when counted. */
+ *  it), the byte it starts at, and its physical line index when counted.
+ *  A line holding bytes that are not valid UTF-8 decodes each of them to
+ *  U+FFFD, three bytes, so `byte` drifts past the true start of every later
+ *  line in its window. Page edges and cursors come from the window's raw
+ *  offsets and do not drift; only an entry's `origin.position` does. */
 export interface JsonlLine {
   text: string;
   byte: number;
@@ -79,6 +89,32 @@ export function splitJsonlLines(text: string, startByte: number, firstLine: numb
   return lines;
 }
 
+/**
+ * Stamp the entries one record yielded, `entries[fromIndex..]`, with where its
+ * line starts (`TranscriptEntry.origin`): the place the viewer gives them on a
+ * scrollbar spanning the whole transcript.
+ */
+export function stampOrigin(entries: TranscriptEntry[], fromIndex: number, conversationId: string, position: number): void {
+  if (fromIndex >= entries.length) return;
+  const origin = { conversationId, position };
+  for (let index = fromIndex; index < entries.length; index += 1) entries[index].origin = origin;
+}
+
+/**
+ * The cursor a tail's `truncated` notice carries into the history it left
+ * out: where the tail starts, with the lines before it when the adapter's
+ * uuids number lines. An adapter passes the same `countLines` here, to its
+ * tail read's `countOmittedLines`, and to `readJsonlHistoryPage`, or a page
+ * mints uuids the tail does not.
+ */
+export function jsonlEarlierHistory(
+  conversationId: string,
+  window: Pick<JsonlWindow, 'startByte' | 'omittedLineCount'>,
+  countLines: boolean,
+): TruncatedHistory {
+  return { conversationId, cursor: encodeJsonlCursor({ byte: window.startByte, line: countLines ? window.omittedLineCount : null }) };
+}
+
 /** How many physical lines a window of whole lines holds. */
 function linesIn(text: string): number {
   if (text.length === 0) return 0;
@@ -101,8 +137,10 @@ export const PAGE_READ_BUDGET_MS = 4_000;
 const MAX_EMPTY_WINDOWS = 4;
 
 /**
- * Identifies the file a page's cursors belong to: a hash of its first bytes.
- * Stable while the file is appended to; a rewrite or a new file changes it.
+ * Identifies the file a page's cursors belong to: a hash of its first 4096
+ * bytes. Stable while a file past that size is appended to; a rewrite or a new
+ * file changes it. A shorter file's token changes on every append, which only
+ * a file small enough to sit whole in the tail could hit, and that never pages.
  */
 export async function jsonlSourceToken(filePath: string): Promise<string | null> {
   let handle;
@@ -131,6 +169,9 @@ interface CollectedWindow {
   text: string;
   startByte: number;
   entries: TranscriptEntry[];
+  /** The line index the window was parsed from, or null when it was parsed
+   *  without one and `renumber` must parse it again. */
+  firstLine: number | null;
 }
 
 /**
@@ -139,7 +180,9 @@ interface CollectedWindow {
  * `unavailable`, a rewritten file or a cursor past the end answers `reset`.
  */
 export async function readJsonlHistoryPage(options: JsonlHistoryPageOptions): Promise<TranscriptPageReadResult> {
-  const { filePath, request, countLines, parseLines } = options;
+  const { filePath, request, parseLines } = options;
+  // A probe reads only times and positions, so it skips the newline count uuids need.
+  const countLines = options.countLines && !request.probe;
   let size: number;
   try {
     size = (await stat(filePath)).size;
@@ -199,6 +242,9 @@ async function readBefore(context: ReadContext & { cursor: JsonlCursor }): Promi
   const { filePath, size, until, maxBytes, deadline, countLines, parseLines, sourceToken, cursor } = context;
   const collected: CollectedWindow[] = [];
   let end = cursor.byte;
+  // The line index of the line starting at `end`, while the windows read so
+  // far are contiguous with the cursor; a skip loses it.
+  let lineAtEnd: number | null = countLines ? cursor.line : null;
   let skipped = false;
   let skippedBytes = 0;
   let emptyWindows = 0;
@@ -216,14 +262,17 @@ async function readBefore(context: ReadContext & { cursor: JsonlCursor }): Promi
       // The line before `end` is longer than a page: skip back through it
       // without parsing. The next window's trim ends it at that line's start.
       skipped = true;
+      lineAtEnd = null;
       skippedBytes += end - start;
       if (skippedBytes > SKIP_BUDGET_BYTES) return { status: 'unavailable', reason: 'record_too_large' };
       end = start;
       continue;
     }
-    const lines = splitJsonlLines(window.text, window.startByte, null);
+    const firstLine = lineAtEnd === null ? null : lineAtEnd - linesIn(window.text);
+    const lines = splitJsonlLines(window.text, window.startByte, firstLine);
     const entries = parseLines(lines);
-    collected.unshift({ text: window.text, startByte: window.startByte, entries });
+    collected.unshift({ text: window.text, startByte: window.startByte, entries, firstLine });
+    lineAtEnd = firstLine;
     end = window.startByte;
     if (entries.length > 0) break;
     emptyWindows += 1;
@@ -239,7 +288,7 @@ async function readBefore(context: ReadContext & { cursor: JsonlCursor }): Promi
       startLine = await countNewlinesBefore(filePath, startPosition);
     }
   }
-  const entries = countLines
+  const entries = countLines && collected.some((window) => window.firstLine === null)
     ? renumber(collected, startLine, parseLines)
     : collected.flatMap((window) => window.entries);
 
@@ -269,6 +318,9 @@ async function readForward(context: ReadContext & {
   let readFrom = context.readFrom;
   let startPosition: number | null = cursor ? cursor.byte : null;
   let end = cursor ? cursor.byte : readFrom;
+  // The line index of the next window's first line, while the windows are
+  // contiguous with a counted start; a skip loses it.
+  let lineAtNext: number | null = countLines && cursor && checkAlignment ? cursor.line : null;
   let skipped = false;
   let skippedBytes = 0;
   let emptyWindows = 0;
@@ -288,6 +340,7 @@ async function readForward(context: ReadContext & {
       // A line longer than a page: carry on past it. The next window's leading
       // skip drops the rest of it.
       skipped = true;
+      lineAtNext = null;
       skippedBytes += window.nextByteOffset - readFrom;
       if (skippedBytes > SKIP_BUDGET_BYTES) return { status: 'unavailable', reason: 'record_too_large' };
       if (window.nextByteOffset <= readFrom) break;
@@ -297,9 +350,16 @@ async function readForward(context: ReadContext & {
       end = Math.max(end, window.endByte);
       continue;
     }
-    const lines = splitJsonlLines(window.text, window.startByte, null);
+    // An uncounted first window (an `around` read) counts its line once here,
+    // so it parses numbered and later windows follow on from it.
+    if (countLines && !skipped && collected.length === 0 && lineAtNext === null) {
+      lineAtNext = await countNewlinesBefore(filePath, window.startByte);
+    }
+    const firstLine = lineAtNext;
+    const lines = splitJsonlLines(window.text, window.startByte, firstLine);
     const entries = parseLines(lines);
-    collected.push({ text: window.text, startByte: window.startByte, entries });
+    collected.push({ text: window.text, startByte: window.startByte, entries, firstLine });
+    if (lineAtNext !== null) lineAtNext += linesIn(window.text);
     end = window.endByte;
     if (entries.length > 0) break;
     emptyWindows += 1;
@@ -309,25 +369,32 @@ async function readForward(context: ReadContext & {
 
   const firstPosition = startPosition ?? end;
   const endPosition = Math.min(Math.max(end, firstPosition), size);
+  const firstWindowStart = collected.length > 0 ? collected[0].startByte : endPosition;
   let startLine: number | null = null;
   if (countLines) {
-    const firstWindowStart = collected.length > 0 ? collected[0].startByte : endPosition;
-    startLine = cursor && cursor.line !== null && !skipped && firstWindowStart === cursor.byte
+    startLine = collected[0]?.firstLine ?? (cursor && cursor.line !== null && !skipped && firstWindowStart === cursor.byte
       ? cursor.line
-      : await countNewlinesBefore(filePath, firstWindowStart);
+      : await countNewlinesBefore(filePath, firstWindowStart));
   }
-  const entries = countLines
+  const entries = countLines && collected.some((window) => window.firstLine === null)
     ? renumber(collected, startLine, parseLines)
     : collected.flatMap((window) => window.entries);
   const endLine = countLines && startLine !== null
     ? (skipped ? await countNewlinesBefore(filePath, endPosition) : startLine + collected.reduce((sum, window) => sum + linesIn(window.text), 0))
     : null;
+  // The page starts at its first window unless a skipped line came first, and
+  // then the counted start is its line: no second count from the file's start.
+  const startCursorLine = async (): Promise<number | null> => {
+    if (!countLines) return null;
+    if (startLine !== null && firstPosition === firstWindowStart) return startLine;
+    return countNewlinesBefore(filePath, firstPosition);
+  };
 
   return {
     status: 'ok',
     page: {
       sourceToken,
-      startCursor: encodeJsonlCursor({ byte: firstPosition, line: cursor?.line ?? (countLines ? await countNewlinesBefore(filePath, firstPosition) : null) }),
+      startCursor: encodeJsonlCursor({ byte: firstPosition, line: cursor?.line ?? await startCursorLine() }),
       endCursor: encodeJsonlCursor({ byte: endPosition, line: endLine }),
       startPosition: firstPosition,
       endPosition,
@@ -341,8 +408,8 @@ async function readForward(context: ReadContext & {
 
 /**
  * Re-parse windows with absolute line numbers, for an adapter whose uuids
- * number lines. The first pass parsed without them only to find where entries
- * begin; this one numbers each window from the running line count.
+ * number lines, when a window was parsed without its line (it came after a
+ * skipped line). Numbers each window from the running line count.
  */
 function renumber(
   collected: CollectedWindow[],

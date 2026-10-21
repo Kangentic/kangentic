@@ -4,8 +4,11 @@ import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types'
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { codexHomeDir } from './config-toml';
 import { readJsonlWindow } from '../../shared/history-scan';
-import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
+
+/** Codex uuids number lines (see `parseCodexRecord`), so the tail, its notice and every page count them. */
+const UUIDS_NUMBER_LINES = true;
 
 /**
  * Parse Codex CLI's native rollout JSONL into agent-agnostic
@@ -45,7 +48,7 @@ export async function parseCodexTranscript(
   // line index (see there). A rollout is append-only, so that index is stable.
   const window = await readJsonlWindow(filePath, {
     maxBytes: parseWindowBytes(),
-    countOmittedLines: true,
+    countOmittedLines: UUIDS_NUMBER_LINES,
   });
   if (window.totalBytes === 0) return [];
 
@@ -55,10 +58,7 @@ export async function parseCodexTranscript(
   const entries = parseCodexLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
   // The notice carries the cursor the Conversation viewer pages the left-out
   // history from (`readCodexTranscriptPage`), with the line count the uuids need.
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
-    conversationId: agentSessionId,
-    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
-  });
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES));
 }
 
 /**
@@ -74,7 +74,7 @@ export function readCodexTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: true,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseCodexLines(agentSessionId, lines),
   });
 }
@@ -101,8 +101,7 @@ function parseCodexLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>
     if (line.length === 0) continue;
     const firstNew = entries.length;
     parseCodexRecord(agentSessionId, line, lineNumber ?? 0, state, entries);
-    const origin = { conversationId: agentSessionId, position: byte };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    stampOrigin(entries, firstNew, agentSessionId, byte);
   }
   return entries;
 }

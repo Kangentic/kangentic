@@ -46,7 +46,7 @@ import {
 } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { openTestDatabase } from './helpers/test-database';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
-import type { TranscriptEntry, TranscriptHistoryPage, TranscriptPageResponse } from '../../src/shared/types';
+import type { TranscriptEntry, TranscriptHistoryPage, TranscriptPageResponse, TranscriptTimelineResponse } from '../../src/shared/types';
 
 const TAIL_BYTES = 1500;
 const PAGE_BYTES = 900;
@@ -57,9 +57,10 @@ const AGENT_SESSION_ID = 'agent-history-1';
 const temporaryDirectories: string[] = [];
 const openDatabases: DatabaseType.Database[] = [];
 
-function transcriptText(turns: number): string {
+/** `turns` turns, numbered from `firstTurn`: a turn's minute is its number, so keep them under 60. */
+function transcriptText(turns: number, firstTurn = 0): string {
   let text = '';
-  for (let turn = 0; turn < turns; turn += 1) {
+  for (let turn = firstTurn; turn < firstTurn + turns; turn += 1) {
     const timestamp = new Date(Date.UTC(2026, 8, 30, 12, turn, 0)).toISOString();
     text += `${JSON.stringify({ type: 'user', uuid: `user-${turn}`, timestamp, message: { role: 'user', content: `question ${turn}` } })}\n`;
     text += `${JSON.stringify({
@@ -211,6 +212,32 @@ describe('readHistoryPage', () => {
     expect(unique(paged)).toEqual(whole);
   });
 
+  it('answers reset for an archive token the archive no longer holds, and takes a live token onto the archive', async () => {
+    const { database, filePath, archive } = fixture({ turns: 20 });
+    const liveTail = await parseClaudeTranscript(filePath);
+    const liveToken = pageOf(await readHistoryPage(database, {
+      conversationId: AGENT_SESSION_ID, direction: 'before', cursor: markerOf(liveTail).cursor, maxBytes: PAGE_BYTES,
+    })).sourceToken;
+    expect(liveToken).toMatch(/^jsonl:/);
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    fs.rmSync(filePath);
+
+    const resolved = await resolveTaskTranscript(database, 'session-1');
+    expect(resolved?.source).toBe('archive');
+    const request = { conversationId: AGENT_SESSION_ID, direction: 'before' as const, cursor: markerOf(resolved!.entries).cursor, maxBytes: PAGE_BYTES };
+    const first = pageOf(await readHistoryPage(database, request));
+    expect(first.sourceToken).toMatch(/^archive:/);
+
+    // The page's own token is the archive it was read from, so it is no reset.
+    expect((await readHistoryPage(database, { ...request, sourceToken: first.sourceToken })).status).toBe('ok');
+    // An archive token the archive does not carry is a rewrite under the caller.
+    expect(await readHistoryPage(database, { ...request, sourceToken: 'archive:stale' }))
+      .toEqual({ status: 'reset', conversationId: AGENT_SESSION_ID });
+    // A live file's pages and the archive share one byte space, so the file going
+    // away between two pages is not a reset.
+    expect((await readHistoryPage(database, { ...request, sourceToken: liveToken })).status).toBe('ok');
+  });
+
   it('answers not_found for a conversation no session names', async () => {
     const { database } = fixture({ turns: 4 });
     expect(await readHistoryPage(database, { conversationId: 'nobody', direction: 'before', cursor: 'j:10' }))
@@ -238,6 +265,50 @@ describe('resolveTaskTranscript extents', () => {
     // The stat-only fast path answers the same extents.
     const again = await resolveTaskTranscript(database, 'session-2');
     expect(again?.conversations).toEqual(resolved?.conversations);
+  });
+
+  it('reports a pageable extent for a conversation read from the archive, sized by the file it archived', async () => {
+    const { database, filePath, archive } = fixture({ turns: 20 });
+    const archivedBytes = fs.statSync(filePath).size;
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    fs.rmSync(filePath);
+
+    const resolved = await resolveTaskTranscript(database, 'session-1');
+    expect(resolved?.source).toBe('archive');
+    const notice = markerOf(resolved!.entries);
+    // The tail is bounded, so the notice is there and the archive holds more than it shows.
+    expect(notice.position).toBeGreaterThan(0);
+    expect(resolved?.conversations).toEqual([{
+      conversationId: AGENT_SESSION_ID,
+      totalPosition: archivedBytes,
+      tailStartPosition: notice.position,
+      pageable: true,
+      hasTimestamps: true,
+    }]);
+  });
+
+  it('reports the same archive extent when the adapter has no structured parser', async () => {
+    // `resolveSessionTranscript` reaches the archive by a second route when the
+    // adapter cannot parse a transcript: the conversation is named by its agent
+    // session id and the extent is built the same way.
+    const { database, filePath, archive } = fixture({ turns: 20 });
+    const adapter = agentRegistry.getBySessionType('claude_agent');
+    vi.mocked(agentRegistry.getBySessionType).mockImplementation(
+      () => ({ ...adapter, parseTranscript: undefined }) as unknown as AgentAdapter,
+    );
+    const archivedBytes = fs.statSync(filePath).size;
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
+    fs.rmSync(filePath);
+
+    const resolved = await resolveTaskTranscript(database, 'session-1');
+    expect(resolved?.source).toBe('archive');
+    expect(resolved?.conversations).toEqual([{
+      conversationId: AGENT_SESSION_ID,
+      totalPosition: archivedBytes,
+      tailStartPosition: markerOf(resolved!.entries).position,
+      pageable: true,
+      hasTimestamps: true,
+    }]);
   });
 });
 
@@ -307,5 +378,122 @@ describe('readHistoryTimeline and locateHistoryTurn', () => {
   it('answers not_found for a turn no conversation holds', async () => {
     const { database } = fixture({ turns: 10 });
     expect(await locateHistoryTurn(database, { sessionId: 'session-1', turnUuid: 'missing' })).toEqual({ status: 'not_found' });
+  });
+});
+
+describe('readHistoryTimeline build, reuse and deadline', () => {
+  /** The fixture adapter, with its page read spied on (the spy calls through). */
+  function spyOnPageReads() {
+    const adapter = agentRegistry.getBySessionType('claude_agent');
+    if (!adapter?.readTranscriptPage) throw new Error('no adapter');
+    return vi.spyOn(adapter, 'readTranscriptPage');
+  }
+
+  function samplesOf(timeline: TranscriptTimelineResponse): Array<{ position: number; ts: number }> {
+    if (timeline.status !== 'ok') throw new Error(`expected a timeline, got ${JSON.stringify(timeline)}`);
+    return timeline.samples;
+  }
+
+  it('answers unsupported_agent, reading nothing, for an adapter whose transcript carries no timestamps', async () => {
+    const { database } = fixture({ turns: 30 });
+    // The same conversation has a timeline while its adapter dates its entries.
+    expect((await readHistoryTimeline(database, AGENT_SESSION_ID)).status).toBe('ok');
+
+    const adapter = agentRegistry.getBySessionType('claude_agent');
+    const withoutTimestamps = { ...adapter, transcriptHasTimestamps: false } as unknown as AgentAdapter;
+    const readPage = vi.spyOn(withoutTimestamps, 'readTranscriptPage');
+    vi.mocked(agentRegistry.getBySessionType).mockImplementation(() => withoutTimestamps);
+    expect(await readHistoryTimeline(database, AGENT_SESSION_ID)).toEqual({ status: 'unavailable', reason: 'unsupported_agent' });
+    expect(readPage).not.toHaveBeenCalled();
+  });
+
+  it('passes probe: true on every probe read and on the cache check', async () => {
+    const { database } = fixture({ turns: 30 });
+    const readPage = spyOnPageReads();
+    await readHistoryTimeline(database, AGENT_SESSION_ID);
+    const probeReads = readPage.mock.calls.length;
+    expect(probeReads).toBeGreaterThan(1);
+    await readHistoryTimeline(database, AGENT_SESSION_ID);
+    // The second answer came from the cache after exactly one check read, which
+    // is the one call carrying the cached source's token.
+    expect(readPage.mock.calls.length - probeReads).toBe(1);
+    expect(readPage.mock.calls.filter(([, , request]) => request.sourceToken !== undefined)).toHaveLength(1);
+    for (const [, , request] of readPage.mock.calls) {
+      expect(request.direction).toBe('around');
+      expect(request.probe).toBe(true);
+    }
+  });
+
+  it('reuses a timeline until its source has grown by a quarter, then rebuilds it out to the new end', async () => {
+    const { database, filePath } = fixture({ turns: 30 });
+    const readPage = spyOnPageReads();
+    const first = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID));
+    const builtAtSize = fs.statSync(filePath).size;
+
+    // Three turns on thirty is about a tenth: the cached map stands, after one check.
+    fs.appendFileSync(filePath, transcriptText(3, 30));
+    expect(fs.statSync(filePath).size).toBeLessThan(builtAtSize * 1.25);
+    let readsBefore = readPage.mock.calls.length;
+    expect(samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID))).toEqual(first);
+    expect(readPage.mock.calls.length - readsBefore).toBe(1);
+
+    // Fifteen turns on thirty is half again: the map is built over, probe by probe.
+    fs.appendFileSync(filePath, transcriptText(12, 33));
+    expect(fs.statSync(filePath).size).toBeGreaterThanOrEqual(builtAtSize * 1.25);
+    readsBefore = readPage.mock.calls.length;
+    const rebuilt = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID));
+    expect(readPage.mock.calls.length - readsBefore).toBeGreaterThan(1);
+    // Dated entries from the appended region are on the map, which the old one could not hold.
+    expect(rebuilt.some((sample) => sample.position >= builtAtSize)).toBe(true);
+    expect(rebuilt[rebuilt.length - 1].position).toBeGreaterThan(first[first.length - 1].position);
+    expect(rebuilt[rebuilt.length - 1].ts).toBeGreaterThan(first[first.length - 1].ts);
+
+    // The rebuild is the cached map now.
+    readsBefore = readPage.mock.calls.length;
+    expect(samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID))).toEqual(rebuilt);
+    expect(readPage.mock.calls.length - readsBefore).toBe(1);
+  });
+
+  it('stops probing at a deadline already past and probes again on the next call', async () => {
+    const { database } = fixture({ turns: 30 });
+    const readPage = spyOnPageReads();
+    const cut = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID, Date.now() - 1));
+    // No probe, and no cached map to check: only the tail's own first dated entry is on it.
+    expect(readPage).not.toHaveBeenCalled();
+    expect(cut.length).toBeLessThanOrEqual(1);
+
+    const full = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID));
+    expect(readPage.mock.calls.length).toBeGreaterThan(1);
+    expect(full.length).toBeGreaterThan(5);
+  });
+
+  it('answers the samples a build cut short by its deadline has, and does not cache them', async () => {
+    const { database, filePath } = fixture({ turns: 30 });
+    const readPage = spyOnPageReads();
+    // Only Date is faked, and only between reads, so the deadline falls partway through the probes.
+    let advancing = true;
+    readPage.mockImplementation(async (_agentSessionId, _cwd, request) => {
+      if (advancing) vi.setSystemTime(Date.now() + 10);
+      return readClaudeTranscriptPage(filePath, request);
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    let cut: Array<{ position: number; ts: number }>;
+    try {
+      vi.setSystemTime(new Date(Date.UTC(2026, 9, 1)));
+      cut = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID, Date.now() + 25));
+    } finally {
+      advancing = false;
+      vi.useRealTimers();
+    }
+    // Some probes ran, so the map has samples, but not all of them did.
+    expect(readPage.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(readPage.mock.calls.length).toBeLessThan(10);
+    expect(cut.length).toBeGreaterThanOrEqual(1);
+
+    // A cached partial map would be checked with one read and answered as it is.
+    readPage.mockClear();
+    const full = samplesOf(await readHistoryTimeline(database, AGENT_SESSION_ID));
+    expect(readPage.mock.calls.length).toBeGreaterThan(10);
+    expect(full.length).toBeGreaterThan(cut.length);
   });
 });

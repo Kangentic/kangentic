@@ -243,6 +243,8 @@ export function ConversationScrollbar({
     event.currentTarget.setPointerCapture(event.pointerId);
     // A new drag starts from where the thumb is drawn, a held far target included.
     const held = farDrag;
+    // And gets its own retry: the track's ends are the same position every drag.
+    retriedFarRef.current = null;
     dragStateRef.current = {
       pointerId: event.pointerId,
       startClientY: event.clientY,
