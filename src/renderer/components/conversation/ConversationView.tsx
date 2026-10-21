@@ -91,7 +91,10 @@ export interface ConversationViewPaging {
   onRetry: (edge: 'top' | 'bottom') => void;
   onJumpToStart: () => void;
   onJumpToLatest: () => void;
-  onFarJump: (logical: number) => void;
+  /** Load the page at a logical position in place, under a far scrollbar drag; null drops it. */
+  onFarSeek: (logical: number | null) => void;
+  /** A far drag's page is on its way. */
+  seeking: boolean;
 }
 
 interface ConversationViewProps {
@@ -657,7 +660,8 @@ export function ConversationView({
   const logicalEnd = paging?.logicalEnd ?? 0;
   const logicalTotal = paging?.logicalTotal ?? 0;
   const pagingTimeAt = paging?.timeAt;
-  const onFarJump = paging?.onFarJump;
+  const onFarSeek = paging?.onFarSeek;
+  const seeking = paging?.seeking ?? false;
   const rowLogical = useMemo(() => {
     if (!logicalByUuid) return null;
     const values = new Array<number>(rows.length);
@@ -669,7 +673,7 @@ export function ConversationView({
     return values;
   }, [logicalByUuid, logicalStart, rows]);
   const logicalScroll = useMemo((): LogicalScroll | null => {
-    if (!rowLogical || !pagingTimeAt || !onFarJump) return null;
+    if (!rowLogical || !pagingTimeAt || !onFarSeek) return null;
     const itemAt = (index: number) => virtualizer.measurementsCache[index];
     return {
       total: logicalTotal,
@@ -682,9 +686,10 @@ export function ConversationView({
         maxOffset: Math.max(0, virtualizer.getTotalSize() - (containerRef.current?.clientHeight ?? 0)),
       }),
       timeAt: pagingTimeAt,
-      onFarRelease: onFarJump,
+      onFarSeek,
+      seeking,
     };
-  }, [rowLogical, pagingTimeAt, onFarJump, virtualizer, logicalTotal, logicalEnd, topEdge, bottomEdge]);
+  }, [rowLogical, pagingTimeAt, onFarSeek, seeking, virtualizer, logicalTotal, logicalEnd, topEdge, bottomEdge]);
 
   // source === 'none': no content at all. Explain why per unavailable reason.
   if (source === 'none') {
