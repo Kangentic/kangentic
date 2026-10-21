@@ -200,6 +200,8 @@ function MonitorTaskDetailHostValue({
       isMoveConfirmPending: () => false,
       // The Board Manager cannot open over the monitor; Settings can.
       shortcutsSuppressed: settingsOpen,
+      // The conversation viewer opens on the board layer, under this overlay.
+      canOpenConversation: false,
     };
   }, [bundle, refresh, settingsOpen]);
 

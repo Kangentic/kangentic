@@ -1,15 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { Tabs, tabIds } from '../../../Tabs';
 import type { TabItem } from '../../../Tabs';
 import { openTaskConversation } from '../open-task-conversation';
+import { useTaskDetailHost } from '../task-detail-host';
 import { Tooltip } from '../../../Tooltip';
 import { CompletedHeaderStrip } from './CompletedHeaderStrip';
 import { SummaryTab } from './SummaryTab';
 import { UsageTab } from './UsageTab';
 import { useTaskReport } from './useTaskReport';
-import type { Task } from '../../../../../shared/types';
+import type { ConversationTabRequest, Task } from '../../../../../shared/types';
 
 type CompletedTab = 'summary' | 'usage' | 'description';
 
@@ -43,6 +44,15 @@ export function CompletedTaskView({
   const [selectedTab, setSelectedTab] = useState<CompletedTab>('summary');
   const { report, loading } = useTaskReport(projectId, task.id);
   const panelIds = tabIds(ID_PREFIX, selectedTab);
+  // Null where this host cannot show the conversation viewer, which leaves
+  // every opener in the view (this tab bar's and the Route card's) out.
+  const { canOpenConversation } = useTaskDetailHost();
+  const openConversation = useMemo(
+    () => (canOpenConversation
+      ? (target?: ConversationTabRequest) => { void openTaskConversation(task.id, projectId, target); }
+      : null),
+    [canOpenConversation, task.id, projectId],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="completed-task-view">
@@ -54,11 +64,11 @@ export function CompletedTaskView({
         ariaLabel="Completed task"
         idPrefix={ID_PREFIX}
         testId="completed-task-tabs"
-        trailing={(
+        trailing={openConversation && (
           <Tooltip label="View the full conversation transcript">
             <button
               type="button"
-              onClick={() => { void openTaskConversation(task.id, projectId); }}
+              onClick={() => openConversation()}
               className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               data-testid="completed-view-conversation"
             >
@@ -84,7 +94,9 @@ export function CompletedTaskView({
         {selectedTab !== 'description' && !loading && !report && (
           <div className="py-8 text-center text-sm text-fg-disabled">Could not read this task&apos;s record</div>
         )}
-        {selectedTab === 'summary' && report && <SummaryTab report={report} projectId={projectId} taskId={task.id} />}
+        {selectedTab === 'summary' && report && (
+          <SummaryTab report={report} projectId={projectId} taskId={task.id} onOpenConversation={openConversation} />
+        )}
         {selectedTab === 'usage' && report && <UsageTab report={report} />}
       </div>
     </div>

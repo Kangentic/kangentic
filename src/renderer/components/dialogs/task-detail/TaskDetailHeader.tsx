@@ -195,7 +195,7 @@ export function TaskDetailHeader({
   const trailingRef = useRef<HTMLDivElement>(null);
   const pillsRef = useRef<HTMLDivElement>(null);
   const titleSpanRef = useRef<HTMLSpanElement>(null);
-  const { projectId: hostProjectId } = useTaskDetailHost();
+  const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   // Conversation availability, for disabling the pill/kebab item rather than
@@ -237,12 +237,12 @@ export function TaskDetailHeader({
     if (canShowWorkflow && onToggleWorkflow) specs.push({ id: 'workflow', priority: 35 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
-    specs.push({ id: 'conversation', priority: 18 });
+    if (canOpenConversation) specs.push({ id: 'conversation', priority: 18 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [task.worktree_path, projectPath, canShowWorkflow, onToggleWorkflow, canShowChanges, canShowBrowser, canOpenConversation, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -413,8 +413,9 @@ export function TaskDetailHeader({
 
           {/* Conversation pill - opens the read-only transcript viewer for this
               task's newest session (also in the kebab as "View conversation").
-              Disabled (muted) when the task has no session, live or historical. */}
-          {showPill('conversation') && (
+              Disabled (muted) when the task has no session, live or historical,
+              and absent where the host cannot show the viewer. */}
+          {showPill('conversation') && canOpenConversation && (
             <div data-pill-id="conversation" className="flex-shrink-0">
               <HeaderActionButton
                 icon={MessageSquare}
@@ -622,7 +623,7 @@ function TaskDetailKebabItems({
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
   const [linkingPr, setLinkingPr] = useState(false);
   const [updatingFromBase, setUpdatingFromBase] = useState(false);
-  const { projectId: hostProjectId } = useTaskDetailHost();
+  const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
 
   const handleUpdateFromBase = async () => {
     if (updatingFromBase) return;
@@ -740,14 +741,17 @@ function TaskDetailKebabItems({
       />
 
       {/* View conversation - opens the structured transcript viewer. Disabled
-          (muted) when the task has no session, live or historical. */}
-      <KebabMenuItem
-        icon={<MessageSquare size={14} />}
-        label="View conversation"
-        onClick={() => { closeAll(); void openTaskConversation(task.id, hostProjectId || null); }}
-        disabled={!conversationAvailable}
-        data-testid="view-conversation-btn"
-      />
+          (muted) when the task has no session, live or historical, and absent
+          where the host cannot show the viewer. */}
+      {canOpenConversation && (
+        <KebabMenuItem
+          icon={<MessageSquare size={14} />}
+          label="View conversation"
+          onClick={() => { closeAll(); void openTaskConversation(task.id, hostProjectId || null); }}
+          disabled={!conversationAvailable}
+          data-testid="view-conversation-btn"
+        />
+      )}
 
       {/* Open folder */}
       {(task.worktree_path || projectPath) && (

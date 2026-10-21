@@ -85,6 +85,7 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     refresh: loadBoard,
     isMoveConfirmPending: () => useBoardStore.getState().pendingMoveConfirm !== null,
     shortcutsSuppressed: boardManagerOpen || settingsOpen,
+    canOpenConversation: true,
   }), [
     projectId, projectPath, defaultAgent, swimlanes, shortcuts, config,
     updateTask, deleteTask, moveTask, unarchiveTask, archiveTask, updateAttachmentCount, loadBoard,
