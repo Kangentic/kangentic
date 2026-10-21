@@ -448,12 +448,15 @@ resident, the refinement model loads on the first press and overlaps the utteran
 has loaded it is recycled 30 minutes after its last session (a process exit is what gives the
 model's memory reservation back) and comes back live-only. On Windows, a worker whose memory has
 grown past 1.5 GB of commit is recycled at the next two-minute gap instead, since the models grow
-with use and a heavy user never leaves a half-hour gap; that shorter window reads a commit figure
-Electron reports on Windows only, so macOS and Linux always use the half-hour one. A worker that
-has only pre-warmed stays resident while under that ceiling. Each language or preset switch
-pre-warms another engine, and a disposed engine's memory stays reserved, so on Windows such a
-worker past 1.5 GB of commit is also recycled after two quiet minutes and re-warms only the engine
-in use. Turning dictation off releases the worker at once.
+with use and a heavy user never leaves a half-hour gap. The commit figure is read when a request
+finishes and once more at the two-minute mark, so a worker that kept growing after its last request
+is caught too. That figure comes from Electron on Windows only, so macOS and Linux always use the
+half-hour window. A worker that has only pre-warmed stays resident while under that ceiling. Each
+language or preset switch pre-warms another engine, and a disposed engine's memory stays reserved,
+so a worker that has warmed a second engine is recycled after the same half-hour window on every
+platform, and on Windows, past 1.5 GB of commit, at the two-minute gap instead. Either recycle
+re-warms only the engine in use. Each recycle logs its reason (`ceiling`, `served-session` or
+`engine-switch`) and the commit it gave back. Turning dictation off releases the worker at once.
 
 The Mode choice is a preset for each language. Main resolves it to models each session
 (`resolveDictationSlots` in `src/shared/dictation-presets.ts`), so a preset follows the lineup
