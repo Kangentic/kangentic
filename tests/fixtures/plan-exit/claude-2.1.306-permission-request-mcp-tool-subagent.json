@@ -1,0 +1,21 @@
+{
+  "session_id": "3bd49087-0000-4000-8000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.claude\\projects\\probe\\3bd49087.jsonl",
+  "cwd": "C:\\Users\\dev\\probe",
+  "prompt_id": "89e6d709-0000-4000-8000-000000000000",
+  "permission_mode": "plan",
+  "agent_id": "ac51c902b2e1ecc8b",
+  "agent_type": "general-purpose",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "mcp__probe__lookup",
+  "tool_input": {
+    "query": "probe"
+  },
+  "mcp_server": {
+    "name": "probe",
+    "source": "dynamic"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "session_id": "1a0e8d44-0000-4000-8000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.claude\\projects\\probe\\1a0e8d44.jsonl",
+  "cwd": "C:\\Users\\dev\\probe",
+  "prompt_id": "cb483a0b-0000-4000-8000-000000000000",
+  "permission_mode": "plan",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "mcp__probe__lookup",
+  "tool_input": {
+    "query": "probe"
+  },
+  "mcp_server": {
+    "name": "probe",
+    "source": "dynamic"
+  }
+}
