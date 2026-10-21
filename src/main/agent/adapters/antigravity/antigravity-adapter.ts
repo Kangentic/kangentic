@@ -143,11 +143,6 @@ export class AntigravityAdapter implements AgentAdapter {
     if (folder) removeAntigravityHooks(folder);
   }
 
-  clearSettingsCache(): void {
-    // The command builder reads hooks.json fresh on every spawn (no cache),
-    // so there is nothing to clear.
-  }
-
   /**
    * Seed the board card's model pill from a `--model <slug>` override before
    * telemetry could report it - which for Antigravity never comes (no usage

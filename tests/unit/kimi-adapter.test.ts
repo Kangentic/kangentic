@@ -655,10 +655,6 @@ describe('KimiAdapter', () => {
     it('removeHooks does not throw', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });
-
-    it('clearSettingsCache does not throw', () => {
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
-    });
   });
 
   // ── probeAuth ────────────────────────────────────────────────────────────

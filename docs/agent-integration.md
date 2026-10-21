@@ -18,7 +18,6 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
 | `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
-| `clearSettingsCache()` | Clear cached merged settings |
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which lifts the shimmer overlay. A heuristic, not proof the agent is up - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
 
@@ -480,12 +479,13 @@ When `nonInteractive` is set, `--print` is added. The agent runs, prints output,
 
 ### Settings Merge
 
-For every session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` (Kangentic's own session record id, not Claude's session id) and passed via `--settings`:
+For every session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` (Kangentic's own session record id, not Claude's session id) and passed via `--settings`. Both project files are read from disk on every spawn, never cached, so a commit, a pull or an edit reaches the next session with no restart:
 
 1. Read `.claude/settings.json` from project root (committed, shared)
-2. Deep-merge `.claude/settings.local.json` from project root (gitignored, personal)
+2. Lay `.claude/settings.local.json` from project root (gitignored, personal) over it, the way Claude Code combines its own settings files ("lists merge instead of overriding" in Claude's settings docs)
    - Hooks: concatenated per event type (local hooks appended after project hooks)
-   - Permissions: deduplicated union of allow/deny arrays
+   - A list key on both sides, at the top level (`enabledMcpjsonServers`) or under `permissions` (`allow`, `deny`, `ask`, `additionalDirectories`), keeps both lists' entries, deduplicated
+   - Every other key takes the local value, and every `permissions` key is kept (`defaultMode` included). Nested objects such as `env` are replaced, not merged
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json`
    - Only permissions are merged (captures "always allow" grants from user)
    - Hooks from the worktree are skipped (may be stale leftovers)
@@ -592,11 +592,13 @@ pattern (`CLI_ENVIRONMENT_REFERENCE`, `tests/unit/helpers/shell-argv-probe.ts`).
 
 #### Hook Identification
 
-Kangentic hooks are identified by two markers in the command string:
-- Contains `.kangentic` (path component)
-- Contains a known bridge name (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`)
+A command is a Kangentic hook (`isKangenticHookCommand`) when it names a known bridge (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`) AND carries one of these markers:
+- `.kangentic` or `/kangentic/` in a path (a session directory, a workspace bridge copy, a source checkout, a Windows install)
+- the events path named through `env:KANGENTIC_EVENTS_PATH`
+- for a `background-shell-hint-bridge` command, a base64 spec that names `kangentic_mark_background_service`
+- the exact path the running app ships that bridge at
 
-Both must match. This two-marker pattern prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
+The first three hold wherever the app is installed, so they also catch a hook an earlier install wrote from another path. Requiring a bridge name plus a marker prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories - the current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
 
 #### Hook Cleanup
 
@@ -817,7 +819,9 @@ stand in the way:
 
 Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (event-bridge hooks and / or the Kangentic MCP server entry) directly to `.gemini/settings.json` in the CWD.
 
-Because the file is shared, concurrent Gemini sessions in the same folder are serialized by per-session holds in `GeminiAdapter.hookHolds` (a `SharedFolderHolds`): every `buildCommand` that writes the file (an events pipeline or MCP wiring) holds it under `CommandOptions.ptySessionId`, the id the session spawns under, and `removeHooks(directory, sessionId)` only strips the file when the last session in that folder releases. The key is the session, not the task: a young session's kill leaves its PTY exiting for up to the grace while the task's next session starts, and a task-keyed release let that late exit strip the running session's hooks. A second release of one session (session-manager invokes `removeHooks` both in `suspend()` and from the PTY `onExit` handler) is a no-op. A built command that never becomes a session (an abort, a skipped startup spawn, a failed spawn) releases its hold through `releaseCommandHold` (`src/main/pty/lifecycle/adapter-lifecycle.ts`). On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. `removeHooks` strips the `mcpServers.kangentic` entry alongside the hooks, so the entry and its environment references do not outlive the session. Qwen, Cursor, Droid, Antigravity, Grok, OpenCode and Codex (its legacy `.codex/hooks.json` sweep) hold their shared files the same way.
+The project root's file is read on every spawn, never cached, so an edit or a pull reaches the next session with no restart. In the main repo that read finds the file the previous spawn wrote, so it strips Kangentic's own hooks and `mcpServers.kangentic` entry first (`stripKangenticEntries`, the same strip `removeHooks` runs) and the user's content is the baseline. A hook counts as Kangentic's when its command runs one of the bridges (`isKangenticHookCommand`). Gemini's commands name no `.kangentic` path, so they are recognized by the events argument `env:KANGENTIC_EVENTS_PATH` and by the hint spec naming `kangentic_mark_background_service`. Neither depends on the install path, so hooks an earlier install wrote from another path (an AppImage remount, a moved app) are stripped too.
+
+Because the file is shared, concurrent Gemini sessions in the same folder are serialized by per-session holds in `GeminiAdapter.hookHolds` (a `SharedFolderHolds`): every `buildCommand` that writes the file (an events pipeline or MCP wiring) holds it under `CommandOptions.ptySessionId`, the id the session spawns under, and `removeHooks(directory, sessionId)` only strips the file when the last session in that folder releases. The key is the session, not the task: a young session's kill leaves its PTY exiting for up to the grace while the task's next session starts, and a task-keyed release let that late exit strip the running session's hooks. A second release of one session (session-manager invokes `removeHooks` both in `suspend()` and from the PTY `onExit` handler) is a no-op. A built command that never becomes a session (an abort, a skipped startup spawn, a failed spawn) releases its hold through `releaseCommandHold` (`src/main/pty/lifecycle/adapter-lifecycle.ts`). On crash or force-quit, the next spawn's read strips any stale Kangentic entries (`stripKangenticEntries`) and `buildHooks` filters them again. `removeHooks` strips the `mcpServers.kangentic` entry alongside the hooks, so the entry and its environment references do not outlive the session. Qwen, Cursor, Droid, Antigravity, Grok, OpenCode and Codex (its legacy `.codex/hooks.json` sweep) hold their shared files the same way.
 
 ### MCP Wiring
 
@@ -920,7 +924,7 @@ that requires user interaction, which the plan prompt does, so no hook can answe
 
 ### Settings Merge
 
-Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
+Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same folder are serialized by per-session holds in `QwenAdapter.hookHolds`, identical to the Gemini implementation. As with Gemini, the project root's file is read on every spawn with Kangentic's own hooks and `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), so an edit reaches the next session and the previous spawn's entries never become the baseline. When Kangentic creates the file the builder seeds `.qwen/settings.json` and `.kangentic/` into `.git/info/exclude` (created-by-us carve-out: a pre-existing user file keeps its git visibility).
 
 On Windows the hook commands carry bare tokens only: `node .kangentic/qwen-event-bridge.cjs env:KANGENTIC_EVENTS_PATH <type> ...`. Qwen's Windows hook runner hands cmd an escaped command line that no quoted path survives, and a bare token also survives the Git Bash it uses under MSYS. The builder checks the bridge copy in `<cwd>/.kangentic/` on every spawn and rewrites it only when its bytes differ from the app's bridge (after an app update, for example). A spawn that finds an identical copy leaves it alone, a hook already running keeps the copy it loaded, and the events path comes from each session's own environment, so concurrent sessions in one folder each write to their own file. See [Paths in hook commands](#paths-in-hook-commands).
 
@@ -1019,7 +1023,7 @@ The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` 
 
 ### Settings Merge
 
-None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `clearSettingsCache` has nothing to clear, and `removeHooks` only removes the activity plugin (next subsection). The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](mcp-server.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
+None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `removeHooks` only removes the activity plugin (next subsection). The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](mcp-server.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
 
 ### Activity Plugin
 

@@ -823,12 +823,6 @@ describe('Codex Adapter', () => {
     });
   });
 
-  describe('clearSettingsCache', () => {
-    it('is a no-op (does not throw)', () => {
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
-    });
-  });
-
   describe('captureSessionIdFromOutput', () => {
     it('captures UUID from Codex v0.118+ startup header', () => {
       const output = 'session id: 019d60ac-b67c-7a22-bcbb-af55c8295c38\n--------';

@@ -173,11 +173,6 @@ export class DroidAdapter implements AgentAdapter {
     return null;
   }
 
-  clearSettingsCache(): void {
-    // No-op: this adapter writes no settings files, so there is no
-    // cache to clear.
-  }
-
   getExitSequence(): string[] {
     // Droid's TUI accepts `/quit` as a graceful exit; Ctrl+C is the
     // hard fallback. Sending both mirrors the Gemini exit sequence

@@ -437,10 +437,6 @@ describe('GooseAdapter', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });
 
-    it('clearSettingsCache does not throw', () => {
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
-    });
-
     it('getSubmissionVerifier returns null', () => {
       expect(adapter.getSubmissionVerifier('paste')).toBeNull();
     });

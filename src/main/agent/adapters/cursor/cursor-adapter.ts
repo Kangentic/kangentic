@@ -371,9 +371,6 @@ export class CursorAdapter implements AgentAdapter {
     if (folder) removeCursorProjectMcpConfig(folder);
   }
 
-  // Cursor CLI has no merged settings - no-op
-  clearSettingsCache(): void {}
-
   getExitSequence(): string[] {
     return ['\x03'];
   }

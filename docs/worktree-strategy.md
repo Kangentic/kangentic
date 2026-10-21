@@ -561,8 +561,8 @@ Activity state (thinking/idle) is derived from event types in the events pipelin
 
 All sessions (main repo and worktree) use a unified approach. For each session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` and passed via `--settings`:
 
-1. Read `.claude/settings.json` from project root (committed, shared)
-2. Deep-merge `.claude/settings.local.json` from project root (gitignored, personal)
+1. Read `.claude/settings.json` from project root (committed, shared), fresh on every spawn so a commit or pull reaches the next session
+2. Merge `.claude/settings.local.json` from project root (gitignored, personal) over it: list keys combined, other keys from the local file (see [Settings Merge](agent-integration.md#settings-merge))
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants -- hooks are skipped since they may be stale leftovers from before the unified approach)
 4. Inject bridge commands into appropriate hook points
 5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
@@ -573,11 +573,13 @@ All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/
 
 ### Hook Identification
 
-Kangentic hooks are identified by two markers in the command string:
-- Contains `.kangentic` (path component)
-- Contains a known bridge name (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`)
+A command is a Kangentic hook (`isKangenticHookCommand`) when it names a known bridge (`activity-bridge`, `event-bridge`, `plan-approval-bridge` or `background-shell-hint-bridge`) AND carries one of these markers:
+- `.kangentic` or `/kangentic/` in a path (a session directory, a workspace bridge copy, a source checkout, a Windows install)
+- the events path named through `env:KANGENTIC_EVENTS_PATH`
+- for a `background-shell-hint-bridge` command, a base64 spec that names `kangentic_mark_background_service`
+- the exact path the running app ships that bridge at
 
-Both must match. This prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
+The first three hold wherever the app is installed, so they also catch a hook an earlier install wrote from another path. Requiring a bridge name plus a marker prevents false positives on user-defined hooks with similar names. The `activity-bridge` check is for backwards compatibility with older session directories. The current bridge scripts are `event-bridge`, `plan-approval-bridge` and `background-shell-hint-bridge`.
 
 ## Session Directory
 
@@ -701,7 +703,7 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 ## Safety
 
 - **No git contamination** -- `.claude/commands/` excluded from worktrees via sparse-checkout (commands walk up, so exclusion prevents duplicates). `.claude/skills/` and `.claude/agents/` are kept in worktrees (they do not walk up and must be present). `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored. Hooks are delivered via `--settings` flag for all sessions (main repo and worktree) -- Kangentic never writes to `.claude/settings.local.json`.
-- **Hook identification** -- two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
+- **Hook identification** -- a bridge name plus a Kangentic marker (see Hook Identification above) prevents touching user hooks.
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
 - **Trust pre-population.** Before each spawn, `ClaudeAdapter.ensureTrust()` (`ensureClaudeSpawnConfig()`) trusts the agent's working directory in `~/.claude.json`, so Claude Code doesn't prompt for trust on first run.

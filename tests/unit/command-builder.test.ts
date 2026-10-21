@@ -2315,6 +2315,155 @@ describe('Merged Settings -- Local Settings Merge', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Project settings reach the next session
+// One CommandBuilder lives as long as the app (the adapter registry holds it), so
+// every case builds twice with the SAME builder and edits the project's files in
+// between. A builder that kept its first read served every later session the
+// settings from before the edit until Kangentic restarted.
+// ---------------------------------------------------------------------------
+
+describe('Merged Settings: project settings read on every spawn', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-fresh-'));
+    fs.mkdirSync(path.join(tmpDir, '.claude'), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function writeClaudeFile(directory: string, fileName: string, settings: Record<string, unknown>): void {
+    fs.mkdirSync(path.join(directory, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(directory, '.claude', fileName), JSON.stringify(settings));
+  }
+
+  /** Build one session with the given builder and return the settings file it wrote. */
+  function buildSession(builder: CommandBuilder, sessionId: string, worktreeDir?: string): Record<string, unknown> {
+    const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', sessionId);
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'fresh-task',
+      cwd: worktreeDir ?? tmpDir,
+      projectRoot: worktreeDir ? tmpDir : undefined,
+      permissionMode: 'default',
+      sessionId,
+      statusOutputPath: path.join(sessionDir, 'status.json'),
+      eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+    });
+    return JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8'));
+  }
+
+  function hookCommands(settings: Record<string, unknown>, event: string): string[] {
+    const hooks = settings.hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>> | undefined;
+    return (hooks?.[event] ?? []).flatMap((entry) => entry.hooks.map((hook) => hook.command));
+  }
+
+  it('a change to .claude/settings.json after the first session reaches the next one', () => {
+    writeClaudeFile(tmpDir, 'settings.json', {
+      permissions: { allow: ['mcp__docs', 'Bash(npm run old:*)'] },
+    });
+    const builder = new CommandBuilder();
+    const first = buildSession(builder, 'fresh-1');
+    expect((first.permissions as { allow: string[] }).allow).not.toContain('mcp__build_tools');
+
+    // A commit lands on main: a new allowed MCP server, one rule revoked, a new
+    // hook, and a new auto-mode rule.
+    writeClaudeFile(tmpDir, 'settings.json', {
+      permissions: { allow: ['mcp__docs', 'mcp__build_tools'] },
+      hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'command', command: 'echo project-guard' }] }] },
+      autoMode: { allow: ['Running the project test suite'] },
+    });
+
+    const second = buildSession(builder, 'fresh-2');
+    const allow = (second.permissions as { allow: string[] }).allow;
+    expect(allow).toContain('mcp__build_tools');
+    expect(allow).not.toContain('Bash(npm run old:*)');
+    expect(hookCommands(second, 'PreToolUse')).toContain('echo project-guard');
+    expect((second.autoMode as { allow: string[] }).allow).toContain('Running the project test suite');
+  });
+
+  it('a change to .claude/settings.local.json after the first session reaches the next one', () => {
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'] } });
+    writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { allow: ['Bash(old-tool:*)'] } });
+    const builder = new CommandBuilder();
+    buildSession(builder, 'local-1');
+
+    writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { allow: ['Bash(new-tool:*)'] } });
+
+    const allow = (buildSession(builder, 'local-2').permissions as { allow: string[] }).allow;
+    expect(allow).toContain('Bash(new-tool:*)');
+    expect(allow).not.toContain('Bash(old-tool:*)');
+  });
+
+  it('a worktree session picks up a change to the project root\'s settings', () => {
+    const worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'fresh-worktree');
+    fs.mkdirSync(worktreeDir, { recursive: true });
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['mcp__docs'] } });
+    const builder = new CommandBuilder();
+    buildSession(builder, 'worktree-1', worktreeDir);
+
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['mcp__docs', 'mcp__build_tools'] } });
+
+    const allow = (buildSession(builder, 'worktree-2', worktreeDir).permissions as { allow: string[] }).allow;
+    expect(allow).toContain('mcp__build_tools');
+  });
+
+  it('keeps every permissions key and combines list keys when the local file has its own', () => {
+    // The shapes a real project had: the local file adds a readable directory and approves
+    // servers of its own, and the session file had lost the directory and one approved server.
+    writeClaudeFile(tmpDir, 'settings.json', {
+      permissions: { allow: ['mcp__docs'], ask: ['Bash(git push:*)'], defaultMode: 'default' },
+      enabledMcpjsonServers: ['docs', 'build_tools'],
+    });
+    writeClaudeFile(tmpDir, 'settings.local.json', {
+      permissions: {
+        additionalDirectories: ['../shared-library'],
+        ask: ['Bash(git reset:*)'],
+        defaultMode: 'acceptEdits',
+      },
+      enabledMcpjsonServers: ['kangentic', 'build_tools'],
+      enableAllProjectMcpServers: true,
+    });
+
+    const merged = buildSession(new CommandBuilder(), 'keep-1');
+
+    const permissions = merged.permissions as Record<string, unknown>;
+    expect(permissions.additionalDirectories).toEqual(['../shared-library']);
+    expect(permissions.ask).toEqual(['Bash(git push:*)', 'Bash(git reset:*)']);
+    expect(permissions.defaultMode).toBe('acceptEdits');
+    expect(permissions.allow).toContain('mcp__docs');
+    expect(permissions.deny).toEqual([]);
+    expect(merged.enabledMcpjsonServers).toEqual(['docs', 'build_tools', 'kangentic']);
+    expect(merged.enableAllProjectMcpServers).toBe(true);
+  });
+
+  it('a local object key still replaces the project\'s whole object', () => {
+    // Only lists combine. Claude's docs say nothing about merging nested objects, so an `env`
+    // in the local file stays the one the session gets, as before.
+    writeClaudeFile(tmpDir, 'settings.json', { env: { PROJECT_ONLY: '1', SHARED: 'project' } });
+    writeClaudeFile(tmpDir, 'settings.local.json', { env: { SHARED: 'local' } });
+
+    const merged = buildSession(new CommandBuilder(), 'object-1');
+
+    expect(merged.env).toEqual({ SHARED: 'local' });
+  });
+
+  it('a worktree\'s granted permissions keep the root\'s other permissions keys', () => {
+    writeClaudeFile(tmpDir, 'settings.json', { permissions: { allow: ['Read'] } });
+    writeClaudeFile(tmpDir, 'settings.local.json', { permissions: { additionalDirectories: ['../shared-library'] } });
+    const worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'grants');
+    writeClaudeFile(worktreeDir, 'settings.local.json', { permissions: { allow: ['Bash(npm test:*)'] } });
+
+    const permissions = buildSession(new CommandBuilder(), 'grants-1', worktreeDir).permissions as Record<string, unknown>;
+
+    expect(permissions.allow).toEqual(expect.arrayContaining(['Read', 'Bash(npm test:*)']));
+    expect(permissions.additionalDirectories).toEqual(['../shared-library']);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TUI Fullscreen Default
 // Kangentic turns the fullscreen renderer on with CLAUDE_CODE_NO_FLICKER=1 in
 // the spawn environment (rendererEnvironment), never with `tui` in
@@ -2476,8 +2625,8 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
   });
 
   it('L: the project\'s choice holds for a builder that has already built a command for that project', () => {
-    // fullscreenByDefault reads the builder's cached settings without a copy, and the builds
-    // read the same cache through a copy. Neither may disturb the other, in either direction.
+    // fullscreenByDefault and the builds each read the project's settings, and a build adds its
+    // statusLine and hooks to what it read. Neither may disturb the other, in either direction.
     vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     const options = {
       cliPath: '/usr/bin/claude',
@@ -2513,9 +2662,9 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
     expect(fullscreenBuilder.rendererEnvironment(options, {})).toEqual(NO_FLICKER);
   });
 
-  it('M: a worktree spawn reads the project root\'s choice, the root the build cached it under', () => {
-    // The build keys its settings cache by projectRoot, so the renderer gate must read the same
-    // key. Keyed by the worktree's own cwd it would find no settings and fall to the global choice.
+  it('M: a worktree spawn reads the project root\'s choice, the root the build reads', () => {
+    // The build reads the project root's settings, so the renderer gate must read the same root.
+    // Read from the worktree's own cwd it would find no settings and fall to the global choice.
     vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
     const worktreeDir = path.join(tmpDir, '.kangentic', 'worktrees', 'tui-worktree');
     fs.mkdirSync(worktreeDir, { recursive: true });
@@ -2536,6 +2685,33 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
 
     expect(builder.fullscreenByDefault(options)).toBe(false);
     expect(builder.rendererEnvironment(options, {})).toBeNull();
+  });
+
+  it('N: a project tui changed after a build reaches the next spawn of the same builder', () => {
+    // The builder lives as long as the app, so a renderer choice committed or pulled after its
+    // first build must reach the next session with no restart, in the environment and in
+    // --settings alike.
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    const sessionOptions = (sessionId: string) => ({
+      cliPath: '/usr/bin/claude',
+      taskId: 'tui-task',
+      cwd: tmpDir,
+      permissionMode: 'default' as const,
+      sessionId,
+      statusOutputPath: path.join(tmpDir, '.kangentic', 'sessions', sessionId, 'status.json'),
+    });
+    writeGlobalSettings({ tui: 'fullscreen' });
+    writeProjectSettings({ tui: 'fullscreen' });
+    const builder = new CommandBuilder();
+    builder.buildClaudeCommand(sessionOptions('tui-edit-1'));
+    expect(builder.rendererEnvironment(sessionOptions('tui-edit-1'), {})).toEqual(NO_FLICKER);
+
+    writeProjectSettings({ tui: 'default' });
+
+    expect(builder.rendererEnvironment(sessionOptions('tui-edit-2'), {})).toBeNull();
+    builder.buildClaudeCommand(sessionOptions('tui-edit-2'));
+    const secondSettings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.kangentic', 'sessions', 'tui-edit-2', 'settings.json'), 'utf-8'));
+    expect(secondSettings.tui).toBe('default');
   });
 });
 

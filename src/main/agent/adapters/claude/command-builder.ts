@@ -70,13 +70,46 @@ const READ_ONLY_TOOLS = 'Read,Grep,Glob,ToolSearch';
 const KANGENTIC_AUTO_MODE_ALLOW_RULE =
   "Kangentic's own board and session tools (mcp__kangentic__*) are always allowed: they only read or mutate this local Kanban board's own state (tasks, columns, sessions) inside a project the user has already opened in Kangentic, never external systems or files outside the project.";
 
+/** The `permissions` block: the lists Kangentic writes to, and every other key (`ask`, `additionalDirectories`, `defaultMode`) passed through. */
+interface ClaudePermissions {
+  allow?: string[];
+  deny?: string[];
+  [key: string]: unknown;
+}
+
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
   statusLine?: { type: string; command: string; refreshInterval?: number };
   hooks?: Record<string, ClaudeHookEntry[]>;
-  permissions?: { allow?: string[]; deny?: string[] };
+  permissions?: ClaudePermissions;
   autoMode?: { environment?: string[]; allow?: string[]; soft_deny?: string[]; hard_deny?: string[] };
   [key: string]: unknown; // preserve unknown keys from user's settings
+}
+
+/**
+ * One settings file laid over another, one level deep, the way Claude Code
+ * combines its own files: a key that holds a list on both sides keeps both
+ * lists' entries, deduplicated with the base's first, and any other key takes
+ * the overlay's value. Claude's settings docs: "When you set the same list
+ * key, such as `permissions.allow`, in more than one file, Claude Code combines
+ * the lists instead of picking one." Nested objects are not walked, since the
+ * docs say nothing about how they merge, so an overlay's `env` replaces the
+ * base's, as it always has here.
+ */
+function overlaySettingsLayer<T extends Record<string, unknown>>(base: T, overlay: T): T {
+  const merged: Record<string, unknown> = { ...base, ...overlay };
+  for (const [key, overlayValue] of Object.entries(overlay)) {
+    const baseValue = base[key];
+    if (Array.isArray(baseValue) && Array.isArray(overlayValue)) {
+      merged[key] = [...new Set([...baseValue, ...overlayValue])];
+    }
+  }
+  return merged as T;
+}
+
+/** True for a parsed settings file that is a JSON object, not an array, `null` or a scalar. */
+function isPlainSettingsObject(parsed: unknown): parsed is ClaudeSettings {
+  return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
 }
 
 /**
@@ -98,28 +131,26 @@ function mergeHookArrays(
   return merged;
 }
 
-/** Deep-merge permissions: deduplicate allow/deny arrays. */
+/**
+ * Lay one `permissions` block over another: every key kept, lists combined
+ * (`overlaySettingsLayer`). `allow` and `deny` are always present.
+ */
 function mergePermissions(
-  base: { allow?: string[]; deny?: string[] } | undefined,
-  overlay: { allow?: string[]; deny?: string[] } | undefined,
-): { allow: string[]; deny: string[] } | undefined {
+  base: ClaudePermissions | undefined,
+  overlay: ClaudePermissions | undefined,
+): (ClaudePermissions & { allow: string[]; deny: string[] }) | undefined {
   if (!base && !overlay) return undefined;
-  const allow = [...new Set([...(base?.allow || []), ...(overlay?.allow || [])])];
-  const deny = [...new Set([...(base?.deny || []), ...(overlay?.deny || [])])];
-  return { allow, deny };
+  const merged = overlaySettingsLayer(base ?? {}, overlay ?? {});
+  return {
+    ...merged,
+    allow: Array.isArray(merged.allow) ? merged.allow : [],
+    deny: Array.isArray(merged.deny) ? merged.deny : [],
+  };
 }
 
 export class CommandBuilder {
-  /** Cache of merged base settings (project + local) keyed by project root path. */
-  private projectSettingsCache = new Map<string, ClaudeSettings>();
-
   /** Path to session mcp.json written by createMergedSettings(), consumed by buildClaudeCommand(). */
   private lastMcpConfigPath: string | null = null;
-
-  /** Clear the cached project settings (e.g., when settings files change). */
-  clearSettingsCache(): void {
-    this.projectSettingsCache.clear();
-  }
 
   /**
    * The Claude TUI renderer the user chose in their global
@@ -168,7 +199,7 @@ export class CommandBuilder {
    * on 2.1.303), which is why it is set only when no other renderer was chosen.
    */
   fullscreenByDefault(options: Pick<CommandOptions, 'cwd' | 'projectRoot'>): boolean {
-    const projectChoice = this.cachedBaseSettings(options.projectRoot || options.cwd).tui;
+    const projectChoice = this.readBaseSettings(options.projectRoot || options.cwd).tui;
     const choice = projectChoice === undefined || projectChoice === null ? this.globalTuiChoice() : projectChoice;
     return choice === null || choice === 'fullscreen';
   }
@@ -331,50 +362,50 @@ export class CommandBuilder {
     return interpolateTemplate(template, vars);
   }
 
-  /** Read and merge project + local settings, with per-projectRoot caching. A copy the caller may change. */
+  /**
+   * The project root's `.claude/settings.json` with its `.claude/settings.local.json`
+   * laid over it, read from disk on every call and returned as a new object the
+   * caller may change. Nothing caches it, so a commit, a pull or an edit to either
+   * file reaches the next session with no restart; two small reads cost nothing
+   * beside the spawn they serve. Kangentic adds nothing to either file, so the
+   * read is always the user's own settings.
+   */
   private readBaseSettings(projectRoot: string): ClaudeSettings {
-    return structuredClone(this.cachedBaseSettings(projectRoot));
-  }
-
-  /** The cached merged settings themselves, for a read that changes nothing. */
-  private cachedBaseSettings(projectRoot: string): Readonly<ClaudeSettings> {
-    const cached = this.projectSettingsCache.get(projectRoot);
-    if (cached) return cached;
-
     // 1. Read project settings (committed, shared)
     let baseSettings: ClaudeSettings = {};
     const projectSettingsPath = path.join(projectRoot, '.claude', 'settings.json');
     try {
-      const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
-      baseSettings = JSON.parse(raw);
+      const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
+      // Only a plain object can be spread into the merged settings, as in the
+      // Gemini and Qwen builders' reads.
+      if (isPlainSettingsObject(parsed)) baseSettings = parsed;
     } catch {
       // No existing settings - start fresh
     }
 
-    // 2. Deep-merge local settings from project root (gitignored, personal)
+    // 2. Lay local settings from project root (gitignored, personal) over them
     const localSettingsPath = path.join(projectRoot, '.claude', 'settings.local.json');
     try {
-      const raw = fs.readFileSync(localSettingsPath, 'utf-8');
-      const localSettings: ClaudeSettings = JSON.parse(raw);
-      const { hooks: localHooks, permissions: localPerms, ...localRest } = localSettings;
-      const mergedPerms = mergePermissions(baseSettings.permissions, localPerms);
+      const localSettings: unknown = JSON.parse(fs.readFileSync(localSettingsPath, 'utf-8'));
+      if (!isPlainSettingsObject(localSettings)) return baseSettings;
+      const { hooks: localHooks, permissions: localPermissions, ...localRest } = localSettings;
+      const { hooks: baseHooks, permissions: basePermissions, ...baseRest } = baseSettings;
+      const mergedPermissions = mergePermissions(basePermissions, localPermissions);
       baseSettings = {
-        ...baseSettings,
-        ...localRest,
-        hooks: mergeHookArrays(baseSettings.hooks, localHooks),
-        ...(mergedPerms ? { permissions: mergedPerms } : {}),
+        ...overlaySettingsLayer(baseRest, localRest),
+        hooks: mergeHookArrays(baseHooks, localHooks),
+        ...(mergedPermissions ? { permissions: mergedPermissions } : {}),
       };
     } catch {
       // No local settings
     }
 
-    this.projectSettingsCache.set(projectRoot, baseSettings);
     return baseSettings;
   }
 
   /**
    * Create a merged Claude settings file that includes the statusLine config
-   * and event-bridge hooks. Deep-merges project + local settings (cached),
+   * and event-bridge hooks. Merges project + local settings (read fresh),
    * injects our hooks, and writes to the session directory.
    *
    * All sessions (main repo and worktree) use `--settings` pointing to
@@ -389,10 +420,11 @@ export class CommandBuilder {
     let baseSettings = this.readBaseSettings(projectRoot);
 
     // 3. For worktrees: merge permissions from the worktree's settings.local.json.
-    //    Claude writes "always allow" grants here during sessions. Without reading
-    //    this on resume, grants would be lost since --settings (CLI precedence)
-    //    overrides the local layer. We only merge permissions, not hooks (which
-    //    are either empty or stale leftovers from before this unified approach).
+    //    Claude writes "always allow" grants here during sessions, so the session
+    //    file carries them on resume whatever Claude makes of a list in --settings
+    //    beside the same list in a project file. We only merge permissions, not
+    //    hooks (which are either empty or stale leftovers from before this unified
+    //    approach).
     if (isWorktree) {
       const wtLocalPath = path.join(options.cwd, '.claude', 'settings.local.json');
       try {

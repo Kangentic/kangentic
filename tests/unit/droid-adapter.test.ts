@@ -209,11 +209,10 @@ describe('Droid Adapter', () => {
     });
   });
 
-  describe('removeHooks / clearSettingsCache / ensureTrust', () => {
-    it('all run without throwing on a directory with no Kangentic config', async () => {
+  describe('removeHooks / ensureTrust', () => {
+    it('both run without throwing on a directory with no Kangentic config', async () => {
       expect(() => adapter.removeHooks(tempDir)).not.toThrow();
       expect(() => adapter.removeHooks(tempDir, 'session-x')).not.toThrow();
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
       await expect(adapter.ensureTrust(tempDir)).resolves.toBeUndefined();
     });
   });

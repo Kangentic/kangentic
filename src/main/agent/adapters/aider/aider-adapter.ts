@@ -201,9 +201,6 @@ export class AiderAdapter implements AgentAdapter {
   // Aider does not use hooks - no-op
   removeHooks(_directory: string): void {}
 
-  // Aider has no merged settings - no-op
-  clearSettingsCache(): void {}
-
   getExitSequence(): string[] {
     // Ctrl+C to interrupt, then /exit for graceful shutdown so Aider
     // can flush .aider.chat.history.md before termination.

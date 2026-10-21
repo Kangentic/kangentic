@@ -209,7 +209,6 @@ function makeAdapter(
       return template;
     },
     removeHooks(_directory: string, _sessionId?: string) {},
-    clearSettingsCache() {},
     detectFirstOutput(_data: string) {
       return false;
     },
@@ -328,7 +327,6 @@ function makeCaptureAdapter(
       return template;
     },
     removeHooks(_directory: string, _sessionId?: string) {},
-    clearSettingsCache() {},
     detectFirstOutput(_data: string) {
       return false;
     },

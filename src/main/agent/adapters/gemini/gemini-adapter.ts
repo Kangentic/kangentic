@@ -200,10 +200,6 @@ export class GeminiAdapter implements AgentAdapter {
     return null;
   }
 
-  clearSettingsCache(): void {
-    this.commandBuilder.clearSettingsCache();
-  }
-
   getExitSequence(): string[] {
     return ['\x03', '/quit\r'];
   }

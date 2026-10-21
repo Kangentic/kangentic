@@ -203,9 +203,6 @@ export class GooseAdapter implements AgentAdapter {
     return null;
   }
 
-  // Goose has no merged settings - no-op.
-  clearSettingsCache(): void {}
-
   getExitSequence(): string[] {
     // Goose's Ctrl+C is CONTEXTUAL (per its published CLI docs, 2026-09-16:
     // "clear the current line if text is entered, interrupt the current request

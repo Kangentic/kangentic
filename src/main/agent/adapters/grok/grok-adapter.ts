@@ -200,11 +200,6 @@ export class GrokAdapter implements AgentAdapter {
     removeMcpConfig(folder);
   }
 
-  clearSettingsCache(): void {
-    // No settings cache: the hook file and MCP block are static content
-    // rewritten on every spawn.
-  }
-
   detectFirstOutput(data: string): boolean {
     // Grok hides the cursor in its very first output chunk (verified via
     // node-pty: ESC[?25l arrives before the alt-screen switch and the

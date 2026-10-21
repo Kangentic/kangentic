@@ -213,10 +213,52 @@ function geminiSettingsPath(directory: string): string {
   return path.join(directory, '.gemini', 'settings.json');
 }
 
+/** The parts of a parsed `.gemini/settings.json` that Kangentic writes into. */
+export interface GeminiSettingsWithKangenticEntries {
+  hooks?: Record<string, GeminiHookEntry[]>;
+  mcpServers?: Record<string, unknown>;
+}
+
+/**
+ * Strip ALL Kangentic hook entries AND the Kangentic MCP server entry from a
+ * parsed `.gemini/settings.json`, in place. Preserves all other user hooks,
+ * MCP servers, and settings. Returns whether anything was removed.
+ *
+ * Shared by `removeHooks()` and the command builder's read of the folder's
+ * settings. In the main repo that read finds the file the previous spawn
+ * wrote, and this strip is what keeps that spawn's entries out of the user's
+ * baseline.
+ */
+export function stripKangenticEntries(settings: GeminiSettingsWithKangenticEntries): boolean {
+  let changed = false;
+
+  if (settings.hooks && typeof settings.hooks === 'object') {
+    for (const key of Object.keys(settings.hooks)) {
+      if (!Array.isArray(settings.hooks[key])) continue;
+      const before = settings.hooks[key].length;
+      settings.hooks[key] = filterOurHooks(settings.hooks[key]);
+      if (settings.hooks[key].length !== before) changed = true;
+      if (settings.hooks[key].length === 0) delete settings.hooks[key];
+    }
+    if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+  }
+
+  if (
+    settings.mcpServers
+    && typeof settings.mcpServers === 'object'
+    && 'kangentic' in settings.mcpServers
+  ) {
+    delete settings.mcpServers.kangentic;
+    changed = true;
+    if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
+  }
+
+  return changed;
+}
+
 /**
  * Remove ALL Kangentic hook entries AND the Kangentic MCP server entry from
- * `.gemini/settings.json` at the given directory. Preserves all other user
- * hooks, MCP servers, and settings.
+ * `.gemini/settings.json` at the given directory (`stripKangenticEntries`).
  *
  * Called on session exit/suspend to clean up what buildHooks() and the
  * command builder injected. Gemini has no --settings flag, so both live in
@@ -227,36 +269,8 @@ function geminiSettingsPath(directory: string): string {
  */
 export function removeHooks(directory: string): void {
   safelyUpdateSettingsFile(geminiSettingsPath(directory), (parsed) => {
-    const settings = parsed as {
-      hooks?: Record<string, GeminiHookEntry[]>;
-      mcpServers?: Record<string, unknown>;
-    };
+    const settings = parsed as GeminiSettingsWithKangenticEntries;
     if (!settings || typeof settings !== 'object') return null;
-
-    let changed = false;
-
-    if (settings.hooks && typeof settings.hooks === 'object') {
-      for (const key of Object.keys(settings.hooks)) {
-        if (!Array.isArray(settings.hooks[key])) continue;
-        const before = settings.hooks[key].length;
-        settings.hooks[key] = filterOurHooks(settings.hooks[key]);
-        if (settings.hooks[key].length !== before) changed = true;
-        if (settings.hooks[key].length === 0) delete settings.hooks[key];
-      }
-      if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-    }
-
-    if (
-      settings.mcpServers
-      && typeof settings.mcpServers === 'object'
-      && 'kangentic' in settings.mcpServers
-    ) {
-      delete settings.mcpServers.kangentic;
-      changed = true;
-      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
-    }
-
-    if (!changed) return null;
-    return settings;
+    return stripKangenticEntries(settings) ? settings : null;
   }, 'removeHooks');
 }

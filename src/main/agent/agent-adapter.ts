@@ -589,9 +589,6 @@ export interface AgentAdapter {
    */
   removeHooks(directory: string, sessionId?: string): void;
 
-  /** Clear any cached settings (e.g. after project settings change). */
-  clearSettingsCache(): void;
-
   /**
    * Detect whether the agent has produced its first meaningful output.
    * Called on each PTY data flush. Return true to emit the 'first-output'
