@@ -209,23 +209,82 @@ const esbuildCommon = {
 
 let viteServer = null;
 let electronProc = null;
+// Held so cleanup() can end it: a stop that lands while it runs would
+// otherwise exit this process and leave the child bundling into the worktree.
+let prebundleProc = null;
 
 /** Runs scripts/vite-prebundle.js for this worktree and resolves with its exit
  *  code, or 1 when it could not start. Its output lands in this terminal, as
  *  the server's own does. */
 function runDependencyPrebundle() {
   return new Promise((resolve) => {
-    const prebundleProc = spawn(
+    const child = spawn(
       process.execPath,
       [path.join(__dirname, 'vite-prebundle.js'), projectDir, String(port)],
       { stdio: 'inherit', windowsHide: true },
     );
-    prebundleProc.on('close', (exitCode) => resolve(exitCode ?? 1));
-    prebundleProc.on('error', (spawnError) => {
+    prebundleProc = child;
+    child.on('close', (exitCode) => {
+      if (prebundleProc === child) prebundleProc = null;
+      resolve(exitCode ?? 1);
+    });
+    child.on('error', (spawnError) => {
+      if (prebundleProc === child) prebundleProc = null;
       console.warn('[dev] could not start the dependency pre-bundle:', spawnError);
       resolve(1);
     });
   });
+}
+
+/** Builds main, preload, the utility-process workers and the pty host with
+ *  esbuild. Needs nothing from Vite, so start() runs it alongside the server. */
+function buildMainBundles() {
+  return Promise.all([
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/index.ts')],
+      outfile: path.join(projectDir, '.vite/build/index.js'),
+    }),
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
+      outfile: path.join(projectDir, '.vite/build/preload.js'),
+    }),
+    // Conversation-memory embedding worker (Electron utilityProcess entry),
+    // built next to the main bundle so it resolves at __dirname in dev too.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
+    }),
+    // Untracked-file line-count worker (Electron utilityProcess entry), same
+    // dev-parity reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
+    }),
+    // Dictation (sherpa-onnx) worker (Electron utilityProcess entry, see
+    // DESKTOP-X), same dev-parity reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
+    }),
+    // Retrieval worker (Electron utilityProcess entry), same dev-parity
+    // reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
+    }),
+    // The pty host, as in scripts/build.js.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
+      outfile: path.join(projectDir, '.vite/build/pty-host.js'),
+    }),
+  ]);
 }
 
 async function start() {
@@ -318,6 +377,17 @@ async function start() {
     ]);
   }
 
+  // Start the esbuild builds first, so they overlap everything Vite does
+  // below, a worktree's dependency pre-bundle included: that child runs to
+  // completion before the server is created, and on a cold cache it is the
+  // longest step of the boot.
+  console.time('[dev] esbuild');
+  const mainBundlesBuilt = buildMainBundles();
+  // Marked handled now so a build that fails while Vite is still starting
+  // reaches start()'s catch through the await below, not the
+  // unhandledRejection handler.
+  mainBundlesBuilt.catch(() => {});
+
   // 1. Start Vite dev server using JS API
   console.time('[dev] vite createServer');
   const { createServer } = await import('vite');
@@ -355,57 +425,11 @@ async function start() {
   console.timeEnd('[dev] vite createServer');
   console.log(`[dev] Vite dev server running at http://localhost:${port}`);
 
-  // 2. Build main + preload with esbuild, and warm up Vite's renderer
-  //    module graph in parallel. transformRequest forces Vite's dependency
+  // 2. Wait for the esbuild builds started above, then warm up Vite's
+  //    renderer module graph. transformRequest forces Vite's dependency
   //    optimizer to complete before Electron loads the page, preventing
   //    the renderer from blocking on mid-load re-optimization.
-  console.time('[dev] esbuild');
-  await Promise.all([
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/index.ts')],
-      outfile: path.join(projectDir, '.vite/build/index.js'),
-    }),
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
-      outfile: path.join(projectDir, '.vite/build/preload.js'),
-    }),
-    // Conversation-memory embedding worker (Electron utilityProcess entry),
-    // built next to the main bundle so it resolves at __dirname in dev too.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
-    }),
-    // Untracked-file line-count worker (Electron utilityProcess entry), same
-    // dev-parity reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
-    }),
-    // Dictation (sherpa-onnx) worker (Electron utilityProcess entry, see
-    // DESKTOP-X), same dev-parity reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
-    }),
-    // Retrieval worker (Electron utilityProcess entry), same dev-parity
-    // reasoning as the embed worker above.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
-      outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
-    }),
-    // The pty host, as in scripts/build.js.
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
-      outfile: path.join(projectDir, '.vite/build/pty-host.js'),
-    }),
-  ]);
+  await mainBundlesBuilt;
   console.timeEnd('[dev] esbuild');
   console.log('[dev] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
 
@@ -535,6 +559,10 @@ function cleanup(exitCode) {
   writeExitRecord(projectDir, port, { pid: process.pid, exitCode });
   markStopping();
 
+  if (prebundleProc) {
+    prebundleProc.kill();
+    prebundleProc = null;
+  }
   if (viteServer) {
     viteServer.close().catch(() => {});
     viteServer = null;

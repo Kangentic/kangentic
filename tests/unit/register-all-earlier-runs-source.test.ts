@@ -135,6 +135,7 @@ vi.mock('../../src/main/pty/session-manager', async () => {
       enableTranscripts = vi.fn();
       setEarlierRunsSource = mockSetEarlierRunsSource;
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
+      setMaxConcurrent = vi.fn();
     },
   };
 });
@@ -152,7 +153,7 @@ vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
   CommandBuilder: class { build = vi.fn(); },
 }));
 vi.mock('../../src/main/config/config-manager', () => ({
-  ConfigManager: class { getEffectiveConfig = vi.fn(() => ({ claude: {}, git: {}, terminal: {} })); },
+  ConfigManager: class { getEffectiveConfig = vi.fn(() => ({ agent: { maxConcurrentSessions: 8 }, git: {}, terminal: {} })); },
 }));
 vi.mock('../../src/main/config/board-config-manager', () => ({
   BoardConfigManager: class {

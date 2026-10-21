@@ -5,9 +5,9 @@
  * Vite pre-bundles dependencies in the process that runs it, and that process
  * keeps the memory afterwards. A worktree preview whose cache was cold held
  * 2,838 MB of commit for its whole life; the same preview relaunched on the
- * cache that run left held 489 MB (measured 2026-10-21, task #873). scripts/dev.js runs this before it creates its server, so the bundle's
- * memory ends with this process. When the cache is already current, Vite
- * returns it untouched.
+ * cache that run left held 489 MB (measured 2026-10-21). scripts/dev.js runs
+ * this before it creates its server, so the bundle's memory ends with this
+ * process. When the cache is already current, Vite returns it untouched.
  *
  * Usage: node scripts/vite-prebundle.js <projectDir> <port>
  * Exits 0 once the cache is committed, 1 on failure. dev.js treats a failure

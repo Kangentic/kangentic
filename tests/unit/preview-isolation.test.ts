@@ -345,8 +345,9 @@ describe('isWorktreeRemovalStop: what dev.js reads from a stop file', () => {
 describe('scripts/dev.js wiring', () => {
   const devJs = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'dev.js'), 'utf-8');
 
-  function cleanupBody(): string {
-    const start = devJs.indexOf('function cleanup(');
+  function functionBody(functionName: string): string {
+    const start = devJs.indexOf(`function ${functionName}(`);
+    expect(start, `scripts/dev.js declares function ${functionName}()`).toBeGreaterThan(-1);
     const open = devJs.indexOf('{', start);
     let depth = 0;
     for (let index = open; index < devJs.length; index += 1) {
@@ -361,7 +362,11 @@ describe('scripts/dev.js wiring', () => {
         }
       }
     }
-    throw new Error('unbalanced braces in cleanup()');
+    throw new Error(`unbalanced braces in ${functionName}()`);
+  }
+
+  function cleanupBody(): string {
+    return functionBody('cleanup');
   }
 
   it('gives the ephemeral Electron process the preview git ceiling, keeping an inherited one', () => {
@@ -402,5 +407,33 @@ describe('scripts/dev.js wiring', () => {
 
   it('sweeps leftover trash at boot through the deleter', () => {
     expect(devJs).toMatch(/for \(const leftoverTrashDir of listTrashDirs\(path\.dirname\(ephemeralDataDir\)\)\) \{\s*spawnTrashDeleter\(leftoverTrashDir\);/);
+  });
+
+  it('ends a dependency pre-bundle that is still running, before it clears the worktree', () => {
+    // A stop that lands during the pre-bundle would otherwise exit dev.js and leave the child
+    // bundling into the worktree, with the cleanup below moving .kangentic/ and .vite/ around it.
+    const body = cleanupBody();
+    const killedAt = body.search(/if \(prebundleProc\) \{\s*prebundleProc\.kill\(\);/);
+    const movedAt = body.indexOf('moveIntoTrash(');
+    expect(killedAt, 'cleanup() kills the pre-bundle child').toBeGreaterThan(-1);
+    expect(movedAt, 'cleanup() moves the ephemeral tree into trash').toBeGreaterThan(-1);
+    expect(killedAt).toBeLessThan(movedAt);
+    // At the top level of cleanup(), not inside the ephemeral branch: a worktree-removal stop and a
+    // plain `npm start` both skip that branch and would exit with the child still bundling.
+    const textBeforeKill = body.slice(0, killedAt);
+    const openBlocks = textBeforeKill.split('{').length - textBeforeKill.split('}').length;
+    expect(openBlocks, 'only the function body is open at the kill').toBe(1);
+  });
+
+  it('keeps the pre-bundle child in the module-level variable cleanup() reads, and clears it when the child ends', () => {
+    expect(devJs).toMatch(/^let prebundleProc = null;/m);
+    const body = functionBody('runDependencyPrebundle');
+    // A local of the same name would shadow the variable, and cleanup() would find null.
+    expect(body).not.toMatch(/\b(?:const|let|var) prebundleProc\b/);
+    const spawned = /const (\w+) = spawn\(/.exec(body);
+    expect(spawned, 'runDependencyPrebundle() keeps the spawned child in a local').not.toBeNull();
+    expect(body).toContain(`prebundleProc = ${spawned?.[1]};`);
+    // Cleared on close and on a failed start, so cleanup() never kills a child that is already gone.
+    expect(body).toMatch(/\.on\('close',[\s\S]*?prebundleProc = null;[\s\S]*?\.on\('error',[\s\S]*?prebundleProc = null;/);
   });
 });

@@ -165,13 +165,14 @@ async function main() {
   console.log(`[probe] target        : ${targetRelativePath}`);
   console.log(`[probe] pane state    : ${holdPane ? 'HIDDEN (held)' : 'showing'}`);
 
-  // Mirror scripts/dev.js's inline worktree config rather than vite.config.mts.
+  // Mirror the inline worktree config scripts/dev.js runs
+  // (scripts/worktree-vite-config.js) rather than vite.config.mts.
   // That is not a preference, it is required for the probe to see anything:
   // vite.config.mts ignores the RELATIVE glob '**/.kangentic/**', and a worktree
   // checkout lives at <repo>/.kangentic/worktrees/<n>, so that glob swallows the
-  // entire source tree and the watcher never fires. dev.js builds the same
-  // ignores from ABSOLUTE paths, so it only ignores <worktree>/.kangentic. The
-  // dogfooded `npm start` runs dev.js, so this is also the faithful config.
+  // entire source tree and the watcher never fires. The worktree config builds
+  // the same ignores from ABSOLUTE paths, so it only ignores <worktree>/.kangentic.
+  // The dogfooded `npm start` runs dev.js, so this is also the faithful config.
   const optimizeDepsInclude = JSON.parse(
     fs.readFileSync(path.join(scriptDir, 'renderer-optimize-deps.json'), 'utf-8'),
   );

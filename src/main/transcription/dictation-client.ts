@@ -67,6 +67,9 @@ export type { EnsureEngineRequest };
  *  never drift apart on a field rename. */
 export type CreateSessionRequest = Omit<CreateSessionMessage, 'type' | 'id'>;
 
+/** Why an idle worker was recycled, as the recycle log line names it. */
+type RecycleReason = 'ceiling' | 'served-session' | 'engine-switch';
+
 interface PendingRequest {
   resolve: (value: { text?: string }) => void;
   reject: (error: Error) => void;
@@ -158,6 +161,11 @@ export class DictationClient extends EventEmitter {
     const child = this.ensureSpawned();
     if (!child) throw new Error(this.unavailableMessage());
     this.clearIdleTimer();
+    // Counted before the reply, so a warm that fails or times out still
+    // counts. A timed-out load can keep going in the worker after this
+    // client stops waiting, and a failed one can leave its arena reserved.
+    // Counting it costs at most one early recycle; not counting it could
+    // leave a second engine's commit held for good.
     this.warmedEngineKeys.add(request.engineKey);
     try {
       await this.request<PrewarmMessage>(child, { type: 'prewarm', ...request }, ENSURE_ENGINE_TIMEOUT_MS);
@@ -384,7 +392,9 @@ export class DictationClient extends EventEmitter {
    *  model, or one a settings switch made warm a second engine. A prewarm-only
    *  child holding its one engine under the ceiling is left resident on
    *  purpose. Recycled, a child re-warms only the engine in use (figures in
-   *  IDLE_SHUTDOWN_MS's note). */
+   *  IDLE_SHUTDOWN_MS's note). The two-stage read is the policy
+   *  commit-ceiling.ts describes; EmbedClient.armIdleShutdown runs the same
+   *  stages, so a change to one belongs in both. */
   private armIdleShutdown(): void {
     if (this.disposed || this.idleTimer || !this.isIdle()) return;
     if (this.overCommitCeiling()) {
@@ -406,13 +416,13 @@ export class DictationClient extends EventEmitter {
 
   /** Why a child under the ceiling is worth recycling after a long quiet, or
    *  null for the resident baseline. */
-  private longWindowReason(): 'served-session' | 'engine-switch' | null {
+  private longWindowReason(): Exclude<RecycleReason, 'ceiling'> | null {
     if (this.servedSession) return 'served-session';
     if (this.warmedEngineKeys.size > 1) return 'engine-switch';
     return null;
   }
 
-  private scheduleRecycle(delayMs: number, reason: string): void {
+  private scheduleRecycle(delayMs: number, reason: RecycleReason): void {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (this.isIdle()) this.recycle(reason);
@@ -423,7 +433,7 @@ export class DictationClient extends EventEmitter {
   /** Recycle the idle child and ask for a fresh baseline. Logged with the
    *  reason and the commit given back, since otherwise a recycle shows only as
    *  a new pid. */
-  private recycle(reason: string): void {
+  private recycle(reason: RecycleReason): void {
     const pid = this.child?.pid;
     const commitBytes = typeof pid === 'number' ? this.readCommitBytes(pid) : null;
     const commitText = commitBytes === null ? 'unknown' : `${Math.round(commitBytes / (1024 * 1024))} MB`;

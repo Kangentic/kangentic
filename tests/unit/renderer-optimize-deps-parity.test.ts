@@ -11,7 +11,7 @@
  *    specifier Vite first meets after boot (reachable only behind a React.lazy
  *    island, e.g. the Changes panel's monaco graph) can trigger a mid-session
  *    re-optimization. Combined with the shared-cache clobbering fixed via the
- *    worktree cacheDir (scripts/dev.js), this surfaced as "Failed to fetch
+ *    worktree cacheDir (scripts/worktree-vite-config.js), this surfaced as "Failed to fetch
  *    dynamically imported module" on the Changes panel, a failure the browser
  *    then caches in the module map for the document lifetime.
  *
@@ -191,9 +191,27 @@ describe('worktree vite cache isolation', () => {
     expect(devSource).toMatch(/createServer\(await worktreeViteConfig\(projectDir, port\)\)/);
     expect(devSource).toMatch(/worktreeViteCacheDir\(projectDir\)/);
     expect(prebundleSource).toMatch(/await worktreeViteConfig\(projectDir, Number\(portText\)\)/);
-    // The pre-bundle runs before the server is created.
-    expect(devSource.indexOf('await runDependencyPrebundle()'))
-      .toBeLessThan(devSource.indexOf('createServer(await worktreeViteConfig('));
+    // The pre-bundle runs before the server is created. Both markers must exist:
+    // indexOf returns -1 for a missing one, and -1 is less than any index.
+    const prebundleAt = devSource.indexOf('await runDependencyPrebundle()');
+    const serverCreationAt = devSource.indexOf('createServer(await worktreeViteConfig(');
+    expect(prebundleAt, 'scripts/dev.js awaits the dependency pre-bundle').toBeGreaterThan(-1);
+    expect(serverCreationAt, 'scripts/dev.js creates the worktree server').toBeGreaterThan(-1);
+    expect(prebundleAt).toBeLessThan(serverCreationAt);
+  });
+
+  it('scripts/dev.js prints the cold-cache notice for the main server only, never for a worktree', () => {
+    // coldCache is read before the pre-bundle runs, so every worktree that starts with an empty
+    // cache has it set. The pre-bundle fills that cache before the server warms up, so the
+    // notice (which says warming up will take longer) would be wrong there.
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'dev.js'), 'utf-8');
+    const noticeAt = source.indexOf('Vite cache is cold');
+    expect(noticeAt, 'scripts/dev.js still prints the cold-cache notice').toBeGreaterThan(-1);
+    const conditionStart = source.lastIndexOf('if (', noticeAt);
+    expect(conditionStart).toBeGreaterThan(-1);
+    const condition = source.slice(conditionStart, source.indexOf('{', conditionStart));
+    expect(condition).toContain('coldCache');
+    expect(condition).toContain('!isWorktree');
   });
 
   it('scripts/dev.js keeps the non-worktree branch on the default node_modules/.vite cache', () => {

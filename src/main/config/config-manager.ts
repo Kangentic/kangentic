@@ -348,6 +348,8 @@ export class ConfigManager {
       const legacy = overrides.claude as Record<string, unknown>;
       overrides.agent = { ...legacy };
       delete (overrides.agent as Record<string, unknown>).cliPath;
+      // A removed setting (see the agent.queueOverflow strip in load()).
+      delete (overrides.agent as Record<string, unknown>).queueOverflow;
       delete overrides.claude;
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
     }

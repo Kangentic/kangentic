@@ -382,7 +382,9 @@ export class EmbedClient implements Embedder {
    *  commit ceiling, IDLE_SHUTDOWN_MS otherwise. Under the ceiling, it is read
    *  once more at the short window: a worker can keep growing after its last
    *  request settled (an init that outlived its timeout and kept loading), and
-   *  the settle-time reading would otherwise be the only one it gets. */
+   *  the settle-time reading would otherwise be the only one it gets. The
+   *  policy commit-ceiling.ts describes; DictationClient.armIdleShutdown runs
+   *  the same stages, so a change to one belongs in both. */
   private armIdleShutdown(): void {
     if (this.disposed || !this.child || this.warmHold || this.idleTimer || this.pending.size > 0) return;
     if (this.overCommitCeiling()) {

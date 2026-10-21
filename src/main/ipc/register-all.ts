@@ -318,6 +318,11 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   startPlanApprovalWriter(context);
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
+  // The configured session cap, before anything can spawn. Opening a project
+  // applies it again (applyRuntimeConfig), but the deferred boot resume of
+  // every project (activateAllProjects) can run with no project open, and it
+  // would otherwise start sessions under the compile-time default.
+  sessionManager.setMaxConcurrent(effectiveConfig.agent.maxConcurrentSessions);
   mobileBridgeService.reconcile({
     enabled: effectiveConfig.mobileBridge?.enabled ?? false,
     relayUrl: resolveRelayUrl(effectiveConfig.mobileBridge),

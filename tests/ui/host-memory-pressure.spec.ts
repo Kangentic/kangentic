@@ -18,11 +18,38 @@
  * to prove both the subscription fired and the store's formatter ran; it
  * does not re-pin the whole sentence.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { launchPage } from './helpers';
 import type { HostMemoryPressureEvent } from '../../src/shared/types';
 
 test.describe.configure({ mode: 'parallel' });
+
+/** A Windows pressure sample with 1.5 GB left, a round number so the
+ *  formatted headroom is exact, while two agents run. */
+function makePressureEvent(): HostMemoryPressureEvent {
+  return {
+    sample: {
+      ts: '2026-09-16T14:24:24.000Z',
+      platform: 'win32',
+      commitLimitBytes: 96_432_717_824,
+      commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
+      physicalTotalBytes: 34_060_931_072,
+      physicalFreeBytes: 5_005_045_760,
+      physicalAvailableBytes: null,
+    },
+    activeAgentCount: 2,
+  };
+}
+
+/** Deliver a pressure push the way main does, through the mock's listeners. */
+async function firePressure(page: Page, event: HostMemoryPressureEvent): Promise<void> {
+  await page.evaluate((payload) => {
+    if (!window.__mockFireHostMemoryPressure) {
+      throw new Error('window.__mockFireHostMemoryPressure is not installed by the mock');
+    }
+    window.__mockFireHostMemoryPressure(payload);
+  }, event);
+}
 
 test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
   test('a pressure push from main renders a persistent warning toast', async () => {
@@ -38,26 +65,7 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
       );
       expect(listenerCount).toBeGreaterThan(0);
 
-      const event: HostMemoryPressureEvent = {
-        sample: {
-          ts: '2026-09-16T14:24:24.000Z',
-          platform: 'win32',
-          commitLimitBytes: 96_432_717_824,
-          // 1.5 GB remaining, a round number so the formatted string is exact.
-          commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
-          physicalTotalBytes: 34_060_931_072,
-          physicalFreeBytes: 5_005_045_760,
-          physicalAvailableBytes: null,
-        },
-        activeAgentCount: 2,
-      };
-
-      await page.evaluate((payload) => {
-        if (!window.__mockFireHostMemoryPressure) {
-          throw new Error('window.__mockFireHostMemoryPressure is not installed by the mock');
-        }
-        window.__mockFireHostMemoryPressure(payload);
-      }, event);
+      await firePressure(page, makePressureEvent());
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible();
@@ -78,24 +86,7 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
       await page.getByTestId('settings-tab-terminal').click();
       await expect(page.getByTestId('settings-tab-terminal')).toHaveClass(/font-medium/);
 
-      const event: HostMemoryPressureEvent = {
-        sample: {
-          ts: '2026-09-16T14:24:24.000Z',
-          platform: 'win32',
-          commitLimitBytes: 96_432_717_824,
-          commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
-          physicalTotalBytes: 34_060_931_072,
-          physicalFreeBytes: 5_005_045_760,
-          physicalAvailableBytes: null,
-        },
-        activeAgentCount: 2,
-      };
-      await page.evaluate((payload) => {
-        if (!window.__mockFireHostMemoryPressure) {
-          throw new Error('window.__mockFireHostMemoryPressure is not installed by the mock');
-        }
-        window.__mockFireHostMemoryPressure(payload);
-      }, event);
+      await firePressure(page, makePressureEvent());
 
       const toast = page.getByTestId('toast');
       await expect(toast).toContainText('page file');
@@ -116,22 +107,8 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
       );
       expect(pressureListenerCount).toBeGreaterThan(0);
 
-      const event: HostMemoryPressureEvent = {
-        sample: {
-          ts: '2026-09-16T14:24:24.000Z',
-          platform: 'win32',
-          commitLimitBytes: 96_432_717_824,
-          commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
-          physicalTotalBytes: 34_060_931_072,
-          physicalFreeBytes: 5_005_045_760,
-          physicalAvailableBytes: null,
-        },
-        activeAgentCount: 2,
-      };
-
-      await page.evaluate((payload) => {
-        window.__mockFireHostMemoryPressure?.(payload);
-      }, event);
+      const event = makePressureEvent();
+      await firePressure(page, event);
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible();

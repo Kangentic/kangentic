@@ -41,7 +41,7 @@ async function worktreeViteConfig(projectDir, port) {
   // matches every file in the worktree. Use absolute paths instead.
   const ignorePatterns = [
     ...(['.kangentic', '.claude', '.codex', '.aider', '.vite', 'docs', 'tests'].map(
-      d => path.join(projectDir, d).replace(/\\/g, '/') + '/**'
+      (directoryName) => path.join(projectDir, directoryName).replace(/\\/g, '/') + '/**'
     )),
     path.join(projectDir, 'kangentic.json').replace(/\\/g, '/'),
     path.join(projectDir, 'kangentic.local.json').replace(/\\/g, '/'),

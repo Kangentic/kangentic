@@ -120,8 +120,8 @@ export default defineConfig(({ mode }) => ({
   // `npx vite`) resolves a different config hash than the main `npm start`
   // server and would invalidate/rewrite the live server's dep cache at the
   // default <root>/node_modules/.vite. Give it a worktree-local cache instead.
-  // Deliberately distinct from scripts/dev.js's worktree cache
-  // (.kangentic/vite-cache): the two configs resolve differently, so sharing one
+  // Deliberately distinct from the worktree dev server's cache
+  // (.kangentic/vite-cache, scripts/worktree-vite-config.js): the two configs resolve differently, so sharing one
   // directory would just recreate the cross-server clobbering inside the
   // worktree (a UI-test run would poison a live preview). Non-worktree servers
   // (main dev, CI) keep the default cache. Guarded by
@@ -133,8 +133,8 @@ export default defineConfig(({ mode }) => ({
   // DevToolsSections). `mode === 'production'` happens during `npm run build`,
   // dropping the conditional blocks from the production renderer bundle.
   // The dev path (Vite's dev server, started via scripts/dev.js) sets the
-  // same constant inline at createServer time for worktrees, or via this
-  // function for non-worktree dev.
+  // same constant in scripts/worktree-vite-config.js for worktrees, or via
+  // this function for non-worktree dev.
   define: {
     __KANGENTIC_DEV__: JSON.stringify(mode !== 'production'),
   },
@@ -158,8 +158,8 @@ export default defineConfig(({ mode }) => ({
     },
   },
   // Renderer deps pre-bundled at dev-server boot. The list lives in
-  // scripts/renderer-optimize-deps.json so scripts/dev.js's inline worktree
-  // config (which cannot load this file) shares it. Two invariants, both
+  // scripts/renderer-optimize-deps.json so the inline worktree config in
+  // scripts/worktree-vite-config.js (which cannot load this file) shares it. Two invariants, both
   // enforced by tests/unit/renderer-optimize-deps-parity.test.ts:
   // 1. Every DEEP import of a listed package used by the renderer must be listed
   //    too. A dep first met after boot triggers a mid-session re-optimization;

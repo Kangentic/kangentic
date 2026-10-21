@@ -70,6 +70,8 @@ vi.mock('../../src/main/pty/session-manager', () => {
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       // The Stop registerAllIpc hands the worktree reaper, by pid and creation time.
       stopProcessByCreationTime = vi.fn(async (_pid: number, _startedAtMs: number) => 'stopped' as const);
+      // registerAllIpc applies the configured session cap before anything spawns.
+      setMaxConcurrent = vi.fn();
     },
   };
 });
@@ -97,7 +99,7 @@ vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
 // Hoisted (not an inline factory closure) so a single test can override its
 // return value for one call via mockReturnValueOnce, e.g. to pin the startup
 // reconcile against a persisted mobileBridge.enabled: true.
-const getEffectiveConfigMock = vi.fn(() => ({ claude: {}, git: {}, terminal: {} }));
+const getEffectiveConfigMock = vi.fn(() => ({ agent: { maxConcurrentSessions: 8 }, git: {}, terminal: {} }));
 vi.mock('../../src/main/config/config-manager', () => ({
   ConfigManager: class { getEffectiveConfig = getEffectiveConfigMock; },
 }));
@@ -483,7 +485,7 @@ describe('registerAllIpc idempotency', () => {
     // as-is, not force it to false the way the removed __KANGENTIC_DEV__
     // gate did.
     getEffectiveConfigMock.mockReturnValueOnce({
-      claude: {},
+      agent: { maxConcurrentSessions: 8 },
       git: {},
       terminal: {},
       mobileBridge: { enabled: true, relayMode: 'custom', relayUrl: 'wss://relay.example.com' },
@@ -496,6 +498,18 @@ describe('registerAllIpc idempotency', () => {
       enabled: true,
       relayUrl: new URL('wss://relay.example.com').href,
     });
+  }, 30000);
+
+  it('applies the configured session cap at registration, before any project is open', async () => {
+    // The deferred boot resume of every project (activateAllProjects) runs
+    // with no project open, so the cap a project open applies arrives too
+    // late for it. A user who lowered the cap must not get the default.
+    getEffectiveConfigMock.mockReturnValueOnce({ agent: { maxConcurrentSessions: 2 }, git: {}, terminal: {} });
+    const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+
+    registerAllIpc(makeMockWindow(1));
+
+    expect(getSessionManager().setMaxConcurrent).toHaveBeenCalledWith(2);
   }, 30000);
 
   describe('TRACK_RENDERER_ERROR analytics handler', () => {
