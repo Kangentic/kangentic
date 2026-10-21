@@ -49,8 +49,9 @@ export interface DisplayRow {
   /** This row's own tool_use results only (see file doc comment). */
   results: Map<string, DisplayRowResult>;
   estimatedHeight: number;
-  searchText: string;
-  searchSegments: SearchSegment[];
+  /** Built on first read (see `buildRow`). */
+  readonly searchText: string;
+  readonly searchSegments: SearchSegment[];
   /** Cheap content fingerprint used only by `reconcileDisplayRows` to decide
    *  whether a previous row object can be reused. Not meant to be read by
    *  renderer code. */
@@ -294,17 +295,31 @@ function sameResults(previous: Map<string, DisplayRowResult>, current: Map<strin
   return true;
 }
 
+/**
+ * The search index is built the first time something reads it. Sanitizing every
+ * row's whole text was most of a reconcile's cost (17.6 ms of 27 for the 7,536
+ * rows of one dense 8 MiB page), paid on every page landing for rows that are
+ * never searched: only the search bar, once a query is typed, and the open-time
+ * terminal match read it.
+ */
 function buildRow(entry: TranscriptEntry, results: Map<string, DisplayRowResult>): DisplayRow {
-  const signature = computeSignature(entry, results);
-  const { searchText, searchSegments } = buildSearchIndex(entry, results);
+  let searchIndex: { searchText: string; searchSegments: SearchSegment[] } | null = null;
+  const readSearchIndex = () => {
+    searchIndex ??= buildSearchIndex(entry, results);
+    return searchIndex;
+  };
   return {
     uuid: entry.uuid,
     entry,
     results,
     estimatedHeight: estimateRowHeight(entry),
-    searchText,
-    searchSegments,
-    signature,
+    get searchText() {
+      return readSearchIndex().searchText;
+    },
+    get searchSegments() {
+      return readSearchIndex().searchSegments;
+    },
+    signature: computeSignature(entry, results),
   };
 }
 

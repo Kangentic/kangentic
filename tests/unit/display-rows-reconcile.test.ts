@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../../src/shared/ansi-strip', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/shared/ansi-strip')>();
+  return { ...actual, sanitizeTranscriptText: vi.fn(actual.sanitizeTranscriptText) };
+});
+
 import { reconcileDisplayRows } from '../../src/renderer/components/conversation/display-rows';
+import { sanitizeTranscriptText } from '../../src/shared/ansi-strip';
 import type { TranscriptEntry } from '../../src/shared/types';
 
 /**
@@ -34,6 +41,29 @@ function toolResultEntry(uuid: string, toolUseId: string, content: string, ts = 
 }
 
 describe('reconcileDisplayRows', () => {
+  it('builds a row\'s search text only when something reads it', () => {
+    // Sanitizing every row's text was most of a page landing's cost, for rows
+    // nobody searches; only the search bar and the open-time match read it.
+    const sanitize = vi.mocked(sanitizeTranscriptText);
+    sanitize.mockClear();
+    const rows = reconcileDisplayRows([], [
+      userEntry('u1', 'first \x1b[31mred\x1b[0m question'),
+      assistantTextEntry('a1', 'an answer'),
+      assistantToolUseEntry('a2', 'tool-1'),
+      toolResultEntry('r1', 'tool-1', 'tool output'),
+    ]);
+    expect(sanitize).not.toHaveBeenCalled();
+
+    expect(rows[0].searchText).toBe('first red question');
+    const callsForOneRow = sanitize.mock.calls.length;
+    expect(callsForOneRow).toBeGreaterThan(0);
+    // Read again: built once, not per read.
+    expect(rows[0].searchText).toBe('first red question');
+    expect(sanitize.mock.calls.length).toBe(callsForOneRow);
+    expect(rows[2].searchText).toContain('tool output');
+    expect(rows[2].searchSegments.every((segment) => segment.expandKey === 'tool-1')).toBe(true);
+  });
+
   it('reuses row object references when entries are unchanged (identity preservation)', () => {
     const entries: TranscriptEntry[] = [userEntry('u1', 'hello'), assistantTextEntry('a1', 'hi there')];
     const first = reconcileDisplayRows([], entries);

@@ -51,9 +51,13 @@ const MAX_TARGET_ATTEMPTS = 3;
 /** Waits before asking again when the worker's queue was full. */
 const BUSY_RETRY_MS = 1000;
 const MAX_BUSY_RETRIES = 2;
-/** A timeline the worker could not answer yet (busy, or restarting) is asked for again, a few times. */
-const TIMELINE_RETRY_MS = 5000;
-const MAX_TIMELINE_TRIES = 3;
+/**
+ * A timeline the worker could not answer yet (busy, or restarting) is asked for
+ * again after each of these waits, then the window goes without. Short, because
+ * a column tab whose stay is not loaded waits on the timeline to open there:
+ * opening without it lands in the wrong place.
+ */
+const TIMELINE_RETRY_DELAYS_MS = [1000, 3000];
 
 const NO_TIMELINES: ReadonlyMap<string, ReadonlyArray<TimelineSample>> = new Map();
 const NO_BLOCKS: ReadonlyArray<HeldBlock> = [];
@@ -532,12 +536,13 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           const tries = (requested.tries.get(conversationId) ?? 0) + 1;
           requested.tries.set(conversationId, tries);
           const retryable = reply.status === 'busy' || (reply.status === 'unavailable' && reply.reason === 'worker_unavailable');
-          if (retryable && tries < MAX_TIMELINE_TRIES) {
+          const retryDelay = TIMELINE_RETRY_DELAYS_MS[tries - 1];
+          if (retryable && retryDelay !== undefined) {
             const timer = setTimeout(() => {
               timelineRetryTimersRef.current.delete(timer);
               requested.ids.delete(conversationId);
               setTimelineRetries((count) => count + 1);
-            }, TIMELINE_RETRY_MS);
+            }, retryDelay);
             timelineRetryTimersRef.current.add(timer);
             return;
           }
