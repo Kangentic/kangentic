@@ -39,17 +39,28 @@ describe('background call matcher parity', () => {
       expect(block).toContain(`function ${name}(`);
     }
   });
+
+  // Every regex the block builds at run time comes from the bridge's argv, which
+  // CodeQL reports as js/regex-injection. The one it keeps is an id source's
+  // pattern: adapter data that has to travel, so that alert is dismissed. CodeQL
+  // runs only after a merge to main, so this test is what stops a second one, such
+  // as the id shape the block used to read from its payload, from landing unflagged.
+  it('builds a regex at run time only from an id source pattern', () => {
+    const block = matcherBlockOf('event-bridge.js');
+    expect(block.match(/new RegExp\(/g)).toEqual(['new RegExp(']);
+    expect(block).toContain('new RegExp(source.pattern)');
+  });
 });
 
 describe('shell id pattern parity', () => {
-  // The hint bridge's v1 path (Claude's spec) checks a shell id against its own
-  // literal, since a workspace copy of the bridge is one file and cannot import
-  // SHELL_ID_PATTERN_SOURCE. The v2 path and the event bridge take the pattern from
-  // the directive or spec payload, so only this literal can drift from the source.
-  it('is the same in the hint bridge v1 literal and SHELL_ID_PATTERN_SOURCE', () => {
-    const source = fs.readFileSync(path.join(AGENT_DIR, 'background-shell-hint-bridge.js'), 'utf-8').replace(/\r\n/g, '\n');
-    const literal = /^const SHELL_ID_PATTERN = \/(.+)\/;$/m.exec(source);
-    expect(literal, 'background-shell-hint-bridge.js has no `const SHELL_ID_PATTERN = /.../;` literal').not.toBeNull();
+  // Both bridges check a shell id against one literal in the shared block, since
+  // a workspace copy of either bridge is one file and cannot import
+  // SHELL_ID_PATTERN_SOURCE. The block is byte-identical across the two (above),
+  // so pinning the event bridge's copy pins both.
+  it('is the same in the shared block literal and SHELL_ID_PATTERN_SOURCE', () => {
+    const block = matcherBlockOf('event-bridge.js');
+    const literal = /^const SHELL_ID_PATTERN = \/(.+)\/;$/m.exec(block);
+    expect(literal, 'the background-call-match block has no `const SHELL_ID_PATTERN = /.../;` literal').not.toBeNull();
     expect(literal?.[1]).toBe(SHELL_ID_PATTERN_SOURCE);
   });
 });

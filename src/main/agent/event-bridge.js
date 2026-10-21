@@ -67,15 +67,16 @@
  *                                 detail or malformed pattern suppresses. Must be
  *                                 listed AFTER an extract directive.
  *   appendBackgroundLaunch     { toolField, tools, when, unless, idSources,
- *                                commandPath, idPattern, optOutFlag }
+ *                                commandPath, optOutFlag }
  *                              -> when the payload is that background launch, ALSO
  *                                 write a background_shell_start (detail = the id,
  *                                 noActivityHold when the command carries
  *                                 optOutFlag) before the hook's own event.
- *   appendBackgroundStop       { toolField, tools, when, unless, idSources, idPattern }
+ *   appendBackgroundStop       { toolField, tools, when, unless, idSources }
  *                              -> likewise a background_shell_end for the id the
  *                                 stop names. Both read the BackgroundCallMatch shape
- *                                 (src/shared/background-command-spec.ts).
+ *                                 (src/shared/background-command-spec.ts), and both
+ *                                 take only an id matching SHELL_ID_PATTERN.
  *
  * Stdin: Agent CLIs pipe hook context as JSON. Directives control which
  * fields are extracted for each event type.
@@ -166,6 +167,9 @@ function firstNonNull(container, fields) {
 // BackgroundCallMatch in src/shared/background-command-spec.ts.
 // tests/unit/background-call-match-parity.test.ts keeps the two copies equal.
 const BACKGROUND_MATCH_SCAN_CAP = 64 * 1024;
+// Mirrors `looksLikeShellId` (src/main/activity-engine/background-shell/looks-like-shell-id.ts).
+// A literal, so no id regex is built from argv; the parity test pins it to SHELL_ID_PATTERN_SOURCE.
+const SHELL_ID_PATTERN = /^[\w-]{1,64}$/;
 
 function valueAtPath(root, pathSegments) {
   if (!Array.isArray(pathSegments) || pathSegments.length === 0) return undefined;
@@ -180,14 +184,8 @@ function conditionHolds(root, condition) {
   return Boolean(condition) && valueAtPath(root, condition.path) === condition.equals;
 }
 
-function idFromSources(root, sources, idPattern) {
-  if (!Array.isArray(sources) || typeof idPattern !== 'string') return null;
-  let shape;
-  try {
-    shape = new RegExp(idPattern);
-  } catch {
-    return null;
-  }
+function idFromSources(root, sources) {
+  if (!Array.isArray(sources)) return null;
   for (const source of sources) {
     if (!source) continue;
     const value = valueAtPath(root, source.path);
@@ -203,13 +201,13 @@ function idFromSources(root, sources, idPattern) {
     } else if (typeof value === 'string' || typeof value === 'number') {
       candidate = String(value);
     }
-    if (candidate && shape.test(candidate)) return candidate;
+    if (candidate && SHELL_ID_PATTERN.test(candidate)) return candidate;
   }
   return null;
 }
 
 /** The id of a call `match` names, or null. Never throws. */
-function matchBackgroundCall(root, match, idPattern) {
+function matchBackgroundCall(root, match) {
   if (!root || typeof root !== 'object' || !match || typeof match !== 'object') return null;
   if (typeof match.toolField !== 'string' || !Array.isArray(match.tools)) return null;
   const tool = root[match.toolField];
@@ -218,7 +216,7 @@ function matchBackgroundCall(root, match, idPattern) {
   const unless = Array.isArray(match.unless) ? match.unless : [];
   if (!when.every((condition) => conditionHolds(root, condition))) return null;
   if (unless.some((condition) => conditionHolds(root, condition))) return null;
-  const id = idFromSources(root, match.idSources, idPattern);
+  const id = idFromSources(root, match.idSources);
   return id ? { tool, id } : null;
 }
 
@@ -437,7 +435,7 @@ process.stdin.on('end', () => {
         // A background launch reported beside the tool's own tool_end. No
         // toolId: the tool_end closes the pending tool, and a start that
         // closed it too would decrement the count twice.
-        const launch = matchBackgroundCall(ctx, payload, payload.idPattern);
+        const launch = matchBackgroundCall(ctx, payload);
         if (!launch) break;
         const start = { ts: event.ts, type: 'background_shell_start', tool: launch.tool.slice(0, FIELD_CAP), detail: launch.id };
         if (commandCarries(ctx, payload.commandPath, payload.optOutFlag)) start.noActivityHold = true;
@@ -445,7 +443,7 @@ process.stdin.on('end', () => {
         break;
       }
       case 'appendBackgroundStop': {
-        const stop = matchBackgroundCall(ctx, payload, payload.idPattern);
+        const stop = matchBackgroundCall(ctx, payload);
         if (stop) appended.push({ ts: event.ts, type: 'background_shell_end', tool: stop.tool.slice(0, FIELD_CAP), detail: stop.id });
         break;
       }

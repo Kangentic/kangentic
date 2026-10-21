@@ -1,5 +1,5 @@
 import { toForwardSlash } from '../../../shared/paths';
-import { SHELL_ID_PATTERN_SOURCE, type BackgroundCommandSpec } from '../../../shared/background-command-spec';
+import type { BackgroundCommandSpec } from '../../../shared/background-command-spec';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../shared/background-shell-hold';
 import { urlNamesTaskSessionCaller } from '../mcp-http/caller-url';
 import type { CommandOptions } from '../agent-adapter';
@@ -8,7 +8,6 @@ import {
   appendBackgroundLaunch,
   appendBackgroundStop,
   type BackgroundLaunchDirective,
-  type BackgroundStopDirective,
 } from './directive-builders';
 import { buildBackgroundShellHintCommand, type BackgroundShellHintSpecV2 } from './background-shell-hint-hook';
 import type { HookShell } from './hook-utils';
@@ -27,7 +26,7 @@ import type { HookShell } from './hook-utils';
 
 /** The launch match the directive and the hint both carry. */
 function launchMatchOf(spec: BackgroundCommandSpec): BackgroundLaunchDirective {
-  return { ...spec.launch, idPattern: SHELL_ID_PATTERN_SOURCE, optOutFlag: NO_ACTIVITY_HOLD_FLAG };
+  return { ...spec.launch, optOutFlag: NO_ACTIVITY_HOLD_FLAG };
 }
 
 /** `appendBackgroundLaunch` for the spec's launch. */
@@ -38,8 +37,7 @@ export function backgroundLaunchDirective(spec: BackgroundCommandSpec): string {
 /** `appendBackgroundStop` for the spec's stop, as a list to spread: empty when the CLI has no stop tool. */
 export function backgroundStopDirectives(spec: BackgroundCommandSpec): string[] {
   if (!spec.stop) return [];
-  const stop: BackgroundStopDirective = { ...spec.stop, idPattern: SHELL_ID_PATTERN_SOURCE };
-  return [appendBackgroundStop(stop)];
+  return [appendBackgroundStop(spec.stop)];
 }
 
 /** The hint bridge's v2 spec, or null when the CLI cannot add context beside a tool result. */
