@@ -496,6 +496,61 @@ describe('resolveTaskTranscript', () => {
       .toEqual(['assistant', 'result:call-a', 'result:call-b']);
   });
 
+  it('names a boundary that a tool result opens by the call it answers, so crossings into one session over records sharing a uuid stay unique', async () => {
+    // A reply and the results of its calls share one uuid (Gemini, OpenCode, a
+    // Claude message with parallel results). When the timeline crosses into a
+    // session on such a result, and later crosses into the same session again on
+    // a sibling result, the session id and the uuid alone would name both
+    // dividers alike, and the viewer keys its rows on that name.
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-old' });
+    const newer = makeRecord({ id: 'session-new', started_at: '2026-06-01T12:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-new', status: 'running' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-old': older, 'session-new': newer },
+      sessionsByTask: { 'task-1': [newer, older] },
+      taskTitle: 'Wire the auth flow',
+    });
+    const reply = {
+      kind: 'assistant' as const, uuid: 'message-1', ts: 1, blocks: [
+        { type: 'tool_use' as const, id: 'call-a', name: 'read', input: {} },
+        { type: 'tool_use' as const, id: 'call-b', name: 'read', input: {} },
+      ],
+    };
+    getBySessionType.mockReturnValue({
+      displayName: 'Gemini CLI',
+      parseTranscript: vi.fn(async (agentSessionId: string) =>
+        agentSessionId === 'agent-old'
+          ? {
+              // The old session holds the reply and a later turn of its own.
+              entries: [reply, { kind: 'user', uuid: 'old-later', ts: 3, text: 'a later prompt' }],
+              sourcePath: '/history/old.jsonl',
+            }
+          : {
+              // The new session replays the reply (deduped) and holds both results, with
+              // the old session's later turn between them in time.
+              entries: [
+                reply,
+                { kind: 'tool_result', uuid: 'message-1', ts: 2, toolUseId: 'call-a', content: 'result a' },
+                { kind: 'tool_result', uuid: 'message-1', ts: 4, toolUseId: 'call-b', content: 'result b' },
+              ],
+              sourcePath: '/history/new.jsonl',
+            },
+      ),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-new');
+
+    const shape = result!.entries.map((entry) => (entry.kind === 'system' ? 'boundary' : entry.kind === 'tool_result' ? `result:${entry.toolUseId}` : entry.uuid));
+    expect(shape).toEqual(['message-1', 'boundary', 'result:call-a', 'boundary', 'old-later', 'boundary', 'result:call-b']);
+
+    const boundaries = result!.entries.filter((entry) => entry.kind === 'system' && entry.subtype === 'session_boundary');
+    expect(boundaries.map((boundary) => boundary.text)).toEqual(['New session', 'Resumed session', 'Resumed session']);
+    // A boundary opened by a tool result ends in the call it answers.
+    expect(boundaries[0].uuid).toBe('session-boundary-session-new-message-1-call-a');
+    expect(boundaries[2].uuid.endsWith('-call-b')).toBe(true);
+    // One crossing is not named by another's, though two enter the same session on the same uuid.
+    expect(new Set(boundaries.map((boundary) => boundary.uuid)).size).toBe(boundaries.length);
+  });
+
   it('emits NO session_boundary for a wholly-replayed resume that adds no new turns (nothing to divide, no dangling divider)', async () => {
     // The exact bug from an isolated-swimlane round-trip: the "latest" session
     // is a --resume of the original and its transcript is an EXACT replay with

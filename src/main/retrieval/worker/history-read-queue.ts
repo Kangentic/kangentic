@@ -6,7 +6,7 @@
  * KILLS the worker when a call passes 15 s (three kills and it stays off). A
  * reader scrolling fast, or dragging the scrollbar across a long transcript,
  * can ask for pages faster than they read, so these reads are serialized here,
- * with two guards that keep any one of them far inside that timer:
+ * with three guards that keep any one of them far inside that timer:
  *
  * - a depth cap: past it a request answers `busy` at once, and the viewer asks
  *   again on its next scroll;

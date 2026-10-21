@@ -61,6 +61,7 @@ const TIMELINE_RETRY_DELAYS_MS = [1000, 3000];
 
 const NO_TIMELINES: ReadonlyMap<string, ReadonlyArray<TimelineSample>> = new Map();
 const NO_BLOCKS: ReadonlyArray<HeldBlock> = [];
+const NO_EDGE_ERRORS: PagingState['errors'] = { top: false, bottom: false };
 const NO_ENTRIES: ReadonlyArray<TranscriptEntry> = [];
 
 /** What holds the window's one read: an edge read, a jump, or a far drag's seek. */
@@ -92,7 +93,7 @@ export function initialState(key: string, openingTs: number | null, generation: 
     anchorTs: openingTs ?? Infinity,
     generation,
     opening: null,
-    errors: { top: false, bottom: false },
+    errors: NO_EDGE_ERRORS,
     jump: null,
     target: openingTs !== null ? { ts: openingTs, attempts: 0 } : null,
     seenVisitTs,
@@ -147,6 +148,9 @@ export function reconcileWindow(state: PagingState, inputs: {
 }): PagingState {
   const { window: built, turnUuid } = inputs;
   let next = state;
+  // A lookup answers for one turn: the same turn asked for again, after the
+  // window moved away from it, is looked up again.
+  if (next.locate && next.locate.uuid !== turnUuid) next = { ...next, locate: null };
   if (next.target && built && built.anchorTs === next.target.ts) next = { ...next, target: null };
   if (inputs.enabled && turnUuid && built && !built.timeByUuid.has(turnUuid) && next.locate?.uuid !== turnUuid
     && inputs.tail?.some((entry) => entry.uuid === turnUuid)) {
@@ -286,10 +290,12 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
   // Mirrors the callbacks read; written after commit, never during render.
   const windowRef = useRef<PagingWindow | null>(null);
   const stateKeyRef = useRef(resetKey);
+  const turnUuidRef = useRef<string | null>(turnUuid);
   const currentKey = current.key;
   useLayoutEffect(() => {
     windowRef.current = pagingWindow;
     stateKeyRef.current = currentKey;
+    turnUuidRef.current = turnUuid;
   });
 
   const readerUuidRef = useRef<string | null>(null);
@@ -328,6 +334,16 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     return stateKeyRef.current === key;
   }, []);
 
+  /**
+   * What a jump the reader asked for settles: the moment a column tab still
+   * owed and the search hit still being looked up. Their reads lose the slot to
+   * the jump and answer nothing, so left pending they would hold the skeleton.
+   */
+  const settledByJump = useCallback((): Pick<PagingState, 'target' | 'locate'> => {
+    const turn = turnUuidRef.current;
+    return { target: null, locate: turn ? { uuid: turn, done: true } : null };
+  }, []);
+
   const jumpToLatest = useCallback(() => {
     slotRef.current = null;
     readerUuidRef.current = null;
@@ -338,11 +354,11 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
       anchorTs: Infinity,
       generation: previous.generation + 1,
       opening: { kind: 'bottom' },
-      errors: { top: false, bottom: false },
+      errors: NO_EDGE_ERRORS,
       jump: null,
-      target: null,
+      ...settledByJump(),
     }));
-  }, [setState]);
+  }, [settledByJump, setState]);
 
   /** Read the page a jump lands on, then replace the window with it. */
   const jumpWith = useCallback((
@@ -353,7 +369,8 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     const sequence = claimSlot('jump');
     if (sequence === null) return;
     const key = stateKeyRef.current;
-    setState((previous) => ({ ...previous, jump: { labelTs } }));
+    // Settled now, not on landing: a jump whose read fails must not leave them pending.
+    setState((previous) => ({ ...previous, jump: { labelTs }, ...settledByJump() }));
     void readPage(request, projectId, requestKey).then((outcome) => {
       if (!releaseSlot(sequence, key)) return;
       if (outcome.kind === 'reset') {
@@ -372,12 +389,12 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           anchorTs: landed.anchorTs,
           generation: previous.generation + 1,
           opening: landed.opening,
-          errors: { top: false, bottom: false },
+          errors: NO_EDGE_ERRORS,
           jump: null,
         };
       });
     });
-  }, [claimSlot, releaseSlot, jumpToLatest, projectId, requestKey, setState]);
+  }, [claimSlot, releaseSlot, jumpToLatest, settledByJump, projectId, requestKey, setState]);
 
   const jumpToStart = useCallback(() => {
     const known = windowRef.current;
@@ -393,12 +410,12 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
         anchorTs: -Infinity,
         generation: previous.generation + 1,
         opening: { kind: 'top' },
-        target: null,
+        ...settledByJump(),
       }));
       return;
     }
     jumpWith(request, Number.isFinite(start.ts) ? start.ts : null, () => ({ anchorTs: -Infinity, opening: { kind: 'top' } }));
-  }, [jumpWith, setState]);
+  }, [jumpWith, settledByJump, setState]);
 
   const seekLogical = useCallback((logical: number | null): Promise<FarSeekOutcome> => {
     if (logical === null) {
@@ -436,7 +453,7 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           ...previous,
           blocks: [blockOf(outcome.page)],
           anchorTs: anchor,
-          errors: { top: false, bottom: false },
+          errors: NO_EDGE_ERRORS,
           target: null,
         };
       });
@@ -533,6 +550,9 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
         .then((reply) => {
           // A newer request for the same timeline took this one's place, and answers itself.
           if (reply.status === 'superseded') return;
+          // The window moved to another session while this was out: its answer
+          // would replace the new session's timelines, which are never asked for again.
+          if (requestedTimelinesRef.current !== requested) return;
           const tries = (requested.tries.get(conversationId) ?? 0) + 1;
           requested.tries.set(conversationId, tries);
           const retryable = reply.status === 'busy' || (reply.status === 'unavailable' && reply.reason === 'worker_unavailable');
@@ -540,6 +560,7 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           if (retryable && retryDelay !== undefined) {
             const timer = setTimeout(() => {
               timelineRetryTimersRef.current.delete(timer);
+              if (requestedTimelinesRef.current !== requested) return;
               requested.ids.delete(conversationId);
               setTimelineRetries((count) => count + 1);
             }, retryDelay);
@@ -564,13 +585,14 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
   // moment counts a try, so a timeline that misleads stops after a few.
   const owedTs = owedTarget?.ts ?? null;
   const owedAttempts = owedTarget?.attempts ?? 0;
+  // Keyed on the tab too: a tab opened while the last one's read was out asks for itself.
   useEffect(() => {
     if (owedTs === null || !timelinesReady) return;
     const known = windowRef.current;
     const request = known?.requestForTime(owedTs) ?? null;
     const sequence = claimSlot('jump');
     if (sequence === null) return;
-    const key = stateKeyRef.current;
+    const key = currentKey;
     const settle = (blocks: ReadonlyArray<HeldBlock> | null): void => {
       setState((previous) => {
         if (previous.key !== key || previous.target?.ts !== owedTs) return previous;
@@ -591,15 +613,16 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
       if (!releaseSlot(sequence, key)) return;
       settle(outcome.kind === 'page' ? [blockOf(outcome.page)] : null);
     });
-  }, [owedTs, owedAttempts, timelinesReady, claimSlot, releaseSlot, projectId, requestKey]);
+  }, [owedTs, owedAttempts, timelinesReady, currentKey, claimSlot, releaseSlot, projectId, requestKey]);
 
-  // A search hit outside the window: the worker finds its page.
+  // A search hit outside the window: the worker finds its page. Keyed on the
+  // tab too, so a tab switch while the lookup ran looks it up again.
   const locateUuid = locating ? turnUuid : null;
   useEffect(() => {
     if (!locateUuid) return;
     const sequence = claimSlot('jump');
     if (sequence === null) return;
-    const key = stateKeyRef.current;
+    const key = currentKey;
     void window.electronAPI.transcripts
       .locate({ projectId, sessionId, turnUuid: locateUuid, requestKey: `${requestKey}:locate` })
       .catch(() => ({ status: 'not_found' as const }))
@@ -616,7 +639,7 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
               anchorTs: entry && entry.ts > 0 ? entry.ts : timeNear(reply.page, reply.page.startPosition),
               generation: previous.generation + 1,
               opening: null,
-              errors: { top: false, bottom: false },
+              errors: NO_EDGE_ERRORS,
               locate: done,
             };
           }
@@ -626,7 +649,7 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           return { ...previous, locate: done };
         });
       });
-  }, [locateUuid, claimSlot, releaseSlot, projectId, sessionId, requestKey]);
+  }, [locateUuid, currentKey, claimSlot, releaseSlot, projectId, sessionId, requestKey]);
 
   const opening = current.opening;
 

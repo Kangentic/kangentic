@@ -95,7 +95,10 @@ export function registerTranscriptHandlers(context: IpcContext): void {
   );
 
   // History paging for the Conversation viewer. Each reads in the retrieval
-  // worker, one at a time, and answers JSON main relays unparsed.
+  // worker, one at a time, and answers JSON main relays unparsed. A request with
+  // no project or a malformed field answers `not_found`: nothing can be found
+  // from it, and the viewer treats that answer as a failed read it does not
+  // ask again for by itself.
   ipcMain.handle(
     IPC.TRANSCRIPT_PAGE,
     async (_event, request: TranscriptPageRequest): Promise<string> => {

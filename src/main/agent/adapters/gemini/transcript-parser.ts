@@ -5,9 +5,12 @@ import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
-import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { computeGeminiProjectDirName } from './session-history-parser';
+
+/** A Gemini message without its own id is named by its line, so the tail, its notice and every page count lines. */
+const UUIDS_NUMBER_LINES = true;
 
 /**
  * Parse Gemini CLI's native chat session file into agent-agnostic
@@ -46,7 +49,7 @@ export async function parseGeminiTranscript(
   // ceiling, and reading one whole is what OOM'd the main process.
   const window = await readJsonlWindow(filePath, {
     maxBytes: parseWindowBytes(),
-    countOmittedLines: true,
+    countOmittedLines: UUIDS_NUMBER_LINES,
   });
   if (window.totalBytes === 0) return [];
 
@@ -86,7 +89,7 @@ export async function parseGeminiTranscript(
   // window held no whole line, and the page read refuses that form.
   const history = await isLegacyGeminiDocument(filePath)
     ? undefined
-    : { conversationId: agentSessionId, cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }) };
+    : jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES);
   return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, history);
 }
 
@@ -106,7 +109,7 @@ export async function readGeminiTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: true,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseGeminiLines(agentSessionId, lines),
   });
 }
@@ -214,9 +217,7 @@ function entriesFromMessages(agentSessionId: string, kept: Map<string, KeptMessa
   for (const [uuid, { message, position }] of kept) {
     const firstNew = entries.length;
     appendMessageEntries(uuid, message, entries);
-    if (position === null) continue;
-    const origin = { conversationId: agentSessionId, position };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    if (position !== null) stampOrigin(entries, firstNew, agentSessionId, position);
   }
   return entries;
 }

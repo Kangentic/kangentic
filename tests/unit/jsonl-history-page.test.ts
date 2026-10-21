@@ -8,11 +8,19 @@ import {
   readClaudeTranscriptPage,
   resetIncrementalParseStateForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
+import { parseCodexTranscript, readCodexTranscriptPage } from '../../src/main/agent/adapters/codex/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
-import { decodeJsonlCursor, PAGE_READ_BUDGET_MS } from '../../src/main/agent/shared/jsonl-history-page';
+import {
+  decodeJsonlCursor,
+  PAGE_READ_BUDGET_MS,
+  readJsonlHistoryPage,
+  splitJsonlLines,
+  type JsonlLine,
+} from '../../src/main/agent/shared/jsonl-history-page';
 import type { TranscriptEntry, TranscriptHistoryPage } from '../../src/shared/types';
-import type { TranscriptPageReadResult } from '../../src/main/agent/agent-adapter';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../src/main/agent/agent-adapter';
 import { claudeTranscriptLines } from './helpers/claude-transcript-fixture';
+import { lineStartsOf, walkHistoryPages } from './helpers/history-page-tiling';
 
 /**
  * History pages for the Conversation viewer (`readJsonlHistoryPage`, through
@@ -259,5 +267,260 @@ describe('readJsonlHistoryPage', () => {
     // The incremental append stamps the new line where it starts.
     const appended = after.find((entry) => entry.uuid === 'appended');
     expect(appended?.origin?.position).toBe(sizeBefore);
+  });
+
+  it('pages a file with CRLF line ends as it pages the same file with LF, every origin a line start', async () => {
+    const text = writeTranscript({ seed: 8, turns: 18 });
+    // A fresh parse each time: the Claude reader remembers a file it has parsed.
+    const walkOptions = {
+      filePath,
+      conversationId: AGENT_SESSION_ID,
+      parseTail: () => {
+        resetIncrementalParseStateForTests();
+        return parseClaudeTranscript(filePath);
+      },
+      readPage: (request: TranscriptPageReadRequest) => readClaudeTranscriptPage(filePath, request),
+      tailBytes: TAIL_BYTES,
+      pageBytes: PAGE_BYTES,
+    };
+    const lf = await walkHistoryPages(walkOptions);
+
+    fs.writeFileSync(filePath, text.replace(/\n/g, '\r\n'));
+    expect(fs.readFileSync(filePath).includes(Buffer.from('\r\n'))).toBe(true);
+    const crlf = await walkHistoryPages(walkOptions);
+    const starts = lineStartsOf(filePath);
+
+    // The same entries, each a CR further on for every line before it.
+    expect(crlf.whole.map((entry) => entry.uuid)).toEqual(lf.whole.map((entry) => entry.uuid));
+    expect(crlf.whole.length).toBeGreaterThan(40);
+    const lastPosition = (entries: TranscriptEntry[]) => entries[entries.length - 1].origin?.position ?? -1;
+    expect(lastPosition(crlf.whole)).toBeGreaterThan(lastPosition(lf.whole));
+
+    for (const [direction, pages] of [['backward', crlf.backward], ['forward', crlf.forward]] as const) {
+      const paged = pages.flatMap((page) => page.entries).concat(crlf.tail);
+      expect(paged.map((entry) => entry.uuid), direction).toEqual(lf.whole.map((entry) => entry.uuid));
+      expect(paged, direction).toEqual(crlf.whole);
+      for (const entry of paged) expect(starts.has(entry.origin?.position ?? -1), `${direction} ${entry.uuid}`).toBe(true);
+      // Every page edge is a line start too, so the next page reads from a whole line.
+      for (const page of pages) {
+        expect(starts.has(page.startPosition), `${direction} start ${page.startPosition}`).toBe(true);
+        expect(page.endPosition === fs.statSync(filePath).size || starts.has(page.endPosition), `${direction} end ${page.endPosition}`).toBe(true);
+      }
+    }
+  });
+});
+
+/** A Codex `response_item` user turn, which the Codex reader and the numbered fake below both read. */
+function codexUserRecord(index: number, filler: string): object {
+  return {
+    type: 'response_item',
+    timestamp: new Date(Date.UTC(2026, 5, 12, 10, 0, index)).toISOString(),
+    payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `turn ${index} ${filler}` }] },
+  };
+}
+
+interface NumberedRecord {
+  timestamp: string;
+  payload: { content: Array<{ text: string }> };
+}
+
+/**
+ * A parser whose uuids number lines, as Codex's do, in the smallest form: the
+ * uuid is `line-<physical line index>`, so an entry parsed without its line
+ * shows as `line-null` instead of passing for another line.
+ */
+function mintNumberedEntries(lines: JsonlLine[]): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  for (const line of lines) {
+    if (line.text.length === 0) continue;
+    const record = JSON.parse(line.text) as NumberedRecord;
+    entries.push({
+      kind: 'user',
+      uuid: `line-${line.line}`,
+      ts: Date.parse(record.timestamp),
+      text: record.payload.content[0].text,
+      origin: { conversationId: AGENT_SESSION_ID, position: line.byte },
+    });
+  }
+  return entries;
+}
+
+describe('readJsonlHistoryPage for an adapter whose uuids number lines', () => {
+  const LINE_COUNT = 60;
+  /** The line a page cannot hold whole: three pages long. */
+  const OVERSIZED_LINE = 25;
+  const CODEX_SESSION_ID = 'codex-session-numbered';
+
+  let text: string;
+  let lineStartBytes: number[];
+  let whole: TranscriptEntry[];
+
+  function writeNumberedFile(oversizedLine?: number): void {
+    text = '';
+    for (let index = 0; index < LINE_COUNT; index += 1) {
+      // Multibyte filler, so a line's bytes are not its characters.
+      const filler = index === oversizedLine ? 'x'.repeat(PAGE_BYTES * 3) : 'é漢'.repeat(index % 4);
+      text += `${JSON.stringify(codexUserRecord(index, filler))}\n`;
+    }
+    fs.writeFileSync(filePath, text);
+    lineStartBytes = lineStarts(text);
+    whole = mintNumberedEntries(splitJsonlLines(text, 0, 0));
+    // The reference is the file's own lines, numbered from 0, each at its start byte.
+    expect(lineStartBytes).toHaveLength(LINE_COUNT);
+    expect(whole.map((entry) => entry.origin?.position)).toEqual(lineStartBytes);
+  }
+
+  function newlinesBefore(byte: number): number {
+    let count = 0;
+    for (const value of Buffer.from(text, 'utf8').subarray(0, byte)) {
+      if (value === 0x0a) count += 1;
+    }
+    return count;
+  }
+
+  async function readNumbered(request: TranscriptPageReadRequest) {
+    const parseLines = vi.fn(mintNumberedEntries);
+    const page = okPage(await readJsonlHistoryPage({ filePath, request, countLines: true, parseLines }));
+    return { page, parseLines };
+  }
+
+  /** The whole-file entries of the lines a page covers, less any line it skipped. */
+  function wholeLinesOf(page: { startPosition: number; endPosition: number }, skippedLine?: number): TranscriptEntry[] {
+    return whole.filter((entry, index) => {
+      const position = entry.origin?.position ?? -1;
+      return position >= page.startPosition && position < page.endPosition && index !== skippedLine;
+    });
+  }
+
+  /** Every cursor of a page names the physical lines before its byte. */
+  function expectCursorsCountLines(page: { startCursor: string; endCursor: string }): void {
+    for (const cursorText of [page.startCursor, page.endCursor]) {
+      const cursor = decodeJsonlCursor(cursorText);
+      expect(cursor, cursorText).not.toBeNull();
+      expect(cursor?.line, cursorText).toBe(newlinesBefore(cursor?.byte ?? 0));
+    }
+  }
+
+  function lastParseWasNumbered(parseLines: { mock: { calls: JsonlLine[][][] } }): boolean {
+    const calls = parseLines.mock.calls;
+    return calls[calls.length - 1][0].every((line) => line.line !== null);
+  }
+
+  describe('a page with no line longer than itself', () => {
+    beforeEach(() => writeNumberedFile());
+
+    it.each([
+      ['before', () => ({ direction: 'before' as const, cursor: `j:${lineStartBytes[40]}:40`, maxBytes: PAGE_BYTES })],
+      ['after', () => ({ direction: 'after' as const, cursor: `j:${lineStartBytes[20]}:20`, maxBytes: PAGE_BYTES })],
+      ['around', () => ({ direction: 'around' as const, position: lineStartBytes[30] + 20, maxBytes: PAGE_BYTES })],
+    ])('parses the %s page numbered the first time, and once', async (_direction, makeRequest) => {
+      const { page, parseLines } = await readNumbered(makeRequest());
+
+      expect(page.entries.length).toBeGreaterThan(1);
+      expect(page.entries).toEqual(wholeLinesOf(page));
+      expectCursorsCountLines(page);
+      // Every line reached the parser with its line known, so nothing was parsed over.
+      expect(parseLines).toHaveBeenCalledTimes(1);
+      expect(parseLines.mock.calls[0][0].every((line) => line.line !== null)).toBe(true);
+    });
+
+    it.each([
+      ['before', () => ({ direction: 'before' as const, cursor: `j:${lineStartBytes[40]}`, maxBytes: PAGE_BYTES })],
+      ['after', () => ({ direction: 'after' as const, cursor: `j:${lineStartBytes[20]}`, maxBytes: PAGE_BYTES })],
+    ])('numbers the %s page from the start of the file when its cursor carries no line count', async (_direction, makeRequest) => {
+      const { page, parseLines } = await readNumbered(makeRequest());
+
+      expect(page.entries.length).toBeGreaterThan(1);
+      expect(page.entries).toEqual(wholeLinesOf(page));
+      expectCursorsCountLines(page);
+      expect(lastParseWasNumbered(parseLines)).toBe(true);
+    });
+  });
+
+  describe('a page whose walk passes a line longer than the page', () => {
+    beforeEach(() => writeNumberedFile(OVERSIZED_LINE));
+
+    it.each([
+      ['before', () => ({ direction: 'before' as const, cursor: `j:${lineStartBytes[OVERSIZED_LINE + 1]}:${OVERSIZED_LINE + 1}`, maxBytes: PAGE_BYTES })],
+      ['after', () => ({ direction: 'after' as const, cursor: `j:${lineStartBytes[OVERSIZED_LINE]}:${OVERSIZED_LINE}`, maxBytes: PAGE_BYTES })],
+      // An `around` read starts half a page before its position, here 850 bytes before the
+      // long line's end. Its first window sits wholly inside the line, and its second holds
+      // the line's last 150 bytes and then 550 bytes of the normal lines after it.
+      ['around', () => ({ direction: 'around' as const, position: lineStartBytes[OVERSIZED_LINE + 1] - 500, maxBytes: PAGE_BYTES })],
+    ])('numbers the lines of the %s page after the skip as a whole-file parse does', async (direction, makeRequest) => {
+      const { page, parseLines } = await readNumbered(makeRequest());
+
+      // The long line is left out, and the lines on the far side of it are all
+      // there: `before` reads the lines ahead of it, `after` and `around` those behind it.
+      const uuids = page.entries.map((entry) => entry.uuid);
+      expect(uuids).not.toContain(`line-${OVERSIZED_LINE}`);
+      expect(uuids).not.toContain('line-null');
+      expect(uuids).toContain(direction === 'before' ? `line-${OVERSIZED_LINE - 1}` : `line-${OVERSIZED_LINE + 1}`);
+      expect(page.entries.length).toBeGreaterThan(1);
+      expect(page.entries).toEqual(wholeLinesOf(page, OVERSIZED_LINE));
+      expectCursorsCountLines(page);
+      // The windows after the skip had no line to start from, so they were parsed again with one.
+      expect(parseLines.mock.calls.length).toBeGreaterThan(1);
+      expect(lastParseWasNumbered(parseLines)).toBe(true);
+    });
+
+    it('walks a Codex rollout through the long line, both ways, with the uuids of a whole-file parse', async () => {
+      const walk = await walkHistoryPages({
+        filePath,
+        conversationId: CODEX_SESSION_ID,
+        parseTail: () => parseCodexTranscript(CODEX_SESSION_ID, filePath),
+        readPage: (request) => readCodexTranscriptPage(CODEX_SESSION_ID, filePath, request),
+        tailBytes: TAIL_BYTES,
+        pageBytes: PAGE_BYTES,
+      });
+
+      // Codex names an entry by its line, from the start of the file.
+      expect(walk.whole.map((entry) => entry.uuid)).toEqual(Array.from({ length: LINE_COUNT }, (_, index) => `${CODEX_SESSION_ID}:${index}`));
+      const expected = walk.whole.filter((entry) => entry.uuid !== `${CODEX_SESSION_ID}:${OVERSIZED_LINE}`);
+      expect(expected).toHaveLength(LINE_COUNT - 1);
+      expect(walk.backward.flatMap((page) => page.entries).concat(walk.tail)).toEqual(expected);
+      expect(walk.forward.flatMap((page) => page.entries).concat(walk.tail)).toEqual(expected);
+    });
+  });
+
+  describe('a timeline probe', () => {
+    beforeEach(() => writeNumberedFile());
+
+    it('leaves the line count out of its cursors and answers the entries a counted read does, with their positions and times', async () => {
+      const request = { direction: 'around' as const, position: lineStartBytes[30] + 20, maxBytes: PAGE_BYTES };
+      const counted = await readNumbered(request);
+      const probed = await readNumbered({ ...request, probe: true });
+
+      // A counted read numbers its cursors, which is what the probe saves.
+      expect(decodeJsonlCursor(counted.page.startCursor)?.line).toBe(newlinesBefore(counted.page.startPosition));
+      expect(decodeJsonlCursor(counted.page.endCursor)?.line).toBe(newlinesBefore(counted.page.endPosition));
+      expect(decodeJsonlCursor(probed.page.startCursor)).toEqual({ byte: probed.page.startPosition, line: null });
+      expect(decodeJsonlCursor(probed.page.endCursor)).toEqual({ byte: probed.page.endPosition, line: null });
+
+      expect(probed.page.entries.length).toBeGreaterThan(1);
+      expect(probed.page.startPosition).toBe(counted.page.startPosition);
+      expect(probed.page.endPosition).toBe(counted.page.endPosition);
+      expect(probed.page.entries.map((entry) => entry.origin?.position)).toEqual(wholeLinesOf(probed.page).map((entry) => entry.origin?.position));
+      expect(probed.page.entries.map((entry) => entry.ts)).toEqual(wholeLinesOf(probed.page).map((entry) => entry.ts));
+      expect(probed.page.entries.every((entry) => entry.ts > 0)).toBe(true);
+    });
+
+    it('answers a Codex probe with each entry at its line start and dated, and no line count in its cursors', async () => {
+      const request = { direction: 'around' as const, position: lineStartBytes[30] + 20, maxBytes: PAGE_BYTES };
+      const starts = lineStartsOf(filePath);
+      const counted = okPage(await readCodexTranscriptPage(CODEX_SESSION_ID, filePath, request));
+      const probed = okPage(await readCodexTranscriptPage(CODEX_SESSION_ID, filePath, { ...request, probe: true }));
+
+      expect(decodeJsonlCursor(counted.startCursor)?.line).not.toBeNull();
+      expect(decodeJsonlCursor(probed.startCursor)?.line).toBeNull();
+      expect(decodeJsonlCursor(probed.endCursor)?.line).toBeNull();
+      expect(probed.entries.length).toBeGreaterThan(1);
+      for (const entry of probed.entries) {
+        expect(starts.has(entry.origin?.position ?? -1)).toBe(true);
+        expect(entry.ts).toBeGreaterThan(0);
+      }
+      expect(probed.entries.map((entry) => [entry.origin?.position, entry.ts]))
+        .toEqual(counted.entries.map((entry) => [entry.origin?.position, entry.ts]));
+    });
   });
 });

@@ -268,6 +268,29 @@ describe('insertBlock', () => {
     const next = insertBlock([page('A', 0, 10)], page('A', 10, 20), BASE, 10_000);
     expect(next).toHaveLength(2);
   });
+
+  const heldEntries = (blocks: ReadonlyArray<HeldBlock>): number => blocks.reduce((total, block) => total + block.entries.length, 0);
+
+  it('drops the page farthest from the reader past the entry cap alone, never the reader\'s or the new one', () => {
+    // 40 entries held after the insert against a cap of 30, while the byte cap
+    // (a million) can never trip: only the entry count can force the drop.
+    const blocks = [page('A', 0, 10), page('A', 10, 20), page('A', 20, 30)];
+    const readerTs = BASE + 25 * MINUTE;
+    const next = insertBlock(blocks, page('A', 30, 40), readerTs, 1_000_000, 30);
+    expect(heldBytes(next)).toBeLessThan(1_000_000);
+    expect(next.map((block) => block.startPosition)).toEqual([10 * 100, 20 * 100, 30 * 100]);
+    expect(heldEntries(next)).toBeLessThanOrEqual(30);
+  });
+
+  it('drops the farthest page by distance in time under the entry cap, not the first one held', () => {
+    // The reader sits in the oldest page, so the page farthest from it is the
+    // last one already held (positions 2000 to 3000), and the new page stays.
+    const blocks = [page('A', 0, 10), page('A', 10, 20), page('A', 20, 30)];
+    const readerTs = BASE + 5 * MINUTE;
+    const next = insertBlock(blocks, page('A', 30, 40), readerTs, 1_000_000, 30);
+    expect(next.map((block) => block.startPosition)).toEqual([0, 10 * 100, 30 * 100]);
+    expect(heldEntries(next)).toBeLessThanOrEqual(30);
+  });
 });
 
 describe('pageFitsRequest', () => {

@@ -2,9 +2,12 @@ import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
-import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { qwenChatsDir } from './session-history-parser';
+
+/** A Qwen record without its own uuid is named by its line, so the tail, its notice and every page count lines. */
+const UUIDS_NUMBER_LINES = true;
 
 /**
  * Parse Qwen Code's native session JSONL into agent-agnostic
@@ -35,7 +38,7 @@ export async function parseQwenTranscript(
   // ceiling, and reading one whole is what OOM'd the main process.
   const window = await readJsonlWindow(filePath, {
     maxBytes: parseWindowBytes(),
-    countOmittedLines: true,
+    countOmittedLines: UUIDS_NUMBER_LINES,
   });
   if (window.totalBytes === 0) return [];
   // The line count is only used when a record turns out to lack its own
@@ -45,10 +48,7 @@ export async function parseQwenTranscript(
   const entries = parseQwenLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
   // The notice carries the cursor the Conversation viewer pages the left-out
   // history from (`readQwenTranscriptPage`), with the line count the uuids need.
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
-    conversationId: agentSessionId,
-    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
-  });
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES));
 }
 
 /**
@@ -64,7 +64,7 @@ export function readQwenTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: true,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseQwenLines(agentSessionId, lines),
   });
 }
@@ -76,8 +76,7 @@ function parseQwenLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>)
     if (line.length === 0) continue;
     const firstNew = entries.length;
     parseQwenRecord(agentSessionId, line, lineNumber ?? 0, entries);
-    const origin = { conversationId: agentSessionId, position: byte };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    stampOrigin(entries, firstNew, agentSessionId, byte);
   }
   return entries;
 }

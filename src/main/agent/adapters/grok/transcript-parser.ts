@@ -7,9 +7,12 @@ import type {
 } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
-import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
+import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
+
+/** Grok uuids number lines (see below), so the tail, its notice and every page count them. */
+const UUIDS_NUMBER_LINES = true;
 
 /**
  * Parse Grok Build's native session files into agent-agnostic structures.
@@ -49,7 +52,7 @@ export async function parseGrokTranscript(
   // because Grok's uuids embed the ABSOLUTE physical line index (see below).
   const window = await readJsonlWindow(filePath, {
     maxBytes: parseWindowBytes(),
-    countOmittedLines: true,
+    countOmittedLines: UUIDS_NUMBER_LINES,
   });
   if (window.totalBytes === 0) {
     return { entries: [], sourcePath: null };
@@ -63,10 +66,7 @@ export async function parseGrokTranscript(
   // The notice carries the cursor the Conversation viewer pages the left-out
   // history from (`readGrokTranscriptPage`), with the line count the uuids need.
   return {
-    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
-      conversationId: agentSessionId,
-      cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
-    }),
+    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, jsonlEarlierHistory(agentSessionId, window, UUIDS_NUMBER_LINES)),
     sourcePath: filePath,
   };
 }
@@ -84,7 +84,7 @@ export function readGrokTranscriptPage(
   return readJsonlHistoryPage({
     filePath,
     request,
-    countLines: true,
+    countLines: UUIDS_NUMBER_LINES,
     parseLines: (lines) => parseGrokLines(agentSessionId, lines),
   });
 }
@@ -97,8 +97,7 @@ function parseGrokLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>)
     if (line.length === 0) continue;
     const firstNew = entries.length;
     parseGrokRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, parseTimeTs, entries);
-    const origin = { conversationId: agentSessionId, position: byte };
-    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+    stampOrigin(entries, firstNew, agentSessionId, byte);
   }
   return entries;
 }

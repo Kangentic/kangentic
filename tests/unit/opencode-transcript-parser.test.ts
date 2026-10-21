@@ -183,6 +183,34 @@ describe('the tail and history pages of a session', () => {
     expect(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'before', cursor: 'o:1:gone', maxBytes: 700 })).toEqual({ status: 'reset' });
   });
 
+  it('answers reset for a source token that names another session start, and accepts the token a page carries', () => {
+    buildDatabase(30);
+    const request = { direction: 'around' as const, position: 100, maxBytes: 700 };
+    const page = okPage(readOpenCodeTranscriptPage(dbPath, SESSION, request));
+    expect(page.sourceToken).toBe(`opencode:${SESSION}_m000_user`);
+
+    expect(readOpenCodeTranscriptPage(dbPath, SESSION, { ...request, sourceToken: page.sourceToken }).status).toBe('ok');
+    expect(readOpenCodeTranscriptPage(dbPath, SESSION, { ...request, sourceToken: 'opencode:other' })).toEqual({ status: 'reset' });
+  });
+
+  it.each(['before', 'after'] as const)('answers reset, not a failed read, for a %s cursor with a malformed escape', (direction) => {
+    buildDatabase(30);
+    // `decodeURIComponent` throws a URIError on this; it used to surface as file_missing.
+    expect(readOpenCodeTranscriptPage(dbPath, SESSION, { direction, cursor: 'o:1:%E0%A4%A', maxBytes: 700 })).toEqual({ status: 'reset' });
+  });
+
+  it('answers file_missing for a database that is not there and read_failed for a file that is not a database', () => {
+    const request = { direction: 'around' as const, position: 0, maxBytes: 700 };
+    expect(readOpenCodeTranscriptPage(path.join(directory, 'no-such-opencode.db'), SESSION, request))
+      .toEqual({ status: 'unavailable', reason: 'file_missing' });
+
+    // Over a kilobyte of text no SQLite header would start with.
+    const notDatabase = path.join(directory, 'not-a-database.db');
+    fs.writeFileSync(notDatabase, 'this file is plain text, not a database\n'.repeat(100));
+    expect(fs.statSync(notDatabase).size).toBeGreaterThan(1024);
+    expect(readOpenCodeTranscriptPage(notDatabase, SESSION, request)).toEqual({ status: 'unavailable', reason: 'read_failed' });
+  });
+
   it('bounds a remote session to the newest entries behind a notice with no cursor', () => {
     setParseWindowBytesForTests(400);
     const entries = Array.from({ length: 20 }, (_, index) => ({ kind: 'user' as const, uuid: `m${index}`, ts: index, text: `turn ${index}` }));

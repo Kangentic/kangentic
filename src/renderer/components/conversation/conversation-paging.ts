@@ -196,6 +196,13 @@ interface Collected {
  * first real time. A conversation with no timestamps keeps its entries at its
  * earliest time and orders them by position.
  */
+/**
+ * Effective time a no-timestamp conversation's entry gains per unit of
+ * position: they keep position order and, under 1 GB of transcript, stay
+ * within a second of the conversation's earliest time.
+ */
+const NO_TIMESTAMP_MS_PER_POSITION = 1e-6;
+
 function assignEffectiveTimes(items: Item[], hasTimestamps: (conversationKey: string) => boolean): void {
   const byConversation = new Map<string, Item[]>();
   for (const item of items) {
@@ -209,7 +216,7 @@ function assignEffectiveTimes(items: Item[], hasTimestamps: (conversationKey: st
       let earliest = Infinity;
       for (const item of list) if (item.entry.ts > 0 && item.entry.ts < earliest) earliest = item.entry.ts;
       const base = Number.isFinite(earliest) ? earliest : 0;
-      for (const item of list) item.effectiveTs = base + item.order * 1e-6;
+      for (const item of list) item.effectiveTs = base + item.order * NO_TIMESTAMP_MS_PER_POSITION;
       continue;
     }
     let previous = list.find((item) => item.entry.ts > 0)?.entry.ts ?? 0;
@@ -596,10 +603,15 @@ function holesOf(input: PagingInput, collected: Collected): ConversationHole[] {
   return holes;
 }
 
+/** Whether one stretch of the view's time overlaps a hole's. */
+function rangeTouchesHole(range: TimeRange, hole: ConversationHole): boolean {
+  return range.start < hole.tsAfter && range.end > hole.tsBefore;
+}
+
 /** Whether a hole covers any of the view's time. */
 function holeIsRelevant(hole: ConversationHole, ranges: ReadonlyArray<TimeRange> | undefined): boolean {
   if (!ranges) return true;
-  return ranges.some((range) => range.start < hole.tsAfter && range.end > hole.tsBefore);
+  return ranges.some((range) => rangeTouchesHole(range, hole));
 }
 
 /**
@@ -680,6 +692,13 @@ export function buildPagingWindow(input: PagingInput): PagingWindow {
     untilPosition: hole.endPosition,
     sourceToken: hole.sourceToken ?? undefined,
   });
+  // The read at a time of the view's inside a hole, or the contiguous read
+  // when that time's position falls outside the hole or on a held stretch.
+  const aroundTimeOr = (hole: ConversationHole, target: number, contiguous: PageRequest): PageRequest => {
+    const position = positionOf(hole.conversationId, target);
+    if (position <= hole.startPosition || position >= hole.endPosition || isHeld(hole.conversationId, position)) return contiguous;
+    return aroundIn(hole, position);
+  };
 
   const requestFor = (edge: 'top' | 'bottom'): PageRequest | null => {
     if (edge === 'top') {
@@ -697,12 +716,10 @@ export function buildPagingWindow(input: PagingInput): PagingWindow {
       // through another column's time.
       let target = hole.tsAfter;
       for (const range of ranges) {
-        if (range.start < hole.tsAfter && range.end > hole.tsBefore) target = Math.min(range.end, hole.tsAfter);
+        if (rangeTouchesHole(range, hole)) target = Math.min(range.end, hole.tsAfter);
       }
       if (target >= hole.tsAfter) return contiguous;
-      const position = positionOf(hole.conversationId, target);
-      if (position <= hole.startPosition || position >= hole.endPosition || isHeld(hole.conversationId, position)) return contiguous;
-      return aroundIn(hole, position);
+      return aroundTimeOr(hole, target, contiguous);
     }
     const hole = bottomHole;
     if (!hole) return null;
@@ -719,15 +736,13 @@ export function buildPagingWindow(input: PagingInput): PagingWindow {
     // The earliest of the view's time inside the hole.
     let target = hole.tsBefore;
     for (const range of ranges) {
-      if (range.start < hole.tsAfter && range.end > hole.tsBefore) {
+      if (rangeTouchesHole(range, hole)) {
         target = Math.max(range.start, hole.tsBefore);
         break;
       }
     }
     if (target <= hole.tsBefore) return contiguous;
-    const position = positionOf(hole.conversationId, target);
-    if (position <= hole.startPosition || position >= hole.endPosition || isHeld(hole.conversationId, position)) return contiguous;
-    return aroundIn(hole, position);
+    return aroundTimeOr(hole, target, contiguous);
   };
 
   const requestForPosition = (conversationId: string, position: number): PageRequest | null => {

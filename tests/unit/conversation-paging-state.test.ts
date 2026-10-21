@@ -106,4 +106,58 @@ describe('reconcileWindow', () => {
     expect(next.locate).toEqual({ uuid: 'A-45', done: true });
     expect(reconcileWindow(next, { window, enabled: true, turnUuid: 'A-45', tail })).toBe(next);
   });
+
+  describe('a lookup answers for one turn', () => {
+    // The window shows the tail (no pages held, anchored at the end), and the
+    // tail holds no turn named 'turn-a' or 'turn-b', so the search-hit branch
+    // cannot fire for either: only the locate clear is under test.
+    const located = { ...initialState('key', null, 0, null), locate: { uuid: 'turn-a', done: true }, seenTail: tail };
+    const tailWindow = buildPagingWindow({ tail, conversations: [EXTENT], blocks: [], timelines: new Map(), anchorTs: located.anchorTs });
+
+    it('forgets the lookup when no turn is asked for any more', () => {
+      const next = reconcileWindow(located, { window: tailWindow, enabled: true, turnUuid: null, tail });
+      expect(next.locate).toBeNull();
+      expect(next).not.toBe(located);
+    });
+
+    it('forgets the lookup when a different turn is asked for', () => {
+      const next = reconcileWindow(located, { window: tailWindow, enabled: true, turnUuid: 'turn-b', tail });
+      expect(next.locate).toBeNull();
+      expect(next).not.toBe(located);
+    });
+
+    it('keeps the lookup, and the state itself, while the same turn stays asked for', () => {
+      expect(reconcileWindow(located, { window: tailWindow, enabled: true, turnUuid: 'turn-a', tail })).toBe(located);
+    });
+
+    it('does not look up again a turn whose lookup is done and still asked for', () => {
+      // Anchored in old pages with the hit in the tail: the lookup is done, so
+      // the window is left where it is instead of being sent back to the tail.
+      const oldPages = { ...initialState('key', null, 0, null), blocks: [page(10, 20)], anchorTs: BASE + 15 * MINUTE, seenTail: tail, locate: { uuid: 'A-45', done: true } };
+      const pagesWindow = buildPagingWindow({ tail, conversations: [EXTENT], blocks: oldPages.blocks, timelines: new Map(), anchorTs: oldPages.anchorTs });
+      expect(pagesWindow.timeByUuid.has('A-45')).toBe(false);
+      expect(reconcileWindow(oldPages, { window: pagesWindow, enabled: true, turnUuid: 'A-45', tail })).toBe(oldPages);
+    });
+
+    it('looks the same turn up again once it was dropped and the window moved away from it', () => {
+      const oldPages = { ...initialState('key', null, 0, null), blocks: [page(10, 20)], anchorTs: BASE + 15 * MINUTE, seenTail: tail };
+      const windowFor = (state: typeof oldPages) => buildPagingWindow({ tail, conversations: [EXTENT], blocks: state.blocks, timelines: new Map(), anchorTs: state.anchorTs });
+
+      const found = reconcileWindow(oldPages, { window: windowFor(oldPages), enabled: true, turnUuid: 'A-45', tail });
+      expect(found.locate).toEqual({ uuid: 'A-45', done: true });
+      expect(found.blocks).toEqual([]);
+
+      // The turn is no longer asked for: the lookup is forgotten.
+      const dropped = reconcileWindow(found, { window: windowFor(found), enabled: true, turnUuid: null, tail });
+      expect(dropped.locate).toBeNull();
+
+      // The reader scrolls back into old pages, then asks for the same turn again.
+      const movedAway = { ...dropped, blocks: [page(10, 20)], anchorTs: BASE + 15 * MINUTE };
+      const askedAgain = reconcileWindow(movedAway, { window: windowFor(movedAway), enabled: true, turnUuid: 'A-45', tail });
+      expect(askedAgain.locate).toEqual({ uuid: 'A-45', done: true });
+      expect(askedAgain.blocks).toEqual([]);
+      expect(askedAgain.anchorTs).toBe(Infinity);
+      expect(askedAgain.generation).toBe(movedAway.generation + 1);
+    });
+  });
 });
