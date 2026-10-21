@@ -203,9 +203,8 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
     git('commit -m "add config"');
 
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
-      ['config/env.example'],
-    );
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main');
+    await mgr.setUpWorktree(worktreePath, { copyFiles: ['config/env.example'] });
 
     // Non-.claude file should be copied
     const dest = path.join(worktreePath, 'config', 'env.example');
@@ -215,9 +214,8 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
   it('.claude/ copyFiles entries are skipped by copy loop', async () => {
     const mgr = new WorktreeManager(tmpDir);
-    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main',
-      ['.claude/settings.local.json'],
-    );
+    const { worktreePath } = await mgr.createWorktree(worktreeTask(TASK_ID, TASK_TITLE), 'main');
+    await mgr.setUpWorktree(worktreePath, { copyFiles: ['.claude/settings.local.json'] });
 
     // .claude/settings.local.json exists from sparse-checkout (it's in git),
     // but the copyFiles loop should have skipped the .claude/ entry (no double-copy).

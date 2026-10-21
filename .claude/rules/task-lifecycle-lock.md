@@ -28,7 +28,9 @@ Three rules (full detail in the JSDoc on `withTaskLock`):
    re-acquire, re-read the task row and bail if the state you depended on changed.
 
 Do NOT wrap long-running I/O already serialized elsewhere (`ensureTaskWorktree`,
-`cleanupTaskResources`, etc. are serialized per project by `WorktreeManager.projectQueues`).
+`cleanupTaskResources`, etc. are serialized per project by `WorktreeManager.projectQueues`, and a
+new worktree's setup script, which runs after the queue, per worktree path by the creation
+registry in `src/main/git/worktree-creation-registry.ts`).
 Pure read-only handlers and synchronous-only paths do not need the lock; if you never `await`,
 you cannot race.
 

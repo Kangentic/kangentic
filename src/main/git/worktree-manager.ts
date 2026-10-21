@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
 import type { WorktreeSkipReason } from '../../shared/types';
-import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
-import { worktreesRootFor } from './task-worktree-folder';
+import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './task-worktree-folder';
+import { isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
@@ -233,6 +233,48 @@ export interface WorktreeSkipped {
 }
 
 export type EnsureWorktreeResult = WorktreeCreateResult | WorktreeSkipped;
+
+/**
+ * What `setUpWorktree` puts into a freshly created worktree: the files copied
+ * from the project root, the node_modules link (on unless `false`), and the
+ * user's Post-Worktree Script. The shape of `config.git`'s matching keys.
+ */
+export interface WorktreeSetup {
+  copyFiles: string[];
+  linkNodeModules?: boolean;
+  initScript?: string | null;
+}
+
+/**
+ * The guards `ensureWorktree` runs before it resolves a base branch, in its
+ * order: a live worktree to reuse, worktrees off for the task, a project that
+ * is not a git repo, and one that is itself a worktree. Synchronous, so
+ * `prepareStaleWorktreeForCreation` runs the same check outside the git queue
+ * and clears nothing where `ensureWorktree` stops short. The base-branch guards
+ * (no commits, an unresolvable base) need git and stay in `ensureWorktree`.
+ */
+function worktreeSkipBeforeBase(
+  task: { worktree_path: string | null; use_worktree?: number | null },
+  projectPath: string,
+  worktreesEnabled: boolean,
+): WorktreeSkipped['reason'] | null {
+  // Trust worktree_path only if the worktree still genuinely exists on disk.
+  // A Done cleanup that could not delete the directory (Windows pinned-CWD)
+  // leaves worktree_path set pointing at an emptied husk with no `.git` file;
+  // trusting it blindly would silently no-op the move-back and resume nothing.
+  // A missing or husk directory falls through to createWorktree, which
+  // recomputes the identical (deterministic) path and recreates the worktree.
+  if (task.worktree_path && fs.existsSync(task.worktree_path) && isInsideWorktree(task.worktree_path)) return 'reused';
+  if (!taskUsesWorktree(worktreesEnabled, storedWorktreeChoice(task.use_worktree))) return 'disabled';
+  if (!isGitRepo(projectPath)) return 'not-a-repo';
+  if (isInsideWorktree(projectPath)) return 'nested-worktree';
+  return null;
+}
+
+/** One `[WORKTREE] create step=<name> done in <n>ms` line, timed from `startedAt`. */
+function logCreateStep(step: string, startedAt: number, detail = ''): void {
+  console.log(`[WORKTREE] create step=${step} done in ${Date.now() - startedAt}ms${detail}`);
+}
 
 const REMOVAL_PROFILE_OPTIONS: Record<WorktreeRemovalProfile, RemoveWithRetryOptions | undefined> = {
   thorough: { budgetMs: THOROUGH_REMOVAL_BUDGET_MS },
@@ -746,26 +788,18 @@ export class WorktreeManager {
    * keeps it when the switch goes off. No per-task choice overrides a
    * structural reason. An unresolvable base branch throws instead (see
    * `resolveWorktreeBase`).
+   *
+   * This is the git phase only, run inside `withLock`. A created worktree is
+   * not ready until the caller runs `setUpWorktree` on it after the lock is
+   * released.
    */
   async ensureWorktree(
     task: { id: string; title: string; display_id: number; worktree_path: string | null; worktree_folder?: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
-    gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[]; initScript?: string | null; linkNodeModules?: boolean },
+    gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string },
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
   ): Promise<EnsureWorktreeResult> {
-    // Trust worktree_path only if the worktree still genuinely exists on disk.
-    // A Done cleanup that could not delete the directory (Windows pinned-CWD)
-    // leaves worktree_path set pointing at an emptied husk with no `.git` file;
-    // trusting it blindly would silently no-op the move-back and resume nothing.
-    // A missing or husk directory falls through to createWorktree, which
-    // recomputes the identical (deterministic) path and recreates the worktree.
-    if (task.worktree_path && fs.existsSync(task.worktree_path) && isInsideWorktree(task.worktree_path)) {
-      return { skipped: true, reason: 'reused' };
-    }
-    if (!taskUsesWorktree(gitConfig.worktreesEnabled, storedWorktreeChoice(task.use_worktree))) {
-      return { skipped: true, reason: 'disabled' };
-    }
-    if (!isGitRepo(this.projectPath)) return { skipped: true, reason: 'not-a-repo' };
-    if (isInsideWorktree(this.projectPath)) return { skipped: true, reason: 'nested-worktree' };
+    const skipReason = worktreeSkipBeforeBase(task, this.projectPath, gitConfig.worktreesEnabled);
+    if (skipReason) return { skipped: true, reason: skipReason };
 
     // Resolve the base branch against the repo's ACTUAL refs before ever calling
     // `git worktree add`, instead of handing it a name that may not exist. A `master`-only
@@ -793,11 +827,9 @@ export class WorktreeManager {
     // The fetch outcome is NOT threaded into resolveWorktreeBase's own fetch
     // pass: a candidate miss there either resolves via another candidate (not
     // a stale-base event) or ends in the already-loud unresolvable throw above.
-    return this.createWorktree(task, resolution.baseBranch, gitConfig.copyFiles, task.branch_name, {
+    return this.createWorktree(task, resolution.baseBranch, task.branch_name, {
       onProgress: options?.onProgress,
       signal: options?.signal,
-      initScript: gitConfig.initScript,
-      linkNodeModules: gitConfig.linkNodeModules,
       verifiedStartPoint: resolution.startPoint,
       onFetchOutcome: options?.onFetchOutcome,
     });
@@ -834,17 +866,19 @@ export class WorktreeManager {
    *
    * Callers must wrap with `withLock()` to serialize concurrent operations
    * on the same project and prevent git lock contention.
+   *
+   * This is creation's GIT phase only. The copied files, the node_modules link
+   * and the Post-Worktree Script are `setUpWorktree`'s, which the caller runs
+   * after the lock is released, so a slow script never holds the project's git
+   * queue. Each step logs `[WORKTREE] create step=<name> done in <n>ms`.
    */
   async createWorktree(
     task: { id: string; title: string; display_id: number; worktree_path?: string | null; worktree_folder?: string | null },
     baseBranch: string = 'main',
-    copyFiles: string[] = [],
     customBranchName?: string | null,
     options?: {
       onProgress?: (phase: string) => void;
       signal?: AbortSignal;
-      initScript?: string | null;
-      linkNodeModules?: boolean;
       /**
        * A ref already observed to resolve (supplied by `ensureWorktree` from its
        * `resolveWorktreeBase` call), used as the start point whenever the fetch below does
@@ -880,10 +914,9 @@ export class WorktreeManager {
     // Reuse the folder this task has always used, falling back to its stored
     // path (belt and braces for a row the migration somehow missed) before
     // choosing the numeric name for the first time. See the JSDoc above for why
-    // this must never change once chosen.
-    const existingFolder = task.worktree_folder
-      ?? worktreeFolderFromPath(task.worktree_path);
-    const folderName = existingFolder ?? String(task.display_id);
+    // this must never change once chosen. The same helper keys the creation
+    // registry (`ensureTaskWorktree`), so the two can never name different paths.
+    const folderName = taskWorktreeFolderFor(task);
 
     // The branch stays title-derived and readable, independent of the folder. A
     // caller-supplied custom name always wins verbatim.
@@ -891,7 +924,7 @@ export class WorktreeManager {
       ?? computeAutoBranchName(slugify(task.title) || 'task', shortId);
 
     const worktreesDir = worktreesRootFor(this.projectPath);
-    const worktreePath = path.join(worktreesDir, folderName);
+    const worktreePath = taskWorktreePathFor(task, this.projectPath);
 
     // Ensure worktrees dir exists
     try {
@@ -909,6 +942,7 @@ export class WorktreeManager {
     options?.onProgress?.('fetching');
     // Read alongside the fetch; it only shapes the `worktree add` below and never rejects.
     const checkoutWorkersConfigPromise = parallelCheckoutConfig(this.git);
+    const fetchStartedAt = Date.now();
     const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
       signal: options?.signal,
       onOutcome: options?.onFetchOutcome,
@@ -923,6 +957,7 @@ export class WorktreeManager {
     const startPoint = fetched === `origin/${baseBranch}` && await refResolvesLocally(this.projectPath, fetched)
       ? fetched
       : (options?.verifiedStartPoint ?? fetched);
+    logCreateStep('fetch', fetchStartedAt);
     options?.onProgress?.('creating-worktree');
     options?.signal?.throwIfAborted();
 
@@ -951,12 +986,15 @@ export class WorktreeManager {
     // killed PTY may still be held, and rmSync fails with EPERM.
     let reuseEmptyHusk = false;
     if (fs.existsSync(worktreePath)) {
+      const staleStartedAt = Date.now();
       // Internal, deliberately: this clears a stale husk so a fresh worktree
       // can be created at the SAME path. The worktree-removed listener means
       // "this path no longer holds a worktree", which is not true a moment
       // later here, so it must not fire (Codex would drop the directory's
       // trust table immediately before the new worktree starts using it).
-      const outcome = await this.removeWorktreeInternal(worktreePath);
+      // `ownCreation`: this creation holds the path in the creation registry,
+      // and a removal refuses any path whose creation is in flight but this one.
+      const outcome = await this.removeWorktreeInternal(worktreePath, { ownCreation: true });
       if (!outcome.removed) {
         // The directory could not be deleted. On Windows a process holding it
         // as its current directory (an agent terminal, an open editor, the
@@ -987,6 +1025,7 @@ export class WorktreeManager {
         }
         reuseEmptyHusk = true;
       }
+      logCreateStep('stale-dir', staleStartedAt, ` (reuseHusk=${reuseEmptyHusk})`);
       options?.signal?.throwIfAborted();
     }
     // On Windows, enable long paths to prevent "Filename too long" errors
@@ -1002,6 +1041,7 @@ export class WorktreeManager {
     // already checked out in another worktree" error.
     const forceFlag = reuseEmptyHusk ? ['--force'] : [];
     const commandConfig = [...longPathsConfig, ...await checkoutWorkersConfigPromise];
+    const addStartedAt = Date.now();
     try {
       if (branchExists) {
         await this.git.raw([...commandConfig, 'worktree', 'add', ...forceFlag, worktreePath, branchName]);
@@ -1013,6 +1053,7 @@ export class WorktreeManager {
     } catch (error) {
       throw withPathLengthCause(error, worktreePath);
     }
+    logCreateStep('worktree-add', addStartedAt);
 
     // Post-creation configuration. `core.longpaths` and sparse-checkout's
     // `extensions.worktreeConfig` land in the repo's SHARED `.git/config` (a
@@ -1025,6 +1066,7 @@ export class WorktreeManager {
     // swallowing sparse-checkout init and leaving `.claude/commands/`
     // materialized. Serial execution costs a handful of milliseconds and
     // eliminates the race.
+    const configureStartedAt = Date.now();
     const wtGit = gitAt(worktreePath);
 
     // Persist long paths for later git commands in every worktree (Windows only).
@@ -1062,78 +1104,7 @@ export class WorktreeManager {
     } catch {
       // Non-fatal -- merge-back falls back to 'main'
     }
-
-    // Copy specified files into the worktree (skip .claude/ entries --
-    // sparse-checkout keeps .claude/ but excludes commands/,
-    // and hooks are delivered via --settings flag pointing to session directory).
-    // Async fs so the per-file copy loop yields the event loop between files
-    // instead of blocking it: a busy main process otherwise bunches the spawn
-    // progress IPC pushes, which then land as one burst on the renderer.
-    for (const file of copyFiles) {
-      if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;
-      const src = path.join(this.projectPath, file);
-      const dest = path.join(worktreePath, file);
-      try {
-        await fs.promises.access(src);
-      } catch {
-        continue; // Source does not exist -- nothing to copy.
-      }
-      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
-      await fs.promises.copyFile(src, dest);
-    }
-
-    // Link node_modules from root so worktree agents can run typecheck/test
-    // without a slow npm install. Non-fatal if it fails. Linking is the default
-    // (undefined/true link); only an explicit `false` skips it, e.g. so an
-    // initScript install can own the worktree's deps instead of sharing root's.
-    const shouldLinkNodeModules = options?.linkNodeModules ?? true;
-    if (shouldLinkNodeModules) {
-      await linkNodeModules(worktreePath, this.projectPath);
-    }
-
-    // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
-    // copied files and the linked (or deliberately absent) node_modules. A
-    // non-zero exit or timeout is FATAL: it rejects createWorktree, failing the
-    // task move / agent spawn, exactly like a failed copyFile above. An abort
-    // (a superseding move, a cancelled spawn, shutdown) rejects with an
-    // AbortError instead, see the catch below.
-    const initScript = options?.initScript?.trim();
-    if (initScript) {
-      options?.onProgress?.('init-script');
-      // npm install can take minutes; re-emit the phase so the card label
-      // survives the 120s spawn-progress TTL during a long run.
-      const heartbeat = setInterval(() => options?.onProgress?.('init-script'), INIT_SCRIPT_PROGRESS_HEARTBEAT_MS);
-      try {
-        console.log(`[INIT-SCRIPT] Running post-worktree script in ${worktreePath}: ${initScript}`);
-        const { stdout, stderr } = await runInitScript(initScript, worktreePath, {
-          timeoutMs: INIT_SCRIPT_TIMEOUT_MS,
-          signal: options?.signal,
-        });
-        if (stdout.trim()) console.log(`[INIT-SCRIPT] stdout:\n${stdout.trim()}`);
-        if (stderr.trim()) console.log(`[INIT-SCRIPT] stderr:\n${stderr.trim()}`);
-        console.log('[INIT-SCRIPT] Post-worktree script completed');
-      } catch (error) {
-        // An abort is not a failure. Every caller skips its failure handling
-        // for an AbortError, and task-move's failure handling queues a stale
-        // cleanup behind the per-project git lock. The superseding move's own
-        // create job is usually queued there first, so the cleanup used to run
-        // after it and delete the worktree it had just made, auto-generated
-        // branch included (reproduced twice in /preview). The half-made
-        // worktree left here is never recorded, so the next creation at this
-        // path clears its directory through the stale-directory branch above.
-        // Its branch survives, so that creation attaches to it, and still
-        // reports the base while the branch sits at the start point
-        // (`attachesAtStartPoint`).
-        if (options?.signal?.aborted) {
-          console.log(`[INIT-SCRIPT] Post-worktree script stopped in ${worktreePath}: creation was aborted`);
-          throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');
-        }
-        console.error(`[INIT-SCRIPT] Post-worktree script failed in ${worktreePath}:`, error);
-        throw withPathLengthCause(error, worktreePath);
-      } finally {
-        clearInterval(heartbeat);
-      }
-    }
+    logCreateStep('configure', configureStartedAt);
 
     // `branchExists` took the no-start-point form of `worktree add` above, so
     // `baseBranch` describes a cut that never happened. Report nothing rather
@@ -1145,6 +1116,122 @@ export class WorktreeManager {
       worktreeFolder: folderName,
       baseBranch: branchExists && !attachesAtStartPoint ? null : baseBranch,
     };
+  }
+
+  /**
+   * Creation's SETUP phase: copy the configured files from the project root,
+   * link node_modules, then run the user's Post-Worktree Script, in a worktree
+   * `createWorktree` just made.
+   *
+   * Runs OUTSIDE `withLock`. None of it touches `.git` state on Kangentic's
+   * behalf, and the script can take minutes (an `npm install`), so holding the
+   * project's git queue through it stalled every other task's creation, Done
+   * cleanup and auto-fetch. A script that runs git itself runs alongside that
+   * work; git's own lock files keep the two from corrupting each other. What
+   * keeps a removal or a second creation off this directory meanwhile is the
+   * creation registry (`worktree-creation-registry.ts`), which the caller holds
+   * for the whole creation.
+   *
+   * A failed copy or a failed script rejects; the caller records nothing, so
+   * the next creation at this path clears the half-made worktree. An abort
+   * rejects with an AbortError (see the script's catch below).
+   */
+  async setUpWorktree(
+    worktreePath: string,
+    setup: WorktreeSetup,
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
+  ): Promise<void> {
+    options?.signal?.throwIfAborted();
+
+    // Copy specified files into the worktree (skip .claude/ entries --
+    // sparse-checkout keeps .claude/ but excludes commands/,
+    // and hooks are delivered via --settings flag pointing to session directory).
+    // Async fs so the per-file copy loop yields the event loop between files
+    // instead of blocking it: a busy main process otherwise bunches the spawn
+    // progress IPC pushes, which then land as one burst on the renderer.
+    const copyStartedAt = Date.now();
+    let copiedCount = 0;
+    for (const file of setup.copyFiles) {
+      if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;
+      const src = path.join(this.projectPath, file);
+      const dest = path.join(worktreePath, file);
+      try {
+        await fs.promises.access(src);
+      } catch {
+        continue; // Source does not exist -- nothing to copy.
+      }
+      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+      await fs.promises.copyFile(src, dest);
+      copiedCount++;
+    }
+    logCreateStep('copy-files', copyStartedAt, ` (files=${copiedCount})`);
+    options?.signal?.throwIfAborted();
+
+    // Link node_modules from root so worktree agents can run typecheck/test
+    // without a slow npm install. Non-fatal if it fails. Linking is the default
+    // (undefined/true link); only an explicit `false` skips it, e.g. so an
+    // initScript install can own the worktree's deps instead of sharing root's.
+    const shouldLinkNodeModules = setup.linkNodeModules ?? true;
+    if (shouldLinkNodeModules) {
+      const linkStartedAt = Date.now();
+      await linkNodeModules(worktreePath, this.projectPath);
+      logCreateStep('link-node-modules', linkStartedAt);
+    }
+    options?.signal?.throwIfAborted();
+
+    // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
+    // copied files and the linked (or deliberately absent) node_modules. A
+    // non-zero exit or timeout is FATAL: it rejects the setup, failing the task
+    // move / agent spawn, exactly like a failed copyFile above. An abort (a
+    // superseding move, a cancelled spawn, shutdown) rejects with an AbortError
+    // instead, see the catch below.
+    const initScript = setup.initScript?.trim();
+    if (initScript) {
+      options?.onProgress?.('init-script');
+      // npm install can take minutes; re-emit the phase so the card label
+      // survives the 120s spawn-progress TTL during a long run. An abort stops
+      // it at once: the script's tree takes up to a few seconds to die after
+      // one, and a tick then would put "Running setup script..." back over
+      // the label of the move that superseded this one.
+      const heartbeat = setInterval(() => options?.onProgress?.('init-script'), INIT_SCRIPT_PROGRESS_HEARTBEAT_MS);
+      const stopHeartbeat = () => clearInterval(heartbeat);
+      options?.signal?.addEventListener('abort', stopHeartbeat, { once: true });
+      const scriptStartedAt = Date.now();
+      try {
+        console.log(`[INIT-SCRIPT] Running post-worktree script in ${worktreePath}: ${initScript}`);
+        const { stdout, stderr } = await runInitScript(initScript, worktreePath, {
+          timeoutMs: INIT_SCRIPT_TIMEOUT_MS,
+          signal: options?.signal,
+        });
+        const elapsedMs = Date.now() - scriptStartedAt;
+        if (stdout.trim()) console.log(`[INIT-SCRIPT] stdout:\n${stdout.trim()}`);
+        if (stderr.trim()) console.log(`[INIT-SCRIPT] stderr:\n${stderr.trim()}`);
+        console.log(`[INIT-SCRIPT] Post-worktree script completed in ${elapsedMs}ms`);
+        logCreateStep('init-script', scriptStartedAt);
+      } catch (error) {
+        const elapsedMs = Date.now() - scriptStartedAt;
+        // An abort is not a failure. Every caller skips its failure handling
+        // for an AbortError, and task-move's failure handling queues a stale
+        // cleanup behind the per-project git lock. The superseding move's own
+        // create job is usually queued there first, so the cleanup used to run
+        // after it and delete the worktree it had just made, auto-generated
+        // branch included (reproduced twice in /preview). The half-made
+        // worktree left here is never recorded, so the next creation at this
+        // path clears its directory through `createWorktree`'s stale-directory
+        // branch. Its branch survives, so that creation attaches to it, and
+        // still reports the base while the branch sits at the start point
+        // (`attachesAtStartPoint`).
+        if (options?.signal?.aborted) {
+          console.log(`[INIT-SCRIPT] Post-worktree script stopped in ${worktreePath} after ${elapsedMs}ms: creation was aborted`);
+          throw new DOMException('Worktree creation was aborted during the post-worktree script', 'AbortError');
+        }
+        console.error(`[INIT-SCRIPT] Post-worktree script failed in ${worktreePath} after ${elapsedMs}ms:`, error);
+        throw withPathLengthCause(error, worktreePath);
+      } finally {
+        stopHeartbeat();
+        options?.signal?.removeEventListener('abort', stopHeartbeat);
+      }
+    }
   }
 
   /** True when local branch `branchName` and `startPoint` name the same commit. Never rejects. */
@@ -1229,9 +1316,20 @@ export class WorktreeManager {
 
   private async removeWorktreeInternal(
     worktreePath: string,
-    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
+    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
   ): Promise<WorktreeRemovalOutcome> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
+
+    // A creation still in flight here (its setup script runs outside the git
+    // queue) owns the directory: refuse rather than delete a worktree that is
+    // being set up, and never wait, since this runs inside the queue. Every
+    // caller already handles a false outcome as "could not remove". The one
+    // removal a creation may make while it holds the path is its own
+    // stale-directory clear.
+    if (!options?.ownCreation && isWorktreeCreationInFlight(worktreePath)) {
+      console.warn(`[WORKTREE] remove skipped: ${worktreePath} (a creation is still setting it up)`);
+      return { removed: false, timedOut: false, holders: [] };
+    }
 
     // Release our own OS handles under this path first. Deliberately ahead of
     // the existsSync bail: a path that is ALREADY gone is exactly the case
@@ -1324,7 +1422,7 @@ export class WorktreeManager {
     timeoutMs: number,
     deadline?: number,
   ): Promise<{ removed: boolean; timedOut: boolean }> {
-    await prepareWorktreeForRemoval(worktreePath, profile, deadline);
+    await clearWorktreeNodeModules(worktreePath, profile, deadline);
 
     const gitStartedAt = Date.now();
     try {
@@ -1554,11 +1652,30 @@ export function parseWorktreeBranches(porcelain: string): Map<string, string> {
  * Does NOT scan or kill processes: the orphaned-pinner reap is deferred to
  * `removeWorktree`'s failure path so a clean Done-move (the common case) pays no
  * process-scan cost. Idempotent (node_modules removal no-ops on ENOENT), so it
- * is correct to call this before the lock AND have `removeWorktree` call it again
- * inside each removal attempt. Never throws (removeNodeModulesPath swallows its
- * own errors). The junction guard in `removeNodeModulesPath` is load-bearing.
+ * is correct to call this before the lock AND have `removeWorktree` clear
+ * node_modules again inside each removal attempt. Never throws
+ * (removeNodeModulesPath swallows its own errors). The junction guard in
+ * `removeNodeModulesPath` is load-bearing.
+ *
+ * Waits first for a creation still in flight at this path
+ * (`worktree-creation-registry.ts`): its setup script runs outside the git queue
+ * and may still be writing here. A move aborts its task's creation before it
+ * cleans up, so that wait is as long as the script's process tree takes to die.
  */
 export async function prepareWorktreeForRemoval(
+  worktreePath: string,
+  profile: WorktreeRemovalProfile,
+  deadline?: number,
+): Promise<void> {
+  const waitStartedAt = Date.now();
+  if (await waitForWorktreeCreation(worktreePath)) {
+    console.log(`[WORKTREE] remove step=creation-wait done in ${Date.now() - waitStartedAt}ms: ${worktreePath}`);
+  }
+  await clearWorktreeNodeModules(worktreePath, profile, deadline);
+}
+
+/** The node_modules step of a removal, without `prepareWorktreeForRemoval`'s wait. */
+async function clearWorktreeNodeModules(
   worktreePath: string,
   profile: WorktreeRemovalProfile,
   deadline?: number,
@@ -1570,6 +1687,44 @@ export async function prepareWorktreeForRemoval(
     removeOptions: removalOptionsFor(profile, nodeModulesDeadline(deadline)),
   });
   console.log(`[WORKTREE] remove step=node-modules done in ${Date.now() - nodeModulesStartedAt}ms`);
+}
+
+/**
+ * Clear the node_modules of a stale directory a creation is about to replace,
+ * OUTSIDE the git queue. `createWorktree` clears a leftover directory at its
+ * path inside the queue, and a real node_modules there (an install an aborted
+ * creation left behind) took 15.8 s in one measured create job, holding every
+ * other git operation in the project for that long. Clearing it first leaves
+ * the in-queue removal only the checkout to delete.
+ *
+ * Runs only when a directory is at the path and `ensureWorktree`'s
+ * synchronous guards (`worktreeSkipBeforeBase`) would let it go on. A repo with
+ * no commits or an unresolvable base still gets here, since those checks need
+ * git; the node_modules it clears is one the next creation would clear anyway.
+ * The caller holds the path in the creation registry, so this never waits on
+ * it (it does not go through `prepareWorktreeForRemoval`, which would wait on
+ * its own creation). Its budget is NODE_MODULES_REMOVAL_BUDGET_MS, the
+ * in-queue step's cap: a superseding move and a Done move's removal both wait
+ * on the registry hold this runs inside. Reports the `creating-worktree` phase
+ * before it starts. Returns whether it found a stale directory. Never throws.
+ */
+export async function prepareStaleWorktreeForCreation(
+  task: { display_id: number; worktree_path: string | null; worktree_folder?: string | null; use_worktree?: number | null },
+  projectPath: string,
+  gitConfig: { worktreesEnabled: boolean },
+  onProgress?: (phase: string) => void,
+): Promise<boolean> {
+  if (worktreeSkipBeforeBase(task, projectPath, gitConfig.worktreesEnabled)) return false;
+  const worktreePath = taskWorktreePathFor(task, projectPath);
+  if (!fs.existsSync(worktreePath)) return false;
+
+  onProgress?.('creating-worktree');
+  const nodeModulesStartedAt = Date.now();
+  await removeNodeModulesPath(path.join(worktreePath, 'node_modules'), {
+    removeOptions: removalOptionsFor('thorough', removalDeadlineFor('thorough', NODE_MODULES_REMOVAL_BUDGET_MS)),
+  });
+  logCreateStep('stale-node-modules', nodeModulesStartedAt);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

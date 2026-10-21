@@ -84,6 +84,8 @@ vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
 import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+import { runWorktreeCreation, isWorktreeCreationInFlight } from '../../src/main/git/worktree-creation-registry';
+import { removeNodeModulesPath } from '../../src/main/git/node-modules-link';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -233,6 +235,85 @@ describe('pruneStaleResources -- async background cleanup', () => {
 
     // None should be removed -- all referenced
     expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it('preserves a worktree directory a creation is still setting up, which no task records yet', async () => {
+    // A worktree is recorded on its task only once its setup (the
+    // Post-Worktree Script) ends, and the script runs outside the git queue,
+    // so for the whole script the directory looks orphaned to this sweep.
+    // Without the `isWorktreeCreationInFlight` check in
+    // `pruneOrphanedDirectories` this directory is removed: the mtime defaults
+    // to a day old here, so the grace period does not save it.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+    const settingUpPath = path.join(WORKTREES_DIR, '42');
+    let finishCreation: () => void = () => undefined;
+    const creation = runWorktreeCreation(settingUpPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+
+    setupReaddir({
+      [WORKTREES_DIR]: [dirEntry('42'), dirEntry('stale-abcd1234')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    expect(mockRm).not.toHaveBeenCalledWith(settingUpPath, expect.anything());
+    expect(mockRm).toHaveBeenCalledWith(
+      path.join(WORKTREES_DIR, 'stale-abcd1234'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    finishCreation();
+    await creation;
+    logSpy.mockRestore();
+  });
+
+  it('preserves a worktree directory a creation claims during the node_modules removal, after the sweep began', async () => {
+    // The sweep asks `isReferenced` once up front, then again after the awaits
+    // (the stat, the slow node_modules removal) because a creation can claim the
+    // path while they run. Without the second ask, `removeWithRetry` deletes a
+    // directory whose setup script has just started. The hold is started from
+    // inside the node_modules removal, so it did not exist at the first ask.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+    const lateClaimedPath = path.join(WORKTREES_DIR, 'stale-abcd1234');
+    const otherOrphanPath = path.join(WORKTREES_DIR, 'other-orphan-5678');
+    let finishCreation: () => void = () => undefined;
+    let creation: Promise<void> = Promise.resolve();
+    vi.mocked(removeNodeModulesPath).mockImplementationOnce(async (targetPath: string) => {
+      if (targetPath !== path.join(lateClaimedPath, 'node_modules')) return;
+      creation = runWorktreeCreation(lateClaimedPath, undefined, () => new Promise<void>((resolve) => { finishCreation = resolve; }));
+    });
+
+    setupReaddir({
+      [WORKTREES_DIR]: [dirEntry('stale-abcd1234'), dirEntry('other-orphan-5678')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      // Nothing holds the path when the sweep starts.
+      expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(false);
+      await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+      await runWithTimers();
+
+      // The sweep reached the removal stage for the claimed directory, so the
+      // skip below is the second ask and not an earlier guard.
+      expect(removeNodeModulesPath).toHaveBeenCalledWith(path.join(lateClaimedPath, 'node_modules'));
+      expect(isWorktreeCreationInFlight(lateClaimedPath)).toBe(true);
+      expect(mockRm).not.toHaveBeenCalledWith(lateClaimedPath, expect.anything());
+      // The sweep carried on: the next orphan, which nothing claimed, is removed.
+      expect(mockRm).toHaveBeenCalledWith(
+        otherOrphanPath,
+        expect.objectContaining({ recursive: true, force: true }),
+      );
+    } finally {
+      finishCreation();
+      await creation;
+      vi.mocked(removeNodeModulesPath).mockReset();
+      logSpy.mockRestore();
+    }
   });
 
   it('preserves directories referenced by archived tasks', async () => {

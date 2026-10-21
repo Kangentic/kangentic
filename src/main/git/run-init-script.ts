@@ -3,7 +3,10 @@ import { spawnWithAbort, type SpawnWithAbortOptions } from './spawn-with-abort';
 /**
  * Generous wall-clock cap for a Post-Worktree init script (e.g. `npm install`).
  * Long enough for a cold dependency install, but bounded so a hung script
- * cannot hold the per-project git queue (WorktreeManager.withLock) forever.
+ * cannot hold its task's creation forever. The script runs outside the
+ * per-project git queue (`WorktreeManager.setUpWorktree`), so what it holds is
+ * that one task's spawn and any removal of its worktree path, never another
+ * task's git work.
  */
 export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
 
@@ -25,8 +28,10 @@ export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
  *
  * The shared spawnWithAbort lifecycle handles the wall-clock timeout, external
  * cancellation (a superseding move or app shutdown), drained stdio, and
- * single-settle. The signal-kill message does not assert a timeout cause, since
- * an external or OS signal is not necessarily a timeout.
+ * single-settle. An aborted script settles once its killed tree has closed (or
+ * after `TREE_EXIT_WAIT_MS`), not the moment the kill is sent. The signal-kill
+ * message does not assert a timeout cause, since an external or OS signal is
+ * not necessarily a timeout.
  *
  * Rejects on non-zero exit, kill-by-signal, or timeout/abort so the caller can
  * treat a failed init script as fatal.

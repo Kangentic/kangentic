@@ -1,11 +1,32 @@
 import path from 'node:path';
 import { slugify, computeAutoBranchName } from '../../shared/slugify';
+import { worktreeFolderFromPath } from '../../shared/worktree-folder';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { Task } from '../../shared/types';
 
 /** The directory every one of a project's worktrees lives directly inside. */
 export function worktreesRootFor(projectPath: string): string {
   return path.join(projectPath, '.kangentic', 'worktrees');
+}
+
+/**
+ * The folder a task's worktree is created in: the folder it has always used,
+ * else the one its stored path names (belt and braces for a row the migration
+ * missed), else `String(display_id)` for its first creation. See
+ * `WorktreeManager.createWorktree` for why this must never change once chosen.
+ */
+export function taskWorktreeFolderFor(
+  task: Pick<Task, 'display_id'> & Partial<Pick<Task, 'worktree_path' | 'worktree_folder'>>,
+): string {
+  return task.worktree_folder ?? worktreeFolderFromPath(task.worktree_path) ?? String(task.display_id);
+}
+
+/** The path `createWorktree` creates a task's worktree at (`taskWorktreeFolderFor`). */
+export function taskWorktreePathFor(
+  task: Pick<Task, 'display_id'> & Partial<Pick<Task, 'worktree_path' | 'worktree_folder'>>,
+  projectPath: string,
+): string {
+  return path.join(worktreesRootFor(projectPath), taskWorktreeFolderFor(task));
 }
 
 /**

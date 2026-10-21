@@ -7,6 +7,7 @@ import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import type { TaskMoveRepository } from '../db/repositories/task-move-repository';
 import { SessionManager } from '../pty/session-manager';
 import { candidateWorktreePathsFor, legacyAutoBranchNameFor } from '../git/task-worktree-folder';
+import { isWorktreeCreationInFlight } from '../git/worktree-creation-registry';
 import { removeNodeModulesPath } from '../git/node-modules-link';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
@@ -408,6 +409,16 @@ async function cleanBacklogTaskResources(
 
       if (!hasStaleDbFields && !hasStaleDirectory && !hasStaleBranch) return 'skipped';
 
+      // A creation still holds one of this task's paths. Its setup script runs
+      // outside the git queue, and the worktree, branch and row it is about to
+      // record are its own, so leave the whole task alone, as the move-failure
+      // stale cleanup does. A later project open cleans what is still stale.
+      const heldPath = candidateWorktreePaths.find(isWorktreeCreationInFlight);
+      if (heldPath) {
+        console.log(`[RESOURCE_CLEANUP] Skipped task "${task.title}" (${shortId}): a creation is still setting up ${heldPath}`);
+        return 'skipped';
+      }
+
       console.log(`[RESOURCE_CLEANUP] Cleaning stale resources for task "${task.title}" (${shortId})`);
 
       // Kill PTY session if alive
@@ -421,10 +432,18 @@ async function cleanBacklogTaskResources(
       // Delete session DB records
       sessionRepo.deleteByTaskId(task.id);
 
-      // Remove worktree directories
+      // Remove worktree directories. Never one a creation holds: this pass takes
+      // neither the registry nor the git queue. Checked again after the slow
+      // node_modules step, since a creation that takes no task lock (a branch
+      // switch) can start during it; that stops the rest of the task's cleanup
+      // too, branches and row included, as the check above does.
       for (const worktreePath of candidateWorktreePaths) {
         if (!fs.existsSync(worktreePath)) continue;
         await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
+        if (isWorktreeCreationInFlight(worktreePath)) {
+          console.log(`[RESOURCE_CLEANUP] Stopped cleaning task "${task.title}" (${shortId}): a creation started setting up ${worktreePath}`);
+          return 'skipped';
+        }
         await removeWorktreeDirectory(worktreePath, projectPath);
       }
 
@@ -611,13 +630,15 @@ export async function pruneOrphanedDirectories(
   const kangenticDir = path.join(projectPath, '.kangentic');
   const allTasks = [...taskRepo.list(), ...taskRepo.listArchived()];
 
-  // Worktree directories: match by full path
+  // Worktree directories: match by full path. A worktree is recorded on its
+  // task only once its setup (the Post-Worktree Script) ends, so one a
+  // creation still holds counts as referenced too.
   const referencedWorktrees = new Set(
     allTasks.map(task => task.worktree_path).filter((worktreePath): worktreePath is string => Boolean(worktreePath)),
   );
   await pruneDirectory(
     path.join(kangenticDir, 'worktrees'),
-    (dirPath) => referencedWorktrees.has(dirPath),
+    (dirPath) => referencedWorktrees.has(dirPath) || isWorktreeCreationInFlight(dirPath),
     'worktree',
     true, // has junctions
   );
@@ -707,6 +728,12 @@ async function pruneDirectory(
 
     if (hasJunctions) {
       await removeNodeModulesPath(path.join(dirPath, 'node_modules'));
+    }
+    // Asked again after the awaits above: a worktree creation can claim the
+    // path while they run.
+    if (isReferenced(dirPath, entry.name)) {
+      console.log(`[RESOURCE_CLEANUP] Kept ${label} directory referenced since the sweep began: ${entry.name}`);
+      continue;
     }
 
     try {
