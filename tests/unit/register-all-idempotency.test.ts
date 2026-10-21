@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 import { IPC } from '../../src/shared/ipc-channels';
 import type { RendererErrorContext } from '../../src/shared/types';
+import type { IdentityTreeStop } from '../../src/main/git/zombie-reaper';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
 
@@ -67,9 +68,19 @@ vi.mock('../../src/main/pty/session-manager', () => {
       setEarlierRunsSource = vi.fn();
       // The pty-host-lost listener files each lost session under its project.
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
+      // The Stop registerAllIpc hands the worktree reaper, by pid and creation time.
+      stopProcessByCreationTime = vi.fn(async (_pid: number, _startedAtMs: number) => 'stopped' as const);
     },
   };
 });
+// registerAllIpc registers the pty host's creation-time Stop with the worktree
+// reaper. The reaper stays real (only this one export is replaced) so the
+// registration itself is what the wiring describe below reads.
+const setIdentityTreeStopSpy = vi.fn();
+vi.mock('../../src/main/git/zombie-reaper', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/zombie-reaper')>()),
+  setIdentityTreeStop: setIdentityTreeStopSpy,
+}));
 // The real transport forks the pty host utility process.
 vi.mock('../../src/main/pty/host/utility-pty-host-transport', () => ({
   UtilityPtyHostTransport: class { start = vi.fn(); },
@@ -739,6 +750,43 @@ describe('registerAllIpc idempotency', () => {
       sessionManager.emit('pty-host-restarted');
 
       expect(recoveries()).toHaveLength(0);
+    }, 30000);
+  });
+
+  describe('worktree reap identity stop wiring', () => {
+    // register-all.ts is the only place the worktree reaper is told how to stop
+    // a process by identity. Without that registration a Windows reap kills by
+    // the bare pid its scan read, which Windows may have handed to a stranger by
+    // then. Red-green: delete the setIdentityTreeStop call and both tests go
+    // red at the registration check; swap the two arguments and the first goes
+    // red; return something other than the host's answer and the second does.
+    async function startWiring() {
+      const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+      registerAllIpc(makeMockWindow(1));
+      expect(setIdentityTreeStopSpy, 'registerAllIpc must register a stop with the worktree reaper').toHaveBeenCalledTimes(1);
+      const registeredStop = setIdentityTreeStopSpy.mock.calls[0][0] as IdentityTreeStop;
+      return { registeredStop, sessionManager: getSessionManager() };
+    }
+
+    it('registers a stop at startup that reaches the pty host with the pid, then the creation time', async () => {
+      const { registeredStop, sessionManager } = await startWiring();
+      expect(sessionManager.stopProcessByCreationTime).not.toHaveBeenCalled();
+
+      const outcome = await registeredStop({ pid: 4242, startedAtMs: 1_792_057_142_367 });
+
+      expect(sessionManager.stopProcessByCreationTime).toHaveBeenCalledTimes(1);
+      expect(sessionManager.stopProcessByCreationTime).toHaveBeenCalledWith(4242, 1_792_057_142_367);
+      expect(outcome).toBe('stopped');
+    }, 30000);
+
+    it('hands back the host\'s answer as it came, so a stop the host could not make is never reported as done', async () => {
+      const { registeredStop, sessionManager } = await startWiring();
+      vi.mocked(sessionManager.stopProcessByCreationTime)
+        .mockResolvedValueOnce('failed')
+        .mockResolvedValueOnce('ended');
+
+      expect(await registeredStop({ pid: 11, startedAtMs: 1_000 })).toBe('failed');
+      expect(await registeredStop({ pid: 12, startedAtMs: 2_000 })).toBe('ended');
     }, 30000);
   });
 });
