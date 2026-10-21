@@ -185,7 +185,7 @@ Priority ladder: `permission > tool > subagent > background-shell > turn-active 
 
 ## EventType reference
 
-The 26 `EventType` values, defined in `src/shared/types.ts`. All but the last are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
+The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_approved` are written to `events.jsonl`: by `event-bridge.js`, except `plan_approval_sent` and `tool_approval_sent`, which `plan-approval-bridge.js` writes. Main's plan approval gate emits `plan_auto_approved` and never writes it to the file. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
 
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
@@ -215,6 +215,7 @@ The 26 `EventType` values, defined in `src/shared/types.ts`. All but the last ar
 | `ToolSelectionStart` | `tool_selection_start` | log-only | Agent is choosing the next tool |
 | `PlanApprovalSent` | `plan_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when it answers the plan prompt, before the agent acts on the answer, so it proves only that the answer was sent. `detail` says where the task goes. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
 | `PlanAutoApproved` | `plan_auto_approved` | log-only | Emitted by main's plan approval gate, never written to the file, right after the plan exit's `tool_end` that follows a `plan_approval_sent`. The Activity log draws it as a "Plan approved automatically" badge with `detail` "Moved to <column>" or "Stayed in <column>", and the engine re-stamps `turnStartedAt` on it |
+| `ToolApprovalSent` | `tool_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when, while a plan is approved automatically, it answers a plan-mode prompt for a tool the session's allow rules name. `tool` names it. Like `plan_approval_sent`, it proves only that the answer was sent. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
 
 "log-only" means the event is recorded for the activity feed and may update internal counters, but does not on its own change `ActivityState`. State changes only occur through the predicate (see below) or via direct `Idle` / `Interrupted` events.
 
@@ -246,8 +247,30 @@ the engine or any detector reads an event:
   nothing more is held, so the exit's last flush never releases a permission idle after the
   session's end.
 
-Only an idle whose tool is the plan exit is held or dropped. A question the agent asks the user, or
-any other permission prompt, passes untouched.
+A question the agent asks the user passes untouched.
+
+The same hook answers a plan-mode prompt for a tool the session's allow rules name, and writes
+`tool_approval_sent` with the tool's name (task #870). Claude's plan mode asks about an MCP tool
+with no `readOnlyHint` even when an allow rule names it. Its permission idle races that marker the same way: on
+Claude Code 2.1.306 the approving hook started 5 to 114 ms after the catch-all one. So, for a
+session whose decision approves plans and a tool its adapter's `mayApprovePlanTool` names (for
+Claude, any MCP tool but Kangentic's own):
+
+- The idle is held for `TOOL_APPROVAL_WAIT_MS` (1 s) for the marker, and released then if none
+  came. A prompt the hook left alone shows that much late.
+- A matching marker, before the idle (within `TOOL_APPROVAL_MARKER_WINDOW_MS`, 5 s) or after it,
+  holds the idle until the tool's `tool_end` (a failed call's included) or its `interrupted`,
+  which drops it. After `TOOL_APPROVAL_HOLD_MS` (30 s)
+  it is released late instead, so a tool the CLI still prompts for shows as needing you within a
+  minute. A tool that really runs longer reads as needing you from then until its `tool_end`.
+- Several can wait at once, as when a subagent calls the tool its parent does. Markers, idles and
+  `tool_end`s pair with the oldest entry of the same tool. The agent's end drops them all.
+- The turn's end drops them all too: a Stop idle, a `turn_failed`, an `interrupted` that names no
+  tool, or a new prompt. An idle released after the turn ended would mark an idle session as
+  needing you.
+
+A running automatic workflow approves plans in every column of a task's route, so a tool prompt
+in such a task shows up to 1 s late there too; the hook itself answers only in plan mode.
 
 ### Idle hints (waiting-for-input notifications)
 

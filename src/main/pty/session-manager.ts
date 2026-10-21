@@ -771,6 +771,8 @@ export class SessionManager extends EventEmitter {
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
       approvesPlanAutomatically: (sessionId) => this.planApprovalLookup?.(sessionId) ?? false,
+      mayApprovePlanTool: (sessionId, toolName) =>
+        this.registry.get(sessionId)?.agentParser?.mayApprovePlanTool?.(toolName) === true,
     }, {
       activityEngineOptions: this.activityEngineOptions,
       // The background-shell watcher's process table comes from the pty host

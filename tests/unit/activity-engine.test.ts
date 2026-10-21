@@ -3477,13 +3477,15 @@ describe('ActivityEngine', () => {
   // Only a Prompt precedes it, because a pending tool would hand the hold to the
   // 5 s stuck-pending-tools watchdog instead.
   //
-  // Red trigger: remove EventType.PlanApprovalSent (or PlanAutoApproved) from
-  // LOG_ONLY_EVENTS in engine/shapes.ts. The matching case then sees the session
-  // still thinking past the deadline and staleThinking at 0.
+  // Red trigger: remove EventType.PlanApprovalSent (or PlanAutoApproved, or
+  // ToolApprovalSent) from LOG_ONLY_EVENTS in engine/shapes.ts. The matching
+  // case then sees the session still thinking past the deadline and
+  // staleThinking at 0.
   describe('plan approval markers are log-only (they leave the stale-thinking anchor alone)', () => {
     it.each([
       EventType.PlanApprovalSent,
       EventType.PlanAutoApproved,
+      EventType.ToolApprovalSent,
     ])('%s does not refresh the anchor, so the watchdog still fires at the original deadline', (markerType) => {
       engine.initSession(SESSION_ID);
       engine.processEvent(SESSION_ID, event(EventType.Prompt));

@@ -5,6 +5,7 @@ import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPl
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
+import { CLAUDE_PLAN_TOOL_APPROVAL_MATCHER } from './plan-tool-approval';
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -69,6 +70,13 @@ export interface BuildHooksOptions {
    */
   planApprovalCommand?: string;
   /**
+   * The same bridge built with the session's plan tool approval spec
+   * (`claudePlanToolApprovalSpec`), registered on PermissionRequest with the
+   * matcher `CLAUDE_PLAN_TOOL_APPROVAL_MATCHER`. Passed only when the session's
+   * allow rules name an MCP tool it may answer (`planToolApprovalRules`).
+   */
+  planToolApprovalCommand?: string;
+  /**
    * The background shell hint hook's command (`buildBackgroundShellHintCommand`
    * with `CLAUDE_BACKGROUND_SHELL_HINT_SPEC`), registered on PostToolUse with
    * the matcher `Bash|PowerShell`. Passed only for a session whose MCP URL names
@@ -85,7 +93,7 @@ export interface BuildHooksOptions {
  */
 export const CLAUDE_BRIDGE_SHELL: HookShell = 'sh-or-powershell';
 
-/** Claude's plan exit tool, the only prompt the plan approval hook answers. */
+/** Claude's plan exit tool, the only non-MCP prompt the plan approval hook answers. */
 const CLAUDE_PLAN_EXIT_TOOL = 'ExitPlanMode';
 
 /**
@@ -380,6 +388,9 @@ export function buildHooks(
         extractTool('tool_name')) }] },
       ...(options.planApprovalCommand
         ? [{ matcher: CLAUDE_PLAN_EXIT_TOOL, hooks: [{ type: 'command', command: options.planApprovalCommand }] }]
+        : []),
+      ...(options.planToolApprovalCommand
+        ? [{ matcher: CLAUDE_PLAN_TOOL_APPROVAL_MATCHER, hooks: [{ type: 'command', command: options.planToolApprovalCommand }] }]
         : []),
     ],
     [H.SessionStart]: [

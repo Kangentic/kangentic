@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /**
- * Plan Approval Bridge - answers an agent CLI's plan approval prompt, and
- * nothing else, when Kangentic's decision for the session says to.
+ * Plan Approval Bridge - answers an agent CLI's plan approval prompt when
+ * Kangentic's decision for the session says to, and, while it does, a
+ * permission prompt for a tool the project allows that the CLI's plan mode
+ * asks about anyway. Nothing else.
  *
  * An adapter that declares `supportsPlanAutoApproval` registers this script as
  * a hook on its plan approval prompt, on every spawn, whatever the column's
  * setting. The decision file decides at run time, so a column or workflow
  * switched to Automatic (or back to Manual) while the agent plans is honored
- * without the hooks reloading.
+ * without the hooks reloading. An adapter may register it a second time, with a
+ * tool spec, on its tool permission prompts (`mayApprovePlanTool`, task #870).
  *
  * Usage:
  *   node plan-approval-bridge.js <decision-path> <events-path> <spec>
@@ -15,12 +18,13 @@
  * <decision-path>  `<session dir>/plan-approval.json`, written by main
  *                  (`src/main/plan-approval/plan-approval-writer.ts`):
  *                  { approve: boolean, mode: string, detail: string | null }
- * <events-path>    the session's events.jsonl. An approval appends one
- *                  `plan_approval_sent` line, which tells the activity
- *                  pipeline to drop the permission idle the same prompt raised.
+ * <events-path>    the session's events.jsonl. An approval appends one marker
+ *                  line, `plan_approval_sent` or `tool_approval_sent`, which
+ *                  tells the activity pipeline to drop the permission idle the
+ *                  same prompt raised.
  * <spec>           base64(JSON) from `buildPlanApprovalCommand`
  *                  (`src/main/agent/shared/plan-approval-hook.ts`). All agent
- *                  knowledge travels here, never in this file:
+ *                  knowledge travels here, never in this file. The plan spec:
  *                  {
  *                    toolField: string,   stdin field holding the tool name
  *                    tool: string,        the plan exit tool's name
@@ -31,10 +35,21 @@
  *                                         "{{mode}}" the decision's mode.
  *                    modes?: object       Kangentic mode -> the CLI's name
  *                  }
+ *                  The tool spec, told apart by its `tools` and `prefixes`:
+ *                  {
+ *                    toolField: string,   stdin field holding the tool name
+ *                    modeField: string,   stdin field holding the session's mode
+ *                    modes: string[],     the modes it answers in
+ *                    tools: string[],     tools answered by exact name
+ *                    prefixes: string[],  tools answered by name prefix
+ *                    excludedTools: string[], excludedPrefixes: string[],
+ *                                         never answered, whatever the above say
+ *                    reply: object        printed to approve, as it is
+ *                  }
  *
- * Fails closed: a stdin that is not this tool, a missing or unreadable
- * decision, `approve: false`, or any error prints NOTHING and exits 0, so the
- * CLI shows its own approval dialog and the user decides. Diagnostics go to
+ * Fails closed: a stdin that is not a tool the spec names, a missing or
+ * unreadable decision, `approve: false`, or any error prints NOTHING and exits
+ * 0, so the CLI shows its own dialog and the user decides. Diagnostics go to
  * the sibling `plan-approval-bridge.error.log`, never to stdout, which the CLI
  * parses as the hook's answer.
  */
@@ -71,6 +86,58 @@ function fill(template, toolInput, mode) {
   return template;
 }
 
+/** The session's decision when it approves the plan, or null. */
+function readApprovingDecision() {
+  let decision;
+  try {
+    decision = readJson(decisionPath);
+  } catch {
+    // No decision yet (a session spawned before this build, or main has not
+    // written one): the user approves, as they always did.
+    return null;
+  }
+  return decision && decision.approve === true ? decision : null;
+}
+
+/**
+ * Approve: the marker first, then the reply. If the marker cannot be written
+ * the pipeline would show the prompt as "needs you" for a call the CLI runs,
+ * so the throw reaches the caller's catch and nothing is printed.
+ */
+function sendApproval(marker, reply) {
+  if (eventsPath) fs.appendFileSync(eventsPath, JSON.stringify(marker) + '\n');
+  process.stdout.write(reply);
+}
+
+/** The tool spec carries `tools` and `prefixes`; the plan spec carries neither. */
+function isToolSpec(spec) {
+  return Array.isArray(spec.tools) || Array.isArray(spec.prefixes);
+}
+
+function stringList(value) {
+  return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
+}
+
+/** Whether a tool spec answers this tool: named, and not excluded. */
+function toolSpecNames(spec, tool) {
+  if (typeof tool !== 'string') return false;
+  if (stringList(spec.excludedTools).includes(tool)) return false;
+  if (stringList(spec.excludedPrefixes).some((prefix) => tool.startsWith(prefix))) return false;
+  return stringList(spec.tools).includes(tool) || stringList(spec.prefixes).some((prefix) => tool.startsWith(prefix));
+}
+
+/**
+ * The tool spec: answer a prompt for a tool the spec names, in a mode it
+ * names, while the decision approves the plan. The reply is printed as it is.
+ */
+function answerToolPrompt(spec, context) {
+  const tool = context[spec.toolField];
+  if (!toolSpecNames(spec, tool)) return;
+  if (!stringList(spec.modes).includes(context[spec.modeField])) return;
+  if (!readApprovingDecision()) return;
+  sendApproval({ ts: Date.now(), type: 'tool_approval_sent', tool }, JSON.stringify(spec.reply));
+}
+
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => { input += chunk; });
@@ -89,17 +156,15 @@ process.stdin.on('end', () => {
     } catch {
       return;
     }
-    if (!context || context[spec.toolField] !== spec.tool) return;
-
-    let decision;
-    try {
-      decision = readJson(decisionPath);
-    } catch {
-      // No decision yet (a session spawned before this build, or main has not
-      // written one): the user approves, as they always did.
+    if (!context || typeof context !== 'object') return;
+    if (isToolSpec(spec)) {
+      answerToolPrompt(spec, context);
       return;
     }
-    if (!decision || decision.approve !== true || typeof decision.mode !== 'string') return;
+    if (context[spec.toolField] !== spec.tool) return;
+
+    const decision = readApprovingDecision();
+    if (!decision || typeof decision.mode !== 'string') return;
 
     const toolInput = context[spec.inputField];
     if (toolInput === undefined) {
@@ -109,15 +174,9 @@ process.stdin.on('end', () => {
     const mode = spec.modes && typeof spec.modes[decision.mode] === 'string' ? spec.modes[decision.mode] : decision.mode;
     const reply = JSON.stringify(fill(spec.reply, toolInput, mode));
 
-    // The marker first: if it cannot be written the pipeline would show the
-    // prompt as "needs you" for a plan that was approved, so approve only when
-    // it lands.
-    if (eventsPath) {
-      const marker = { ts: Date.now(), type: 'plan_approval_sent' };
-      if (typeof decision.detail === 'string') marker.detail = decision.detail.slice(0, 200);
-      fs.appendFileSync(eventsPath, JSON.stringify(marker) + '\n');
-    }
-    process.stdout.write(reply);
+    const marker = { ts: Date.now(), type: 'plan_approval_sent' };
+    if (typeof decision.detail === 'string') marker.detail = decision.detail.slice(0, 200);
+    sendApproval(marker, reply);
   } catch (error) {
     logError(error && error.message ? error.message : String(error));
   }

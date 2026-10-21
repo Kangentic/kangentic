@@ -937,11 +937,12 @@ export const LOG_ONLY_EVENTS = new Set<EventType>([
   EventType.ModelStart,
   EventType.ModelEnd,
   EventType.ToolSelectionStart,
-  // Plan approval bookkeeping. The marker is written by a hook while the turn
-  // is held on the prompt, and the auto-approval follows the plan exit's
-  // ToolEnd, which already refreshed the anchor. Neither is new work.
+  // Plan approval bookkeeping. The markers are written by a hook while the
+  // turn is held on a prompt, and the auto-approval follows the plan exit's
+  // ToolEnd, which already refreshed the anchor. None is new work.
   EventType.PlanApprovalSent,
   EventType.PlanAutoApproved,
+  EventType.ToolApprovalSent,
   // EventType.ToolEnd intentionally NOT here. A `PostToolUse` hook proves
   // the agent is alive, so it refreshes `lastSignalAt`. Re-adding it
   // reintroduces the false-idle-after-long-foreground-tool bug: a single

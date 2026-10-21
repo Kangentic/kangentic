@@ -1972,15 +1972,22 @@ describe('Merged Settings -- Local Settings Merge', () => {
     // decides at run time, so it must name THIS session's directory.
     const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', 'plan-sess');
     const builder = new CommandBuilder();
-    builder.buildClaudeCommand({
-      cliPath: '/usr/bin/claude',
-      taskId: 'plan-task',
-      cwd: tmpDir,
-      permissionMode: 'plan',
-      sessionId: 'agent-plan-sess',
-      statusOutputPath: path.join(sessionDir, 'status.json'),
-      eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
-    });
+    // A home with no settings: an MCP allow rule in the developer's own would
+    // add the tool approval entry, which runs the same bridge.
+    vi.spyOn(os, 'homedir').mockReturnValue(tmpDir);
+    try {
+      builder.buildClaudeCommand({
+        cliPath: '/usr/bin/claude',
+        taskId: 'plan-task',
+        cwd: tmpDir,
+        permissionMode: 'plan',
+        sessionId: 'agent-plan-sess',
+        statusOutputPath: path.join(sessionDir, 'status.json'),
+        eventsOutputPath: path.join(sessionDir, 'events.jsonl'),
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
 
     const merged = JSON.parse(fs.readFileSync(path.join(sessionDir, 'settings.json'), 'utf-8')) as {
       hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string }> }>>;

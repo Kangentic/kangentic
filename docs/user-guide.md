@@ -687,7 +687,9 @@ judges whether that column's work is done and the agent is not waiting on you. D
 to the next column on its route, and the last one to Done; not done leaves it where it is. A task
 that finishes a plan moves on when its plan is approved. Who approves is the workflow's **Plan
 approval**, in the inspector with no task selected: **Automatic** has Kangentic approve every plan
-in the workflow (a question the agent asks still waits), and **Manual** leaves each one to you.
+in the workflow, and **Manual** leaves each one to you. While a plan is approved automatically, an
+MCP tool your Claude allow rules name, in the project's settings or your own, runs without a prompt during planning, even one Claude's
+plan mode would ask about. A question the agent asks, and any tool you have not allowed, still wait.
 Until you pick, it shows what the plan columns on its tasks' routes give together: Automatic only
 when every one is set to Automatic and runs an agent Kangentic can approve plans for, Manual
 otherwise. A pick holds from then on. When no plan column on the routes runs an agent Kangentic can
@@ -1585,7 +1587,7 @@ Terminal:
 
 ## Tips
 
-- **Plan mode workflow:** Use a Planning column with Permission Mode set to Plan and **After Plan Mode** pointing to your Executing column. The agent plans first, then auto-moves to execution when the plan is approved. Set **Plan approval** to Automatic to have Kangentic approve each plan, so the task moves on without waiting for you.
+- **Plan mode workflow:** Use a Planning column with Permission Mode set to Plan and **After Plan Mode** pointing to your Executing column. The agent plans first, then auto-moves to execution when the plan is approved. Set **Plan approval** to Automatic to have Kangentic approve each plan, so the task moves on without waiting for you. With it, MCP tools your Claude allow rules name also run while the agent plans, without a prompt.
 - **Column messages:** Add a **Send message to agent** automation on a Code Review column to automatically ask the agent to review its own code when tasks arrive. Prose works: "Review the diff on this branch and fix what you would change."
 - **Concurrent agents:** Increase `maxConcurrentSessions` to run more agents in parallel. Each needs its own worktree to avoid conflicts.
 - **Resume from Done:** Unarchive a completed task and drag it back to an active column. Kangentic recreates the worktree from the preserved branch on the fly, and the agent picks up exactly where it left off. If the agent deleted that conversation in the meantime, it starts a new one from a recap instead (see Session Persistence).

@@ -820,7 +820,8 @@ export type SessionSpawnStrategy = 'create_or_resume' | 'always_spawn_new';
  * Who answers a plan column's plan approval prompt (Claude's ExitPlanMode).
  * - 'manual' (default): the user approves each plan in the agent's terminal.
  * - 'automatic': Kangentic approves it, for an agent that declares
- *   `supportsPlanAutoApproval`. Only the plan prompt is answered; a question the
+ *   `supportsPlanAutoApproval`. It answers the plan prompt and, in plan mode, a
+ *   prompt for another server's MCP tool the project allows; a question the
  *   agent asks the user always waits.
  * A task in a running workflow follows the workflow's value instead
  * (`Workflow.plan_approval`, see `src/shared/plan-approval.ts`).
@@ -2037,6 +2038,14 @@ export const EventType = {
    * the engine re-stamps the turn's start, as for a plan the user approved.
    */
   PlanAutoApproved: 'plan_auto_approved',
+  /**
+   * Kangentic's plan approval hook answered a permission prompt for a tool the
+   * project allows, which the agent's plan mode asks about anyway (task #870).
+   * `tool` names it. Written before the agent acts on the answer, like
+   * `plan_approval_sent`, so the activity pipeline can drop the permission idle
+   * the same prompt raised. Log-only and not rendered.
+   */
+  ToolApprovalSent: 'tool_approval_sent',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
 
@@ -2091,6 +2100,7 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.ToolSelectionStart]: null,
   [EventType.PlanApprovalSent]: null,
   [EventType.PlanAutoApproved]: null,
+  [EventType.ToolApprovalSent]: null,
 };
 
 // === Session Events (Claude Code Hooks → Activity Log) ===
@@ -5952,6 +5962,12 @@ export interface AgentParser {
    * in each state it can be in. See `AgentAdapter.consoleCloseIsGraceful`.
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
+  /**
+   * Optional: whether the agent's plan tool approval hook may answer a
+   * permission prompt for this tool. The activity gate waits for the hook's
+   * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.
+   */
+  mayApprovePlanTool?(toolName: string): boolean;
   /**
    * Optional: this agent reports the background commands it starts, so a
    * launch holds the session and the agent is offered

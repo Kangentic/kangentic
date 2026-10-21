@@ -9,6 +9,7 @@ import { peekModelPickerAliasIds } from './model-picker-probe';
 import { buildHooks, CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
+import { claudePlanToolApprovalSpec, planToolApprovalRules } from './plan-tool-approval';
 import { buildBackgroundShellHintCommand } from '../../shared/background-shell-hint-hook';
 import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
 import { quoteBridgePath } from '../../shared/hook-utils';
@@ -39,6 +40,9 @@ const STATUS_LINE_REFRESH_INTERVAL_SECONDS = 10;
  * Allow rules cover default/acceptEdits mode only. Plan mode does NOT honor
  * allow rules; plan-mode auto-approval of the read-only tools comes from
  * their `readOnlyHint` annotations (see src/main/agent/mcp-http/annotations.ts).
+ * While a plan is approved automatically, the plan approval hook answers a
+ * prompt for another server's tool these rules allow (plan-tool-approval.ts),
+ * but never for Kangentic's own: its mutating tools keep prompting.
  *
  * `--permission-mode auto` ALSO does not honor this list: auto mode runs an
  * entirely separate natural-language classifier (`autoMode.allow` /
@@ -153,22 +157,29 @@ export class CommandBuilder {
   private lastMcpConfigPath: string | null = null;
 
   /**
+   * The user's own `~/.claude/settings.json`, or an empty object when it is
+   * missing, unreadable or not a JSON object. Read fresh each spawn (small
+   * file, infrequent), so a change to it is honored on the next session.
+   */
+  private readUserSettings(): ClaudeSettings {
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf-8'));
+      return isPlainSettingsObject(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * The Claude TUI renderer the user chose in their global
    * `~/.claude/settings.json` (where Claude's `/tui` command persists the `tui`
-   * setting), or null when they have not chosen. Read fresh each spawn (small
-   * file, infrequent) so a `/tui` change is honored on the next session.
+   * setting), or null when they have not chosen, so a `/tui` change is honored
+   * on the next session.
    */
   private globalTuiChoice(): unknown {
-    try {
-      const globalSettingsPath = path.join(os.homedir(), '.claude', 'settings.json');
-      const parsedGlobalSettings = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8')) as Record<string, unknown>;
-      // Treat `tui: null` (a reset sentinel, or a hand-edited file) the same as an
-      // absent key: null is not a renderer choice.
-      return parsedGlobalSettings.tui ?? null;
-    } catch {
-      // No global settings file, or unreadable/invalid -> user has not chosen.
-      return null;
-    }
+    // Treat `tui: null` (a reset sentinel, or a hand-edited file) the same as an
+    // absent key: null is not a renderer choice.
+    return this.readUserSettings().tui ?? null;
   }
 
   /**
@@ -465,13 +476,20 @@ export class CommandBuilder {
       // in the session's own directory decides at run time, so a column switched
       // to Automatic while this session plans is honored with no hook reload.
       // Without a decision file it answers nothing and the dialog shows.
+      const planApprovalBridge = toForwardSlash(resolveBridgeScript('plan-approval-bridge'));
+      const decisionPath = toForwardSlash(planApprovalDecisionPath(path.dirname(options.statusOutputPath!)));
       const planApprovalCommand = buildPlanApprovalCommand(
-        CLAUDE_BRIDGE_SHELL,
-        toForwardSlash(resolveBridgeScript('plan-approval-bridge')),
-        toForwardSlash(planApprovalDecisionPath(path.dirname(options.statusOutputPath!))),
-        eventsPath,
-        CLAUDE_PLAN_APPROVAL_SPEC,
+        CLAUDE_BRIDGE_SHELL, planApprovalBridge, decisionPath, eventsPath, CLAUDE_PLAN_APPROVAL_SPEC,
       );
+      // The same bridge, and the same decision file, on a prompt for an MCP
+      // tool the user's allow rules name, which plan mode asks about anyway
+      // (plan-tool-approval.ts). Registered only when a rule names one.
+      const toolApprovalRules = planToolApprovalRules([baseSettings.permissions, this.readUserSettings().permissions]);
+      const planToolApprovalCommand = toolApprovalRules
+        ? buildPlanApprovalCommand(
+          CLAUDE_BRIDGE_SHELL, planApprovalBridge, decisionPath, eventsPath, claudePlanToolApprovalSpec(toolApprovalRules),
+        )
+        : undefined;
       // The hint names kangentic_mark_background_service, which the MCP server
       // offers only to a connection that names a task session, so a session
       // without one (a Command Terminal, MCP turned off) gets no hint.
@@ -481,6 +499,7 @@ export class CommandBuilder {
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
         capturePromptText: options.capturePromptText === true,
         planApprovalCommand,
+        planToolApprovalCommand,
         backgroundShellHintCommand,
       });
     }
