@@ -799,7 +799,14 @@ export async function readModifiedFirstChangeLine(target: Page): Promise<number>
  * in changes-diff-scroll-memory.spec.ts), an unhandled rejection that
  * collectPageErrors reports. The detached swap disposes the old diff view
  * model, and with it that token, but a second compute for the SAME content
- * still lands late.
+ * still lands late. Nor is the disposal immediate: DiffEditorWidget.setDiffModel
+ * releases the outgoing view model in a `setTimeout(..., 0)`, so for one timer
+ * tick after `setModel(null)` it is still alive, still holds an uncancelled
+ * token, and still listens to the shared text models. A reply that is already
+ * queued when the swap runs (likely under load, where the synchronous `setValue`
+ * of a long file is slow) lands on it against the incoming file's line counts.
+ * That is why a caller must settle the diff BEFORE it starts a swap, not only
+ * after it.
  *
  * Two signals, because neither is enough alone. `waitForDiff()` resolves once
  * the editor's diff is up to date, which covers a compute that has started.

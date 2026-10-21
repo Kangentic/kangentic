@@ -860,7 +860,22 @@ test.describe('Changes view: diff scroll memory', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  /** Open the task window with the Changes panel showing, whatever state a sibling left it in. */
+  /**
+   * Open the task window with the Changes panel showing, whatever state a
+   * sibling left it in, and wait for the diff it opened on to settle.
+   *
+   * The panel reopens on the file a sibling left selected, and a first line
+   * rendering does not mean its diff has landed. A test that clicks another file
+   * right away swaps new text into the models while that compute is still in
+   * flight. Monaco disposes the outgoing diff view model one timer tick after
+   * `setModel(null)`, so a worker reply queued behind the swap lands on the
+   * outgoing view model against the incoming file's line counts and
+   * `UnchangedRegion.fromDiffs` throws. It surfaced as "startLineNumber 2001
+   * cannot be after endLineNumberExclusive 1501" in the identical-text test,
+   * which opens on epsilon.ts (2000 lines) and switches to a 1500-line twin. The
+   * product swap cannot close that tick, so the test must not start a swap
+   * while a compute is pending.
+   */
   async function openDiffScrollTask(): Promise<void> {
     await page.locator('[data-swimlane-name="Code Review"]').locator('text=Diff Scroll Task').first().click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
@@ -872,6 +887,7 @@ test.describe('Changes view: diff scroll memory', () => {
       await diffArea.waitFor({ state: 'visible', timeout: 10000 });
     }
     await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
+    await waitForDiffToSettle(page);
   }
 
   /**
