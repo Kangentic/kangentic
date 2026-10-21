@@ -17,6 +17,7 @@
  */
 
 import type { TranscriptEntry } from '../../../shared/types';
+import { truncationNoticeText } from '../../../shared/conversation-history';
 
 /**
  * Largest span of SOURCE bytes any adapter's `parseTranscript` reads. Above
@@ -70,13 +71,6 @@ export function setParseWindowBytesForTests(bytes?: number): void {
   activeMaxParseSourceBytes = bytes ?? MAX_PARSE_SOURCE_BYTES;
 }
 
-/** Human-readable byte size for the notice text. */
-function formatBytes(bytes: number): string {
-  const megabytes = bytes / (1024 * 1024);
-  if (megabytes >= 1) return `${megabytes.toFixed(1)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
 /**
  * How to page the history a truncated read left out: the conversation it
  * belongs to (the agent's own session id) and the adapter's cursor for the
@@ -125,8 +119,7 @@ export function buildTruncationMarker(
     // rest the indexer falls back to this same bounded read, so the index is
     // cut off at the same place the reader is. A notice that overstates what
     // survives is worse than one that just states the omission.
-    text: `Earlier ${formatBytes(omittedBytes)} of this conversation are not shown `
-      + `(the transcript is ${formatBytes(totalBytes)}).`,
+    text: truncationNoticeText(omittedBytes, totalBytes),
   };
 }
 

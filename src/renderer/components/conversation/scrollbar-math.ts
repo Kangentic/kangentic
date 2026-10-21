@@ -72,6 +72,72 @@ export function computeThumbGeometry(params: {
   return { thumbTop: progress * thumbTravel, thumbSize };
 }
 
+/** Where the virtualizer placed one row, in pixels of the scroll content. */
+export interface MeasuredRow {
+  index: number;
+  start: number;
+  size: number;
+}
+
+/**
+ * A paged window's logical position at a pixel offset: the logical position
+ * of the row the offset lands in, interpolated toward the next row's. The
+ * scrollbar of a paged window measures the whole transcript in this unit
+ * (`conversation-paging.ts`), while the scroll container only holds the rows
+ * loaded. `rowLogical` is non-decreasing, one value per row.
+ */
+export function logicalAtOffset(params: {
+  offset: number;
+  rowLogical: ReadonlyArray<number>;
+  itemAt: (index: number) => MeasuredRow | undefined;
+  itemForOffset: (offset: number) => MeasuredRow | undefined;
+  logicalEnd: number;
+}): number {
+  const { offset, rowLogical, itemAt, itemForOffset, logicalEnd } = params;
+  if (rowLogical.length === 0) return logicalEnd;
+  const first = itemAt(0);
+  if (!first || offset <= first.start) return rowLogical[0];
+  const item = itemForOffset(offset);
+  if (!item) return logicalEnd;
+  const from = rowLogical[item.index] ?? logicalEnd;
+  const to = item.index + 1 < rowLogical.length ? rowLogical[item.index + 1] : logicalEnd;
+  const fraction = item.size > 0 ? clamp01((offset - item.start) / item.size) : 1;
+  return from + fraction * (to - from);
+}
+
+/**
+ * The pixel offset of a logical position, the inverse of `logicalAtOffset`, or
+ * null when the position is outside the rows loaded: a drag there is a far
+ * drag, which loads a page. Past an edge with nothing left to load it clamps.
+ */
+export function offsetAtLogical(params: {
+  logical: number;
+  rowLogical: ReadonlyArray<number>;
+  itemAt: (index: number) => MeasuredRow | undefined;
+  logicalEnd: number;
+  startLoaded: boolean;
+  endLoaded: boolean;
+  maxOffset: number;
+}): number | null {
+  const { logical, rowLogical, itemAt, logicalEnd, startLoaded, endLoaded, maxOffset } = params;
+  if (rowLogical.length === 0) return null;
+  if (logical < rowLogical[0]) return startLoaded ? 0 : null;
+  if (logical > logicalEnd) return endLoaded ? maxOffset : null;
+  let low = 0;
+  let high = rowLogical.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (rowLogical[middle] <= logical) low = middle;
+    else high = middle - 1;
+  }
+  const item = itemAt(low);
+  if (!item) return null;
+  const from = rowLogical[low];
+  const to = low + 1 < rowLogical.length ? rowLogical[low + 1] : logicalEnd;
+  const fraction = to > from ? clamp01((logical - from) / (to - from)) : 0;
+  return Math.min(maxOffset, item.start + fraction * item.size);
+}
+
 /** Inverse of `computeThumbGeometry`'s position half: given where the user
  *  dragged the thumb to, returns the scroll offset that should produce it. */
 export function thumbPositionToOffset(params: {

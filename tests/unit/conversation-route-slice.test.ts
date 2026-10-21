@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ALL_CONVERSATION_TAB,
+  columnTimeRanges,
   firstEntryOfStay,
   isolatedSwimlaneIdsFromKey,
   isolatedSwimlaneIdsKey,
@@ -206,6 +207,18 @@ describe('firstEntryOfStay', () => {
     const slice = sliceConversationByRoute(ENTRIES, ROUTE, 'merge');
 
     expect(firstEntryOfStay(slice, 'merge', iso(50))).toBeNull();
+  });
+});
+
+describe('columnTimeRanges', () => {
+  it('gives each stay of a column the time until the next stay of any column begins', () => {
+    expect(columnTimeRanges(ROUTE, 'executing')).toEqual([
+      { start: at(0), end: at(20) },
+      { start: at(30), end: at(50) },
+    ]);
+    // The last stay runs on: the task may still be in it.
+    expect(columnTimeRanges(ROUTE, 'merge')).toEqual([{ start: at(50), end: Infinity }]);
+    expect(columnTimeRanges(ROUTE, 'nowhere')).toEqual([]);
   });
 });
 

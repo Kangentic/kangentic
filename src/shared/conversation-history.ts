@@ -17,3 +17,20 @@ export const HISTORY_WINDOW_MAX_PAGES = 8;
 
 /** The most page source a window holds at once. */
 export const HISTORY_WINDOW_MAX_BYTES = HISTORY_PAGE_BYTES * HISTORY_WINDOW_MAX_PAGES;
+
+/** Human-readable byte size for the notice text. */
+function formatBytes(bytes: number): string {
+  const megabytes = bytes / (1024 * 1024);
+  if (megabytes >= 1) return `${megabytes.toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/**
+ * The text of the notice that a conversation's earlier part is not shown. The
+ * worker writes it into a truncated tail, and the viewer's Copy uses it for the
+ * part a paged window still leaves out, so the two never word it differently.
+ */
+export function truncationNoticeText(omittedBytes: number, totalBytes: number): string {
+  return `Earlier ${formatBytes(omittedBytes)} of this conversation are not shown `
+    + `(the transcript is ${formatBytes(totalBytes)}).`;
+}

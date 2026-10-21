@@ -40,7 +40,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, X, SquareTerminal, Copy, Check, Loader2, PictureInPicture2 } from 'lucide-react';
+import { MessageSquare, X, SquareTerminal, Copy, Check, Loader2, PictureInPicture2, ArrowUpToLine } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -48,11 +48,14 @@ import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { Tooltip } from '../../components/Tooltip';
-import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
+import { ConversationView, type ConversationViewPaging, type InitialPosition } from '../../components/conversation/ConversationView';
+import { ConversationSkeleton } from '../../components/conversation/ConversationSkeleton';
+import { useConversationPaging } from '../../components/conversation/use-conversation-paging';
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
 import {
   ALL_CONVERSATION_TAB,
+  columnTimeRanges,
   firstEntryOfStay,
   isolatedSwimlaneIdsFromKey,
   isolatedSwimlaneIdsKey,
@@ -358,14 +361,39 @@ export function ConversationWindow({
   // same set and the tabs it feeds.
   const isolatedKey = isolatedSwimlaneIdsKey(response?.sessions ?? []);
   const isolatedSwimlaneIds = useMemo(() => isolatedSwimlaneIdsFromKey(isolatedKey), [isolatedKey]);
-  const slice = useMemo(
-    () => (showTabs && response ? sliceConversationByRoute(response.entries, route, activeTab, isolatedSwimlaneIds) : null),
-    [showTabs, response, route, activeTab, isolatedSwimlaneIds],
+
+  // A transcript larger than the tail pages its history (`useConversationPaging`).
+  // A column tab loads only its own stays, and opens at the first one (or the
+  // stay a Route row asked for), loading it first when it is not held.
+  const visitStartedAt = selection.visitStartedAt;
+  const timeRanges = useMemo(
+    () => (activeTab === ALL_CONVERSATION_TAB ? undefined : columnTimeRanges(route, activeTab)),
+    [route, activeTab],
   );
-  const visibleEntries = slice?.entries ?? response?.entries ?? EMPTY_ENTRIES;
+  const parsedVisitTs = requestedSwimlaneId !== null && requestedSwimlaneId === activeTab && visitStartedAt
+    ? Date.parse(visitStartedAt)
+    : NaN;
+  const visitTs = Number.isNaN(parsedVisitTs) ? null : parsedVisitTs;
+  const openingTs = timeRanges && timeRanges.length > 0 ? visitTs ?? timeRanges[0].start : null;
+  const paging = useConversationPaging({
+    response,
+    projectId: currentProjectId,
+    sessionId: managedWindow.anchor,
+    windowId: managedWindow.id,
+    resetKey: `${fetchKey}|${activeTab}`,
+    timeRanges,
+    openingTs,
+    visitTs,
+    turnUuid: activeScrollUuid,
+  });
+  const pagedEntries = paging.entries;
+  const slice = useMemo(
+    () => (showTabs && response ? sliceConversationByRoute(pagedEntries, route, activeTab, isolatedSwimlaneIds) : null),
+    [showTabs, response, pagedEntries, route, activeTab, isolatedSwimlaneIds],
+  );
+  const visibleEntries = slice?.entries ?? (response ? pagedEntries : EMPTY_ENTRIES);
   // A repeat-stay row asks for its stay's first turn; it scrolls there once the
   // slice holds it.
-  const visitStartedAt = selection.visitStartedAt;
   const visitScrollUuid = requestedSwimlaneId !== null && visitStartedAt && slice && requestedSwimlaneId === activeTab
     ? firstEntryOfStay(slice, requestedSwimlaneId, visitStartedAt)
     : null;
@@ -407,7 +435,12 @@ export function ConversationWindow({
     // Set when a delta did not fit what this window holds: the next tick asks
     // for the whole conversation.
     let wantWhole = false;
+    // One read at a time: a tick that finds the last one still out skips, so a
+    // slow read (the worker busy with history pages) never stacks a second.
+    let inFlight = false;
     const interval = setInterval(() => {
+      if (inFlight) return;
+      inFlight = true;
       const held = responseRef.current;
       window.electronAPI.transcripts
         .get({
@@ -434,7 +467,10 @@ export function ConversationWindow({
             transcriptSignature(previous) === transcriptSignature(next) ? previous : next,
           );
         })
-        .catch(() => undefined);
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight = false;
+        });
     }, LIVE_REFRESH_MS);
     return () => {
       cancelled = true;
@@ -442,21 +478,61 @@ export function ConversationWindow({
     };
   }, [sessionStatus, taskHasLiveSession, managedWindow.anchor, currentProjectId]);
 
+  const copyNotice = paging.copyNotice;
   const handleCopyMarkdown = useCallback(() => {
     if (!response) return;
     // Copies the tab on screen: a column tab copies that column's stays, each
-    // opened by its date as a heading, and All copies everything.
+    // opened by its date as a heading, and All copies everything. A paged
+    // window copies what it holds, opened by the notice of what it leaves out.
     // Only flip to "copied" once the write actually resolves; a rejected write
     // (unfocused document / denied permission) must not falsely signal success
     // or surface as an unhandled rejection.
     void navigator.clipboard
-      .writeText(transcriptToMarkdown(visibleEntries))
+      .writeText(transcriptToMarkdown(copyNotice ? [copyNotice, ...visibleEntries] : [...visibleEntries]))
       .then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       })
       .catch(() => undefined);
-  }, [response, visibleEntries]);
+  }, [response, visibleEntries, copyNotice]);
+
+  // What the view and its scrollbar read of a paged window.
+  const {
+    window: pagingWindow,
+    topEdge,
+    bottomEdge,
+    onNearEdge,
+    onReaderMove,
+    retry: retryEdge,
+    jumpToStart,
+    jumpToLatest,
+    jumpToLogical,
+  } = paging;
+  const viewPaging = useMemo((): ConversationViewPaging | undefined => {
+    if (!pagingWindow) return undefined;
+    return {
+      topEdge,
+      bottomEdge,
+      reachesTail: pagingWindow.reachesTail,
+      logicalByUuid: pagingWindow.logicalByUuid,
+      logicalStart: pagingWindow.logicalStart,
+      logicalEnd: pagingWindow.logicalEnd,
+      logicalTotal: pagingWindow.logicalTotal,
+      timeAt: pagingWindow.timeAt,
+      onNearEdge,
+      onReaderMove,
+      onRetry: retryEdge,
+      onJumpToStart: jumpToStart,
+      onJumpToLatest: jumpToLatest,
+      onFarJump: jumpToLogical,
+    };
+  }, [pagingWindow, topEdge, bottomEdge, onNearEdge, onReaderMove, retryEdge, jumpToStart, jumpToLatest, jumpToLogical]);
+  let searchPlaceholder: string | undefined;
+  if (paging.historyUnloaded) {
+    searchPlaceholder = columnOnScreen ? `Search loaded ${columnOnScreen.name} messages` : 'Search loaded messages';
+  } else if (columnOnScreen) {
+    searchPlaceholder = `Search ${columnOnScreen.name}`;
+  }
 
   const handleOpenTask = useCallback(() => {
     // A window opened from another project's island names that project, so the
@@ -628,6 +704,17 @@ export function ConversationWindow({
                   disabled={!response}
                   data-testid="conversation-copy-markdown"
                 />
+                {paging.enabled && (
+                  <KebabMenuItem
+                    icon={<ArrowUpToLine size={13} />}
+                    label="Jump to start"
+                    onClick={() => {
+                      jumpToStart();
+                      close();
+                    }}
+                    data-testid="conversation-jump-to-start"
+                  />
+                )}
               </>
             )}
           </KebabMenu>
@@ -691,7 +778,11 @@ export function ConversationWindow({
             aria-labelledby={showTabs ? tabIds(TAB_ID_PREFIX, activeTab).tabId : undefined}
             className="flex min-h-0 flex-1 flex-col"
           >
-            {columnOnScreen && visibleEntries.length === 0 ? (
+            {paging.jumping ? (
+              // A jump is reading the page it lands on: placeholder rows, with
+              // the moment it is headed for when it knows one.
+              <ConversationSkeleton labelTs={paging.jumpLabelTs} className="min-h-0 flex-1" />
+            ) : columnOnScreen && visibleEntries.length === 0 ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center" data-testid="conversation-route-empty">
                 <MessageSquare size={24} className="text-fg-disabled" />
                 <div className="text-sm font-semibold text-fg-tertiary">No conversation in {columnOnScreen.name}</div>
@@ -701,25 +792,29 @@ export function ConversationWindow({
               <ConversationView
                 // A tab is its own list: switching remounts the view so it opens
                 // at that tab's own position rather than the last tab's scroll.
-                key={activeTab}
+                // A jump that replaced a paged window's rows remounts it too.
+                key={`${activeTab}:${paging.generation}`}
                 entries={visibleEntries}
                 degraded={response.degraded}
                 source={response.source}
                 unavailableReason={response.unavailableReason}
                 agentName={agentName}
                 archivedAgentName={response.archivedAgentName ?? null}
-                scrollToTurnUuid={activeScrollUuid ?? visitScrollUuid}
+                // A search hit in history the window has not loaded is held
+                // back until the page holding it is.
+                scrollToTurnUuid={paging.turnTarget ?? visitScrollUuid}
                 onConsumedScroll={consumeScroll}
                 autoFollowNewMessages={autoFollowNewMessages}
                 // All opens where the window always has; a column tab opens at
-                // its first stay.
-                initialPosition={columnOnScreen && visibleEntries[0]
+                // its first stay; a jump opens where it landed.
+                initialPosition={paging.opening ?? (columnOnScreen && visibleEntries[0]
                   ? { kind: 'uuid', uuid: visibleEntries[0].uuid }
-                  : initialPosition ?? { kind: 'bottom' }}
+                  : initialPosition ?? { kind: 'bottom' })}
                 isFocused={isFocused}
                 dividerColumns={slice?.dividerColumns}
                 isolatedDividers={slice?.isolatedDividers}
-                searchPlaceholder={columnOnScreen ? `Search ${columnOnScreen.name}` : undefined}
+                searchPlaceholder={searchPlaceholder}
+                paging={viewPaging}
               />
             )}
           </div>
