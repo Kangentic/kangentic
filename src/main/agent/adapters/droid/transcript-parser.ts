@@ -1,7 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { cwdToSessionSlug } from './session-id-capture';
 
@@ -51,93 +53,125 @@ export async function parseDroidTranscript(
   });
   if (window.totalBytes === 0) return [];
 
+  // The line count is only used when a record turns out to lack its own `id`.
+  // See the Qwen parser for why this is resolved up front rather than lazily.
+  const entries = parseDroidLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readDroidTranscriptPage`), with the line count the uuids need.
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
+    conversationId: agentSessionId,
+    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
+  });
+}
+
+/**
+ * One page of a Droid transcript's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). A record without its own id is named
+ * by its line, so cursors carry a line count.
+ */
+export function readDroidTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseDroidLines(agentSessionId, lines),
+  });
+}
+
+/** Parse whole lines into entries, each stamped with the byte its line starts at. */
+function parseDroidLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  const lines = window.text.split(/\r?\n/);
-  // Only used when a record turns out to lack its own `id`. See the Qwen
-  // parser for why this is resolved up front rather than lazily.
-  const lineIndexBase = window.omittedLineCount;
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
+  for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw)) continue;
+    const firstNew = entries.length;
+    parseDroidRecord(agentSessionId, line, lineNumber ?? 0, entries);
+    const origin = { conversationId: agentSessionId, position: byte };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+  }
+  return entries;
+}
 
-    if (raw.type !== 'message') continue;
+/** Parse one JSONL record, appending what it yields. */
+function parseDroidRecord(agentSessionId: string, line: string, lineNumber: number, entries: TranscriptEntry[]): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(raw)) return;
 
-    // An id-less record used to fall back to `''`, which is not an absent uuid
-    // but a SHARED one: `resolveTaskTranscript` dedups by uuid keeping the
-    // first, so every such entry after the first vanished from the stitched
-    // Conversation tab. Fall back to the session-scoped absolute line index
-    // instead (the Codex/Kimi shape) so the entry keeps a real identity.
-    const uuid = typeof raw.id === 'string' && raw.id.length > 0
-      ? raw.id
-      : `${agentSessionId}:${lineIndexBase + lineIndex}`;
-    const ts = parseTimestamp(raw.timestamp);
-    const message = raw.message;
-    if (!isRecord(message)) continue;
+  if (raw.type !== 'message') return;
 
-    const role = message.role;
-    const messageContent = message.content;
-    if (!Array.isArray(messageContent)) continue;
+  // An id-less record used to fall back to `''`, which is not an absent uuid
+  // but a SHARED one: `resolveTaskTranscript` dedups by uuid keeping the
+  // first, so every such entry after the first vanished from the stitched
+  // Conversation tab. Fall back to the session-scoped absolute line index
+  // instead (the Codex/Kimi shape) so the entry keeps a real identity.
+  const uuid = typeof raw.id === 'string' && raw.id.length > 0
+    ? raw.id
+    : `${agentSessionId}:${lineNumber}`;
+  const ts = parseTimestamp(raw.timestamp);
+  const message = raw.message;
+  if (!isRecord(message)) return;
 
-    if (role === 'user') {
-      const textParts: string[] = [];
-      for (const block of messageContent) {
-        if (!isRecord(block)) continue;
-        if (block.type === 'tool_result') {
-          entries.push({
-            kind: 'tool_result',
-            uuid,
-            ts,
-            toolUseId: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
-            content: stringifyToolResultContent(block.content),
-            isError: block.is_error === true,
-          });
-        } else if (block.type === 'text' && typeof block.text === 'string') {
-          textParts.push(block.text);
-        }
+  const role = message.role;
+  const messageContent = message.content;
+  if (!Array.isArray(messageContent)) return;
+
+  if (role === 'user') {
+    const textParts: string[] = [];
+    for (const block of messageContent) {
+      if (!isRecord(block)) continue;
+      if (block.type === 'tool_result') {
+        entries.push({
+          kind: 'tool_result',
+          uuid,
+          ts,
+          toolUseId: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
+          content: stringifyToolResultContent(block.content),
+          isError: block.is_error === true,
+        });
+      } else if (block.type === 'text' && typeof block.text === 'string') {
+        textParts.push(block.text);
       }
-      if (textParts.length > 0) {
-        entries.push({ kind: 'user', uuid, ts, text: textParts.join('\n') });
-      }
-      continue;
     }
-
-    if (role === 'assistant') {
-      const blocks: TranscriptBlock[] = [];
-      for (const block of messageContent) {
-        if (!isRecord(block)) continue;
-        if (block.type === 'text' && typeof block.text === 'string') {
-          blocks.push({ type: 'text', text: block.text });
-        } else if (block.type === 'thinking') {
-          // Forward-compat: Droid 0.109 has not been observed emitting
-          // thinking blocks, but reasoning-capable models could surface
-          // them in a future version. Match Claude's behavior: keep
-          // non-empty thinking, drop empty signature-only stubs.
-          if (typeof block.thinking === 'string' && block.thinking.length > 0) {
-            blocks.push({ type: 'thinking', text: block.thinking });
-          }
-        } else if (block.type === 'tool_use') {
-          blocks.push({
-            type: 'tool_use',
-            id: typeof block.id === 'string' ? block.id : '',
-            name: typeof block.name === 'string' ? block.name : 'tool',
-            input: block.input,
-          });
-        }
-      }
-      if (blocks.length === 0) continue;
-      entries.push({ kind: 'assistant', uuid, ts, blocks });
+    if (textParts.length > 0) {
+      entries.push({ kind: 'user', uuid, ts, text: textParts.join('\n') });
     }
+    return;
   }
 
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+  if (role === 'assistant') {
+    const blocks: TranscriptBlock[] = [];
+    for (const block of messageContent) {
+      if (!isRecord(block)) continue;
+      if (block.type === 'text' && typeof block.text === 'string') {
+        blocks.push({ type: 'text', text: block.text });
+      } else if (block.type === 'thinking') {
+        // Forward-compat: Droid 0.109 has not been observed emitting
+        // thinking blocks, but reasoning-capable models could surface
+        // them in a future version. Match Claude's behavior: keep
+        // non-empty thinking, drop empty signature-only stubs.
+        if (typeof block.thinking === 'string' && block.thinking.length > 0) {
+          blocks.push({ type: 'thinking', text: block.thinking });
+        }
+      } else if (block.type === 'tool_use') {
+        blocks.push({
+          type: 'tool_use',
+          id: typeof block.id === 'string' ? block.id : '',
+          name: typeof block.name === 'string' ? block.name : 'tool',
+          input: block.input,
+        });
+      }
+    }
+    if (blocks.length === 0) return;
+    entries.push({ kind: 'assistant', uuid, ts, blocks });
+  }
 }
 
 /**

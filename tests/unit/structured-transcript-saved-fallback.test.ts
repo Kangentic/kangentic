@@ -125,6 +125,16 @@ describe('renderStructuredTranscript saved-conversation fallback', () => {
     expect(response.message).not.toContain('what did we decide about the retry budget');
   });
 
+  it('cuts a span longer than 20,000 characters with a marker, as the viewer does', async () => {
+    useAdapter([{ kind: 'user', uuid: 'huge', ts: 1, text: `start ${'x'.repeat(30_000)} end-marker` }]);
+
+    const response = await renderStructuredTranscript(request({ charBudget: 400_000 }));
+
+    expect(response.message).toContain('start ');
+    expect(response.message).toMatch(/\[truncated \d+ chars\]/);
+    expect(response.message).not.toContain('end-marker');
+  });
+
   it('shapes the saved entries like live ones: view and search apply to them', async () => {
     useAdapter([]);
     const reader: SavedConversationReader = async () => ({ entries: savedEntries, source: 'archive' });

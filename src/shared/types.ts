@@ -9349,6 +9349,19 @@ export function applyTranscriptDelta(held: TranscriptEntry[], delta: TranscriptD
   return entries;
 }
 
+/**
+ * What a transcript entry is deduplicated by. One record can yield several
+ * entries under its uuid: a reply and the results of its tool calls (Gemini,
+ * OpenCode), or the results of parallel calls in one message (Claude, Qwen,
+ * Droid). Keyed by uuid alone, every one after the first was dropped and its
+ * tool card showed no result, so a tool result is also named by the call it
+ * answers. A resumed session replays its parent's records verbatim, which
+ * still yields the same keys and still dedupes.
+ */
+export function transcriptEntryKey(entry: TranscriptEntry): string {
+  return entry.kind === 'tool_result' ? `${entry.uuid}\u0000${entry.toolUseId}` : entry.uuid;
+}
+
 /** One selectable session in the conversation viewer's session picker. */
 export interface ConversationSessionMeta {
   sessionId: string;

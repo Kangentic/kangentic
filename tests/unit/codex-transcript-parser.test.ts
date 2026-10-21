@@ -2,10 +2,33 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseCodexTranscript, locateCodexTranscriptFile } from '../../src/main/agent/adapters/codex/transcript-parser';
+import {
+  parseCodexTranscript,
+  locateCodexTranscriptFile,
+  readCodexTranscriptPage,
+} from '../../src/main/agent/adapters/codex/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
+import type { TranscriptEntry } from '../../src/shared/types';
+import { walkHistoryPages } from './helpers/history-page-tiling';
 
 const SESSION_ID = '019df02a-e744-7de2-8f30-63d9ae3ab36a';
+
+/**
+ * The entries without the model on assistant ones. Codex names the model on a
+ * `turn_context` line, and every read starts knowing none, so a page's
+ * assistant entries before its own first `turn_context` carry no model where
+ * the whole-file parse names one. That gap is accepted (the tail reads its own
+ * start the same way, and real rollouts are far too small to page), so the
+ * tiling compares everything else exactly and checks the models on their own.
+ */
+function withoutModels(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return entries.map((entry) => {
+    if (entry.kind !== 'assistant') return entry;
+    const copy = { ...entry };
+    delete copy.model;
+    return copy;
+  });
+}
 
 /** Enough `response_item` user turns to overflow `cap` several times over,
  *  each one identifiable by the index embedded in its text. `startIndex` lets
@@ -55,9 +78,10 @@ describe('parseCodexTranscript', () => {
       { type: 'response_item', timestamp: '2026-06-12T10:00:02Z', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'real prompt' }] } },
     ]);
     const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
-    expect(entries).toEqual([
-      { kind: 'user', uuid: expect.any(String), ts: expect.any(Number), text: 'real prompt' },
-    ]);
+    expect(entries).toEqual([{
+      kind: 'user', uuid: expect.any(String), ts: expect.any(Number), text: 'real prompt',
+      origin: { conversationId: SESSION_ID, position: expect.any(Number) },
+    }]);
   });
 
   it('drops empty (encrypted-only) reasoning and keeps populated summaries', async () => {
@@ -66,9 +90,10 @@ describe('parseCodexTranscript', () => {
       { type: 'response_item', timestamp: '2026-06-12T10:00:01Z', payload: { type: 'reasoning', summary: [{ type: 'summary_text', text: 'plan the work' }] } },
     ]);
     const entries = await parseCodexTranscript(SESSION_ID, tmpFile);
-    expect(entries).toEqual([
-      { kind: 'assistant', uuid: expect.any(String), ts: expect.any(Number), model: undefined, blocks: [{ type: 'thinking', text: 'plan the work' }] },
-    ]);
+    expect(entries).toEqual([{
+      kind: 'assistant', uuid: expect.any(String), ts: expect.any(Number), model: undefined, blocks: [{ type: 'thinking', text: 'plan the work' }],
+      origin: { conversationId: SESSION_ID, position: expect.any(Number) },
+    }]);
   });
 
   it('maps function_call (parsed args) and function_call_output to a tool_use / tool_result pair', async () => {
@@ -199,6 +224,64 @@ describe('parseCodexTranscript', () => {
       `${SESSION_ID}:10`,
       `${SESSION_ID}:12`,
     ]);
+  });
+
+  it('pages its history in tiles that add up to the whole file, models aside', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-transcript-'));
+    tmpFile = path.join(dir, 'rollout.jsonl');
+    const filePath = tmpFile;
+    const records: object[] = [];
+    const at = (turn: number, step: number): string => new Date(Date.UTC(2026, 9, 1, 9, turn, step)).toISOString();
+    records.push({ timestamp: at(0, 0), type: 'session_meta', payload: { id: SESSION_ID, cwd: 'C:/Users/dev/project' } });
+    for (let turn = 0; turn < 14; turn += 1) {
+      // The user switches model halfway through the session.
+      records.push({ timestamp: at(turn, 1), type: 'turn_context', payload: { model: turn < 7 ? 'gpt-5-codex' : 'gpt-5.1-codex' } });
+      if (turn === 0) {
+        records.push({ timestamp: at(turn, 2), type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<permissions instructions>read-only</permissions instructions>' }] } });
+        records.push({ timestamp: at(turn, 3), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n<cwd>C:/Users/dev/project</cwd>\n</environment_context>' }] } });
+      }
+      const prompt = `question ${turn} ${'é漢'.repeat(turn % 5)}`;
+      records.push({ timestamp: at(turn, 4), type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: prompt }] } });
+      records.push({ timestamp: at(turn, 5), type: 'event_msg', payload: { type: 'user_message', message: prompt } });
+      records.push({
+        timestamp: at(turn, 6), type: 'response_item',
+        payload: { type: 'reasoning', summary: turn % 2 === 0 ? [] : [{ type: 'summary_text', text: `plan ${turn}` }], encrypted_content: 'gAAAAABp93oJ' },
+      });
+      records.push({ timestamp: at(turn, 7), type: 'response_item', payload: { type: 'function_call', name: 'shell', arguments: `{"command":["cat","f${turn}.ts"]}`, call_id: `call_${turn}` } });
+      records.push({ timestamp: at(turn, 8), type: 'response_item', payload: { type: 'function_call_output', call_id: `call_${turn}`, output: `contents ${turn} naïve` } });
+      records.push({ timestamp: at(turn, 9), type: 'event_msg', payload: { type: 'agent_message', message: `answer ${turn}` } });
+      records.push({ timestamp: at(turn, 10), type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: `answer ${turn}` }] } });
+    }
+    fs.writeFileSync(filePath, records.map((record) => `${JSON.stringify(record)}\n`).join(''));
+
+    const walk = await walkHistoryPages({
+      filePath,
+      conversationId: SESSION_ID,
+      parseTail: () => parseCodexTranscript(SESSION_ID, filePath),
+      readPage: (request) => readCodexTranscriptPage(SESSION_ID, filePath, request),
+      tailBytes: 1500,
+      pageBytes: 700,
+    });
+    // Line 4: the session_meta, turn_context, developer and environment lines
+    // before the first prompt still count.
+    expect(walk.whole[0].uuid).toBe(`${SESSION_ID}:4`);
+    // Read whole, every assistant entry names its model, both of them in turn.
+    const wholeModels = walk.whole.flatMap((entry) => (entry.kind === 'assistant' ? [entry.model] : []));
+    expect(new Set(wholeModels)).toEqual(new Set(['gpt-5-codex', 'gpt-5.1-codex']));
+
+    for (const pages of [walk.backward, walk.forward]) {
+      const paged = pages.flatMap((page) => page.entries).concat(walk.tail);
+      expect(withoutModels(paged)).toEqual(withoutModels(walk.whole));
+      // A page names the model the whole file does, or none before its first
+      // `turn_context`, never the wrong one. Some do name none: the gap is real.
+      expect(paged.some((entry) => entry.kind === 'assistant' && entry.model === undefined)).toBe(true);
+      paged.forEach((entry, index) => {
+        const wholeEntry = walk.whole[index];
+        if (entry.kind === 'assistant' && wholeEntry.kind === 'assistant' && entry.model !== undefined) {
+          expect(entry.model).toBe(wholeEntry.model);
+        }
+      });
+    }
   });
 });
 

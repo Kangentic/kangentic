@@ -231,6 +231,20 @@ describe('buildPagingWindow', () => {
     expect(retainSeam(previous.tail, nextTail, [], BASE)).toEqual([]);
   });
 
+  it('keeps a reply and the results that share its uuid', () => {
+    const reply: TranscriptEntry = {
+      kind: 'assistant', uuid: 'A-60', ts: BASE + 60 * MINUTE, blocks: [{ type: 'tool_use', id: 'call-1', name: 'read', input: {} }],
+      origin: { conversationId: 'A', position: 6000 },
+    };
+    const result: TranscriptEntry = {
+      kind: 'tool_result', uuid: 'A-60', ts: BASE + 60 * MINUTE, toolUseId: 'call-1', content: 'contents',
+      origin: { conversationId: 'A', position: 6000 },
+    };
+    const base = singleConversation();
+    const window = buildPagingWindow({ ...base, tail: [...base.tail, reply, result], conversations: [extent('A', 6100, 4000)] });
+    expect(window.entries.slice(-2)).toEqual([reply, result]);
+  });
+
   it('keeps an ordinary conversation with no paging exactly as the tail stitched it', () => {
     const tail = [entry('C', 0), entry('C', 1)];
     const window = buildPagingWindow({

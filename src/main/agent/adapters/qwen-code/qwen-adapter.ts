@@ -3,7 +3,7 @@ import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
 import { QwenSessionHistoryParser } from './session-history-parser';
 import { createQwenCommandInjectionVerifier } from './command-injection-verifier';
-import { parseQwenTranscript, locateQwenTranscriptFile } from './transcript-parser';
+import { parseQwenTranscript, locateQwenTranscriptFile, readQwenTranscriptPage } from './transcript-parser';
 import { QwenStatusParser } from './status-parser';
 import { discoverQwenCapabilities } from './capability-discovery';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
@@ -11,7 +11,16 @@ import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -240,6 +249,11 @@ export class QwenAdapter implements AgentAdapter {
     const filePath = locateQwenTranscriptFile(agentSessionId, cwd);
     const entries = await parseQwenTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    return readQwenTranscriptPage(agentSessionId, locateQwenTranscriptFile(agentSessionId, cwd), request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {

@@ -1,11 +1,12 @@
 import fs from 'node:fs';
-import type { ParsedTranscript } from '../../agent-adapter';
+import type { ParsedTranscript, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type { TranscriptBlock, TranscriptEntry } from '../../../../shared/types';
 import {
   scanForSubmittedText,
   type UserTurnRecord,
 } from '../../shared/submitted-text-verifier';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { antigravityTranscriptPath } from './data-paths';
 
@@ -53,28 +54,17 @@ export function locateAntigravityTranscriptFile(conversationId: string): string 
   return fs.existsSync(transcriptPath) ? transcriptPath : null;
 }
 
-/** Read and order the raw steps of a conversation's transcript. Async read:
- *  transcript.jsonl grows for the life of a session (multi-MB on a long
- *  task), and this runs in the single-threaded main process on routine card
- *  moves (transcriptToolCounts via session-metrics refine) - a sync read
- *  would stall IPC and PTY flushing app-wide, which is why the Claude and
- *  Grok transcript parsers read async too. */
-async function readSteps(
-  transcriptPath: string,
-): Promise<{ steps: AntigravityStep[]; omittedBytes: number; totalBytes: number }> {
-  // Bounded tail read rather than a whole-file one. The JSDoc above already
-  // recognised that this file "grows for the life of a session" and made the
-  // read async so it would not stall IPC - but an async read of an unbounded
-  // file still puts the whole thing on the heap, which is the part that OOM'd
-  // the main process.
-  const window = await readJsonlWindow(transcriptPath, { maxBytes: parseWindowBytes() });
-  if (window.totalBytes === 0) {
-    return { steps: [], omittedBytes: 0, totalBytes: 0 };
-  }
+/** A step the dedupe kept, with the byte its line starts at. */
+interface PositionedStep {
+  step: AntigravityStep;
+  position: number;
+}
 
-  const byIndex = new Map<number, AntigravityStep>();
-  for (const line of window.text.split(/\r?\n/)) {
-    const trimmed = line.trim();
+/** Order the raw steps of whole lines, deduped and sorted by step_index. */
+function orderSteps(lines: ReadonlyArray<JsonlLine>): PositionedStep[] {
+  const byIndex = new Map<number, PositionedStep>();
+  for (const line of lines) {
+    const trimmed = line.text.trim();
     if (!trimmed.startsWith('{')) continue;
     let parsed: unknown;
     try {
@@ -85,13 +75,10 @@ async function readSteps(
     if (!parsed || typeof parsed !== 'object') continue;
     const step = parsed as AntigravityStep;
     if (typeof step.step_index !== 'number') continue;
-    byIndex.set(step.step_index, step); // last-write-wins on a re-emitted index
+    // Last-write-wins on a re-emitted index, and the kept copy's own line is its origin.
+    byIndex.set(step.step_index, { step, position: line.byte });
   }
-  return {
-    steps: Array.from(byIndex.values()).sort((left, right) => left.step_index - right.step_index),
-    omittedBytes: window.omittedBytes,
-    totalBytes: window.totalBytes,
-  };
+  return Array.from(byIndex.values()).sort((left, right) => left.step.step_index - right.step.step_index);
 }
 
 /** Pull the user's actual prompt out of a USER_INPUT step's wrapped content. */
@@ -148,21 +135,71 @@ export async function parseAntigravityTranscriptFile(
   sourcePath: string,
   agentSessionId?: string,
 ): Promise<ParsedTranscript> {
+  // Bounded tail read rather than a whole-file one, and async:
+  // transcript.jsonl grows for the life of a session (multi-MB on a long
+  // task), and the tool-count reader runs this on routine card moves
+  // (transcriptToolCounts via session-metrics refine). A sync read would stall
+  // IPC and PTY flushing app-wide, and an async read of the unbounded file
+  // still puts the whole thing on the heap, which is the part that OOM'd the
+  // main process.
+  const window = await readJsonlWindow(sourcePath, { maxBytes: parseWindowBytes() });
+  if (window.totalBytes === 0) return { entries: [], sourcePath };
+  const entries = parseAntigravityLines(splitJsonlLines(window.text, window.startByte, null), agentSessionId);
+  // With a session id, the notice carries the cursor the Conversation viewer
+  // pages the left-out history from (`readAntigravityTranscriptPage`). Uuids
+  // come from each step's own `step_index`, so the cursor needs no line count.
+  const history = agentSessionId
+    ? { conversationId: agentSessionId, cursor: encodeJsonlCursor({ byte: window.startByte, line: null }) }
+    : undefined;
+  return {
+    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, history),
+    sourcePath,
+  };
+}
+
+/**
+ * One page of an Antigravity transcript's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). Each window of lines it reads is parsed
+ * alone, as the tail is. A step re-emitted in a later window is parsed there
+ * again under the same uuid, and the viewer keeps the copy from the later
+ * position. An ERROR_MESSAGE whose tool call sits in an earlier window has no
+ * anchor in its own and yields nothing, as it does at the tail's cut.
+ */
+export function readAntigravityTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: false,
+    parseLines: (lines) => parseAntigravityLines(lines, agentSessionId),
+  });
+}
+
+/**
+ * Parse whole lines into entries in step_index order. Each entry is stamped
+ * with the byte its own step's line starts at when there is a session id to
+ * name the conversation, so a step written out of order keeps its place in
+ * the file.
+ */
+function parseAntigravityLines(lines: ReadonlyArray<JsonlLine>, agentSessionId?: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   // The id of the most recent tool_use block, so a following ERROR_MESSAGE
   // step (agy records tool failures as their own step) can be attached as
   // that tool call's error result.
   let lastToolUseId: string | null = null;
 
-  const { steps, omittedBytes, totalBytes } = await readSteps(sourcePath);
-  for (const step of steps) {
-    // `step_index` is already absolute (readSteps dedups and sorts by it), so
+  for (const { step, position } of orderSteps(lines)) {
+    // `step_index` is already absolute (orderSteps dedups and sorts by it), so
     // only the session namespace was missing: `resolveTaskTranscript` stitches
     // every session a task has had and dedups by uuid keeping the first, so two
     // agy sessions on one task both minting `step-0..N` made the second
     // session's steps vanish from the Conversation tab.
     const uuid = agentSessionId ? `${agentSessionId}:step-${step.step_index}` : `step-${step.step_index}`;
     const ts = stepTimestamp(step);
+    const firstNew = entries.length;
 
     switch (step.type) {
       case 'USER_INPUT': {
@@ -221,12 +258,13 @@ export async function parseAntigravityTranscriptFile(
         // viewer can render - skip defensively.
         break;
     }
+
+    if (!agentSessionId) continue;
+    const origin = { conversationId: agentSessionId, position };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
   }
 
-  return {
-    entries: prependTruncationMarker(entries, omittedBytes, totalBytes),
-    sourcePath,
-  };
+  return entries;
 }
 
 /**

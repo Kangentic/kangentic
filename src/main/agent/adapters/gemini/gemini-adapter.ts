@@ -3,7 +3,7 @@ import { GeminiCommandBuilder } from './command-builder';
 import { removeHooks as removeGeminiHooks } from './hook-manager';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { GeminiSessionHistoryParser } from './session-history-parser';
-import { parseGeminiTranscript, locateGeminiTranscriptFile } from './transcript-parser';
+import { parseGeminiTranscript, locateGeminiTranscriptFile, readGeminiTranscriptPage } from './transcript-parser';
 import { migrateGeminiProjectData } from './project-relocation';
 import { GeminiStatusParser } from './status-parser';
 import { discoverGeminiCapabilities } from './capability-discovery';
@@ -12,7 +12,17 @@ import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  AnswerFromContextOptions,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -221,6 +231,11 @@ export class GeminiAdapter implements AgentAdapter {
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseGeminiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    return readGeminiTranscriptPage(agentSessionId, locateGeminiTranscriptFile(agentSessionId, cwd), request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {

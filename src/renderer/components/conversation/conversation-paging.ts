@@ -32,7 +32,7 @@
  * A conversation whose agent records no timestamps is ordered by position.
  */
 
-import type { ConversationExtent, TranscriptEntry, TranscriptHistoryPage } from '../../../shared/types';
+import { transcriptEntryKey, type ConversationExtent, type TranscriptEntry, type TranscriptHistoryPage } from '../../../shared/types';
 import { HISTORY_WINDOW_MAX_BYTES } from '../../../shared/conversation-history';
 
 /** A page of history the window holds, as `transcripts.page` returned it. */
@@ -174,10 +174,10 @@ interface Item {
   sequence: number;
 }
 
-/** A stitch divider and the entry it followed in the tail. */
+/** A stitch divider and the entry it followed in the tail, by `transcriptEntryKey`. */
 interface TailDivider {
   divider: TranscriptEntry;
-  previousUuid: string | null;
+  previousKey: string | null;
 }
 
 interface Collected {
@@ -186,7 +186,7 @@ interface Collected {
   itemsByConversation: Map<string, Item[]>;
   extentById: Map<string, ConversationExtent>;
   noticeById: Map<string, TailNotice>;
-  /** The stitch's dividers, by the uuid of the entry each one introduces. */
+  /** The stitch's dividers, by the key of the entry each one introduces. */
   dividerBefore: Map<string, TailDivider>;
 }
 
@@ -238,7 +238,7 @@ function collectItems(input: PagingInput): Collected {
 
   let segment = 0;
   let pendingDivider: TranscriptEntry | null = null;
-  let previousUuid: string | null = null;
+  let previousKey: string | null = null;
   input.tail.forEach((entry, tailIndex) => {
     if (isSessionBoundary(entry)) {
       // Each stretch between two of the stitch's dividers is one session.
@@ -254,14 +254,15 @@ function collectItems(input: PagingInput): Collected {
       });
       return;
     }
+    const key = transcriptEntryKey(entry);
     if (pendingDivider) {
-      dividerBefore.set(entry.uuid, { divider: pendingDivider, previousUuid });
+      dividerBefore.set(key, { divider: pendingDivider, previousKey });
       pendingDivider = null;
     }
-    previousUuid = entry.uuid;
-    if (chosen.has(entry.uuid)) return;
+    previousKey = key;
+    if (chosen.has(key)) return;
     const origin = entry.origin;
-    chosen.set(entry.uuid, {
+    chosen.set(key, {
       entry,
       effectiveTs: entry.ts,
       conversationKey: origin ? origin.conversationId : `segment:${segment}`,
@@ -277,9 +278,10 @@ function collectItems(input: PagingInput): Collected {
   for (const block of input.blocks) {
     for (const entry of block.entries) {
       const position = entry.origin?.position ?? block.startPosition;
-      const existing = chosen.get(entry.uuid);
+      const key = transcriptEntryKey(entry);
+      const existing = chosen.get(key);
       if (existing && (existing.fromTail || existing.conversationKey !== block.conversationId || position <= existing.order)) continue;
-      chosen.set(entry.uuid, {
+      chosen.set(key, {
         entry,
         effectiveTs: entry.ts,
         conversationKey: block.conversationId,
@@ -638,9 +640,9 @@ export function buildPagingWindow(input: PagingInput): PagingWindow {
   const entries: TranscriptEntry[] = [];
   let previous: Item | null = null;
   for (const item of inWindow) {
-    const tailDivider = collected.dividerBefore.get(item.entry.uuid);
+    const tailDivider = collected.dividerBefore.get(transcriptEntryKey(item.entry));
     if (tailDivider && previous
-      && (previous.entry.uuid === tailDivider.previousUuid || previous.conversationKey !== item.conversationKey)) {
+      && (transcriptEntryKey(previous.entry) === tailDivider.previousKey || previous.conversationKey !== item.conversationKey)) {
       entries.push(tailDivider.divider);
     }
     entries.push(item.entry);

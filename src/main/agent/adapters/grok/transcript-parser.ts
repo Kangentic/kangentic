@@ -5,7 +5,9 @@ import type {
   TranscriptToolCounts,
   PerToolStat,
 } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
 
@@ -26,9 +28,10 @@ import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
  *   `project_instructions` / `system_reminder` and are injected context,
  *   not conversation) and wrap the typed text in `<user_query>` tags.
  *   Assistant tool calls ride `tool_calls: [{id, name, arguments}]` where
- *   `arguments` is a JSON-encoded string. Records carry NO timestamps -
- *   entries get a single parse-time stamp (the Droid fallback precedent)
- *   and synthesized `<sessionId>:<line>` uuids.
+ *   `arguments` is a JSON-encoded string. A `reasoning` record's summary is
+ *   a thinking entry of its own. Records carry NO timestamps - entries get
+ *   a single parse-time stamp (the Droid fallback precedent) and
+ *   synthesized `<sessionId>:<line>` uuids.
  *
  * - `updates.jsonl` -> `TranscriptUsage` / `TranscriptToolCounts` for the
  *   lifetime rollup (Claude-parity `transcriptUsage` /
@@ -52,77 +55,106 @@ export async function parseGrokTranscript(
     return { entries: [], sourcePath: null };
   }
 
-  const entries: TranscriptEntry[] = [];
-  const parseTimeTs = Date.now();
-  const lines = window.text.split(/\r?\n/);
   // Line indices must stay absolute within the FILE, not relative to the
   // window: these uuids are the persisted citation anchors that
   // `sliceTranscriptAroundUuid` resolves against, so renumbering them when a
   // transcript grows past the cap would silently break every stored citation.
-  const lineIndexBase = window.omittedLineCount;
-  // Reasoning records precede the assistant record they belong to; buffer
-  // their summaries and attach as thinking blocks on the next assistant.
-  let pendingThinking: string[] = [];
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
-    if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw)) continue;
-    const uuid = `${agentSessionId}:${lineIndexBase + lineIndex}`;
-
-    if (raw.type === 'user') {
-      if (typeof raw.synthetic_reason === 'string' && raw.synthetic_reason.length > 0) continue;
-      const text = extractTextContent(raw.content);
-      if (!text) continue;
-      entries.push({ kind: 'user', uuid, ts: parseTimeTs, text: unwrapUserQuery(text) });
-    } else if (raw.type === 'reasoning') {
-      const summaryText = extractReasoningSummary(raw.summary);
-      if (summaryText) pendingThinking.push(summaryText);
-    } else if (raw.type === 'assistant') {
-      const blocks: TranscriptBlock[] = [];
-      for (const thinking of pendingThinking) {
-        blocks.push({ type: 'thinking', text: thinking });
-      }
-      pendingThinking = [];
-      const text = extractTextContent(raw.content);
-      if (text) blocks.push({ type: 'text', text });
-      if (Array.isArray(raw.tool_calls)) {
-        for (const call of raw.tool_calls) {
-          if (!isRecord(call)) continue;
-          blocks.push({
-            type: 'tool_use',
-            id: typeof call.id === 'string' ? call.id : '',
-            name: typeof call.name === 'string' ? call.name : 'tool',
-            input: parseToolArguments(call.arguments),
-          });
-        }
-      }
-      if (blocks.length === 0) continue;
-      const model = typeof raw.model_id === 'string' && raw.model_id.length > 0 ? raw.model_id : undefined;
-      entries.push({ kind: 'assistant', uuid, ts: parseTimeTs, model, blocks });
-    } else if (raw.type === 'tool_result') {
-      entries.push({
-        kind: 'tool_result',
-        uuid,
-        ts: parseTimeTs,
-        toolUseId: typeof raw.tool_call_id === 'string' ? raw.tool_call_id : '',
-        content: extractTextContent(raw.content) ?? '',
-      });
-    }
-    // 'system' (the system prompt) is deliberately skipped: TranscriptEntry
-    // has no system-prompt kind, and the viewer renders conversation.
-  }
-
+  const entries = parseGrokLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readGrokTranscriptPage`), with the line count the uuids need.
   return {
-    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes),
+    entries: prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
+      conversationId: agentSessionId,
+      cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
+    }),
     sourcePath: filePath,
   };
+}
+
+/**
+ * One page of a Grok transcript's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). Every uuid is named by its line, so
+ * cursors carry a line count.
+ */
+export function readGrokTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseGrokLines(agentSessionId, lines),
+  });
+}
+
+/** Parse whole lines into entries, each stamped with the byte its line starts at. */
+function parseGrokLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  const parseTimeTs = Date.now();
+  for (const { text: line, byte, line: lineNumber } of lines) {
+    if (line.length === 0) continue;
+    const firstNew = entries.length;
+    parseGrokRecord(`${agentSessionId}:${lineNumber ?? 0}`, line, parseTimeTs, entries);
+    const origin = { conversationId: agentSessionId, position: byte };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+  }
+  return entries;
+}
+
+/** Parse one JSONL record, appending what it yields. */
+function parseGrokRecord(uuid: string, line: string, parseTimeTs: number, entries: TranscriptEntry[]): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(raw)) return;
+  const model = typeof raw.model_id === 'string' && raw.model_id.length > 0 ? raw.model_id : undefined;
+
+  if (raw.type === 'user') {
+    if (typeof raw.synthetic_reason === 'string' && raw.synthetic_reason.length > 0) return;
+    const text = extractTextContent(raw.content);
+    if (!text) return;
+    entries.push({ kind: 'user', uuid, ts: parseTimeTs, text: unwrapUserQuery(text) });
+  } else if (raw.type === 'reasoning') {
+    // A reasoning record precedes the assistant record it belongs to, and is
+    // its own thinking entry rather than a block carried onto that assistant.
+    // Carrying it made a line's entries depend on the line before, so a tail
+    // or history page that started between the two lost the thinking.
+    const summaryText = extractReasoningSummary(raw.summary);
+    if (!summaryText) return;
+    entries.push({ kind: 'assistant', uuid, ts: parseTimeTs, model, blocks: [{ type: 'thinking', text: summaryText }] });
+  } else if (raw.type === 'assistant') {
+    const blocks: TranscriptBlock[] = [];
+    const text = extractTextContent(raw.content);
+    if (text) blocks.push({ type: 'text', text });
+    if (Array.isArray(raw.tool_calls)) {
+      for (const call of raw.tool_calls) {
+        if (!isRecord(call)) continue;
+        blocks.push({
+          type: 'tool_use',
+          id: typeof call.id === 'string' ? call.id : '',
+          name: typeof call.name === 'string' ? call.name : 'tool',
+          input: parseToolArguments(call.arguments),
+        });
+      }
+    }
+    if (blocks.length === 0) return;
+    entries.push({ kind: 'assistant', uuid, ts: parseTimeTs, model, blocks });
+  } else if (raw.type === 'tool_result') {
+    entries.push({
+      kind: 'tool_result',
+      uuid,
+      ts: parseTimeTs,
+      toolUseId: typeof raw.tool_call_id === 'string' ? raw.tool_call_id : '',
+      content: extractTextContent(raw.content) ?? '',
+    });
+  }
+  // 'system' (the system prompt) is deliberately skipped: TranscriptEntry
+  // has no system-prompt kind, and the viewer renders conversation.
 }
 
 /**

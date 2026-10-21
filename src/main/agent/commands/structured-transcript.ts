@@ -8,6 +8,7 @@ import {
   TRANSCRIPT_DATA_NOTE,
   type TranscriptView,
 } from '../../../shared/transcript-format';
+import { truncateEntries } from '../transcript-cache';
 import type { CommandResponse } from './types';
 import type { TranscriptEntry } from '../../../shared/types';
 
@@ -55,7 +56,9 @@ export async function renderStructuredTranscript(
 
   const parsed = await adapter.parseTranscript(record.agentSessionId, record.cwd);
   const { sourcePath } = parsed;
-  let entries = parsed.entries;
+  // The same per-span clamp every other reader applies: one 30 MB tool result
+  // would otherwise travel whole into the render and the reply.
+  let entries = truncateEntries(parsed.entries);
   let savedSource: 'archive' | 'index' | null = null;
   if (entries.length === 0 && readSavedConversation) {
     const saved = await readSavedConversation(record.agentSessionId);

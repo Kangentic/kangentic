@@ -30,6 +30,7 @@ import {
 } from '../../src/main/agent/adapters/grok/session-history-parser';
 import {
   parseGrokTranscript,
+  readGrokTranscriptPage,
   unwrapUserQuery,
   grokTranscriptUsage,
   grokTranscriptToolCounts,
@@ -51,6 +52,7 @@ import {
   installedPowerShellHosts,
   runAsHookShell,
 } from './helpers/shell-argv-probe';
+import { expectPagesTile } from './helpers/history-page-tiling';
 
 const SESSION_ID = '01a00b63-e666-71b3-8a30-a1829680cfdc';
 
@@ -1103,16 +1105,24 @@ describe('parseGrokTranscript', () => {
 
     const { entries, sourcePath } = await parseGrokTranscript(SESSION_ID, cwd);
     expect(sourcePath).toContain('chat_history.jsonl');
-    expect(entries).toHaveLength(3);
+    expect(entries).toHaveLength(4);
 
     expect(entries[0]).toMatchObject({ kind: 'user', text: 'fix the bug' });
-    expect(entries[1]).toMatchObject({ kind: 'assistant', model: 'grok-4.6' });
-    const assistantEntry = entries[1] as { blocks: Array<{ type: string }> };
-    expect(assistantEntry.blocks.map((block) => block.type)).toEqual(['thinking', 'text', 'tool_use']);
-    const toolUse = assistantEntry.blocks[2] as { type: string; name: string; input: unknown };
+    // The reasoning record is its own thinking entry, named by its own line,
+    // so no entry depends on the line before it.
+    expect(entries[1]).toMatchObject({
+      kind: 'assistant',
+      uuid: `${SESSION_ID}:3`,
+      blocks: [{ type: 'thinking', text: 'Considering the fix.' }],
+    });
+    expect(entries[2]).toMatchObject({ kind: 'assistant', uuid: `${SESSION_ID}:4`, model: 'grok-4.6' });
+    const assistantEntry = entries[2] as { blocks: Array<{ type: string }> };
+    expect(assistantEntry.blocks.map((block) => block.type)).toEqual(['text', 'tool_use']);
+    const toolUse = assistantEntry.blocks[1] as { type: string; name: string; input: unknown };
     expect(toolUse.name).toBe('read_file');
     expect(toolUse.input).toEqual({ target_file: 'a.ts' });
-    expect(entries[2]).toMatchObject({ kind: 'tool_result', toolUseId: 'call-1', content: 'file contents' });
+    expect(entries[3]).toMatchObject({ kind: 'tool_result', toolUseId: 'call-1', content: 'file contents' });
+    expect(entries[3].origin).toEqual({ conversationId: SESSION_ID, position: expect.any(Number) });
   });
 
   it('returns empty on a missing file', async () => {
@@ -1227,6 +1237,48 @@ describe('parseGrokTranscript', () => {
       }
     } finally {
       setParseWindowBytesForTests();
+    }
+  });
+
+  it('pages its history in tiles that add up to the whole file, line-numbered uuids included', async () => {
+    const home = useTempGrokHome();
+    const cwd = '/home/dev/paging-project';
+    const sessionDir = path.join(home, 'sessions', cwdToSessionsDirName(cwd), SESSION_ID);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const filePath = path.join(sessionDir, 'chat_history.jsonl');
+    let text = `${JSON.stringify({ type: 'system', content: 'You are Grok.' })}\n`;
+    for (let turn = 0; turn < 20; turn += 1) {
+      // A synthetic reminder yields no entry; the reasoning record yields its own.
+      if (turn % 4 === 0) {
+        text += `${JSON.stringify({ type: 'user', synthetic_reason: 'system_reminder', content: { type: 'text', text: 'injected context' } })}\n`;
+      }
+      text += `${JSON.stringify({ type: 'user', content: { type: 'text', text: `<user_query>\nquestion ${turn} ${'é漢'.repeat(turn % 5)}\n</user_query>` } })}\n`;
+      text += `${JSON.stringify({ type: 'reasoning', content: null, summary: `Thinking about ${turn}.` })}\n`;
+      text += `${JSON.stringify({
+        type: 'assistant', content: `answer ${turn}`, model_id: 'grok-4.6',
+        tool_calls: [{ id: `call-${turn}`, name: 'read_file', arguments: JSON.stringify({ target_file: `f${turn}.ts` }) }],
+      })}\n`;
+      text += `${JSON.stringify({ type: 'tool_result', tool_call_id: `call-${turn}`, content: `contents ${turn}` })}\n`;
+    }
+    fs.writeFileSync(filePath, text);
+    // Grok records carry no timestamps, so every entry is stamped with parse
+    // time. Freezing the clock makes the whole-file, tail and page parses
+    // stamp the same ts, so the comparison covers every other field.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'));
+    try {
+      const whole = await expectPagesTile({
+        filePath,
+        conversationId: SESSION_ID,
+        parseTail: async () => (await parseGrokTranscript(SESSION_ID, cwd)).entries,
+        readPage: (request) => readGrokTranscriptPage(SESSION_ID, filePath, request),
+        tailBytes: 1500,
+        pageBytes: 700,
+      });
+      expect(whole.some((entry) => entry.uuid === `${SESSION_ID}:2`)).toBe(true);
+      expect(whole.some((entry) => entry.kind === 'assistant' && entry.blocks[0]?.type === 'thinking')).toBe(true);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

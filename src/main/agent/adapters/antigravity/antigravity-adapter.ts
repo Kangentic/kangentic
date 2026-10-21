@@ -11,6 +11,7 @@ import {
   locateAntigravityTranscriptFile,
   parseAntigravityTranscript,
   parseAntigravityTranscriptFile,
+  readAntigravityTranscriptPage,
 } from './transcript-parser';
 import { antigravityTranscriptPath } from './data-paths';
 import { runAntigravityPrint } from './print-runner';
@@ -25,6 +26,8 @@ import type {
   ParsedTranscript,
   SpawnCommandOptions,
   SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
 } from '../../agent-adapter';
 import type {
   AgentCapabilities,
@@ -196,6 +199,11 @@ export class AntigravityAdapter implements AgentAdapter {
 
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
     return parseAntigravityTranscript(agentSessionId, cwd);
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(agentSessionId: string, _cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    return readAntigravityTranscriptPage(agentSessionId, antigravityTranscriptPath(agentSessionId), request);
   }
 
   /**

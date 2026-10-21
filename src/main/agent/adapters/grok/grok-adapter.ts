@@ -8,12 +8,12 @@ import { removeHooksFile } from './hook-manager';
 import { KANGENTIC_MCP_TOKEN_ENV, KANGENTIC_MCP_URL_ENV, removeMcpConfig, writeMcpConfig } from './mcp-config';
 import { GrokStatusParser } from './status-parser';
 import { GrokSessionHistoryParser, grokModelDisplayName } from './session-history-parser';
-import { parseGrokTranscript, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
+import { parseGrokTranscript, readGrokTranscriptPage, grokTranscriptUsage, grokTranscriptToolCounts } from './transcript-parser';
 import { createGrokCommandInjectionVerifier } from './command-injection-verifier';
 import { discoverGrokCapabilities } from './capability-discovery';
 import { ensureAnswerHomeTrust, ensureWorktreeTrust, isFolderTrusted, removeWorktreeTrust } from './trust-manager';
 import { migrateGrokProjectData } from './project-relocation';
-import { grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
+import { grokChatHistoryPath, grokSessionDir, grokUpdatesJsonlPath } from './session-paths';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -23,7 +23,17 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  AnswerFromContextOptions,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -76,6 +86,8 @@ export class GrokAdapter implements AgentAdapter {
   // `kill_command_or_subagent` stops it (GROK_BACKGROUND_COMMAND_SPEC, measured
   // on 1.0.0). Grok's PostToolUse cannot add context, so there is no hint.
   readonly backgroundCommands = { source: 'hooks', launchHint: false } as const;
+  // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
+  readonly transcriptHasTimestamps = false;
   /**
    * `--permission-mode` accepts Kangentic's exact PermissionMode names
    * (verified in `grok --help`), so all six pass through 1:1. Internally
@@ -238,6 +250,11 @@ export class GrokAdapter implements AgentAdapter {
 
   async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
     return parseGrokTranscript(agentSessionId, cwd);
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    return readGrokTranscriptPage(agentSessionId, grokChatHistoryPath(cwd, agentSessionId), request);
   }
 
   /**

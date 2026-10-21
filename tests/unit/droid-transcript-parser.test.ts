@@ -2,9 +2,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseDroidTranscript, droidTranscriptFilePath } from '../../src/main/agent/adapters/droid/transcript-parser';
+import {
+  parseDroidTranscript,
+  droidTranscriptFilePath,
+  readDroidTranscriptPage,
+} from '../../src/main/agent/adapters/droid/transcript-parser';
 import { transcriptToMarkdown } from '../../src/shared/transcript-format';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
+import { expectPagesTile } from './helpers/history-page-tiling';
 
 describe('droidTranscriptFilePath', () => {
   it('builds the expected path on Windows-style cwds', () => {
@@ -558,5 +563,50 @@ describe('parseDroidTranscript', () => {
     expect(md).toContain('"file_path"');
     expect(md).toContain('**Result:**');
     expect(md).toContain('hello world from fixture probe');
+  });
+
+  it('stamps each entry with the conversation and the byte its line starts at', async () => {
+    tmpFile = writeFixture([
+      { type: 'session_start', id: 's1', cwd: 'C:\\Users\\dev\\project' },
+      { type: 'message', id: 'u1', timestamp: '2026-04-09T00:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+    ]);
+    const entries = await parseDroidTranscript(SESSION_ID, tmpFile);
+    const firstLineBytes = Buffer.byteLength(fs.readFileSync(tmpFile, 'utf-8').split('\n')[0], 'utf-8') + 1;
+    expect(entries).toEqual([{
+      kind: 'user', uuid: 'u1', ts: Date.parse('2026-04-09T00:00:00Z'), text: 'hi',
+      origin: { conversationId: SESSION_ID, position: firstLineBytes },
+    }]);
+  });
+
+  it('pages its history in tiles that add up to the whole file, line-numbered uuids included', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'droid-transcript-test-'));
+    tmpFile = path.join(dir, `${SESSION_ID}.jsonl`);
+    const filePath = tmpFile;
+    let text = `${JSON.stringify({ type: 'session_start', id: 's1', title: 't', owner: 'dev', version: 2, cwd: '/home/dev/project' })}\n`;
+    for (let turn = 0; turn < 20; turn += 1) {
+      const timestamp = new Date(Date.UTC(2026, 3, 9, 9, turn)).toISOString();
+      // Every third prompt has no id of its own, so it is named by its line.
+      const id = turn % 3 === 0 ? {} : { id: `user-${turn}` };
+      text += `${JSON.stringify({ type: 'message', ...id, timestamp, message: { role: 'user', content: [{ type: 'text', text: `question ${turn} ${'é漢'.repeat(turn % 5)}` }] } })}\n`;
+      text += `${JSON.stringify({ type: 'todo_state', todos: [] })}\n`;
+      text += `${JSON.stringify({
+        type: 'message', id: `assistant-${turn}`, timestamp,
+        message: { role: 'assistant', content: [{ type: 'text', text: `answer ${turn}` }, { type: 'tool_use', id: `toolu-${turn}`, name: 'Read', input: { file_path: `f${turn}` } }] },
+      })}\n`;
+      text += `${JSON.stringify({
+        type: 'message', id: `result-${turn}`, timestamp,
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu-${turn}`, content: `contents ${turn}` }] },
+      })}\n`;
+    }
+    fs.writeFileSync(filePath, text);
+    const whole = await expectPagesTile({
+      filePath,
+      conversationId: SESSION_ID,
+      parseTail: () => parseDroidTranscript(SESSION_ID, filePath),
+      readPage: (request) => readDroidTranscriptPage(SESSION_ID, filePath, request),
+      tailBytes: 1500,
+      pageBytes: 700,
+    });
+    expect(whole.some((entry) => entry.uuid === `${SESSION_ID}:1`)).toBe(true);
   });
 });

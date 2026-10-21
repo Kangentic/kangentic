@@ -1,6 +1,8 @@
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { qwenChatsDir } from './session-history-parser';
 
@@ -36,89 +38,121 @@ export async function parseQwenTranscript(
     countOmittedLines: true,
   });
   if (window.totalBytes === 0) return [];
+  // The line count is only used when a record turns out to lack its own
+  // `uuid`. Resolved up front rather than lazily: the scan is free below the
+  // cap and ~27ms on the largest transcript measured, which is not worth a
+  // second code shape.
+  const entries = parseQwenLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readQwenTranscriptPage`), with the line count the uuids need.
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
+    conversationId: agentSessionId,
+    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
+  });
+}
 
+/**
+ * One page of a Qwen transcript's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). A record without its own uuid is named
+ * by its line, so cursors carry a line count.
+ */
+export function readQwenTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseQwenLines(agentSessionId, lines),
+  });
+}
+
+/** Parse whole lines into entries, each stamped with the byte its line starts at. */
+function parseQwenLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  const lines = window.text.split(/\r?\n/);
-  // Only used when a record turns out to lack its own `uuid`. Resolved up
-  // front rather than lazily: the scan is free below the cap and ~27ms on the
-  // largest transcript measured, which is not worth a second code shape.
-  const lineIndexBase = window.omittedLineCount;
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
+  for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw)) continue;
+    const firstNew = entries.length;
+    parseQwenRecord(agentSessionId, line, lineNumber ?? 0, entries);
+    const origin = { conversationId: agentSessionId, position: byte };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+  }
+  return entries;
+}
 
-    const type = raw.type;
-    if (type !== 'user' && type !== 'assistant') continue; // skip system/ui_telemetry
-    const message = raw.message;
-    if (!isRecord(message)) continue;
-    const parts = message.parts;
-    if (!Array.isArray(parts)) continue;
+/** Parse one JSONL record, appending what it yields. */
+function parseQwenRecord(agentSessionId: string, line: string, lineNumber: number, entries: TranscriptEntry[]): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(raw)) return;
 
-    // The record's own `uuid` is the best anchor available: intrinsic, stable
-    // across re-parses, and already unique per session (real sessions carry
-    // `uuid` / `parentUuid` / `sessionId` per line). Older or partial writers
-    // may omit it, so fall back to the session-scoped absolute line index the
-    // Codex and Kimi parsers use - see the fuller note there for why both
-    // halves matter. Sharing one uuid across the several entries a single
-    // record can emit is deliberate and pre-existing (Droid does the same).
-    const uuid = typeof raw.uuid === 'string' && raw.uuid.length > 0
-      ? raw.uuid
-      : `${agentSessionId}:${lineIndexBase + lineIndex}`;
-    const ts = parseTimestamp(raw.timestamp);
+  const type = raw.type;
+  if (type !== 'user' && type !== 'assistant') return; // skip system/ui_telemetry
+  const message = raw.message;
+  if (!isRecord(message)) return;
+  const parts = message.parts;
+  if (!Array.isArray(parts)) return;
 
-    if (type === 'user') {
-      const textParts: string[] = [];
-      for (const part of parts) {
-        if (!isRecord(part)) continue;
-        if (isRecord(part.functionResponse)) {
-          const response = part.functionResponse;
-          entries.push({
-            kind: 'tool_result',
-            uuid,
-            ts,
-            toolUseId: typeof response.id === 'string' ? response.id : '',
-            content: stringifyResponse(response.response),
-          });
-        } else if (typeof part.text === 'string') {
-          textParts.push(part.text);
-        }
-      }
-      const text = textParts.join('').trim();
-      if (text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
-      continue;
-    }
+  // The record's own `uuid` is the best anchor available: intrinsic, stable
+  // across re-parses, and already unique per session (real sessions carry
+  // `uuid` / `parentUuid` / `sessionId` per line). Older or partial writers
+  // may omit it, so fall back to the session-scoped absolute line index the
+  // Codex and Kimi parsers use - see the fuller note there for why both
+  // halves matter. Sharing one uuid across the several entries a single
+  // record can emit is deliberate and pre-existing (Droid does the same).
+  const uuid = typeof raw.uuid === 'string' && raw.uuid.length > 0
+    ? raw.uuid
+    : `${agentSessionId}:${lineNumber}`;
+  const ts = parseTimestamp(raw.timestamp);
 
-    // assistant
-    const model = typeof raw.model === 'string' ? raw.model : undefined;
-    const blocks: TranscriptBlock[] = [];
+  if (type === 'user') {
+    const textParts: string[] = [];
     for (const part of parts) {
       if (!isRecord(part)) continue;
-      if (isRecord(part.functionCall)) {
-        const call = part.functionCall;
-        blocks.push({
-          type: 'tool_use',
-          id: typeof call.id === 'string' ? call.id : '',
-          name: typeof call.name === 'string' ? call.name : 'tool',
-          input: call.args,
+      if (isRecord(part.functionResponse)) {
+        const response = part.functionResponse;
+        entries.push({
+          kind: 'tool_result',
+          uuid,
+          ts,
+          toolUseId: typeof response.id === 'string' ? response.id : '',
+          content: stringifyResponse(response.response),
         });
-      } else if (part.thought === true && typeof part.text === 'string') {
-        if (part.text.trim().length > 0) blocks.push({ type: 'thinking', text: part.text });
       } else if (typeof part.text === 'string') {
-        if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
+        textParts.push(part.text);
       }
     }
-    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+    const text = textParts.join('').trim();
+    if (text.length > 0) entries.push({ kind: 'user', uuid, ts, text });
+    return;
   }
 
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+  // assistant
+  const model = typeof raw.model === 'string' ? raw.model : undefined;
+  const blocks: TranscriptBlock[] = [];
+  for (const part of parts) {
+    if (!isRecord(part)) continue;
+    if (isRecord(part.functionCall)) {
+      const call = part.functionCall;
+      blocks.push({
+        type: 'tool_use',
+        id: typeof call.id === 'string' ? call.id : '',
+        name: typeof call.name === 'string' ? call.name : 'tool',
+        input: call.args,
+      });
+    } else if (part.thought === true && typeof part.text === 'string') {
+      if (part.text.trim().length > 0) blocks.push({ type: 'thinking', text: part.text });
+    } else if (typeof part.text === 'string') {
+      if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
+    }
+  }
+  if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
 }
 
 /**

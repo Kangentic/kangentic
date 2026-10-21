@@ -3,7 +3,7 @@ import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
-import { parseCodexTranscript, locateCodexTranscriptFile } from './transcript-parser';
+import { parseCodexTranscript, locateCodexTranscriptFile, readCodexTranscriptPage } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
@@ -12,7 +12,16 @@ import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities, AgentLaunchOptionInfo } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -275,6 +284,13 @@ export class CodexAdapter implements AgentAdapter {
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseCodexTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  async readTranscriptPage(agentSessionId: string, _cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    const filePath = locateCodexTranscriptFile(agentSessionId);
+    if (!filePath) return { status: 'unavailable', reason: 'file_missing' };
+    return readCodexTranscriptPage(agentSessionId, filePath, request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
