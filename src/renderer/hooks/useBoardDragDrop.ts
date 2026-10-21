@@ -40,6 +40,7 @@ import {
   laneTaskList,
   laneTasksForDrop,
   placeDropSlot,
+  rawDropPosition,
   releaseDropSettle,
   settleDropGap,
 } from '../utils/board-drop-preview';
@@ -359,9 +360,15 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     return laneTasks;
   }, []);
 
+  /** Close the gap open in `previous`'s lane, if that lane still renders. */
+  const closePreviousGap = useCallback((previous: { laneId: string }) => {
+    const previousList = laneTaskList(previous.laneId);
+    if (previousList) closeDropGap(previousList);
+  }, []);
+
   /**
    * Part the target lane's cards at the slot the drop would use, and move its
-   * blank slot card there. Runs from both handleDragOver and handleDragMove:
+   * slot card there. Runs from both handleDragOver and handleDragMove:
    * onDragOver fires only when `over` changes, and the slot can change under
    * the same `over` (past the last card, or cards of unequal height). The slot
    * is computed from event data alone; the DOM is touched only when the lane or
@@ -372,6 +379,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const originLaneId = dragOriginRef.current;
     const targetLaneId = event.over ? findSwimlane(String(event.over.id)) ?? null : null;
 
+    // dropGapTarget owns the whole rule. This guard repeats its first checks
+    // only so that refusedBoardMove is asked for a lane that could part at all.
     let refused = false;
     if (targetLaneId && originLaneId && targetLaneId !== originLaneId && !activeId.startsWith('column:')) {
       const known = refusalByLaneRef.current.get(targetLaneId);
@@ -397,8 +406,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const previous = dropGapRef.current;
     if (!laneId) {
       if (previous) {
-        const previousList = laneTaskList(previous.laneId);
-        if (previousList) closeDropGap(previousList);
+        closePreviousGap(previous);
         dropGapRef.current = null;
       }
       return;
@@ -410,20 +418,18 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const slot = getInsertionIndex(event, laneTasks);
     if (previous && previous.laneId === laneId && previous.slot === slot) return;
 
-    if (previous && previous.laneId !== laneId) {
-      const previousList = laneTaskList(previous.laneId);
-      if (previousList) closeDropGap(previousList);
-    }
+    if (previous && previous.laneId !== laneId) closePreviousGap(previous);
     const list = laneTaskList(laneId);
     if (!list) {
       dropGapRef.current = null;
       return;
     }
-    applyDropGap(list, laneTasks, slot, ghost.height + CARD_GAP_PX);
+    // The slot first: it reads the lane's layout, and the parting below writes.
     // The overlay's card is the card as it will land, so the slot shows it.
-    placeDropSlot(list, laneTasks, slot, ghost.height, document.querySelector<HTMLElement>('.drag-overlay [data-task-id]'));
+    placeDropSlot(list, laneTasks, slot, ghost.height, () => document.querySelector<HTMLElement>('.drag-overlay [data-task-id]'));
+    applyDropGap(list, laneTasks, slot, ghost.height + CARD_GAP_PX);
     dropGapRef.current = { laneId, slot };
-  }, [findSwimlane, doneLaneId, swimlanes, laneTasksFor]);
+  }, [findSwimlane, doneLaneId, swimlanes, laneTasksFor, closePreviousGap]);
 
   /** Keep the gap open until the dropped card lands in `laneId` (settleDropHandoff). */
   const beginDropHandoff = useCallback((laneId: string, taskId: string) => {
@@ -451,11 +457,11 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     cancelDropTimers();
     settleDropGap();
     // Hold the settle past dnd-kit's `wasDragging` window, then two frames for
-    // the derived transforms it set in that window to clear. Measured in the UI
-    // tier: with no settle a parted card jumps 76px back toward its drag-start
-    // place on the frame after the drop; the derived transform there cleared
-    // within a frame, but it is cleared from a passive effect, which no frame
-    // bounds, so the hold runs to the end of the window that can set one.
+    // the derived transforms it set in that window to clear. In the UI tier,
+    // with no settle, a parted card jumped 76px back toward its drag-start place
+    // on the frame after the drop. The derived transform there cleared within a
+    // frame, but it is cleared from a passive effect, which no frame bounds, so
+    // the hold runs to the end of the window that can set one.
     const timers = dropTimersRef.current;
     timers.settle = setTimeout(() => {
       timers.settle = null;
@@ -683,7 +689,10 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     }
 
     // The same function the drop gap used, so the card lands where the gap was.
-    const targetPosition = getInsertionIndex(event, laneTasksForDrop(state.tasks, targetSwimlaneId, taskId));
+    // A move takes a raw position, so the slot is anchored on the lane's own
+    // positions, which can have gaps.
+    const dropLaneTasks = laneTasksForDrop(state.tasks, targetSwimlaneId, taskId);
+    const targetPosition = rawDropPosition(dropLaneTasks, getInsertionIndex(event, dropLaneTasks));
 
     // Project this drop targets, captured synchronously before any await. A Done
     // drop defers its persist ~700ms (the FlyingCard flight) and is threaded

@@ -28,7 +28,7 @@ const SLOT_VISIBLE_ATTRIBUTE = 'data-visible';
 export function laneTasksForDrop(tasks: readonly Task[], laneId: string, activeId: string): Task[] {
   return tasks
     .filter((task) => task.swimlane_id === laneId && task.id !== activeId)
-    .sort((a, b) => a.position - b.position);
+    .sort((firstTask, secondTask) => firstTask.position - secondTask.position);
 }
 
 /** A rendered card's static top and bottom edges, in the collision rects' coordinates. */
@@ -74,6 +74,24 @@ function collisionRect(collision: Collision): ClientRect | null {
   return rect ?? null;
 }
 
+// hmr-safe: a cache keyed on a lane-order array's identity; after a reload it
+// starts empty and the next drag move rebuilds the one entry it needs.
+const laneIndexCache = new WeakMap<readonly Task[], ReadonlyMap<string, number>>();
+
+/**
+ * Each lane card's index in `laneTasks`. The drag hook hands `getInsertionIndex`
+ * the same array on every pointer move while the board's tasks are unchanged,
+ * so the map is built once per lane order rather than once per move.
+ */
+function laneIndexById(laneTasks: readonly Task[]): ReadonlyMap<string, number> {
+  const cached = laneIndexCache.get(laneTasks);
+  if (cached) return cached;
+  const indexById = new Map<string, number>();
+  laneTasks.forEach((task, index) => indexById.set(task.id, index));
+  laneIndexCache.set(laneTasks, indexById);
+  return indexById;
+}
+
 /**
  * The index a cross-column drop inserts at, for the preview and the drop alike
  * (`handleDragEnd` calls this too, so the card lands where the gap was).
@@ -94,24 +112,41 @@ export function getInsertionIndex(
   const ghost = event.active.rect.current.translated;
   if (!ghost) return laneTasks.length;
 
-  const laneIndexById = new Map<string, number>();
-  laneTasks.forEach((task, index) => laneIndexById.set(task.id, index));
+  const indexById = laneIndexById(laneTasks);
 
   const rendered: Array<CardSpan & { laneIndex: number }> = [];
   for (const collision of event.collisions ?? []) {
-    const laneIndex = laneIndexById.get(String(collision.id));
+    const laneIndex = indexById.get(String(collision.id));
     if (laneIndex === undefined) continue;
     const rect = collisionRect(collision);
     if (rect) rendered.push({ laneIndex, top: rect.top, bottom: rect.top + rect.height });
   }
   if (rendered.length === 0) return laneTasks.length;
-  rendered.sort((a, b) => a.laneIndex - b.laneIndex);
+  // Collisions arrive nearest first; slotIndexAt wants the cards top to bottom.
+  rendered.sort((firstCard, secondCard) => firstCard.laneIndex - secondCard.laneIndex);
 
   const slot = slotIndexAt(ghost.top + ghost.height / 2, rendered, ghost.height, CARD_GAP_PX);
   // A board filter can hide cards, so a slot among the rendered cards maps to
   // the hidden-inclusive lane order: before the rendered card, or just after
   // the last one.
   return slot < rendered.length ? rendered[slot].laneIndex : rendered[rendered.length - 1].laneIndex + 1;
+}
+
+/**
+ * The raw `position` a cross-column move hands `TaskRepository.move` for drop
+ * slot `slot` in `laneTasks` (the order `laneTasksForDrop` gives).
+ *
+ * `move()` reads its target as a raw stored position: it shifts the lane's rows
+ * at or past it and writes the card there. A lane's positions can have gaps
+ * (archiving leaves them, so a lane can sit at 0, 5, 9), and passing the slot
+ * index straight through would then land the card a slot early, beside the gap
+ * rather than in it. So anchor on the raw position of the card holding the
+ * slot, and past the last card on one past its position. The MCP placement
+ * tools do the same (`resolveRawPosition`, task-ordering.ts).
+ */
+export function rawDropPosition(laneTasks: readonly Task[], slot: number): number {
+  if (slot < laneTasks.length) return laneTasks[slot].position;
+  return laneTasks.length > 0 ? laneTasks[laneTasks.length - 1].position + 1 : 0;
 }
 
 /**
@@ -146,18 +181,30 @@ function renderedCards(list: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * Take a card's shift away, with the gap value that went with it, so a card the
+ * gap has left carries no trace of it.
+ */
+function unshiftCard(card: HTMLElement): void {
+  card.removeAttribute(SHIFT_ATTRIBUTE);
+  card.style.removeProperty(GAP_PROPERTY);
+}
+
+/**
  * Part the lane's rendered cards at `slot`: every card at or past it slides
  * down by `gapPx`. Attribute writes only; `index.css` turns `data-drop-shift`
- * into the transform, and dnd-kit's own inline transition animates it.
+ * into the transform, and dnd-kit's own inline transition animates it. A card
+ * already in the state the slot gives it is not written, so a slot moving by
+ * one touches the one card that crosses it.
  */
 export function applyDropGap(list: HTMLElement, laneTasks: readonly Task[], slot: number, gapPx: number): void {
   const shifted = new Set(laneTasks.slice(slot).map((task) => task.id));
+  const gapValue = `${gapPx}px`;
   for (const card of renderedCards(list)) {
     if (card.dataset.taskId !== undefined && shifted.has(card.dataset.taskId)) {
-      card.style.setProperty(GAP_PROPERTY, `${gapPx}px`);
-      card.setAttribute(SHIFT_ATTRIBUTE, '');
-    } else {
-      card.removeAttribute(SHIFT_ATTRIBUTE);
+      if (card.style.getPropertyValue(GAP_PROPERTY) !== gapValue) card.style.setProperty(GAP_PROPERTY, gapValue);
+      if (!card.hasAttribute(SHIFT_ATTRIBUTE)) card.setAttribute(SHIFT_ATTRIBUTE, '');
+    } else if (card.hasAttribute(SHIFT_ATTRIBUTE)) {
+      unshiftCard(card);
     }
   }
 }
@@ -199,21 +246,20 @@ export function inertCardCopy(card: HTMLElement): HTMLElement {
  * where the gap opens: before the first rendered card at or past the slot,
  * after the last rendered card, or at the list's top padding when the lane
  * shows none. Already showing, it slides there with the cards; shown from
- * hidden, it is filled with a copy of `cardTemplate` (a blank card without
- * one) and fades in where it belongs (index.css).
+ * hidden, it is filled with a copy of the card `findCardTemplate` returns (a
+ * blank card without one) and fades in where it belongs (index.css). The
+ * layout is read before anything here is written, so call this before
+ * `applyDropGap` and the read finds a clean layout.
  */
 export function placeDropSlot(
   list: HTMLElement,
   laneTasks: readonly Task[],
   slot: number,
   heightPx: number,
-  cardTemplate: HTMLElement | null,
+  findCardTemplate: () => HTMLElement | null,
 ): void {
   const slotElement = list.querySelector<HTMLElement>(`:scope > ${SLOT_SELECTOR}`);
   if (!slotElement) return;
-  if (!slotElement.hasAttribute(SLOT_VISIBLE_ATTRIBUTE)) {
-    slotElement.replaceChildren(...(cardTemplate ? [inertCardCopy(cardTemplate)] : []));
-  }
   const cardById = new Map<string, HTMLElement>();
   for (const card of renderedCards(list)) {
     if (card.dataset.taskId !== undefined) cardById.set(card.dataset.taskId, card);
@@ -230,6 +276,10 @@ export function placeDropSlot(
   }
   if (top === null) top = Number.parseFloat(getComputedStyle(list).paddingTop) || 0;
 
+  if (!slotElement.hasAttribute(SLOT_VISIBLE_ATTRIBUTE)) {
+    const cardTemplate = findCardTemplate();
+    slotElement.replaceChildren(...(cardTemplate ? [inertCardCopy(cardTemplate)] : []));
+  }
   slotElement.style.height = `${heightPx}px`;
   slotElement.style.transform = `translate3d(0px, ${top}px, 0)`;
   slotElement.setAttribute(SLOT_VISIBLE_ATTRIBUTE, '');
@@ -243,7 +293,7 @@ function hideDropSlot(slotElement: Element): void {
 
 /** Close a lane's gap: its cards slide back and its slot card goes. */
 export function closeDropGap(list: HTMLElement): void {
-  for (const card of renderedCards(list)) card.removeAttribute(SHIFT_ATTRIBUTE);
+  for (const card of renderedCards(list)) unshiftCard(card);
   const slotElement = list.querySelector(`:scope > ${SLOT_SELECTOR}`);
   if (slotElement) hideDropSlot(slotElement);
 }

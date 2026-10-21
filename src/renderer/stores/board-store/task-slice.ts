@@ -291,8 +291,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // lane closes the card's old slot and the target lane opens one at the
       // target position. Without it the card ties with the target card already
       // at that position and sorts on array order, so it can render one slot off
-      // the drop until the move's reload lands: a visible jump right where the
-      // drop gap handed over to it.
+      // the drop until the move's reload lands. That is a visible jump right
+      // where the drop gap handed over to it.
       for (let index = 0; index < tasks.length; index++) {
         if (index === taskIndex) continue;
         const sibling = tasks[index];

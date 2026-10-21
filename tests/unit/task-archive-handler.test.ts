@@ -29,6 +29,9 @@
  *       covered by the spawn-agent-*.test.ts harness suites.
  *     - withTaskLock serialization: concurrent calls for the same id serialize;
  *       different ids run independently
+ *     - lane order: every restore writes the target lane's order back through
+ *       reorderWithinSwimlane (restoredLaneOrder), at the requested index or last,
+ *       with the restored id once even when the lane list already holds it
  *     - resetSessionForTodoRestore: restoring into a role='todo' lane runs the
  *       SESSION-ONLY reset (cleanupTaskSession), never the full resource
  *       teardown (cleanupTaskResources), which force-deletes the branch when
@@ -39,6 +42,7 @@
  *
  *   TASK_BULK_UNARCHIVE
  *     - auto_spawn=false lane skips spawn for every task in the batch
+ *     - each restored task is written last in the lane, the second behind the first
  *     - per-task worktree error is caught; subsequent tasks still process
  *     - per-iteration lock is independent per id (different ids don't block)
  *     - every restored task goes through spawnAgent with the same
@@ -203,6 +207,9 @@ interface MockTaskRepo {
   list: ReturnType<typeof vi.fn>;
   getById: ReturnType<typeof vi.fn>;
   unarchive: ReturnType<typeof vi.fn>;
+  // Every restore writes the target lane's order back, so a fake without it
+  // would throw from the handler. Tests that care read its calls.
+  reorderWithinSwimlane: ReturnType<typeof vi.fn>;
 }
 
 interface MockSwimlaneRepo {
@@ -284,6 +291,7 @@ function createMockTaskRepo(tasks: MockTask[]): MockTaskRepo {
       task.swimlane_id = targetSwimlaneId;
       return task;
     }),
+    reorderWithinSwimlane: vi.fn(),
   };
 }
 
@@ -481,8 +489,11 @@ describe('task-archive handlers', () => {
 
     // A card dragged out of Done onto a lane passes the slot that lane's cards
     // parted at (the board's drop gap). Any other restore passes none and lands
-    // last, as every restore did before.
-    it('places the restored task at a position inside the lane, and appends for none or one outside it', async () => {
+    // last. Either way the lane's order is written back (densely, by
+    // `reorderWithinSwimlane`), so "last" holds on a lane whose stored positions
+    // have gaps: a bare `position = laneTasks.length` would sort the card second
+    // on a lane stored as 0, 5, 9.
+    it('places the restored task at a position inside the lane, and last for none or one the lane cannot honor', async () => {
       const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
       swimlaneRepo = createMockSwimlaneRepo([doneLane, noSpawnLane]);
       const restored = createMockTask('task-restored', { swimlane_id: 'lane-done' });
@@ -503,11 +514,86 @@ describe('task-archive handlers', () => {
       expect(repo.unarchive).toHaveBeenCalledWith('task-restored', 'lane-backlog', 2);
       expect(reorderWithinSwimlane).toHaveBeenCalledWith('lane-backlog', ['lane-first', 'task-restored', 'lane-second']);
 
-      for (const position of [undefined, 2, 7, -1, 0.5]) {
+      reorderWithinSwimlane.mockClear();
+      await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position: 0 });
+      expect(reorderWithinSwimlane).toHaveBeenCalledWith('lane-backlog', ['task-restored', 'lane-first', 'lane-second']);
+
+      // 2 is the end slot of a two-card lane (honored); the rest are not whole
+      // numbers inside the lane. All of them put the card last, and each still
+      // writes the order back.
+      for (const position of [undefined, 2, 7, -1, 0.5, Number.NaN]) {
         reorderWithinSwimlane.mockClear();
         await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position });
-        expect(reorderWithinSwimlane).not.toHaveBeenCalled();
+        expect(reorderWithinSwimlane, `position ${String(position)}`).toHaveBeenCalledTimes(1);
+        expect(reorderWithinSwimlane, `position ${String(position)}`).toHaveBeenCalledWith(
+          'lane-backlog',
+          ['lane-first', 'lane-second', 'task-restored'],
+        );
       }
+    });
+
+    // The task being restored can already be a live row in the target lane, so
+    // `tasks.list(targetSwimlaneId)` returns it among the lane's cards. The index
+    // is into the OTHER cards: the id is placed once, and the bound is the lane
+    // without it. Splicing it in over a list that already held it wrote it twice.
+    describe('a restored task that is already a live row in the target lane', () => {
+      function registerLaneHolding(laneCards: MockTask[]) {
+        const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, noSpawnLane]);
+        const reorderWithinSwimlane = vi.fn();
+        const repo = { ...createMockTaskRepo(laneCards), reorderWithinSwimlane };
+        repo.list = vi.fn((swimlaneId?: string) => (swimlaneId === 'lane-backlog' ? laneCards : []));
+        mockGetProjectRepos.mockReturnValue({
+          tasks: repo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+        return reorderWithinSwimlane;
+      }
+
+      function laneCardsWithRestoredSecond(): MockTask[] {
+        return [
+          createMockTask('lane-first', { swimlane_id: 'lane-backlog' }),
+          createMockTask('task-restored', { swimlane_id: 'lane-backlog' }),
+          createMockTask('lane-second', { swimlane_id: 'lane-backlog' }),
+        ];
+      }
+
+      it('writes the id exactly once, at the requested index among the other cards', async () => {
+        const expectedOrders: Array<[number, string[]]> = [
+          [0, ['task-restored', 'lane-first', 'lane-second']],
+          [1, ['lane-first', 'task-restored', 'lane-second']],
+        ];
+        for (const [position, expectedOrder] of expectedOrders) {
+          const reorderWithinSwimlane = registerLaneHolding(laneCardsWithRestoredSecond());
+
+          await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position });
+
+          expect(reorderWithinSwimlane).toHaveBeenCalledTimes(1);
+          const [laneId, writtenOrder] = reorderWithinSwimlane.mock.calls[0] as [string, string[]];
+          expect(laneId).toBe('lane-backlog');
+          expect(writtenOrder).toEqual(expectedOrder);
+          expect(writtenOrder.filter((taskId) => taskId === 'task-restored')).toHaveLength(1);
+        }
+      });
+
+      it('puts it last, once, for the end slot among the other cards and for an index past it, though the lane list is one longer', async () => {
+        // Three cards listed, but only two besides the restored one: index 2 is
+        // the end slot of what remains (honored, so last), and 3 or none is
+        // past it (also last). A bound counted over the lane list, restored id
+        // included, would have written the id twice.
+        for (const position of [2, 3, undefined]) {
+          const reorderWithinSwimlane = registerLaneHolding(laneCardsWithRestoredSecond());
+
+          await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-restored', targetSwimlaneId: 'lane-backlog', position });
+
+          expect(reorderWithinSwimlane, `position ${String(position)}`).toHaveBeenCalledTimes(1);
+          const [, writtenOrder] = reorderWithinSwimlane.mock.calls[0] as [string, string[]];
+          expect(writtenOrder, `position ${String(position)}`).toEqual(['lane-first', 'lane-second', 'task-restored']);
+          expect(writtenOrder.filter((taskId) => taskId === 'task-restored')).toHaveLength(1);
+        }
+      });
     });
 
     it('returns task without spawning when ensureTaskWorktree throws', async () => {
@@ -960,6 +1046,46 @@ describe('task-archive handlers', () => {
       expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
       expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
       expect(mockSpawnAgent).not.toHaveBeenCalled();
+    });
+
+    // A bulk restore carries no slot, so every card goes last. It still writes
+    // the lane's order back after each restore: appending at the lane's length
+    // would sort a card second on a lane stored as 0, 5, 9. The fake keeps the
+    // lane as the repository would (a restore adds the task, a reorder rewrites
+    // the order), so the second restore reads the first one.
+    it('writes each restored task last in the lane, the second behind the first', async () => {
+      const noSpawnLane = createMockSwimlane('lane-backlog', { auto_spawn: false });
+      swimlaneRepo = createMockSwimlaneRepo([doneLane, noSpawnLane]);
+      const everyTask = [
+        createMockTask('lane-first', { swimlane_id: 'lane-backlog' }),
+        createMockTask('lane-second', { swimlane_id: 'lane-backlog' }),
+        createMockTask('task-bulk-a', { swimlane_id: 'lane-done' }),
+        createMockTask('task-bulk-b', { swimlane_id: 'lane-done' }),
+      ];
+      const taskById = new Map(everyTask.map((task) => [task.id, task]));
+      let liveLaneIds = ['lane-first', 'lane-second'];
+      const repo = createMockTaskRepo(everyTask);
+      repo.list = vi.fn((swimlaneId?: string) => (swimlaneId === 'lane-backlog' ? liveLaneIds.map((id) => taskById.get(id)) : []));
+      repo.unarchive = vi.fn((id: string) => {
+        liveLaneIds = [...liveLaneIds, id];
+        return taskById.get(id);
+      });
+      repo.reorderWithinSwimlane = vi.fn((_swimlaneId: string, orderedTaskIds: string[]) => {
+        liveLaneIds = orderedTaskIds;
+      });
+      mockGetProjectRepos.mockReturnValue({
+        tasks: repo,
+        swimlanes: swimlaneRepo,
+        actions: { getTransitionsFor: vi.fn(() => []) },
+        attachments: { deleteByTaskId: vi.fn() },
+      });
+
+      await callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-bulk-a', 'task-bulk-b'], 'lane-backlog');
+
+      expect(repo.reorderWithinSwimlane.mock.calls).toEqual([
+        ['lane-backlog', ['lane-first', 'lane-second', 'task-bulk-a']],
+        ['lane-backlog', ['lane-first', 'lane-second', 'task-bulk-a', 'task-bulk-b']],
+      ]);
     });
 
     it('continues processing subsequent tasks when one worktree creation fails', async () => {

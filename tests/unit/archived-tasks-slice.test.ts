@@ -447,16 +447,17 @@ describe('loadArchivedTasks - project-switch guard', () => {
 // ---------------------------------------------------------------------------
 // unarchiveTask's optimistic placement. A card dragged out of Done onto a lane
 // restores at the slot that lane's cards parted at (board-drop-preview.ts);
-// main honors a position inside the lane and appends otherwise
-// (TASK_UNARCHIVE), and the optimistic write mirrors that rule. The IPC is
-// held open so the assertions read the optimistic state alone.
+// main honors a position from 0 to the lane's length (the end slot included)
+// and puts the card last otherwise, writing the whole lane back as dense
+// positions (TASK_UNARCHIVE), and the optimistic write mirrors that rule. The
+// IPC is held open so the assertions read the optimistic state alone.
 // ---------------------------------------------------------------------------
 
 describe('unarchiveTask - optimistic placement', () => {
   function laneOrder(tasks: Task[], laneId: string): string[] {
     return tasks
       .filter((task) => task.swimlane_id === laneId)
-      .sort((a, b) => a.position - b.position)
+      .sort((firstTask, secondTask) => firstTask.position - secondTask.position)
       .map((task) => task.id);
   }
 
@@ -485,8 +486,8 @@ describe('unarchiveTask - optimistic placement', () => {
     expect(state.archivedTasks).toEqual([]);
   });
 
-  it('appends with no position, or with one outside the lane, as main does', () => {
-    for (const position of [undefined, 3, 9, -1, 1.5]) {
+  it('puts the card last with no position, with the end slot, or with one outside the lane, as main does', () => {
+    for (const position of [undefined, 3, 9, -1, 1.5, Number.NaN]) {
       tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
       const { getState } = seeded();
 
@@ -494,5 +495,88 @@ describe('unarchiveTask - optimistic placement', () => {
 
       expect(laneOrder(getState().tasks, 'lane-planning')).toEqual(['first', 'second', 'third', 'restored']);
     }
+  });
+
+  // Archiving a card leaves its siblings' positions as they were
+  // (`TaskRepository.archive`), so a live lane is not always 0..n-1. `position`
+  // is an INDEX into the lane's order (main writes the lane back as dense
+  // positions), never a value to compare against the siblings' stored positions.
+  function seededGapped() {
+    return buildHarness({
+      tasks: [
+        makeTask({ id: 'first', swimlane_id: 'lane-planning', position: 0 }),
+        makeTask({ id: 'second', swimlane_id: 'lane-planning', position: 5 }),
+        makeTask({ id: 'third', swimlane_id: 'lane-planning', position: 9 }),
+      ],
+      swimlanes: [{ id: 'lane-planning', role: null, auto_spawn: false } as Swimlane],
+      archivedTasks: [makeTask({ id: 'restored', swimlane_id: 'lane-done', archived_at: '2026-01-02T00:00:00.000Z' })],
+      archivedTotalCount: 1,
+    });
+  }
+
+  function positionsById(tasks: Task[], laneId: string): Record<string, number> {
+    return Object.fromEntries(
+      tasks.filter((task) => task.swimlane_id === laneId).map((task) => [task.id, task.position]),
+    );
+  }
+
+  it('places a restore at index 2 of a gapped lane (0, 5, 9) after the second card, with the lane renumbered densely', () => {
+    tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+    const { getState } = seededGapped();
+
+    void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position: 2 });
+
+    const state = getState();
+    // The raw-position shift (`position >= 2`) left second at 6, third at 10
+    // and the restored card at 2, so it rendered at index 1 while main's
+    // handler wrote it at index 2.
+    expect(laneOrder(state.tasks, 'lane-planning')).toEqual(['first', 'second', 'restored', 'third']);
+    expect(positionsById(state.tasks, 'lane-planning')).toEqual({ first: 0, second: 1, restored: 2, third: 3 });
+  });
+
+  it('places a restore at every index of a gapped lane by that index, not by the siblings stored positions', () => {
+    const expectedOrders: Array<[number, string[]]> = [
+      [0, ['restored', 'first', 'second', 'third']],
+      [1, ['first', 'restored', 'second', 'third']],
+      [2, ['first', 'second', 'restored', 'third']],
+    ];
+    for (const [position, expectedOrder] of expectedOrders) {
+      tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+      const { getState } = seededGapped();
+
+      void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position });
+
+      const state = getState();
+      expect(laneOrder(state.tasks, 'lane-planning')).toEqual(expectedOrder);
+      expect(expectedOrder.map((taskId) => positionsById(state.tasks, 'lane-planning')[taskId])).toEqual([0, 1, 2, 3]);
+    }
+  });
+
+  it('puts the restored card last on a gapped lane, renumbering it densely, when the position is omitted or outside the lane', () => {
+    for (const position of [undefined, 9, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+      const { getState } = seededGapped();
+
+      void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position });
+
+      // Main writes the whole lane back as dense positions, so "last" is last
+      // here too. Leaving the siblings at 0, 5, 9 and writing the new card at
+      // the lane length (3) would sort it second.
+      const state = getState();
+      expect(positionsById(state.tasks, 'lane-planning'), `position ${String(position)}`)
+        .toEqual({ first: 0, second: 1, third: 2, restored: 3 });
+      expect(laneOrder(state.tasks, 'lane-planning')).toEqual(['first', 'second', 'third', 'restored']);
+    }
+  });
+
+  it('puts the restored card last on a gapped lane for the end slot (index 3 on 0, 5, 9), renumbered densely', () => {
+    tasksApi.unarchive.mockReturnValue(new Promise(() => {}));
+    const { getState } = seededGapped();
+
+    void getState().unarchiveTask({ id: 'restored', targetSwimlaneId: 'lane-planning', position: 3 });
+
+    const state = getState();
+    expect(positionsById(state.tasks, 'lane-planning')).toEqual({ first: 0, second: 1, third: 2, restored: 3 });
+    expect(laneOrder(state.tasks, 'lane-planning')).toEqual(['first', 'second', 'third', 'restored']);
   });
 });

@@ -348,8 +348,10 @@ zoom over the first element it matches inside the canvas instead of the canvas's
 A card dragged into another column now parts that column's cards under the ghost, the way its own
 column does, and a dimmed copy of the card fills the slot (`src/renderer/utils/board-drop-preview.ts`). It runs
 on every pointer move (dnd-kit's `onDragOver` fires only when `over` changes, and the slot can
-change under the same `over`), so it was built to the budget above: the slot is computed from the
-drag event alone, with no layout read, and the DOM is written only when the slot changes. The
+change under the same `over`), so it was built to the budget above. The slot is computed from the
+drag event alone, with no layout read per move. The DOM is written only when the slot changes, and
+then only on the cards that cross it, with the slot card's one layout read made before those
+writes. The
 parting itself is dnd-kit's own inline `transform 200ms ease` on each card, driven by an
 attribute and a non-inherited registered custom property, so a write restyles only the card it is
 on. Nothing changes lane membership, which is what the earlier preview did before `cd7b40c1b`
@@ -386,7 +388,8 @@ performance issue was closed with a pointer to the `@dnd-kit/react` rewrite, so 
 instead of per render, and `TaskCard` hands React its content as a memoized element. Every drag-start
 commit still re-renders each card's root, because `useSortable` reads dnd-kit's context, but stops
 there. `tests/ui/board-drag-skips-card-content.spec.ts` counts content renders through the activity
-mark's per-render layout effect: 24 at a drag start without the memo (6 cards, 4 commits), 0 with it.
+mark's per-render layout effect. It counted 24 at a drag start without the memo (6 cards, 4
+commits) and 0 with it.
 
 W100's board drags, two interleaved invocations per build (A, B, A, B) from a scratch copy of the
 tree, medians with the traced first run of the second pair left out:

@@ -1,5 +1,6 @@
 import { type StateCreator } from 'zustand';
 import type { Task, TaskUnarchiveInput, TaskBulkDeleteProgress } from '../../../shared/types';
+import { restoredLaneOrder } from '../../../shared/restore-lane-order';
 import { useSessionStore } from '../session-store';
 import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
@@ -143,36 +144,40 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
     if (!archivedRecord) return;
 
     const targetLane = get().swimlanes.find((lane) => lane.id === input.targetSwimlaneId);
-    const endOfLanePosition = previousTasks.filter((t) => t.swimlane_id === input.targetSwimlaneId).length;
-    // Main honors a position inside the lane and appends otherwise
-    // (TASK_UNARCHIVE); the optimistic placement mirrors that rule.
-    const requestedPosition = input.position;
-    const position = requestedPosition !== undefined
-      && Number.isInteger(requestedPosition)
-      && requestedPosition >= 0
-      && requestedPosition < endOfLanePosition
-      ? requestedPosition
-      : endOfLanePosition;
+    const targetLaneTasks = previousTasks
+      .filter((task) => task.swimlane_id === input.targetSwimlaneId)
+      .sort((firstTask, secondTask) => firstTask.position - secondTask.position);
+    // Main places the card at an index inside the lane, or last, and writes the
+    // lane's order back as dense positions (TASK_UNARCHIVE). The optimistic
+    // placement takes the same order from the same rule, so a lane whose
+    // positions have gaps (0, 5, 9) shows the card where main will put it.
+    const restoredOrder = restoredLaneOrder(
+      targetLaneTasks.map((task) => task.id),
+      input.id,
+      input.position,
+    );
+    const restoredPositions = new Map(restoredOrder.map((taskId, index) => [taskId, index]));
     const optimisticTask: Task = {
       ...archivedRecord,
       archived_at: null,
       swimlane_id: input.targetSwimlaneId,
-      position,
+      position: restoredPositions.get(input.id) ?? targetLaneTasks.length,
     };
 
     // Symmetric optimistic update: insert into tasks[] and remove from
     // archivedTasks[] in one set() so the card is continuously present in
     // some list. Without this, dnd-kit's DragOverlay has no handoff target
-    // during the IPC window and animates back to Done. The lane's cards at or
-    // past the position move down one in the same set(), so the restored card
-    // sorts into its slot rather than tying with the card already there.
+    // during the IPC window and animates back to Done. The lane's cards are
+    // renumbered in the same set(), so the restored card sorts into its slot
+    // rather than tying with the card already there.
     set((state) => ({
       tasks: [
-        ...state.tasks.map((t) => (
-          t.swimlane_id === input.targetSwimlaneId && t.position >= position
-            ? { ...t, position: t.position + 1 }
-            : t
-        )),
+        ...state.tasks.map((task) => {
+          const restoredPosition = restoredPositions.get(task.id);
+          return restoredPosition === undefined || restoredPosition === task.position
+            ? task
+            : { ...task, position: restoredPosition };
+        }),
         optimisticTask,
       ],
       archivedTasks: state.archivedTasks.filter((t) => t.id !== input.id),
