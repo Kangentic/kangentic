@@ -403,6 +403,49 @@ test.describe('Conversation Viewer - history paging', () => {
     }
   });
 
+  test('a far drag whose read failed asks once more while the pointer rests', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await takeOver(page);
+      // The first read around a position fails; every read after it answers.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: { direction: string }) => unknown;
+          __mockTranscriptsPageOverride: (input: { direction: string }) => unknown;
+        };
+        let failedOnce = false;
+        host.__mockTranscriptsPageOverride = (input) => {
+          if (input.direction === 'around' && !failedOnce) {
+            failedOnce = true;
+            return { status: 'unavailable', reason: 'read_failed' };
+          }
+          return host.__pagingAnswer(input);
+        };
+      });
+      const rail = page.getByTestId('conversation-scrollbar-rail');
+      const thumbBox = await page.getByTestId('conversation-scrollbar-thumb').boundingBox();
+      const railBox = await rail.boundingBox();
+      expect(thumbBox && railBox).toBeTruthy();
+      const startX = thumbBox!.x + thumbBox!.width / 2;
+      await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(startX, railBox!.y + railBox!.height * 0.25);
+
+      // No move after the failure: the drag asks again by itself and the rows show.
+      await expect.poll(async () => (await pageCalls(page)).filter((call) => call.direction === 'around').length).toBe(2);
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+      const shownTurns = await page.locator('[data-turn-uuid^="paged-turn-"]').evaluateAll((rows) => rows
+        .map((row) => Number(row.getAttribute('data-turn-uuid')!.slice('paged-turn-'.length))));
+      expect(Math.min(...shownTurns)).toBeLessThan(TAIL_FROM_TURN);
+      await page.mouse.up();
+      expect((await pageCalls(page)).filter((call) => call.direction === 'around')).toHaveLength(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a far drag let go before its page lands holds the placeholders until it does', async () => {
     const { browser, page } = await launch();
     try {

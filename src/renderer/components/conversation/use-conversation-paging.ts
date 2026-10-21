@@ -41,6 +41,7 @@ import {
   type TimelineSample,
 } from './conversation-paging';
 import type { InitialPosition } from './ConversationView';
+import type { FarSeekOutcome } from './ConversationScrollbar';
 
 /** What an edge row says: the window is reading there, or the read failed. */
 export type EdgeStatus = 'loading' | 'error';
@@ -70,8 +71,6 @@ export interface PagingState {
   errors: { top: boolean; bottom: boolean };
   /** A jump the window is waiting on, with the time its skeleton shows. */
   jump: { labelTs: number | null } | null;
-  /** A far drag's page is being read; the view stays mounted under the drag's skeleton. */
-  seeking: boolean;
   /** A moment the window must hold (a column tab's opening stay), and the tries spent on it. */
   target: { ts: number; attempts: number } | null;
   /** The last visit a Route row asked for, so the same one asked again moves again. */
@@ -91,7 +90,6 @@ export function initialState(key: string, openingTs: number | null, generation: 
     opening: null,
     errors: { top: false, bottom: false },
     jump: null,
-    seeking: false,
     target: openingTs !== null ? { ts: openingTs, attempts: 0 } : null,
     seenVisitTs,
     seenTail: null,
@@ -192,8 +190,6 @@ export interface ConversationPaging {
   /** A jump is waiting on its page: show the skeleton, not the view. */
   jumping: boolean;
   jumpLabelTs: number | null;
-  /** A far drag's page is being read, with the view still mounted. */
-  seeking: boolean;
   /** Part of the history is not loaded: the search covers loaded messages only. */
   historyUnloaded: boolean;
   /** The turn to hand the view: withheld while its page is being found. */
@@ -206,7 +202,7 @@ export interface ConversationPaging {
   jumpToStart: () => void;
   jumpToLatest: () => void;
   /** Load the page at a logical position into the window in place; null drops a seek in flight. */
-  seekLogical: (logical: number | null) => void;
+  seekLogical: (logical: number | null) => Promise<FarSeekOutcome>;
 }
 
 type ReadOutcome =
@@ -340,7 +336,6 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
       opening: { kind: 'bottom' },
       errors: { top: false, bottom: false },
       jump: null,
-      seeking: false,
       target: null,
     }));
   }, [setState]);
@@ -354,8 +349,7 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     const sequence = claimSlot('jump');
     if (sequence === null) return;
     const key = stateKeyRef.current;
-    // A jump replaces the view, so a seek it took the slot from is over too.
-    setState((previous) => ({ ...previous, jump: { labelTs }, seeking: false }));
+    setState((previous) => ({ ...previous, jump: { labelTs } }));
     void readPage(request, projectId, requestKey).then((outcome) => {
       if (!releaseSlot(sequence, key)) return;
       if (outcome.kind === 'reset') {
@@ -402,50 +396,47 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     jumpWith(request, Number.isFinite(start.ts) ? start.ts : null, () => ({ anchorTs: -Infinity, opening: { kind: 'top' } }));
   }, [jumpWith, setState]);
 
-  const seekLogical = useCallback((logical: number | null) => {
+  const seekLogical = useCallback((logical: number | null): Promise<FarSeekOutcome> => {
     if (logical === null) {
       // The drag came back over loaded rows: a page still on its way is not wanted.
       if (slotRef.current?.kind === 'seek') slotRef.current = null;
-      setState((previous) => (previous.seeking ? { ...previous, seeking: false } : previous));
-      return;
+      return Promise.resolve('dropped');
     }
     const known = windowRef.current;
-    if (!known) return;
-    const located = known.targetAt(logical);
-    if (!located) return;
+    const located = known?.targetAt(logical) ?? null;
+    if (!known || !located) return Promise.resolve('failed');
     const request = known.requestForPosition(located.conversationId, located.position);
     if (!request) {
       // Already held (the tail, or a page the window passed over): re-anchor on it.
       if (slotRef.current?.kind === 'seek') slotRef.current = null;
-      setState((previous) => ({ ...previous, anchorTs: located.ts, target: null, seeking: false }));
-      return;
+      setState((previous) => ({ ...previous, anchorTs: located.ts, target: null }));
+      return Promise.resolve('landed');
     }
     const sequence = claimSlot('seek');
-    if (sequence === null) return;
+    if (sequence === null) return Promise.resolve('dropped');
     const key = stateKeyRef.current;
-    setState((previous) => (previous.seeking ? previous : { ...previous, seeking: true }));
-    void readPage(request, projectId, requestKey).then((outcome) => {
-      // A newer seek, a jump, or a cancel owns the window now: it clears `seeking` itself.
-      if (!releaseSlot(sequence, key)) return;
+    return readPage(request, projectId, requestKey).then((outcome): FarSeekOutcome => {
+      // A newer seek, a jump, or a cancel owns the window now.
+      if (!releaseSlot(sequence, key)) return 'dropped';
       if (outcome.kind === 'reset') {
         jumpToLatest();
-        return;
+        return 'dropped';
       }
+      if (outcome.kind !== 'page') return 'failed';
+      const anchor = timeNear(outcome.page, located.position);
+      readerUuidRef.current = null;
+      readerTsRef.current = anchor;
       setState((previous) => {
         if (previous.key !== key) return previous;
-        if (outcome.kind !== 'page') return { ...previous, seeking: false };
-        const anchor = timeNear(outcome.page, located.position);
-        readerUuidRef.current = null;
-        readerTsRef.current = anchor;
         return {
           ...previous,
           blocks: [blockOf(outcome.page)],
           anchorTs: anchor,
           errors: { top: false, bottom: false },
-          seeking: false,
           target: null,
         };
       });
+      return 'landed';
     });
   }, [claimSlot, releaseSlot, jumpToLatest, projectId, requestKey, setState]);
 
@@ -582,7 +573,6 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
           ...previous,
           ...(blocks ? { blocks, generation: previous.generation + 1 } : {}),
           anchorTs: owedTs,
-          seeking: false,
           target: { ts: owedTs, attempts: previous.target.attempts + 1 },
         };
       });
@@ -622,16 +612,13 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
               generation: previous.generation + 1,
               opening: null,
               errors: { top: false, bottom: false },
-              seeking: false,
               locate: done,
             };
           }
           if (reply.status === 'in_tail') {
-            return {
-              ...previous, blocks: NO_BLOCKS, anchorTs: Infinity, generation: previous.generation + 1, opening: null, seeking: false, locate: done,
-            };
+            return { ...previous, blocks: NO_BLOCKS, anchorTs: Infinity, generation: previous.generation + 1, opening: null, locate: done };
           }
-          return { ...previous, seeking: false, locate: done };
+          return { ...previous, locate: done };
         });
       });
   }, [locateUuid, claimSlot, releaseSlot, projectId, sessionId, requestKey]);
@@ -666,7 +653,6 @@ export function useConversationPaging(options: ConversationPagingOptions): Conve
     opening,
     jumping,
     jumpLabelTs: current.jump?.labelTs ?? owedTarget?.ts ?? null,
-    seeking: enabled && current.seeking,
     historyUnloaded: !!pagingWindow && (!!pagingWindow.topHole || !!pagingWindow.bottomHole),
     turnTarget: locating ? null : turnUuid,
     copyNotice,
