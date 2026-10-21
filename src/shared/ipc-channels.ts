@@ -158,6 +158,7 @@ export const IPC = {
   SESSION_GET_SUMMARY: 'session:getSummary',
   SESSION_LIST_SUMMARIES: 'session:listSummaries',
   SESSION_GET_TASK_REPORT: 'session:getTaskReport',
+  SESSION_GET_TASK_ROUTE: 'session:getTaskRoute',
   SESSION_GET_TASK_LAST_MESSAGE: 'session:getTaskLastMessage',
   SESSION_GET_TOOL_BREAKDOWN: 'session:getToolBreakdown',
   SESSION_GET_TOOL_RESULT_TOKENS: 'session:getToolResultTokens',

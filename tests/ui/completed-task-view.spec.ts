@@ -21,7 +21,13 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, settleFrames } from './helpers';
+import {
+  launch as launchMonitorSeed,
+  openMonitor,
+  sessionIdOf,
+  byTestId as monitorByTestId,
+} from './monitor-writes-seed';
 
 // Each test launches its own browser, so the file fans out across UI workers safely.
 test.describe.configure({ mode: 'parallel' });
@@ -80,6 +86,8 @@ function makePreConfig(options: {
   knowledgeGraph?: Record<string, unknown>;
   /** The task's past sessions as `transcripts.listSessions` serves them; unset reads as no history. */
   transcriptSessions?: object[];
+  /** The task's conversation, as `transcripts.get` serves it for every one of `transcriptSessions`. */
+  transcript?: object;
 }): string {
   const exitCode = options.exitCode !== undefined ? options.exitCode : 0;
   const summaryBlock = options.withSummary
@@ -110,9 +118,13 @@ function makePreConfig(options: {
     ? `memoryTaskSummaries: { '${TASK_ID}': ${JSON.stringify(options.writtenSummary)} },`
     : '';
   const knowledgeGraphBlock = options.knowledgeGraph ? `state.config.knowledgeGraph = ${JSON.stringify(options.knowledgeGraph)};` : '';
-  const transcriptBlock = options.transcriptSessions
-    ? `transcriptSessionsByTask: { '${TASK_ID}': ${JSON.stringify(options.transcriptSessions)} },`
-    : '';
+  const transcriptSeeds = options.transcript
+    ? Object.fromEntries((options.transcriptSessions ?? []).map((meta) => [(meta as { sessionId: string }).sessionId, options.transcript]))
+    : null;
+  const transcriptBlock = [
+    options.transcriptSessions ? `transcriptSessionsByTask: { '${TASK_ID}': ${JSON.stringify(options.transcriptSessions)} },` : '',
+    transcriptSeeds ? `transcriptSeeds: ${JSON.stringify(transcriptSeeds)},` : '',
+  ].join(' ');
 
   let extraTasksBlock = '';
   for (let index = 0; index < (options.extraArchivedTasks ?? 0); index++) {
@@ -326,6 +338,33 @@ function fullReport(overrides: Record<string, unknown> = {}) {
     },
     summaryState: { kind: 'written', text: 'Fixed the blank bottom strip.' },
     ...overrides,
+  };
+}
+
+/**
+ * `fullReport`'s conversation, one turn in each stay of its route (Planning
+ * 03:04, Executing 03:24, Code Review 04:14, Executing again 04:30), served for
+ * either of the task's two sessions.
+ */
+function routeConversation() {
+  const meta = (sessionId: string, startedAt: string) => ({ sessionId, agentName: 'Claude Code', startedAt, exitedAt: startedAt, isolatedSwimlaneId: null, status: 'exited' });
+  const timestampAt = (time: string) => Date.parse(`2026-10-13T${time}:00.000Z`);
+  const say = (uuid: string, time: string, text: string) => ({ kind: 'assistant', uuid, ts: timestampAt(time), model: 'claude-opus-5-5', blocks: [{ type: 'text', text }] });
+  const transcriptSessions = [meta('sess-older', '2026-10-13T03:04:00.000Z'), meta('sess-newest', '2026-10-13T04:14:00.000Z')];
+  return {
+    transcriptSessions,
+    transcript: {
+      sessionId: 'sess-newest', taskId: TASK_ID, taskTitle: 'Completed Test Task', agentName: 'Claude Code',
+      startedAt: '2026-10-13T03:04:00.000Z', sessionStatus: 'exited', source: 'live', sourcePath: '/mock/completed.jsonl',
+      entries: [
+        { kind: 'user', uuid: 'turn-planning', ts: timestampAt('03:05'), text: 'PLANNING_TURN' },
+        say('turn-executing-first', '03:30', 'EXECUTING_FIRST'),
+        say('turn-review', '04:20', 'REVIEW_TURN'),
+        say('turn-executing-second', '04:35', 'EXECUTING_SECOND'),
+      ],
+      degraded: false,
+      sessions: transcriptSessions,
+    },
   };
 }
 
@@ -708,21 +747,70 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('a Route whose move log begins after the task started says where it begins', async () => {
+  test('a Route whose move log begins after the task started gets no note of its own', async () => {
+    // The earlier turns are in the conversation's All tab; nothing special is drawn here.
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport({ startedAt: '2026-09-26T22:49:00.000Z' }) }));
     try {
       await openCompletedTask(page);
-      // The first logged move is 03:04 UTC on Oct 13, which is Oct 12 in a zone west of UTC.
-      await expect(page.locator('[data-testid="completed-route"]')).toContainText(/Moves logged from Oct 1[23]/);
+      await expect(page.locator('[data-testid="route-column-pill"]')).toHaveCount(3);
+      await expect(page.locator('[data-testid="completed-route"]')).not.toContainText('Moves logged');
     } finally {
       await browser.close();
     }
-    const whole = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+  });
+
+  test('a Route pill opens the conversation on its column\'s tab, and a second pill switches that window', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
     try {
-      await openCompletedTask(whole.page);
-      await expect(whole.page.locator('[data-testid="completed-route"]')).not.toContainText('Moves logged');
+      await openCompletedTask(page);
+      await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Code Review"]').click();
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      await expect(page.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByText('REVIEW_TURN')).toBeVisible();
+      await expect(page.getByText('EXECUTING_FIRST')).toHaveCount(0);
+      // The conversation window may sit over the card now, so click the pill as
+      // its own handler would be reached, not by pointer position.
+      await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Executing"]').dispatchEvent('click');
+      await expect(page.getByTestId('conversation-route-tabs-lane-executing')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('conversation-window')).toHaveCount(1);
     } finally {
-      await whole.browser.close();
+      await browser.close();
+    }
+  });
+
+  test('a stay row opens its column\'s tab at that stay\'s first turn', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
+    try {
+      await openCompletedTask(page);
+      // Executing's second stay, at 04:30.
+      await page.locator('[data-testid="route-visit"]').nth(1).click();
+      await expect(page.getByTestId('conversation-route-tabs-lane-executing')).toHaveAttribute('aria-selected', 'true');
+      await expect
+        .poll(async () => page.locator('[data-turn-uuid="turn-executing-second"] [data-highlighted="true"]').count(), { timeout: 5000 })
+        .toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a pill reuses a conversation window opened on another of the task\'s sessions', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
+    try {
+      await openCompletedTask(page);
+      // A search hit or an earlier open anchored the window on the older session.
+      await page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { setConversationSessionId: (id: string) => void } } };
+      }).__zustandStores.session.getState().setConversationSessionId('sess-older'));
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Code Review"]').dispatchEvent('click');
+      await expect(page.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('conversation-window')).toHaveCount(1);
+      const conversationSessionId = await page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { conversationSessionId: string | null } } };
+      }).__zustandStores.session.getState().conversationSessionId);
+      expect(conversationSessionId).toBe('sess-older');
+    } finally {
+      await browser.close();
     }
   });
 
@@ -758,8 +846,9 @@ test.describe('Completed task view', () => {
       await expect(runs.locator('thead')).not.toContainText('Column');
       await expect(runs.locator('thead')).not.toContainText('Compactions');
       await expect(runs.locator('[data-testid="completed-run-row"]')).toHaveCount(1);
-      await expect(runs.locator('[data-testid="completed-conversation-header"]')).toContainText('Main conversation');
-      await expect(runs.locator('[data-testid="completed-conversation-header"]')).toContainText('abc12345');
+      // With no Column column, the Session pill leads the row.
+      await expect(runs.locator('thead th').first()).toHaveText('Session');
+      await expect(runs.locator('[data-testid="completed-copy-conversation-id"]')).toHaveText('abc12345');
       await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('17s');
       await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('$0.08');
       // No ledger behind the mock's derived report: the session totals stand in.
@@ -770,24 +859,68 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('Runs groups runs by conversation, with columns, permissions and a Compactions column', async () => {
+  test('Runs lists every run oldest first, each naming its conversation with a Session pill', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
     try {
       await openCompletedTask(page);
       await openUsageTab(page);
       const runs = page.locator('[data-testid="completed-runs"]');
-      await expect(runs.locator('thead')).toContainText('Column');
+      await expect(runs.locator('thead th')).toContainText(['Column', 'Session', 'Started']);
       await expect(runs.locator('thead')).toContainText('Compactions');
-      const headers = runs.locator('[data-testid="completed-conversation-header"]');
-      await expect(headers).toHaveCount(2);
-      await expect(headers.nth(0)).toContainText('Main conversation');
-      await expect(headers.nth(1)).toContainText('Code Review conversation');
+      // No heading row per conversation: the pill says which conversation a run continues.
       const rows = runs.locator('[data-testid="completed-run-row"]');
       await expect(rows).toHaveCount(3);
+      await expect(rows.locator('[data-testid="completed-copy-conversation-id"]')).toHaveText(['0407afe2', '0407afe2', '096842a0']);
       await expect(rows.nth(1).locator('[data-testid="report-column-label"]')).toHaveText(['Planning', 'Executing']);
       await expect(rows.nth(0)).toContainText('Plan');
       await expect(rows.nth(2)).toContainText('Auto');
       await expect(runs.locator('[data-testid="completed-runs-total"]')).toContainText('$42.78');
+
+      // The pill copies the full id.
+      await page.evaluate(() => {
+        const scope = window as unknown as { __copiedText: string[] };
+        scope.__copiedText = [];
+        navigator.clipboard.writeText = async (text: string) => { scope.__copiedText.push(text); };
+      });
+      await rows.nth(2).locator('[data-testid="completed-copy-conversation-id"]').click();
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __copiedText: string[] }).__copiedText))
+        .toEqual(['096842a0-5555-6666-7777-888888888888']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a Usage header sorts its table: highest first, then flipped, then back to the table\'s own order', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport() }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const runs = page.locator('[data-testid="completed-runs"]');
+      const costs = runs.locator('[data-testid="completed-run-row"] td:nth-last-child(2)');
+      const costHeader = runs.locator('th', { has: page.getByTestId('completed-runs-sort-cost') });
+      await expect(costs).toHaveText(['$1.85', '$24.19', '$16.74']);
+
+      await page.getByTestId('completed-runs-sort-cost').click();
+      await expect(costs).toHaveText(['$24.19', '$16.74', '$1.85']);
+      await expect(costHeader).toHaveAttribute('aria-sort', 'descending');
+
+      await page.getByTestId('completed-runs-sort-cost').click();
+      await expect(costs).toHaveText(['$1.85', '$16.74', '$24.19']);
+      await expect(costHeader).toHaveAttribute('aria-sort', 'ascending');
+
+      await page.getByTestId('completed-runs-sort-cost').click();
+      await expect(costs).toHaveText(['$1.85', '$24.19', '$16.74']);
+      await expect(costHeader).not.toHaveAttribute('aria-sort', /.+/);
+      // Total never moves.
+      await expect(runs.locator('tbody tr').last()).toHaveAttribute('data-testid', 'completed-runs-total');
+
+      // Models: Turns starts highest first, and a second click puts the fewest on top.
+      const models = page.locator('[data-testid="completed-models"]');
+      await page.getByTestId('completed-models-sort-turns').click();
+      await expect(models.locator('[data-testid="completed-model-row"]').first()).toContainText('Opus 5.5');
+      await page.getByTestId('completed-models-sort-turns').click();
+      await expect(models.locator('[data-testid="completed-model-row"]').first()).toContainText('Haiku 5.5');
+      await expect(models.locator('tbody tr').last()).toHaveAttribute('data-testid', 'completed-models-total');
     } finally {
       await browser.close();
     }
@@ -1027,6 +1160,81 @@ test.describe('Completed task view', () => {
       await expect(rows.nth(0).locator('[data-testid="completed-call-outcome"]')).toHaveAccessibleDescription('');
       await page.locator('[data-testid="completed-background-calls-toggle"]').click();
       await expect(rows).toHaveCount(12);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Background calls sorts every call before the cut, so the dearest leads while Show all is collapsed and keeps leading', async () => {
+    const call = (index: number) => ({
+      callId: `call-${index}`, job: 'condition_check', column: null, automationName: `Automation ${index}`,
+      automationType: 'notify', condition: null, outcome: 'skipped', reason: null,
+      startedAt: `2026-10-13T04:${String(10 + index).padStart(2, '0')}:00.000Z`,
+      model: 'Haiku 5.5', effort: 'low', durationMs: 4_000,
+      // The last call is by far the dearest; the others rise a little with their number.
+      costUsd: index === 11 ? 0.5 : 0.001 * (index + 1), tokens: 13_000,
+    });
+    const report = fullReport({
+      backgroundCalls: Array.from({ length: 12 }, (_, index) => call(index)),
+      totals: { ...FULL_REPORT_TOTALS, backgroundCalls: { durationMs: 48_000, costUsd: 0.566, tokens: 156_000 } },
+    });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const card = page.locator('[data-testid="completed-background-calls"]');
+      const rows = card.locator('[data-testid="completed-background-call-row"]');
+      const names = card.locator('[data-testid="completed-background-call-row"] [data-testid="completed-call-label"]');
+      const toggle = card.locator('[data-testid="completed-background-calls-toggle"]');
+      const callNames = (indexes: number[]) => indexes.map((index) => `Automation ${index}`);
+
+      // Collapsed and unsorted: the first ten, so the dearest call (the twelfth) is cut.
+      await expect(rows).toHaveCount(10);
+      await expect(names).toHaveText(callNames([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]));
+      await expect(toggle).toHaveText('Show all 12');
+
+      // Sorted by cost, still collapsed: the cut falls after the sort, so the
+      // call that was cut leads and the two cheapest are the ones left out.
+      await card.locator('[data-testid="completed-background-calls-sort-cost"]').click();
+      await expect(rows).toHaveCount(10);
+      await expect(names).toHaveText(callNames([11, 10, 9, 8, 7, 6, 5, 4, 3, 2]));
+      await expect(toggle).toHaveText('Show all 12');
+
+      // Expanding and collapsing keep the sort.
+      await toggle.click();
+      await expect(rows).toHaveCount(12);
+      await expect(names).toHaveText(callNames([11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]));
+      await toggle.click();
+      await expect(rows).toHaveCount(10);
+      await expect(names).toHaveText(callNames([11, 10, 9, 8, 7, 6, 5, 4, 3, 2]));
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Runs lists runs oldest first when the report hands its conversations over in another order', async () => {
+    // Conversation A runs at 03:04 and again at 04:30; conversation B runs at
+    // 04:14 between them, and the report lists B first. Oldest first reads A, B, A.
+    const runsOfA = [
+      reportRun('leg-1', '2026-10-13T03:04:00.000Z', 1.85, 722_000, 23, [PLANNING]),
+      reportRun('leg-3', '2026-10-13T04:30:00.000Z', 3.1, 600_000, 40, [EXECUTING]),
+    ];
+    const runsOfB = [reportRun('review-1', '2026-10-13T04:14:00.000Z', 16.74, 1_415_000, 274, [REVIEW])];
+    const report = fullReport({
+      conversations: [
+        { conversationId: '096842a0-5555-6666-7777-888888888888', isolatedColumn: REVIEW, runs: runsOfB },
+        { conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: runsOfA },
+      ],
+      totals: { ...FULL_REPORT_TOTALS, runs: { runCount: 3, runtimeMs: 2_737_000, costUsd: 21.69, toolCallCount: 337, compactionCount: 0 } },
+    });
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report }));
+    try {
+      await openCompletedTask(page);
+      await openUsageTab(page);
+      const rows = page.locator('[data-testid="completed-runs"] [data-testid="completed-run-row"]');
+      await expect(rows).toHaveCount(3);
+      await expect(rows.locator('[data-testid="completed-copy-conversation-id"]')).toHaveText(['0407afe2', '096842a0', '0407afe2']);
+      await expect(rows.locator('td:nth-last-child(2)')).toHaveText(['$1.85', '$16.74', '$3.10']);
     } finally {
       await browser.close();
     }
@@ -1366,6 +1574,97 @@ test.describe('Done Column', () => {
       await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
       await expect(doneColumn).toContainText('Completed (0)');
       await expect(doneColumn).toContainText('No completed tasks yet');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * A task detail hosted in the Agent Monitor cannot show the conversation viewer
+ * (its host sets `canOpenConversation: false`: the viewer opens on the board's
+ * layer, under the monitor overlay), so every opener is left out rather than
+ * left to do nothing. The board host keeps them, which the tests above and
+ * conversation-pill-disabled-state.spec.ts cover.
+ */
+test.describe('Task detail hosted in the Agent Monitor', () => {
+  const monitorDetailFrame = (page: Page): Locator => page.locator('#monitor-detail-layer-root [data-testid^="window-frame-"]');
+
+  /** Open the detail for a row by its title; the monitor hosts it in its own layer. */
+  async function openMonitorDetail(page: Page, taskId: string): Promise<Locator> {
+    await monitorByTestId(page, 'monitor-page')
+      .locator(`[data-session-id="${sessionIdOf(taskId)}"] [data-testid="monitor-card-title"]`)
+      .click();
+    const detail = monitorDetailFrame(page);
+    await expect(detail).toHaveCount(1);
+    return detail;
+  }
+
+  /** Open the header's Actions menu and return once it is showing, proven by an item every task has. */
+  async function openActionsMenu(page: Page, detail: Locator): Promise<void> {
+    await detail.getByRole('button', { name: 'Actions' }).click();
+    await expect(page.getByRole('menu').getByRole('button', { name: 'Edit' })).toBeVisible();
+  }
+
+  // Red: `MonitorTaskDetailHost` sets `canOpenConversation: true`. The completed
+  // view's tab row gains View conversation, the Route's pills and stay rows
+  // become buttons, and the Actions menu lists View conversation.
+  test('a completed task detail in the monitor has no way to open the conversation', async () => {
+    const taskId = 'task-monitor-completed';
+    const { browser, page } = await launchMonitorSeed(
+      { tasks: [{ id: taskId, displayId: 90, title: 'Completed in the monitor', lane: 'Done', session: true, sessionStatus: 'suspended', archived: true }] },
+      `window.__mockPreConfigure(function (state) { state.taskReportCache['${taskId}'] = ${JSON.stringify(fullReport())}; return {}; });`,
+    );
+    try {
+      await openMonitor(page);
+      const detail = await openMonitorDetail(page, taskId);
+
+      // The completed view and its Route are showing, so what is missing below is missing.
+      await expect(detail.locator('[data-testid="completed-task-view"]')).toBeVisible();
+      await expect(detail.locator('[data-testid="completed-task-tabs"]')).toBeVisible();
+      const pills = detail.locator('[data-testid="route-column-pill"]');
+      const stays = detail.locator('[data-testid="route-visit"]');
+      await expect(pills).toHaveCount(3);
+      await expect(stays).toHaveCount(2);
+      await expect(detail.locator('[data-testid="completed-view-conversation"]')).toHaveCount(0);
+
+      // The Route's pills and stay rows are plain boxes here, not buttons.
+      expect(await pills.evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(['DIV', 'DIV', 'DIV']);
+      expect(await stays.evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(['DIV', 'DIV']);
+      await pills.nth(2).click();
+      await stays.nth(1).click();
+      await settleFrames(page);
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
+      const conversationSessionId = await page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { conversationSessionId: string | null } } };
+      }).__zustandStores.session.getState().conversationSessionId);
+      expect(conversationSessionId).toBeNull();
+
+      await openActionsMenu(page, detail);
+      await expect(page.getByTestId('view-conversation-btn')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Red: the same flag. The header gains the conversation pill and the Actions
+  // menu gains View conversation.
+  test('a running task detail in the monitor shows no conversation pill and no View conversation item', async () => {
+    const taskId = 'task-monitor-running';
+    const { browser, page } = await launchMonitorSeed({
+      tasks: [{ id: taskId, displayId: 91, title: 'Running in the monitor', lane: 'Executing', session: true }],
+    });
+    try {
+      await openMonitor(page);
+      const detail = await openMonitorDetail(page, taskId);
+
+      // The header's pills are showing (the folder pill is one), so a missing
+      // conversation pill is not a header that never drew them.
+      await expect(detail.locator('[data-pill-id="folder"]')).toBeVisible();
+      await expect(detail.locator('[data-testid="conversation-pill"]')).toHaveCount(0);
+
+      await openActionsMenu(page, detail);
+      await expect(page.getByTestId('view-conversation-btn')).toHaveCount(0);
     } finally {
       await browser.close();
     }

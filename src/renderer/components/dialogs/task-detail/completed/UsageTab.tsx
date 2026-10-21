@@ -1,6 +1,6 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useCallback, useMemo, useState } from 'react';
 import type { ReactElement } from 'react';
-import { ArrowRight, Check, Copy, FileText, Sparkles, SquareTerminal, Workflow, XCircle } from 'lucide-react';
+import { ArrowRight, FileText, Sparkles, SquareTerminal, Workflow, XCircle } from 'lucide-react';
 import { AutomationIcon } from '../../board-manager/automation-icons';
 import { formatCallDuration, formatCost, formatSpan } from '../../../../utils/format-session';
 import { formatTokenCount } from '../../../../utils/format-tokens';
@@ -8,8 +8,9 @@ import { formatDateTime, formatMonthDayTime } from '../../../../lib/datetime';
 import { useConfigStore } from '../../../../stores/config-store';
 import { AUTOMATION_MANIFEST } from '../../../../../shared/automation-manifest';
 import { DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../../../shared/types';
-import { ColumnLabel, LinkButton, ReportCard, ToolCallsPill, ValuePill } from './report-parts';
+import { ColumnLabel, LinkButton, ReportCard, SessionPill, ToolCallsPill, ValuePill } from './report-parts';
 import { Tooltip } from '../../../Tooltip';
+import { computeNextSorts, SORT_HINT, SortIndicator, sortRows, sortStateOf, type SortableColumn, type SortLevel } from '../../../DataTable';
 import type {
   BackgroundCallJob,
   PermissionMode,
@@ -17,7 +18,6 @@ import type {
   TaskReportBackgroundCall,
   TaskReportBackgroundCallsTotal,
   TaskReportCallOutcome,
-  TaskReportConversation,
   TaskReportModelFallback,
   TaskReportModelsTotal,
   TaskReportModelUsage,
@@ -55,8 +55,8 @@ const AUTO_TABLE_WRAPPER = '@container overflow-x-auto';
 const LABEL_SHARE_PERCENT = 30;
 
 /**
- * The grid every table on this tab shares: the label columns (Column, Call,
- * Model) hold the first 30% and each data column takes an equal part of the
+ * The grid every table on this tab shares: the label columns (Column, Session,
+ * Call, Model) hold the first 30% and each data column takes an equal part of the
  * rest. Every card's data columns then start on one line, and Runs and
  * Background calls, which both have seven data columns unless Runs adds
  * Compactions, line up column for column. A column never narrows below its
@@ -69,6 +69,61 @@ function ColumnGrid({ labelColumns, dataColumns }: { labelColumns: number; dataC
       {Array.from({ length: labelColumns }, (_, index) => <col key={`label-${index}`} />)}
       {Array.from({ length: dataColumns }, (_, index) => <col key={`data-${index}`} style={{ width: dataColumnWidth }} />)}
     </colgroup>
+  );
+}
+
+/** One sortable column of a Usage table: its header and how its rows compare. */
+interface SortColumn<TRow, TKey extends string> extends SortableColumn<TRow, TKey> {
+  label: string;
+  align: 'left' | 'right';
+}
+
+/**
+ * A Usage table's sort, cycled as the Completed Tasks table cycles its own
+ * (`computeNextSorts`): a number column puts the highest first, a text column
+ * runs A to Z, a second click flips it and a third returns the table's own
+ * order. A row with no value sorts last either way (`sortRows`). The Total
+ * row is never a row here, so it stays at the bottom.
+ */
+function useSortedRows<TRow, TKey extends string>(rows: TRow[], columns: Array<SortColumn<TRow, TKey>>) {
+  const [sorts, setSorts] = useState<Array<SortLevel<TKey>>>([]);
+  const sortedRows = useMemo(() => sortRows(rows, sorts, columns), [rows, sorts, columns]);
+  const sortBy = useCallback((column: SortColumn<TRow, TKey>, shiftKey: boolean) => {
+    setSorts((current) => computeNextSorts(current, column, shiftKey));
+  }, []);
+  return { sorts, sortedRows, sortBy };
+}
+
+/**
+ * A sortable header: a button, so the keyboard reaches it, with the Completed
+ * Tasks table's own hint and indicator (`SortIndicator`). On a right-aligned
+ * number column the arrow sits left of the label, so the label stays flush with
+ * the numbers under it.
+ */
+function SortHeader<TRow, TKey extends string>({ column, sorts, onSort, first = false, testIdPrefix }: {
+  column: SortColumn<TRow, TKey>;
+  sorts: Array<SortLevel<TKey>>;
+  onSort: (column: SortColumn<TRow, TKey>, shiftKey: boolean) => void;
+  first?: boolean;
+  testIdPrefix: string;
+}) {
+  const sortIndex = sorts.findIndex((level) => level.key === column.key);
+  return (
+    <th className={cellClass('header', column.align, first)} aria-sort={sortStateOf(sortIndex === 0 ? sorts[0].direction : null)}>
+      <Tooltip label={SORT_HINT}>
+        <button
+          type="button"
+          onClick={(event) => onSort(column, event.shiftKey)}
+          className={`inline-flex items-center gap-1 rounded-sm transition-colors hover:text-fg-secondary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+            column.align === 'right' ? 'flex-row-reverse' : ''
+          } ${sortIndex >= 0 ? 'text-fg-secondary' : ''}`}
+          data-testid={`${testIdPrefix}-sort-${column.key}`}
+        >
+          {column.label}
+          <SortIndicator sorts={sorts} sortIndex={sortIndex} />
+        </button>
+      </Tooltip>
+    </th>
   );
 }
 
@@ -95,59 +150,86 @@ function usePermissionLabel(): (agent: string, mode: string | null) => string | 
   };
 }
 
-function conversationLabel(conversation: TaskReportConversation): string {
-  return conversation.isolatedColumn ? `${conversation.isolatedColumn.name} conversation` : 'Main conversation';
+/** A run with the conversation it continues, which the Session pill names. */
+interface RunsRow {
+  run: TaskReportRun;
+  conversationId: string;
 }
 
+type RunsSortKey = 'column' | 'session' | 'started' | 'model' | 'effort' | 'permissions' | 'compactions' | 'runtime' | 'cost' | 'toolCalls';
+
+const RUNS_COLUMNS: Record<RunsSortKey, SortColumn<RunsRow, RunsSortKey>> = {
+  column: { key: 'column', label: 'Column', align: 'left', sortValue: (row) => row.run.columns[0]?.name ?? null },
+  session: { key: 'session', label: 'Session', align: 'left', sortValue: (row) => row.conversationId },
+  started: { key: 'started', label: 'Started', align: 'left', sortValue: (row) => Date.parse(row.run.startedAt) },
+  model: { key: 'model', label: 'Model', align: 'left', sortValue: (row) => row.run.model },
+  effort: { key: 'effort', label: 'Effort', align: 'left', sortValue: (row) => row.run.effort },
+  permissions: { key: 'permissions', label: 'Permissions', align: 'left', sortValue: (row) => row.run.permissionMode },
+  compactions: { key: 'compactions', label: 'Compactions', align: 'right', sortValue: (row) => row.run.compactionCount },
+  runtime: { key: 'runtime', label: 'Runtime', align: 'right', sortValue: (row) => row.run.runtimeMs },
+  cost: { key: 'cost', label: 'Cost', align: 'right', sortValue: (row) => row.run.costUsd },
+  toolCalls: { key: 'toolCalls', label: 'Tool calls', align: 'right', sortValue: (row) => row.run.toolCallCount },
+};
+
+/**
+ * Every run of the task, oldest first, each naming its conversation with a
+ * Session pill: the same pill on two rows says they continue one conversation.
+ * One flat list rather than a heading per conversation, so the table reads in
+ * the order the task moved and sorts as one.
+ */
 function RunsCard({ report }: { report: TaskReport }) {
   const permissionLabel = usePermissionLabel();
-  const runs = report.conversations.flatMap((conversation) => conversation.runs);
-  const showColumn = runs.some((run) => run.columns.length > 0);
-  const showCompactions = runs.some((run) => run.compactionCount > 0);
+  const rows = useMemo<RunsRow[]>(
+    () => report.conversations
+      .flatMap((conversation) => conversation.runs.map((run) => ({ run, conversationId: conversation.conversationId })))
+      .sort((first, second) => Date.parse(first.run.startedAt) - Date.parse(second.run.startedAt)),
+    [report.conversations],
+  );
+  const showColumn = rows.some((row) => row.run.columns.length > 0);
+  const showCompactions = rows.some((row) => row.run.compactionCount > 0);
+  const columns = useMemo(() => [
+    ...(showColumn ? [RUNS_COLUMNS.column] : []),
+    RUNS_COLUMNS.session,
+    RUNS_COLUMNS.started,
+    RUNS_COLUMNS.model,
+    RUNS_COLUMNS.effort,
+    RUNS_COLUMNS.permissions,
+    ...(showCompactions ? [RUNS_COLUMNS.compactions] : []),
+    RUNS_COLUMNS.runtime,
+    RUNS_COLUMNS.cost,
+    RUNS_COLUMNS.toolCalls,
+  ], [showColumn, showCompactions]);
+  const { sorts, sortedRows, sortBy } = useSortedRows(rows, columns);
   // A field no run reported totals to null, shown as a dash, never a measured zero.
   const total = report.totals.runs;
-  // Started, Model, Effort, Permissions, Runtime, Cost and Tool calls always show.
-  const columnCount = 7 + (showColumn ? 1 : 0) + (showCompactions ? 1 : 0);
+  // Column and Session are the label columns, as Column and Call are on
+  // Background calls, so the two cards' data columns line up.
+  const labelColumns = showColumn ? 2 : 1;
   // The Total's label spans every column before the first number.
-  const totalLabelSpan = 4 + (showColumn ? 1 : 0);
+  const totalLabelSpan = labelColumns + 4;
 
   return (
     <ReportCard title="Runs" testId="completed-runs">
       <div className={AUTO_TABLE_WRAPPER}>
         <table className="w-full border-collapse text-[13px] tabular-nums">
-          {/* With no Column column, Started is the label column. */}
-          <ColumnGrid labelColumns={1} dataColumns={columnCount - 1} />
+          <ColumnGrid labelColumns={labelColumns} dataColumns={columns.length - labelColumns} />
           <thead>
             <tr>
-              {showColumn && <th className={cellClass('header', 'left', true)}>Column</th>}
-              <th className={cellClass('header', 'left', !showColumn)}>Started</th>
-              <th className={cellClass('header', 'left')}>Model</th>
-              <th className={cellClass('header', 'left')}>Effort</th>
-              <th className={cellClass('header', 'left')}>Permissions</th>
-              {showCompactions && <th className={cellClass('header', 'right')}>Compactions</th>}
-              <th className={cellClass('header', 'right')}>Runtime</th>
-              <th className={cellClass('header', 'right')}>Cost</th>
-              <th className={cellClass('header', 'right')}>Tool calls</th>
+              {columns.map((column, index) => (
+                <SortHeader key={column.key} column={column} sorts={sorts} onSort={sortBy} first={index === 0} testIdPrefix="completed-runs" />
+              ))}
             </tr>
           </thead>
           <tbody>
-            {report.conversations.map((conversation) => (
-              <Fragment key={conversation.conversationId}>
-                <tr data-testid="completed-conversation-header">
-                  <td colSpan={columnCount} className="pb-1 pt-3.5 text-left">
-                    <ConversationHeader label={conversationLabel(conversation)} conversationId={conversation.conversationId} />
-                  </td>
-                </tr>
-                {conversation.runs.map((run) => (
-                  <RunRow
-                    key={run.recordId}
-                    run={run}
-                    showColumn={showColumn}
-                    showCompactions={showCompactions}
-                    permissionLabel={permissionLabel(run.agent, run.permissionMode)}
-                  />
-                ))}
-              </Fragment>
+            {sortedRows.map((row) => (
+              <RunRow
+                key={row.run.recordId}
+                run={row.run}
+                conversationId={row.conversationId}
+                showColumn={showColumn}
+                showCompactions={showCompactions}
+                permissionLabel={permissionLabel(row.run.agent, row.run.permissionMode)}
+              />
             ))}
             <tr data-testid="completed-runs-total">
               <td colSpan={totalLabelSpan} className={cellClass('total', 'left', true)}>Total</td>
@@ -165,47 +247,15 @@ function RunsCard({ report }: { report: TaskReport }) {
   );
 }
 
-/** A conversation's name, its short id, and a button copying the full id. */
-function ConversationHeader({ label, conversationId }: { label: string; conversationId: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <span className="inline-flex items-center gap-2">
-      <span className="text-xs font-semibold text-fg-secondary">{label}</span>
-      <Tooltip label={conversationId}>
-        <span className="font-mono text-xs text-fg-faint">{conversationId.slice(0, 8)}</span>
-      </Tooltip>
-      <Tooltip label="Copy conversation ID">
-        <button
-          type="button"
-          aria-label="Copy conversation ID"
-          onClick={() => {
-            // The check shows only once the id is on the clipboard: a write the
-            // window is refused (no focus, no permission) leaves the copy icon.
-            navigator.clipboard.writeText(conversationId).then(
-              () => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              },
-              (error: unknown) => console.warn('[completed-task] conversation id copy failed:', error),
-            );
-          }}
-          className="-ml-1 inline-flex h-[22px] w-[22px] items-center justify-center rounded text-fg-muted hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          data-testid="completed-copy-conversation-id"
-        >
-          {copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
-        </button>
-      </Tooltip>
-    </span>
-  );
-}
-
 function RunRow({
   run,
+  conversationId,
   showColumn,
   showCompactions,
   permissionLabel,
 }: {
   run: TaskReportRun;
+  conversationId: string;
   showColumn: boolean;
   showCompactions: boolean;
   permissionLabel: string | null;
@@ -226,6 +276,9 @@ function RunRow({
         </td>
       )}
       <td className={cellClass('body', 'left', !showColumn)}>
+        <SessionPill conversationId={conversationId} />
+      </td>
+      <td className={cellClass('body', 'left')}>
         <Tooltip label={formatDateTime(run.startedAt)}>
           <span className="inline-flex items-center gap-1.5">
             {formatMonthDayTime(run.startedAt)}
@@ -277,7 +330,22 @@ function ModelsCard({ models, total, fallback }: {
   return null;
 }
 
+type ModelsSortKey = 'model' | 'turns' | 'freshInput' | 'cacheWrite' | 'cacheRead' | 'output';
+
+const MODELS_COLUMNS: Array<SortColumn<TaskReportModelUsage, ModelsSortKey>> = [
+  // The model alone: the sort is stable, so a model's main thread and subagent
+  // rows keep the ledger's own order. A combined string would not, since
+  // `localeCompare` ignores a NUL separator and runs the two names together.
+  { key: 'model', label: 'Model', align: 'left', sortValue: (row) => row.model },
+  { key: 'turns', label: 'Turns', align: 'right', sortValue: (row) => row.turns },
+  { key: 'freshInput', label: 'Fresh input', align: 'right', sortValue: (row) => row.freshInputTokens },
+  { key: 'cacheWrite', label: 'Cache write', align: 'right', sortValue: (row) => row.cacheWriteTokens },
+  { key: 'cacheRead', label: 'Cache read', align: 'right', sortValue: (row) => row.cacheReadTokens },
+  { key: 'output', label: 'Output', align: 'right', sortValue: (row) => row.outputTokens },
+];
+
 function LedgerModelsCard({ models, total }: { models: TaskReportModelUsage[]; total: TaskReportModelsTotal }) {
+  const { sorts, sortedRows, sortBy } = useSortedRows(models, MODELS_COLUMNS);
   return (
     <ReportCard title="Models and tokens" testId="completed-models">
       <div className={AUTO_TABLE_WRAPPER}>
@@ -285,16 +353,13 @@ function LedgerModelsCard({ models, total }: { models: TaskReportModelUsage[]; t
           <ColumnGrid labelColumns={1} dataColumns={5} />
           <thead>
             <tr>
-              <th className={cellClass('header', 'left', true)}>Model</th>
-              <th className={cellClass('header', 'right')}>Turns</th>
-              <th className={cellClass('header', 'right')}>Fresh input</th>
-              <th className={cellClass('header', 'right')}>Cache write</th>
-              <th className={cellClass('header', 'right')}>Cache read</th>
-              <th className={cellClass('header', 'right')}>Output</th>
+              {MODELS_COLUMNS.map((column, index) => (
+                <SortHeader key={column.key} column={column} sorts={sorts} onSort={sortBy} first={index === 0} testIdPrefix="completed-models" />
+              ))}
             </tr>
           </thead>
           <tbody>
-            {models.map((row) => (
+            {sortedRows.map((row) => (
               <tr key={`${row.model}\u0000${row.subagent ?? ''}`} data-testid="completed-model-row">
                 <td className={cellClass('body', 'left', true)}>
                   <span className="inline-flex items-center gap-2.5">
@@ -326,7 +391,16 @@ function LedgerModelsCard({ models, total }: { models: TaskReportModelUsage[]; t
   );
 }
 
+type FallbackSortKey = 'model' | 'inputWithCache' | 'output';
+
+const FALLBACK_COLUMNS: Array<SortColumn<TaskReportModelFallback, FallbackSortKey>> = [
+  { key: 'model', label: 'Model', align: 'left', sortValue: (row) => row.model },
+  { key: 'inputWithCache', label: 'Input with cache', align: 'right', sortValue: (row) => row.inputWithCacheTokens },
+  { key: 'output', label: 'Output', align: 'right', sortValue: (row) => row.outputTokens },
+];
+
 function FallbackModelsCard({ fallback }: { fallback: TaskReportModelFallback[] }) {
+  const { sorts, sortedRows, sortBy } = useSortedRows(fallback, FALLBACK_COLUMNS);
   return (
     <ReportCard title="Models and tokens" aside="From session totals" testId="completed-models-fallback">
       <div className={AUTO_TABLE_WRAPPER}>
@@ -334,13 +408,13 @@ function FallbackModelsCard({ fallback }: { fallback: TaskReportModelFallback[] 
           <ColumnGrid labelColumns={1} dataColumns={2} />
           <thead>
             <tr>
-              <th className={cellClass('header', 'left', true)}>Model</th>
-              <th className={cellClass('header', 'right')}>Input with cache</th>
-              <th className={cellClass('header', 'right')}>Output</th>
+              {FALLBACK_COLUMNS.map((column, index) => (
+                <SortHeader key={column.key} column={column} sorts={sorts} onSort={sortBy} first={index === 0} testIdPrefix="completed-models-fallback" />
+              ))}
             </tr>
           </thead>
           <tbody>
-            {fallback.map((row) => (
+            {sortedRows.map((row) => (
               <tr key={row.model} data-testid="completed-model-row">
                 <td className={`${cellClass('body', 'left', true)} font-medium text-fg`}>{row.model}</td>
                 <TokenCell value={row.inputWithCacheTokens} kind="body" />
@@ -376,6 +450,20 @@ const JOB_CALLS: Record<BackgroundCallJob, { label: string; icon: ReactElement }
   condition_check: { label: 'Condition check', icon: <Sparkles size={14} className="flex-shrink-0 text-fg-muted" /> },
 };
 
+type CallsSortKey = 'column' | 'call' | 'started' | 'model' | 'effort' | 'outcome' | 'runtime' | 'cost' | 'tokens';
+
+const CALLS_COLUMNS: Array<SortColumn<TaskReportBackgroundCall, CallsSortKey>> = [
+  { key: 'column', label: 'Column', align: 'left', sortValue: (call) => call.column?.name ?? null },
+  { key: 'call', label: 'Call', align: 'left', sortValue: (call) => call.automationName ?? JOB_CALLS[call.job].label },
+  { key: 'started', label: 'Started', align: 'left', sortValue: (call) => Date.parse(call.startedAt) },
+  { key: 'model', label: 'Model', align: 'left', sortValue: (call) => call.model },
+  { key: 'effort', label: 'Effort', align: 'left', sortValue: (call) => call.effort },
+  { key: 'outcome', label: 'Outcome', align: 'left', sortValue: (call) => call.outcome },
+  { key: 'runtime', label: 'Runtime', align: 'right', sortValue: (call) => call.durationMs },
+  { key: 'cost', label: 'Cost', align: 'right', sortValue: (call) => call.costUsd },
+  { key: 'tokens', label: 'Tokens', align: 'right', sortValue: (call) => call.tokens },
+];
+
 /**
  * One row per automation a Condition check was asked about, with its Outcome
  * (ran, skipped or error), and each call with no automation behind it (a
@@ -386,7 +474,9 @@ const JOB_CALLS: Record<BackgroundCallJob, { label: string; icon: ReactElement }
  */
 function BackgroundCallsCard({ calls, total }: { calls: TaskReportBackgroundCall[]; total: TaskReportBackgroundCallsTotal }) {
   const [showAll, setShowAll] = useState(false);
-  const shown = showAll ? calls : calls.slice(0, BACKGROUND_CALLS_SHOWN);
+  // Sorted before the "Show all" cut, so the highest cost is the highest of every call.
+  const { sorts, sortedRows, sortBy } = useSortedRows(calls, CALLS_COLUMNS);
+  const shown = showAll ? sortedRows : sortedRows.slice(0, BACKGROUND_CALLS_SHOWN);
   const hidden = calls.length - BACKGROUND_CALLS_SHOWN;
 
   return (
@@ -406,15 +496,9 @@ function BackgroundCallsCard({ calls, total }: { calls: TaskReportBackgroundCall
             <tr>
               {/* The data columns follow Runs' order, Outcome where Runs has
                   Permissions, so the two cards line up column for column. */}
-              <th className={cellClass('header', 'left', true)}>Column</th>
-              <th className={cellClass('header', 'left')}>Call</th>
-              <th className={cellClass('header', 'left')}>Started</th>
-              <th className={cellClass('header', 'left')}>Model</th>
-              <th className={cellClass('header', 'left')}>Effort</th>
-              <th className={cellClass('header', 'left')}>Outcome</th>
-              <th className={cellClass('header', 'right')}>Runtime</th>
-              <th className={cellClass('header', 'right')}>Cost</th>
-              <th className={cellClass('header', 'right')}>Tokens</th>
+              {CALLS_COLUMNS.map((column, index) => (
+                <SortHeader key={column.key} column={column} sorts={sorts} onSort={sortBy} first={index === 0} testIdPrefix="completed-background-calls" />
+              ))}
             </tr>
           </thead>
           <tbody>

@@ -25,6 +25,10 @@ import { useWindowStore } from '../store/window-store';
 
 export function useConversationWindowBridge(): void {
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
+  // Every open request bumps this, so asking again for a conversation that is
+  // already open (a second Route pill) re-runs the effect below and switches
+  // the window's tab. `?? 0`: an instance pinned across a Fast Refresh predates it.
+  const conversationRequestId = useSessionStore((state) => state.conversationRequestId ?? 0);
   const windows = useWindowStore((state) => state.windows);
 
   // The window id we opened for the current signal, so the mirror effect can
@@ -47,23 +51,20 @@ export function useConversationWindowBridge(): void {
     // main dedups to once per day.
     window.electronAPI?.analytics?.trackFeatureUsed('conversation_viewer');
 
-    // Focus an existing conversation window for this session instead of duplicating.
-    const existing = Object.values(windowStore.windows).find(
-      (candidate) => candidate.kind === 'conversation' && candidate.anchor === conversationSessionId,
-    );
-    if (existing) {
-      windowStore.focusWindow(existing.id);
-      conversationWindowIdRef.current = existing.id;
-      return;
-    }
-
+    // `openWindow` focuses an existing window for this session instead of
+    // duplicating, and hands it the tab this open asked for. The tab is a
+    // one-shot, cleared once handed over, so a later re-run of this effect (a
+    // remount, a project switch that keeps the signal) never asks again.
+    const conversationTab = useSessionStore.getState().conversationTab ?? undefined;
     conversationWindowIdRef.current = windowStore.openWindow({
       kind: 'conversation',
       anchor: conversationSessionId,
       sessionId: conversationSessionId,
       title: 'Conversation',
+      conversationTab,
     });
-  }, [conversationSessionId]);
+    if (conversationTab) useSessionStore.setState({ conversationTab: null });
+  }, [conversationSessionId, conversationRequestId]);
 
   // Mirror window closure back to the signal: when the conversation window we
   // opened is gone (closed via the title bar / Escape), clear the signal.

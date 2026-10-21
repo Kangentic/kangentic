@@ -5,6 +5,7 @@ import { TaskChangesDialog } from './TaskChangesDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTable } from '../DataTable';
 import { ArchivedTaskContextMenu } from '../board/ArchivedTaskContextMenu';
+import { openTaskConversation } from './task-detail/open-task-conversation';
 import { formatCost } from '../../utils/format-session';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { useBoardStore } from '../../stores/board-store';
@@ -347,6 +348,12 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
           task={contextMenu.task}
           swimlanes={swimlanes}
           onOpen={() => handleViewDetail(contextMenu.task.id)}
+          onViewConversation={() => {
+            // The window opens on the board layer under this modal, so close the
+            // list to reveal it, as Open does.
+            void openTaskConversation(contextMenu.task.id, currentProjectId);
+            onClose();
+          }}
           onShowChanges={() => setChangesTask(contextMenu.task)}
           onRestoreTo={(targetSwimlaneId) => handleRestore(contextMenu.task.id, targetSwimlaneId)}
           onDelete={() => handleDelete(contextMenu.task.id)}

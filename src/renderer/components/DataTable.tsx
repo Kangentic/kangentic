@@ -10,7 +10,8 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   label: string;
   align?: 'left' | 'right';
   width?: string;
-  sortValue?: (row: TRow) => number | string;
+  /** Null for a row with no value: it sorts last in both directions. */
+  sortValue?: (row: TRow) => number | string | null;
   render: (row: TRow) => React.ReactNode;
   headerRender?: (data: TRow[]) => React.ReactNode;
   /** Hover explanation for the column header (what the stat means). Sortable
@@ -67,10 +68,37 @@ export interface SortLevel<TKey extends string = string> {
 }
 
 /** Subset of DataTableColumn the sort algorithms need. */
-interface SortableColumn<TRow, TKey extends string> {
+export interface SortableColumn<TRow, TKey extends string> {
   key: TKey;
   align?: 'left' | 'right';
-  sortValue?: (row: TRow) => number | string;
+  /** Null for a row with no value: it sorts last in both directions. */
+  sortValue?: (row: TRow) => number | string | null;
+}
+
+/** The hint every sortable header carries, here and in the completed task view's Usage tables. */
+export const SORT_HINT = 'Click to sort - Shift+Click adds a secondary sort';
+
+/**
+ * A sortable header's indicator: the arrow slot, reserved even with no sort so
+ * the label never shifts when one turns on, then the tie-break priority once
+ * two or more levels are active. `sortIndex` is the column's place in `sorts`,
+ * or -1. A right-aligned header lays it out with `flex-row-reverse`, so the
+ * label stays flush with the numbers under it.
+ */
+export function SortIndicator<TKey extends string>({ sorts, sortIndex }: { sorts: Array<SortLevel<TKey>>; sortIndex: number }) {
+  const level = sortIndex >= 0 ? sorts[sortIndex] : null;
+  return (
+    <>
+      <span className="w-3 h-3 flex items-center justify-center">
+        {level && (level.direction === 'asc'
+          ? <ArrowUp size={12} className="text-accent-fg" />
+          : <ArrowDown size={12} className="text-accent-fg" />)}
+      </span>
+      {level && sorts.length > 1 && (
+        <span className="text-[11px] text-accent-fg tabular-nums" data-testid="sort-priority">{sortIndex + 1}</span>
+      )}
+    </>
+  );
 }
 
 /**
@@ -122,7 +150,9 @@ export function computeNextSorts<TRow, TKey extends string>(
 
 /**
  * Applies ordered sort levels to `data`. Index 0 is the primary sort; later
- * levels break ties left to right. Pure and exported for the same reason as
+ * levels break ties left to right. A row whose value is null (nothing
+ * reported) sorts last whichever way the level runs, so "highest first" never
+ * opens on a blank. Pure and exported for the same reason as
  * `computeNextSorts`.
  */
 export function sortRows<TRow, TKey extends string>(
@@ -133,13 +163,17 @@ export function sortRows<TRow, TKey extends string>(
   if (sorts.length === 0) return data;
   const levels = sorts
     .map((level) => ({ direction: level.direction, extractValue: columns.find((column) => column.key === level.key)?.sortValue }))
-    .filter((level): level is { direction: 'asc' | 'desc'; extractValue: (row: TRow) => number | string } => !!level.extractValue);
+    .filter((level): level is { direction: 'asc' | 'desc'; extractValue: (row: TRow) => number | string | null } => !!level.extractValue);
   if (levels.length === 0) return data;
 
   return [...data].sort((rowA, rowB) => {
     for (const level of levels) {
       const valueA = level.extractValue(rowA);
       const valueB = level.extractValue(rowB);
+      if (valueA === null || valueB === null) {
+        if (valueA === valueB) continue;
+        return valueA === null ? 1 : -1;
+      }
       const comparison = typeof valueA === 'string' && typeof valueB === 'string'
         ? valueA.localeCompare(valueB)
         : (valueA as number) - (valueB as number);
@@ -319,10 +353,9 @@ export function DataTable<TRow, TKey extends string = string>({
       {columns.map((column, columnIndex) => {
         const isSortable = !!column.sortValue;
         const sortIndex = sorts.findIndex((level) => level.key === column.key);
-        const isActive = sortIndex >= 0;
         const headerTip = [
           column.headerTip,
-          isSortable ? 'Click to sort - Shift+Click adds a secondary sort' : undefined,
+          isSortable ? SORT_HINT : undefined,
         ].filter(Boolean).join('\n');
         return (
           // The tip goes on the cell itself: Tooltip adds no element, so the
@@ -343,19 +376,7 @@ export function DataTable<TRow, TKey extends string = string>({
                 // numeric values below it.
                 <span className={`inline-flex items-center gap-1 ${column.align === 'right' ? 'flex-row-reverse' : ''}`}>
                   {column.label}
-                  {isSortable && (
-                    <span className="w-3 h-3 flex items-center justify-center">
-                      {isActive && (
-                        sorts[sortIndex].direction === 'asc'
-                          ? <ArrowUp size={12} className="text-accent-fg" />
-                          : <ArrowDown size={12} className="text-accent-fg" />
-                      )}
-                    </span>
-                  )}
-                  {/* Tie-break priority, shown only when multiple levels are active. */}
-                  {isActive && sorts.length > 1 && (
-                    <span className="text-[11px] text-accent-fg tabular-nums" data-testid="sort-priority">{sortIndex + 1}</span>
-                  )}
+                  {isSortable && <SortIndicator sorts={sorts} sortIndex={sortIndex} />}
                 </span>
               )}
             </th>

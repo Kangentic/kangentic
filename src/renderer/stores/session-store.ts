@@ -277,6 +277,8 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   pendingDetailWindowsProjectId: null,
   scrollToEventKey: null,
   conversationSessionId: preservedConversationSessionId,
+  conversationTab: null,
+  conversationRequestId: 0,
   scrollToTurnUuid: preservedScrollToTurnUuid,
   // hmr-safe: one-shot cross-project handoff, alive only during an async project
   // switch; dropping it on a coincident HMR only skips an auto-open, no visible close.
@@ -691,7 +693,9 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     set((state) => ({ dialogSessionIds: state.dialogSessionIds.filter((id) => id !== sessionId) })),
   setPendingDetailWindowsProjectId: (projectId) => set({ pendingDetailWindowsProjectId: projectId }),
   setScrollToEventKey: (key) => set({ scrollToEventKey: key }),
-  setConversationSessionId: (id) => set({ conversationSessionId: id }),
+  setConversationSessionId: (id, tab = null) => set((state) => (id === null
+    ? { conversationSessionId: null, conversationTab: null }
+    : { conversationSessionId: id, conversationTab: tab, conversationRequestId: state.conversationRequestId + 1 })),
   setScrollToTurnUuid: (uuid) => set({ scrollToTurnUuid: uuid }),
   setPendingOpenConversation: (id) => set({ _pendingOpenConversation: id }),
   setPendingScrollToTurnUuid: (uuid) => set({ _pendingScrollToTurnUuid: uuid }),

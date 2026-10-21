@@ -24,9 +24,20 @@
  * (handled inside ConversationView itself, since it wins there too), then a
  * `pendingTuiAnchor` match (the task's terminal viewport at the moment the
  * user clicked "open conversation" - see `tui-anchor.ts`), then the bottom.
+ *
+ * Route tabs: a task whose Route (`sessions.getTaskRoute`, the same route the
+ * completed task view's Route card draws) has two or more columns gets a tab
+ * row, All plus one tab per column. A tab shows the slice `route-slice.ts`
+ * cuts: All with a divider at each column move, a column with only its stays,
+ * each opened by its date. Search and Copy follow the tab. The route is re-read
+ * on every new transcript revision, so a live task's tabs follow its moves, and
+ * on every open request, which catches a move that wrote no turn. A
+ * Route pill asks for its column through `managedWindow.conversationTab`, and
+ * an open window switches to it; a search hit or a Knowledge Graph source row
+ * (`scrollToTurnUuid`) switches to All, where every turn is.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageSquare, X, SquareTerminal, Copy, Check, Loader2, PictureInPicture2 } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -38,11 +49,21 @@ import { Tooltip } from '../../components/Tooltip';
 import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
 import { reconcileDisplayRows } from '../../components/conversation/display-rows';
 import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
+import {
+  ALL_CONVERSATION_TAB,
+  firstEntryOfStay,
+  sliceConversationByRoute,
+} from '../../components/conversation/route-slice';
+import { Tabs, tabIds, type TabItem } from '../../components/Tabs';
+import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import { useLayerStore, useWindowManager } from '../context';
 import type { ManagedWindow } from '../store/types';
 import {
   applyTranscriptDelta,
+  type ConversationTabRequest,
+  type TaskReportRouteColumn,
+  type TranscriptEntry,
   type TranscriptDeltaResponse,
   type TranscriptGetResponse,
   type TranscriptUnchangedResponse,
@@ -62,6 +83,20 @@ const LIVE_REFRESH_MS = 2500;
 
 /** How long to wait before asking again after the first read failed. */
 const READER_RETRY_MS = 5000;
+
+const EMPTY_ROUTE: TaskReportRouteColumn[] = [];
+const EMPTY_ENTRIES: TranscriptEntry[] = [];
+const TAB_ID_PREFIX = 'conversation-route';
+const ALL_SELECTION: ConversationTabRequest = { swimlaneId: null };
+
+/** What the slicing reads of a route: each column and its stays' starts. A
+ *  live task's re-read changes only durations, which keeps this the same, so
+ *  the held route (and the slice built from it) is kept. */
+function routeSignature(route: ReadonlyArray<TaskReportRouteColumn>): string {
+  return route
+    .map((column) => `${column.swimlaneId}:${column.name}:${column.color}:${column.icon ?? ''}:${column.visits.map((visit) => visit.startedAt).join(',')}`)
+    .join('|');
+}
 
 type TranscriptReply = TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse;
 
@@ -220,6 +255,122 @@ export function ConversationWindow({
   }, [managedWindow.anchor, currentProjectId, fetchKey]);
 
   const taskId = response?.taskId ?? null;
+  const revision = response?.revision ?? null;
+
+  // The task's Route, re-read on every new transcript revision so a live
+  // task's tabs follow its moves, and on every open request (`routeReadRequest`,
+  // bumped below): a move that wrote no turn, such as the one into Done, leaves
+  // the revision where it was, and a pill that names a column the held route
+  // lacks would otherwise land on All. A failed first read leaves no tab row,
+  // the window as it was before tabs; a failed re-read keeps the route already
+  // held, so one transient failure never drops a working tab row. The held
+  // route is kept while its stays are the same, so a re-read that only grew a
+  // duration re-slices nothing. `readRequest` is the open request the held
+  // route answers, so a request for a column it lacks can tell a re-read still
+  // on its way from a column the task never worked in.
+  const [routeState, setRouteState] = useState<{ taskId: string; route: TaskReportRouteColumn[]; readRequest: number } | null>(null);
+  const [routeReadRequest, setRouteReadRequest] = useState(0);
+  useEffect(() => {
+    if (!taskId || !currentProjectId) return;
+    let cancelled = false;
+    // `route` is null for a failed read.
+    const keep = (route: TaskReportRouteColumn[] | null): void => {
+      if (cancelled) return;
+      setRouteState((previous) => {
+        const held = previous && previous.taskId === taskId ? previous : null;
+        const next = route ?? held?.route ?? EMPTY_ROUTE;
+        if (!held || routeSignature(held.route) !== routeSignature(next)) {
+          return { taskId, route: next, readRequest: routeReadRequest };
+        }
+        return held.readRequest === routeReadRequest ? held : { ...held, readRequest: routeReadRequest };
+      });
+    };
+    window.electronAPI.sessions
+      .getTaskRoute(currentProjectId, taskId)
+      .then(keep)
+      .catch(() => keep(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId, currentProjectId, revision, routeReadRequest]);
+  // Wait for the first read of this task's route before showing anything, so
+  // a window opened on a column tab never paints All first.
+  const routeLoaded = !taskId || !currentProjectId || routeState?.taskId === taskId;
+  const route = routeState && routeState.taskId === taskId ? routeState.route : EMPTY_ROUTE;
+  const showTabs = route.length >= 2;
+
+  // The tab asked for (a null swimlane is All) and, from a repeat-stay row, the
+  // stay to scroll to once that tab shows. Set by the user's click on a tab, by
+  // a Route pill's open request (`managedWindow.conversationTab`, applied here
+  // during render and cleared from the store in an effect), or to All for a
+  // scroll-to-turn request, since All is where every turn is.
+  const [selection, setSelection] = useState<ConversationTabRequest>(ALL_SELECTION);
+  const tabRequest = managedWindow.conversationTab;
+  const [appliedTabRequest, setAppliedTabRequest] = useState<ConversationTabRequest | undefined>(undefined);
+  if (tabRequest && tabRequest !== appliedTabRequest) {
+    setAppliedTabRequest(tabRequest);
+    setRouteReadRequest((count) => count + 1);
+    setSelection(tabRequest);
+  }
+  const clearConversationTab = layerStore((state) => state.clearConversationTab);
+  useEffect(() => {
+    if (tabRequest) clearConversationTab(managedWindow.id);
+  }, [tabRequest, clearConversationTab, managedWindow.id]);
+
+  const windowScrollTarget = managedWindow.scrollToTurnUuid;
+  // Only this window (the one the signal points at) consumes the one-shot scroll,
+  // so a second open conversation window never races to clear it.
+  const activeScrollUuid = windowScrollTarget
+    ?? (managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null);
+  const [appliedScrollUuid, setAppliedScrollUuid] = useState<string | null>(null);
+  if (activeScrollUuid !== appliedScrollUuid) {
+    // Tracking the consumed (null) state too lets the same turn asked for again
+    // switch to All again.
+    setAppliedScrollUuid(activeScrollUuid);
+    if (activeScrollUuid) setSelection(ALL_SELECTION);
+  }
+
+  // A column the route does not hold shows All, but only once the re-read the
+  // request started has answered: until then the window keeps the tab it shows
+  // (`shownTab`), so a pill for a column added since the last read switches once,
+  // straight to that column, instead of passing through All.
+  const requestedSwimlaneId = selection.swimlaneId;
+  const requestedColumn = requestedSwimlaneId === null
+    ? null
+    : route.find((column) => column.swimlaneId === requestedSwimlaneId) ?? null;
+  const awaitingColumn = requestedSwimlaneId !== null && !requestedColumn
+    && routeState?.readRequest !== routeReadRequest;
+  const [shownTab, setShownTab] = useState<string>(ALL_CONVERSATION_TAB);
+  const shownColumn = route.find((column) => column.swimlaneId === shownTab) ?? null;
+  // The column whose tab is on screen, or null for All (and always null with no tab row).
+  const columnOnScreen = showTabs ? (awaitingColumn ? shownColumn : requestedColumn) : null;
+  const activeTab = columnOnScreen ? columnOnScreen.swimlaneId : ALL_CONVERSATION_TAB;
+  if (!awaitingColumn && shownTab !== activeTab) setShownTab(activeTab);
+  const slice = useMemo(
+    () => (showTabs && response ? sliceConversationByRoute(response.entries, route, activeTab) : null),
+    [showTabs, response, route, activeTab],
+  );
+  const visibleEntries = slice?.entries ?? response?.entries ?? EMPTY_ENTRIES;
+  // A repeat-stay row asks for its stay's first turn; it scrolls there once the
+  // slice holds it.
+  const visitStartedAt = selection.visitStartedAt;
+  const visitScrollUuid = requestedSwimlaneId !== null && visitStartedAt && slice && requestedSwimlaneId === activeTab
+    ? firstEntryOfStay(slice, requestedSwimlaneId, visitStartedAt)
+    : null;
+  const tabItems = useMemo<Array<TabItem<string>>>(
+    () => [
+      { id: ALL_CONVERSATION_TAB, label: 'All' },
+      ...route.map((column) => ({
+        id: column.swimlaneId,
+        label: column.name,
+        icon: <ColumnGlyph column={column} size={14} color={column.color} />,
+      })),
+    ],
+    [route],
+  );
+  const handleSelectTab = useCallback((tab: string) => {
+    setSelection(tab === ALL_CONVERSATION_TAB ? ALL_SELECTION : { swimlaneId: tab });
+  }, []);
 
   // Live-follow: re-fetch on an interval (no loading spinner) while EITHER the
   // latest contributing session is still running/queued, OR the reactive
@@ -280,17 +431,19 @@ export function ConversationWindow({
 
   const handleCopyMarkdown = useCallback(() => {
     if (!response) return;
+    // Copies the tab on screen: a column tab copies that column's stays, each
+    // opened by its date as a heading, and All copies everything.
     // Only flip to "copied" once the write actually resolves; a rejected write
     // (unfocused document / denied permission) must not falsely signal success
     // or surface as an unhandled rejection.
     void navigator.clipboard
-      .writeText(transcriptToMarkdown(response.entries))
+      .writeText(transcriptToMarkdown(visibleEntries))
       .then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       })
       .catch(() => undefined);
-  }, [response]);
+  }, [response, visibleEntries]);
 
   const handleOpenTask = useCallback(() => {
     // A window opened from another project's island names that project, so the
@@ -303,13 +456,14 @@ export function ConversationWindow({
   const canOpenTask = taskId !== null && revealTaskDetail !== undefined;
 
   const clearWindowScrollTarget = layerStore((state) => state.clearWindowScrollTarget);
-  const windowScrollTarget = managedWindow.scrollToTurnUuid;
   const consumeScroll = useCallback(() => {
     // A per-window target (the Knowledge Graph's source rows) is this window's
-    // own; the session-store one-shot belongs to the board's bridge.
+    // own; the session-store one-shot belongs to the board's bridge. With
+    // neither, the scroll was a repeat-stay row's, which is this window's state.
     if (windowScrollTarget) clearWindowScrollTarget(managedWindow.id);
-    else setScrollToTurnUuid(null);
-  }, [windowScrollTarget, clearWindowScrollTarget, managedWindow.id, setScrollToTurnUuid]);
+    else if (activeScrollUuid) setScrollToTurnUuid(null);
+    else setSelection((current) => (current.visitStartedAt ? { swimlaneId: current.swimlaneId } : current));
+  }, [windowScrollTarget, activeScrollUuid, clearWindowScrollTarget, managedWindow.id, setScrollToTurnUuid]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(managedWindow.id), [toggleMaximizeWindow, managedWindow.id]);
   const handleUndock = useCallback(() => untileWindow(managedWindow.id), [untileWindow, managedWindow.id]);
@@ -348,10 +502,6 @@ export function ConversationWindow({
 
   const taskTitle = response?.taskTitle || 'Session';
   const agentName = response?.agentName ?? '';
-  // Only this window (the one the signal points at) consumes the one-shot scroll,
-  // so a second open conversation window never races to clear it.
-  const activeScrollUuid = windowScrollTarget
-    ?? (managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null);
 
   // Open-at-position: computed ONCE, synchronously, on the render where
   // `response` first becomes available - so it is ready before ConversationView
@@ -502,24 +652,64 @@ export function ConversationWindow({
         </div>
       </div>
 
-      {loading || !response ? (
+      {loading || !response || !routeLoaded ? (
         <div className="flex-1 min-h-0 flex items-center justify-center">
           <Loader2 size={20} className="animate-spin text-fg-muted" />
         </div>
       ) : (
-        <ConversationView
-          entries={response.entries}
-          degraded={response.degraded}
-          source={response.source}
-          unavailableReason={response.unavailableReason}
-          agentName={agentName}
-          archivedAgentName={response.archivedAgentName ?? null}
-          scrollToTurnUuid={activeScrollUuid}
-          onConsumedScroll={consumeScroll}
-          autoFollowNewMessages={autoFollowNewMessages}
-          initialPosition={initialPosition ?? { kind: 'bottom' }}
-          isFocused={isFocused}
-        />
+        <>
+          {showTabs && (
+            <Tabs
+              tabs={tabItems}
+              selectedId={activeTab}
+              onSelect={handleSelectTab}
+              ariaLabel="Conversation sections"
+              idPrefix={TAB_ID_PREFIX}
+              fit="icons-then-scroll"
+              testId="conversation-route-tabs"
+            />
+          )}
+          {/* One view at one position, tab row or not, so a live task's first
+              move (one column to two) adds the tab row above the conversation
+              without remounting it. */}
+          <div
+            role={showTabs ? 'tabpanel' : undefined}
+            id={showTabs ? tabIds(TAB_ID_PREFIX, activeTab).panelId : undefined}
+            aria-labelledby={showTabs ? tabIds(TAB_ID_PREFIX, activeTab).tabId : undefined}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {columnOnScreen && visibleEntries.length === 0 ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center" data-testid="conversation-route-empty">
+                <MessageSquare size={24} className="text-fg-disabled" />
+                <div className="text-sm font-semibold text-fg-tertiary">No conversation in {columnOnScreen.name}</div>
+                <div className="text-sm text-fg-muted">The agent did not run while the task was in {columnOnScreen.name}.</div>
+              </div>
+            ) : (
+              <ConversationView
+                // A tab is its own list: switching remounts the view so it opens
+                // at that tab's own position rather than the last tab's scroll.
+                key={activeTab}
+                entries={visibleEntries}
+                degraded={response.degraded}
+                source={response.source}
+                unavailableReason={response.unavailableReason}
+                agentName={agentName}
+                archivedAgentName={response.archivedAgentName ?? null}
+                scrollToTurnUuid={activeScrollUuid ?? visitScrollUuid}
+                onConsumedScroll={consumeScroll}
+                autoFollowNewMessages={autoFollowNewMessages}
+                // All opens where the window always has; a column tab opens at
+                // its first stay.
+                initialPosition={columnOnScreen && visibleEntries[0]
+                  ? { kind: 'uuid', uuid: visibleEntries[0].uuid }
+                  : initialPosition ?? { kind: 'bottom' }}
+                isFocused={isFocused}
+                dividerColumns={slice?.dividerColumns}
+                searchPlaceholder={columnOnScreen ? `Search ${columnOnScreen.name}` : undefined}
+              />
+            )}
+          </div>
+        </>
       )}
     </div>
   );

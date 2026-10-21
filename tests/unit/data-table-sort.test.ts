@@ -202,4 +202,32 @@ describe('sortRows (comparator application)', () => {
     const sorted = sortRows(rows, [{ key: 'id', direction: 'asc' } as SortLevel<string>], columns);
     expect(sorted).toBe(rows);
   });
+
+  it('puts a row with no value (null) last in BOTH directions, so "highest first" never opens on a blank', () => {
+    // The completed task view's Usage tables: a run that reported no cost.
+    type CostRow = { id: string; cost: number | null };
+    const costRows: CostRow[] = [
+      { id: 'unreported', cost: null },
+      { id: 'cheap', cost: 1 },
+      { id: 'dear', cost: 9 },
+    ];
+    const costColumns = [{ key: 'cost' as const, align: 'right' as const, sortValue: (row: CostRow) => row.cost }];
+
+    expect(sortRows(costRows, [{ key: 'cost', direction: 'desc' }], costColumns).map((row) => row.id)).toEqual(['dear', 'cheap', 'unreported']);
+    expect(sortRows(costRows, [{ key: 'cost', direction: 'asc' }], costColumns).map((row) => row.id)).toEqual(['cheap', 'dear', 'unreported']);
+  });
+
+  it('lets a secondary level order rows that are both null on the primary', () => {
+    type CostRow = { id: string; cost: number | null; name: string };
+    const costRows: CostRow[] = [
+      { id: 'b', cost: null, name: 'Bravo' },
+      { id: 'a', cost: null, name: 'Alpha' },
+    ];
+    const costColumns = [
+      { key: 'cost' as const, align: 'right' as const, sortValue: (row: CostRow) => row.cost },
+      { key: 'name' as const, align: 'left' as const, sortValue: (row: CostRow) => row.name },
+    ];
+    const sorted = sortRows(costRows, [{ key: 'cost', direction: 'desc' }, { key: 'name', direction: 'asc' }], costColumns);
+    expect(sorted.map((row) => row.id)).toEqual(['a', 'b']);
+  });
 });

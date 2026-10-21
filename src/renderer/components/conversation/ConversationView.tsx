@@ -45,7 +45,9 @@ import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
 import { formatTime } from '../../lib/datetime';
+import { ColumnGlyph } from '../../utils/swimlane-icons';
 import type {
+  TaskReportColumn,
   TranscriptEntry,
   TranscriptSource,
   TranscriptUnavailableReason,
@@ -87,6 +89,11 @@ interface ConversationViewProps {
   /** Whether the owning window is focused - gates the Mod+F keybinding that
    *  focuses the (always-visible) in-viewer search bar. */
   isFocused: boolean;
+  /** The Route dividers among `entries` (`route-slice.ts`), by uuid, each with
+   *  the column whose icon it draws. Absent when the window shows no tabs. */
+  dividerColumns?: ReadonlyMap<string, TaskReportColumn>;
+  /** The search field's placeholder; it names the tab the search covers. */
+  searchPlaceholder?: string;
 }
 
 /**
@@ -245,6 +252,8 @@ export function ConversationView({
   autoFollowNewMessages,
   initialPosition,
   isFocused,
+  dividerColumns,
+  searchPlaceholder,
 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchBarRef = useRef<ConversationSearchBarHandle>(null);
@@ -525,7 +534,7 @@ export function ConversationView({
           <span>{archivedAgentName} deleted the original file. Showing Kangentic&apos;s saved copy.</span>
         </div>
       )}
-      <ConversationSearchBar ref={searchBarRef} rows={rows} onNavigate={navigateToUuidFromSearch} />
+      <ConversationSearchBar ref={searchBarRef} rows={rows} onNavigate={navigateToUuidFromSearch} placeholder={searchPlaceholder} />
       {rows.length === 0 ? (
         <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-fg-muted">
           This conversation has no messages yet.
@@ -588,6 +597,7 @@ export function ConversationView({
                         agentName={agentName}
                         expandedKeys={expandedKeys}
                         toggleExpanded={toggleExpanded}
+                        dividerColumn={dividerColumns?.get(row.uuid)}
                       />
                     </div>
                   ) : (
@@ -644,12 +654,18 @@ interface ConversationRowProps {
   agentName?: string;
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
+  /** Set for a Route divider: the column whose icon it draws. The same object
+   *  for the same divider on every render, so the memo still holds. */
+  dividerColumn?: TaskReportColumn;
 }
 
-function ConversationRow({ row, agentName, expandedKeys, toggleExpanded }: ConversationRowProps) {
+function ConversationRow({ row, agentName, expandedKeys, toggleExpanded, dividerColumn }: ConversationRowProps) {
   const { entry, results } = row;
   if (entry.kind === 'user') return <UserRow text={entry.text} ts={entry.ts} />;
-  if (entry.kind === 'system') return <SystemRow subtype={entry.subtype} text={entry.text} />;
+  if (entry.kind === 'system') {
+    if (dividerColumn) return <RouteDividerRow column={dividerColumn} text={entry.text} />;
+    return <SystemRow subtype={entry.subtype} text={entry.text} />;
+  }
   if (entry.kind === 'tool_result') return <OrphanToolResultRow entry={entry} expandedKeys={expandedKeys} toggleExpanded={toggleExpanded} />;
   return (
     <AssistantRow
@@ -819,6 +835,25 @@ function SystemRow({
       <div className="flex-1 h-px bg-edge/50" />
       <span className="text-[11px] uppercase tracking-wider whitespace-nowrap">{label}</span>
       <div className="flex-1 h-px bg-edge/50" />
+    </div>
+  );
+}
+
+/**
+ * A Route divider (`route-slice.ts`): where a column's turns begin in All, or
+ * where one stay begins in a column's tab. The column's icon in its own color
+ * ties the line to its tab and its Route pill, and the label is a step
+ * brighter than a session divider, since it is what a reader scans for.
+ */
+function RouteDividerRow({ column, text }: { column: TaskReportColumn; text: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1 text-fg-faint" data-testid="conversation-row-route-divider">
+      <div className="flex-1 h-px bg-edge/70" />
+      <span className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wider whitespace-nowrap">
+        <ColumnGlyph column={column} size={12} color={column.color} />
+        {text}
+      </span>
+      <div className="flex-1 h-px bg-edge/70" />
     </div>
   );
 }

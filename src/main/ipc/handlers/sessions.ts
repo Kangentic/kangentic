@@ -12,7 +12,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, notifySpawnBlocked } from '../helpers';
 import { linkPR, autoLinkPRForTask, recordPushedBranchForSession } from '../../pr/pr-linking';
 import { planExitTargetFor } from '../helpers/plan-exit-target';
-import { readTaskLastMessage, readTaskReport } from '../helpers/task-report';
+import { readTaskLastMessage, readTaskReport, readTaskRoute } from '../helpers/task-report';
 import { announceTaskWrite } from '../helpers/task-write-announce';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
@@ -180,6 +180,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   // The completed task view's report and its last message. Both take the
   // project explicitly: the view can be hosted for another project's task.
   ipcMain.handle(IPC.SESSION_GET_TASK_REPORT, (_, projectId: string, taskId: string) => readTaskReport(context, projectId, taskId));
+  ipcMain.handle(IPC.SESSION_GET_TASK_ROUTE, (_, projectId: string, taskId: string) => readTaskRoute(context, projectId, taskId));
   ipcMain.handle(IPC.SESSION_GET_TASK_LAST_MESSAGE, (_, projectId: string, taskId: string) => readTaskLastMessage(projectId, taskId));
 
   // Per-tool breakdown for an active session's track: its earlier runs' stored

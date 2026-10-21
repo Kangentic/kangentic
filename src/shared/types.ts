@@ -1572,6 +1572,17 @@ export interface TaskReportRouteColumn extends TaskReportColumn {
   visits: TaskReportVisit[];
 }
 
+/**
+ * Which part of a task's conversation an open asks for: a Route column's tab
+ * (and, from a repeat-stay row, one stay in it), or null for All. Renderer-only:
+ * it rides the session store's open signal and the conversation window, and
+ * never crosses IPC.
+ */
+export interface ConversationTabRequest {
+  swimlaneId: string | null;
+  visitStartedAt?: string;
+}
+
 /** One session record: one run of an agent process. */
 export interface TaskReportRun {
   recordId: string;
@@ -7413,6 +7424,9 @@ export interface ElectronAPI {
     listSummaries: () => Promise<Record<string, SessionSummary>>;
     /** Everything the completed task view shows for one task, in one read. */
     getTaskReport: (projectId: string, taskId: string) => Promise<TaskReport>;
+    /** The task's route alone (the report's `route`), for the conversation window's
+     *  column tabs: database rows only, so it is cheap to re-read as a task moves. */
+    getTaskRoute: (projectId: string, taskId: string) => Promise<TaskReportRouteColumn[]>;
     /** The agent's last message in the task's newest conversation, or null. Read
      *  on its own, only when no summary is written, since it parses a transcript. */
     getTaskLastMessage: (projectId: string, taskId: string) => Promise<TaskLastMessage | null>;

@@ -15,6 +15,7 @@ import { taskDetailSurfaceFor } from '../../utils/task-progress';
 import type { Task } from '../../../shared/types';
 import { TaskContextMenu } from './TaskContextMenu';
 import { ArchivedTaskContextMenu } from './ArchivedTaskContextMenu';
+import { openTaskConversation } from '../dialogs/task-detail/open-task-conversation';
 import { TaskCardBody, TaskCardCompactBody, taskCardFrameClass, useTaskCardViewModel } from './task-card-view';
 import { WorkflowTaskCardBody } from './WorkflowTaskCardBody';
 import { DeleteTaskDialog } from './DeleteTaskDialog';
@@ -253,6 +254,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             task={task}
             swimlanes={useBoardStore.getState().swimlanes}
             onOpen={() => setDetailTaskId(task.id)}
+            onViewConversation={() => {
+              void openTaskConversation(task.id, useProjectStore.getState().currentProject?.id ?? null);
+            }}
             onShowChanges={() => setShowChanges(true)}
             onRestoreTo={(targetSwimlaneId) => {
               useBoardStore.getState().unarchiveTask({ id: task.id, targetSwimlaneId });

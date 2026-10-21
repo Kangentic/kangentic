@@ -8,8 +8,10 @@
  *
  * Both surfaces should:
  *   - Open the archived context menu at the cursor on right-click.
+ *   - Surface "View conversation", which opens the conversation window (the
+ *     Completed Tasks dialog closes first, as it does for Open).
  *   - Surface "Restore to" with non-Done lanes.
- *   - Surface "Delete permanently" which routes through ConfirmDialog (skipDeleteConfirm
+ *   - Surface "Delete" which routes through ConfirmDialog (skipDeleteConfirm
  *     unset by default) and ultimately calls tasks.delete via the existing
  *     deleteArchivedTask path.
  *
@@ -87,7 +89,12 @@ async function launchWithArchivedTask(): Promise<{ browser: Browser; page: Page 
         updated_at: ts,
       });
 
-      return { currentProjectId: '${PROJECT_ID}' };
+      // One past session, so View conversation has a conversation to open.
+      var sessionsByTask = {};
+      sessionsByTask['${TASK_ID}'] = [{
+        sessionId: 'sess-acm', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited',
+      }];
+      return { currentProjectId: '${PROJECT_ID}', transcriptSessionsByTask: sessionsByTask };
     });
   `);
 
@@ -225,6 +232,8 @@ test.describe('Archived task context menu', () => {
       await expect(page.locator('[data-testid="archived-context-open-task"]')).toBeVisible();
       await expect(page.locator('[data-testid="archived-context-restore-to"]').first()).toBeVisible();
       await expect(page.locator('[data-testid="archived-context-delete-task"]')).toBeVisible();
+      // The confirmation names what Delete does, so the item needs no "permanently".
+      await expect(page.locator('[data-testid="archived-context-delete-task"]')).toHaveText('Delete');
 
       // No worktree_path -> "Show changes" item must be gated off.
       await expect(page.locator('[data-testid="archived-context-show-changes"]')).not.toBeVisible();
@@ -272,6 +281,38 @@ test.describe('Archived task context menu', () => {
       await confirmButton.click();
 
       await expect.poll(() => readTaskDeleteCalls(page)).toContain(TASK_ID);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('DoneSwimlane preview: View conversation follows Open and opens the conversation window', async () => {
+    const { browser, page } = await launchWithArchivedTask();
+    try {
+      const compactCard = page.locator('[data-task-id="' + TASK_ID + '"]').first();
+      await compactCard.waitFor({ state: 'visible', timeout: 10000 });
+      await compactCard.click({ button: 'right' });
+
+      // Right after Open: the two ways to look at a finished task sit together.
+      await expect(page.locator('[data-testid="archived-context-open-task"] + [data-testid="archived-context-view-conversation"]')).toHaveText('View conversation');
+      await page.locator('[data-testid="archived-context-view-conversation"]').click();
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('CompletedTasksDialog: View conversation closes the dialog and opens the conversation window', async () => {
+    const { browser, page } = await launchWithArchivedTask();
+    try {
+      await page.locator('[data-testid="view-all-completed"]').click();
+      const dialog = page.locator('[data-testid="completed-tasks-dialog"]');
+      await dialog.waitFor({ state: 'visible', timeout: 5000 });
+      await page.locator('[data-testid="completed-task-row"]').first().click({ button: 'right' });
+
+      await page.locator('[data-testid="archived-context-view-conversation"]').click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
     } finally {
       await browser.close();
     }

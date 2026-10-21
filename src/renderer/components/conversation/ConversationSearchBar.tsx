@@ -19,6 +19,8 @@ import type { DisplayRow } from './display-rows';
 interface ConversationSearchBarProps {
   rows: DisplayRow[];
   onNavigate: (uuid: string, options?: { flash?: boolean }) => boolean;
+  /** Names what the search covers: a column tab searches that column only. */
+  placeholder?: string;
 }
 
 /** Imperative handle so the owning window's Mod+F keybinding can focus the
@@ -51,7 +53,7 @@ function buildSnippet(text: string, matchStart: number, matchEnd: number): { sni
 }
 
 export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, ConversationSearchBarProps>(
-  function ConversationSearchBar({ rows, onNavigate }, ref) {
+  function ConversationSearchBar({ rows, onNavigate, placeholder = 'Search this conversation' }, ref) {
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
@@ -149,7 +151,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Search this conversation"
+            placeholder={placeholder}
             className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder:text-fg-faint focus:outline-none"
             data-testid="conversation-search-input"
           />
