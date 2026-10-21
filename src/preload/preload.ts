@@ -875,6 +875,16 @@ const api: ElectronAPI = {
       const reply: unknown = await ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input);
       return typeof reply === 'string' ? JSON.parse(reply) : reply;
     },
+    // A page and a located turn's page arrive as the worker's JSON too.
+    page: async (input) => {
+      const reply: unknown = await ipcRenderer.invoke(IPC.TRANSCRIPT_PAGE, input);
+      return typeof reply === 'string' ? JSON.parse(reply) : reply;
+    },
+    locate: async (input) => {
+      const reply: unknown = await ipcRenderer.invoke(IPC.TRANSCRIPT_LOCATE, input);
+      return typeof reply === 'string' ? JSON.parse(reply) : reply;
+    },
+    timeline: (input) => ipcRenderer.invoke(IPC.TRANSCRIPT_TIMELINE, input),
     listSessions: (taskId, projectId) =>
       ipcRenderer.invoke(IPC.TRANSCRIPT_LIST_SESSIONS, taskId, projectId),
   },

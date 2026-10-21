@@ -745,7 +745,7 @@ describe('parseClaudeTranscript', () => {
     ]);
     const entries = await parseClaudeTranscript(tmpFile);
     expect(entries).toEqual([
-      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/exit' },
+      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/exit', origin: expect.objectContaining({ position: 0 }) },
     ]);
   });
 
@@ -765,7 +765,7 @@ describe('parseClaudeTranscript', () => {
     ]);
     const entries = await parseClaudeTranscript(tmpFile);
     expect(entries).toEqual([
-      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/code-review' },
+      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/code-review', origin: expect.objectContaining({ position: 0 }) },
     ]);
   });
 
@@ -796,7 +796,14 @@ describe('parseClaudeTranscript', () => {
     ]);
     const entries = await parseClaudeTranscript(tmpFile);
     expect(entries).toEqual([
-      { kind: 'system', uuid: 'sum', ts: expect.any(Number), subtype: 'compaction', text: 'Summary: prior work recap.' },
+      {
+        kind: 'system',
+        uuid: 'sum',
+        ts: expect.any(Number),
+        subtype: 'compaction',
+        text: 'Summary: prior work recap.',
+        origin: expect.objectContaining({ position: 0 }),
+      },
     ]);
   });
 

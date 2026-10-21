@@ -152,6 +152,50 @@ describe('reconcileDisplayRows', () => {
     expect(thinkingSegment).toBeDefined();
   });
 
+  it('hands back the previous array itself when no row changed', () => {
+    const entries: TranscriptEntry[] = [userEntry('u1', 'hello'), assistantToolUseEntry('a1', 'tool-1')];
+    const first = reconcileDisplayRows([], entries);
+    const second = reconcileDisplayRows(first, [...entries]);
+
+    expect(second).toBe(first);
+  });
+
+  it('reuses an unchanged entry object without serializing its tool input again', () => {
+    let serializations = 0;
+    const input = {
+      toJSON() {
+        serializations += 1;
+        return { command: 'ls' };
+      },
+    };
+    const toolEntry: TranscriptEntry = {
+      kind: 'assistant',
+      uuid: 'a1',
+      ts: 3,
+      blocks: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input }],
+    };
+    const first = reconcileDisplayRows([], [toolEntry]);
+    const afterFirst = serializations;
+
+    // A poll tick with the same entry object, and one that re-parsed it into a
+    // new object holding the same input: neither serializes the input again.
+    reconcileDisplayRows(first, [toolEntry, userEntry('u2', 'next')]);
+    reconcileDisplayRows(first, [{ ...toolEntry }]);
+
+    expect(afterFirst).toBeGreaterThan(0);
+    expect(serializations).toBe(afterFirst);
+  });
+
+  it('keeps every existing row when a page of older entries lands in front of them', () => {
+    const tail: TranscriptEntry[] = [userEntry('u3', 'newer'), assistantTextEntry('a3', 'newer reply', 6)];
+    const first = reconcileDisplayRows([], tail);
+    const withPage = reconcileDisplayRows(first, [userEntry('u1', 'older', 1), assistantTextEntry('a1', 'older reply', 2), ...tail]);
+
+    expect(withPage).toHaveLength(4);
+    expect(withPage[2]).toBe(first[0]);
+    expect(withPage[3]).toBe(first[1]);
+  });
+
   it('estimates a taller row for longer text content than a short one', () => {
     const shortEntries: TranscriptEntry[] = [userEntry('u1', 'short')];
     const longEntries: TranscriptEntry[] = [userEntry('u1', 'x'.repeat(2000))];

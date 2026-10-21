@@ -11,6 +11,7 @@ import {
   parseClaudeTranscriptUsage,
   parseClaudeTranscriptToolCounts,
   parseClaudeTranscriptToolResultTokens,
+  readClaudeTranscriptPage,
 } from './transcript-parser';
 import {
   CLAUDE_SUBAGENT_SPAWN_TOOL,
@@ -50,6 +51,8 @@ import type {
   SettingsChangeSpec,
   ParsedTranscript,
   ParsedTranscriptWindow,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
   AnswerFromContextOptions,
   AnswerSession,
   AnswerSessionInput,
@@ -589,6 +592,15 @@ export class ClaudeAdapter implements AgentAdapter {
       filePath, startByte, maxBytes, attributedMessageIds,
     );
     return { ...window, sourcePath: filePath };
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+  ): Promise<TranscriptPageReadResult> {
+    return readClaudeTranscriptPage(locateClaudeTranscriptFile(agentSessionId, cwd), request);
   }
 
   /**

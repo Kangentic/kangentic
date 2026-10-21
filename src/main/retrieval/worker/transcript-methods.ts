@@ -29,7 +29,18 @@ import type { CommandResponse } from '../../agent/commands/types';
 import { lastAssistantPreview } from '../../agent/shared/message-preview';
 import { sliceTranscriptWindow, TranscriptSync, type TranscriptWindowSlice } from '../../mobile-bridge/handlers/transcript-sync';
 import { adoptRemoteTargets, type RemoteTargets } from '../remote-targets';
-import type { TranscriptToolCounts, TranscriptUsage } from '../../../shared/types';
+import { locateHistoryTurn, readHistoryPage, readHistoryTimeline } from '../../agent/transcript-history';
+import { historyReadQueue } from './history-read-queue';
+import type {
+  TranscriptLocateRequest,
+  TranscriptLocateResponse,
+  TranscriptPageRequest,
+  TranscriptPageResponse,
+  TranscriptTimelineRequest,
+  TranscriptTimelineResponse,
+  TranscriptToolCounts,
+  TranscriptUsage,
+} from '../../../shared/types';
 import type { WorkerContext } from './methods';
 
 /** Who wrote a transcript, for the token and tool counts read at a run's end. */
@@ -50,6 +61,25 @@ export interface TranscriptMethods {
   'transcript.task': {
     params: { projectId: string; sessionId: string; knownRevision?: number; remoteTargets: RemoteTargets };
     result: string;
+  };
+  /**
+   * One page of a conversation's history for the Conversation viewer, as the
+   * JSON of a `TranscriptPageResponse`. Read one at a time (`historyReadQueue`);
+   * only the viewer calls it, so no other reader's read changes.
+   */
+  'transcript.page': {
+    params: { projectId: string; request: Omit<TranscriptPageRequest, 'projectId'>; remoteTargets: RemoteTargets };
+    result: string;
+  };
+  /** The page holding one turn, as the JSON of a `TranscriptLocateResponse`. */
+  'transcript.locate': {
+    params: { projectId: string; request: Omit<TranscriptLocateRequest, 'projectId'>; remoteTargets: RemoteTargets };
+    result: string;
+  };
+  /** A coarse position-to-time map of one conversation, for the scrollbar's drag label. */
+  'transcript.timeline': {
+    params: { projectId: string; request: Omit<TranscriptTimelineRequest, 'projectId'>; remoteTargets: RemoteTargets };
+    result: TranscriptTimelineResponse;
   };
   /** The phone's page of a task's conversation: the newest entries before an index. */
   'transcript.window': {
@@ -163,6 +193,15 @@ async function readSavedConversationOf(
   return readSavedConversation(db, agentSessionId);
 }
 
+/** The project's database, or null when it cannot be opened (closed for deletion). */
+function projectDbOf(context: WorkerContext, projectId: string): ReturnType<WorkerContext['getDb']> | null {
+  try {
+    return context.getDb(projectId);
+  } catch {
+    return null;
+  }
+}
+
 /** The response fields other than the entries, as JSON members. */
 function metaJson(resolved: ResolvedTaskTranscript): string {
   const meta = {
@@ -179,6 +218,7 @@ function metaJson(resolved: ResolvedTaskTranscript): string {
     sessions: resolved.sessions,
     revision: resolved.revision,
     archivedAgentName: resolved.archivedAgentName,
+    conversations: resolved.conversations,
   };
   // Without its braces, to be joined with the entries.
   return JSON.stringify(meta).slice(1, -1);
@@ -235,6 +275,32 @@ export const transcriptHandlers: TranscriptHandlers = {
     adoptRemoteTargets(agentRegistry, remoteTargets);
     const resolved = await resolveTaskTranscript(context.getDb(projectId), sessionId);
     return resolved ? taskTranscriptJson(resolved, knownRevision) : emptyTaskJson(sessionId);
+  },
+
+  'transcript.page': async ({ projectId, request, remoteTargets }, context) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    const db = projectDbOf(context, projectId);
+    if (!db) return JSON.stringify({ status: 'unavailable', reason: 'not_found' } satisfies TranscriptPageResponse);
+    const outcome = await historyReadQueue.run(request.requestKey, () => readHistoryPage(db, request));
+    const response: TranscriptPageResponse = outcome.ran ? outcome.value : { status: outcome.reason };
+    return JSON.stringify(response);
+  },
+
+  'transcript.locate': async ({ projectId, request, remoteTargets }, context) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    const db = projectDbOf(context, projectId);
+    if (!db) return JSON.stringify({ status: 'not_found' } satisfies TranscriptLocateResponse);
+    const outcome = await historyReadQueue.run(request.requestKey, () => locateHistoryTurn(db, request));
+    const response: TranscriptLocateResponse = outcome.ran ? outcome.value : { status: outcome.reason };
+    return JSON.stringify(response);
+  },
+
+  'transcript.timeline': async ({ projectId, request, remoteTargets }, context) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    const db = projectDbOf(context, projectId);
+    if (!db) return { status: 'unavailable', reason: 'not_found' };
+    const outcome = await historyReadQueue.run(request.requestKey, () => readHistoryTimeline(db, request.conversationId));
+    return outcome.ran ? outcome.value : { status: outcome.reason };
   },
 
   'transcript.window': async ({ projectId, sessionId, beforeIndex, limit, remoteTargets }, context) => {

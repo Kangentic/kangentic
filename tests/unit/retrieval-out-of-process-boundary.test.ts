@@ -149,6 +149,11 @@ describe('retrieval out-of-process boundary', () => {
       'readArchivedConversation',
       'readSavedConversation',
       'formatConversationTail',
+      // The Conversation viewer's history paging.
+      'readHistoryPage',
+      'locateHistoryTurn',
+      'readHistoryTimeline',
+      'readArchivedPage',
     ];
     // Class methods cannot be found by name, so the classes that own the
     // index's reads and writes are checked whole.

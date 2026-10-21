@@ -395,12 +395,16 @@ export async function readArchivedConversation(
   `).all(agentSessionId) as Array<{ rowStart: number; sourceEnd: number; pieceCount: number }>;
   if (rows.length === 0) return null;
 
+  // Newest rows while they fit the bound, and always at least one. Keeping the
+  // row that crossed it read about 24 MiB against a 16 MiB bound; the
+  // Conversation viewer pages anything older (`readArchivedPage`).
   const kept: typeof rows = [];
   let span = 0;
   for (const row of rows) {
+    const rowSpan = Math.max(0, row.sourceEnd - row.rowStart);
+    if (kept.length > 0 && span + rowSpan > maxSourceBytes) break;
     kept.push(row);
-    span += Math.max(0, row.sourceEnd - row.rowStart);
-    if (span >= maxSourceBytes) break;
+    span += rowSpan;
   }
   kept.reverse();
 
@@ -431,6 +435,109 @@ export async function readArchivedConversation(
   };
   touchBounded(readCache, cacheKey, { revision: state.revision, maxSourceBytes, conversation }, cacheOptions);
   return conversation;
+}
+
+/**
+ * The byte a row's first whole line starts at. A row's `row_start` is the
+ * offset its walk asked for, which after the first row is the previous
+ * window's `nextByteOffset`: it points AT the newline before the row's first
+ * line, one byte before the line-start coordinate the live tail and history
+ * pages use. This is the one place that converts between the two; a query
+ * that compares `row_start` with a line-start cursor directly picks the row
+ * that begins at the cursor and pages nowhere.
+ */
+export function archiveRowLineStart(rowStart: number): number {
+  return rowStart === 0 ? 0 : rowStart + 1;
+}
+
+/** The line-start byte a row's lines end before: the next row's first line. */
+function archiveRowLineEnd(sourceEnd: number, totalBytes: number): number {
+  return sourceEnd >= totalBytes ? sourceEnd : sourceEnd + 1;
+}
+
+/** One page of an archived conversation, for a Conversation viewer whose file is gone. */
+export interface ArchivedPage {
+  entries: TranscriptEntry[];
+  revision: number;
+  startPosition: number;
+  endPosition: number;
+  totalPosition: number;
+  reachedStart: boolean;
+}
+
+/**
+ * One archived row as a history page: the row ending before `position`
+ * (`before`), the row holding or after it (`after`), or the row holding it
+ * (`around`). Uncached, unlike `readArchivedConversation`, whose cache holds one
+ * read per conversation and would hand the tail's next poll a new array if a
+ * page read replaced it. A row straddling the cursor is cut at it by each
+ * entry's origin; a row archived before entries carried one is returned whole,
+ * and the viewer's dedupe by uuid drops the overlap. Null when the archive does
+ * not hold the conversation or the row cannot be read.
+ */
+export async function readArchivedPage(
+  db: Database.Database,
+  agentSessionId: string,
+  direction: 'before' | 'after' | 'around',
+  position: number,
+): Promise<ArchivedPage | null> {
+  if (!hasArchiveTables(db)) return null;
+  const state = db.prepare('SELECT revision FROM transcript_archive_state WHERE agent_session_id = ?')
+    .get(agentSessionId) as { revision: number } | undefined;
+  if (!state) return null;
+  const total = db.prepare('SELECT MAX(source_end) AS total FROM transcript_archive_rows WHERE agent_session_id = ?')
+    .get(agentSessionId) as { total: number | null } | undefined;
+  const totalPosition = total?.total ?? 0;
+  if (totalPosition <= 0) return null;
+
+  const select = 'SELECT row_start AS rowStart, MAX(source_end) AS sourceEnd, MAX(piece_count) AS pieceCount '
+    + 'FROM transcript_archive_rows WHERE agent_session_id = ? GROUP BY row_start';
+  let row: { rowStart: number; sourceEnd: number; pieceCount: number } | undefined;
+  if (direction === 'before') {
+    row = db.prepare(`${select} HAVING (CASE WHEN row_start = 0 THEN 0 ELSE row_start + 1 END) < ? ORDER BY row_start DESC LIMIT 1`)
+      .get(agentSessionId, position) as typeof row;
+  } else if (direction === 'after') {
+    row = db.prepare(`${select} HAVING MAX(source_end) >= ? ORDER BY row_start ASC LIMIT 1`)
+      .get(agentSessionId, position) as typeof row;
+  } else {
+    row = (db.prepare(`${select} HAVING row_start <= ? ORDER BY row_start DESC LIMIT 1`).get(agentSessionId, position)
+      ?? db.prepare(`${select} ORDER BY row_start ASC LIMIT 1`).get(agentSessionId)) as typeof row;
+  }
+  if (!row) return null;
+
+  const pieces = db.prepare(
+    'SELECT payload FROM transcript_archive_rows WHERE agent_session_id = ? AND row_start = ? ORDER BY piece',
+  ).all(agentSessionId, row.rowStart) as Array<{ payload: Buffer }>;
+  if (pieces.length !== row.pieceCount) return null;
+  let rowEntries: unknown;
+  try {
+    const json = await decompress(Buffer.concat(pieces.map((piece) => piece.payload)));
+    rowEntries = JSON.parse(json.toString('utf8')) as unknown;
+  } catch (error) {
+    console.warn(`[retrieval] an archived row of ${agentSessionId.slice(0, 8)} could not be read:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+  if (!Array.isArray(rowEntries)) return null;
+
+  let startPosition = archiveRowLineStart(row.rowStart);
+  let endPosition = archiveRowLineEnd(row.sourceEnd, totalPosition);
+  if (direction === 'before') endPosition = Math.min(endPosition, position);
+  if (direction === 'after') startPosition = Math.max(startPosition, position);
+  const entries: TranscriptEntry[] = [];
+  for (const entry of rowEntries) {
+    if (!isArchivedEntry(entry)) continue;
+    const entryPosition = entry.origin?.position;
+    if (entryPosition !== undefined && (entryPosition < startPosition || entryPosition >= endPosition)) continue;
+    entries.push(entry);
+  }
+  return {
+    entries,
+    revision: state.revision,
+    startPosition,
+    endPosition,
+    totalPosition,
+    reachedStart: row.rowStart === 0,
+  };
 }
 
 /** An archived element a reader can dispatch on: an object with a string `kind`. */

@@ -618,6 +618,12 @@ export const IPC = {
   // explicit projectId but fall back to the ambient current project.
   TRANSCRIPT_GET: 'transcript:get',
   TRANSCRIPT_LIST_SESSIONS: 'transcript:listSessions',
+  // History paging: one page of a conversation's history, the page holding a
+  // turn, and a position-to-time map for the scrollbar. Read one at a time in
+  // the retrieval worker.
+  TRANSCRIPT_PAGE: 'transcript:page',
+  TRANSCRIPT_LOCATE: 'transcript:locate',
+  TRANSCRIPT_TIMELINE: 'transcript:timeline',
 
   // Conversation-memory semantic-layer status (the Knowledge Graph settings tab).
   KNOWLEDGE_GRAPH_STATUS: 'knowledgeGraph:status',

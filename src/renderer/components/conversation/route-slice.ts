@@ -109,13 +109,21 @@ function staysOf(route: ReadonlyArray<TaskReportRouteColumn>): Stay[] {
   return stays.sort((first, second) => first.startMs - second.startMs);
 }
 
-/** The index of the stay an instant falls in, or -1 for none (no timestamp, or before the first stay). */
+/** The index of the stay an instant falls in, or -1 for none (no timestamp, or before the first stay).
+ *  A binary search: with older pages loaded this runs once per entry over thousands of entries. */
 function stayIndexAt(stays: ReadonlyArray<Stay>, timestampMs: number): number {
   if (!(timestampMs > 0)) return -1;
+  let low = 0;
+  let high = stays.length - 1;
   let found = -1;
-  for (let index = 0; index < stays.length; index++) {
-    if (stays[index].startMs > timestampMs) break;
-    found = index;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    if (stays[middle].startMs <= timestampMs) {
+      found = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
   }
   return found;
 }

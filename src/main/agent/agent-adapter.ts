@@ -23,6 +23,9 @@ import type {
   AgentLaunchOptionInfo,
   AnswerCapabilities,
   ExitSequenceStep,
+  TranscriptHistoryPage,
+  TranscriptPageDirection,
+  TranscriptPageUnavailableReason,
 } from '../../shared/types';
 
 /**
@@ -34,6 +37,10 @@ import type {
 export interface ParsedTranscript {
   entries: TranscriptEntry[];
   sourcePath: string | null;
+  /** The whole conversation's size in the unit of `TranscriptEntry.origin.position`,
+   *  for an adapter whose unit is not the source file's bytes. Omitted, the
+   *  file's size is used. */
+  totalPosition?: number;
 }
 
 /**
@@ -50,7 +57,31 @@ export interface ParsedTranscriptWindow {
   sourcePath: string | null;
   nextByteOffset: number;
   totalBytes: number;
+  /** The byte the window's first whole line starts at (0, or a byte just after a newline). */
+  firstByteOffset: number;
+  /** One past the window's last whole line. Equals `firstByteOffset` when it held none. */
+  endByte: number;
 }
+
+/**
+ * A request for one page of a conversation's history (`readTranscriptPage`).
+ * `maxBytes` bounds the page's span in the adapter's position unit; the
+ * worker passes `HISTORY_PAGE_BYTES` for a page and less for a timeline probe.
+ */
+export interface TranscriptPageReadRequest {
+  direction: TranscriptPageDirection;
+  cursor?: string;
+  position?: number;
+  untilPosition?: number;
+  maxBytes: number;
+  sourceToken?: string;
+}
+
+export type TranscriptPageReadResult =
+  | { status: 'ok'; page: Omit<TranscriptHistoryPage, 'conversationId'> }
+  /** The source was rewritten or shrank since the caller's cursors were made. */
+  | { status: 'reset' }
+  | { status: 'unavailable'; reason: TranscriptPageUnavailableReason };
 
 /**
  * One subagent turn's token usage, already folded to exactly one entry per API
@@ -788,6 +819,43 @@ export interface AgentAdapter {
     maxBytes: number,
     attributedMessageIds?: Set<string>,
   ): Promise<ParsedTranscriptWindow>;
+
+  /**
+   * Optional: read ONE page of the conversation's history for the
+   * Conversation viewer, before a cursor, after it, or around a position,
+   * retaining nothing between calls.
+   *
+   * `parseTranscript` reads only the newest `MAX_PARSE_SOURCE_BYTES`, and its
+   * `truncated` notice carries `earlierHistory`, a cursor into the part it left
+   * out. The viewer pages backward from that cursor as the reader scrolls up,
+   * and forward again after a jump, holding at most `HISTORY_WINDOW_MAX_PAGES`
+   * pages, so a transcript of any size scrolls end to end at a bounded cost.
+   *
+   * The contract every implementation keeps:
+   * - The cursor is the adapter's own encoding and is opaque to the caller,
+   *   which passes it back verbatim. `position` is a number in one unit that
+   *   rises through the conversation (bytes for a JSONL file), shared with
+   *   every entry's `origin.position` and the notice's `earlierHistory.position`.
+   * - Consecutive pages tile the source: a `before` page ends exactly at its
+   *   cursor and an `after` page starts exactly at it, so no record is read
+   *   twice or skipped, and each record gets the uuid the tail parse gives it.
+   * - A forward read stops at `untilPosition`, the tail's start.
+   * - `sourceToken` identifies the source the cursors belong to; a request
+   *   carrying a different one answers `reset`, as does a cursor past the end.
+   * - It must not throw: a failed read answers `unavailable`.
+   */
+  readTranscriptPage?(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+  ): Promise<TranscriptPageReadResult>;
+
+  /**
+   * False for an agent whose transcript records no timestamps (its parser
+   * stamps parse time), so the viewer orders that conversation by position and
+   * shows no date while the scrollbar is dragged over it. Omitted means true.
+   */
+  readonly transcriptHasTimestamps?: boolean;
 
   /**
    * Optional: the cheap staleness signature of this session's subagent

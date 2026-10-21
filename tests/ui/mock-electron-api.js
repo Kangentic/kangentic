@@ -6435,6 +6435,41 @@
         }
         return Promise.resolve(Object.assign({}, response, { revision: 0 }));
       },
+      // History paging. The sample install records no transcript past the read
+      // cap, so nothing ever pages: an honest empty answer, the one the desktop
+      // gives once a history file is gone. Test hook:
+      // window.__mockTranscriptsPageOverride(input) => response | Promise | undefined,
+      // and the same for locate and timeline. Every call is recorded on
+      // window.__mockTranscriptPageCalls for assertions.
+      page: function (input) {
+        if (typeof window !== 'undefined') {
+          window.__mockTranscriptPageCalls = window.__mockTranscriptPageCalls || [];
+          window.__mockTranscriptPageCalls.push(input);
+          if (typeof window.__mockTranscriptsPageOverride === 'function') {
+            var overridden = window.__mockTranscriptsPageOverride(input);
+            if (overridden) return Promise.resolve(overridden);
+          }
+        }
+        return Promise.resolve({ status: 'unavailable', reason: 'file_missing' });
+      },
+      locate: function (input) {
+        if (typeof window !== 'undefined') {
+          window.__mockTranscriptLocateCalls = window.__mockTranscriptLocateCalls || [];
+          window.__mockTranscriptLocateCalls.push(input);
+          if (typeof window.__mockTranscriptsLocateOverride === 'function') {
+            var overridden = window.__mockTranscriptsLocateOverride(input);
+            if (overridden) return Promise.resolve(overridden);
+          }
+        }
+        return Promise.resolve({ status: 'not_found' });
+      },
+      timeline: function (input) {
+        if (typeof window !== 'undefined' && typeof window.__mockTranscriptsTimelineOverride === 'function') {
+          var overridden = window.__mockTranscriptsTimelineOverride(input);
+          if (overridden) return Promise.resolve(overridden);
+        }
+        return Promise.resolve({ status: 'unavailable', reason: 'file_missing' });
+      },
       listSessions: function (taskId, _projectId) {
         var list = transcriptSessionsByTask[taskId];
         return Promise.resolve(list ? list.slice() : []);
