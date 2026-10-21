@@ -16,12 +16,14 @@ const ISOLATED_SESSION_LABEL = 'Isolated session';
  * Leading the word "Isolated", it is decorative. `explained` is for an icon
  * that stands alone after a name: it carries its own name and its tip.
  */
-export function IsolatedIcon({ size, explained = false, inheritTone = false }: {
+export function IsolatedIcon({ size, explained = false, inheritTone = false, className }: {
   size: number;
   explained?: boolean;
   inheritTone?: boolean;
+  /** Extra classes, for a surface whose text needs the icon nudged to sit on its baseline. */
+  className?: string;
 }) {
-  const toneClass = inheritTone ? 'flex-shrink-0' : 'flex-shrink-0 text-fg-muted';
+  const toneClass = [inheritTone ? 'flex-shrink-0' : 'flex-shrink-0 text-fg-muted', className].filter(Boolean).join(' ');
   if (!explained) {
     return <Split size={size} aria-hidden="true" className={toneClass} data-testid="isolated-icon" />;
   }

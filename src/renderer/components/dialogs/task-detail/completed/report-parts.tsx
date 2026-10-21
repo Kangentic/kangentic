@@ -78,7 +78,8 @@ export function SessionPill({ conversationId, isolated = false }: { conversation
         data-testid="completed-copy-conversation-id"
       >
         {copied && <Check size={11} className="text-green-400" />}
-        {isolated && <IsolatedIcon size={11} />}
+        {/* The glyph's ink sits about a pixel below the monospace digits' baseline, so it is nudged up. */}
+        {isolated && <IsolatedIcon size={11} className="-translate-y-px" />}
         {conversationId.slice(0, 8)}
       </button>
     </Tooltip>
