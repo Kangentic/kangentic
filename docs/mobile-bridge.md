@@ -313,7 +313,7 @@ the phone vs. fix the network). `offline` is a presence conclusion rather than a
 so it is **not** part of `MobileBridgeTransportState`, which must keep mirroring
 `@kangentic/protocol`'s `TransportState` exactly.
 
-Two guards keep the value honest without making it twitchy:
+Several guards keep the value honest without making it twitchy:
 
 - **A probe budget before `offline`.** Every handshake initiation doubles as a presence probe.
   Silence for `PEER_PRESENCE_TIMEOUT_MS` (5s) spends one unit; only `PEER_PRESENCE_FAILURES_BEFORE_ABSENT`
@@ -369,14 +369,26 @@ Two guards keep the value honest without making it twitchy:
   That reported "Offline" for a demonstrably live device: the exact mirror of the stale green
   "Connected" this whole state exists to remove.
 - **A hold before surfacing a blip.** The relay force-closes both peers when either drops, so an
-  ordinary phone reload costs a ~500ms reconnect plus a re-handshake. A known-good session keeps
-  reporting `connected` for `RECONNECT_GRACE_MS` (2s), spanning the reconnect *and* the
+  ordinary phone reload costs a ~500ms reconnect plus a re-handshake. A session with a settled
+  presence verdict keeps reporting it for `RECONNECT_GRACE_MS` (2s) after the transport leaves
+  `connected`. The window covers the reconnect and, when the handshake completes inside it, the
   re-handshake, so the badge does not flicker `connected -> reconnecting -> connecting -> connected`
-  on every reload. A genuine outage outlasts the hold and correctly falls through.
+  on every reload. A completed handshake or an absence verdict ends the hold early, and a genuine
+  outage outlasts it and correctly falls through. The verdict is whichever the session had
+  (`connected` or `offline`), so an absent phone keeps reporting `offline` the same way. A session
+  that has not reached a verdict yet (before its first handshake or two spent probe windows) has
+  nothing to hold, so its first drop shows at once. The absent case recurs every minute: the relay's park timeout closes the parked socket of a phone
+  that is away (code 4408), and `RelayClient` is back in about 1s (the 500ms backoff plus a dial).
+  Before the hold covered it, each recycle flashed the badge to "Reconnecting", reset
+  `connectionStateSince`, and wrote two `warn` lines.
 
-`MobileBridgeStatus.relayState` is the separate panel-wide aggregate over each session's
-*transport* state, with precedence `connected > connecting > reconnecting > closed`. It describes
-the relay link, so it deliberately stays transport-based. Because that precedence pins it at
+`MobileBridgeStatus.relayState` is the separate panel-wide aggregate over each session's relay
+link state (`BridgeSession.relayLinkState`), with precedence
+`connected > connecting > reconnecting > closed`. That value equals the transport state, except
+that it reads `connected` while a reconnect hold is armed. It describes the relay link, so it never
+reads the presence verdict. A reconnect shorter than 2s on a device with a settled verdict, such as
+the park recycle of an absent phone, therefore leaves the aggregate on `connected` and sends the
+renderer no `mobile:stateChanged`. Because that precedence pins it at
 `connected` the moment any one device connects, the renderer's `mobile:stateChanged` notification
 is gated on a signature covering the aggregate **and** every device's own connection state -
 gating on the aggregate alone left a second device's row frozen on "Connecting..." while its phone
@@ -408,7 +420,7 @@ device id or `pairing`; no slot ids, no key material, no message content.
 | Line | Level | Means |
 |---|---|---|
 | `[mobile-bridge/relay-client <label>] connected after N ms (via <stack>)` | log | A dial opened. `<stack>` is the WebSocket that dialed: `chromium` for Electron's `net.WebSocket`, `node` for Node's global. The dial-failed and dial-timed-out lines end with the same suffix, so a latency series stays comparable across a change of stack. |
-| `... parked slot timed out (code 4408) after N s; redial in N ms` | log | The relay's park timeout recycling a slot whose phone is away: once a minute per absent device, forever. |
+| `... parked slot timed out (code 4408) after N s; redial in N ms` | log | The relay's park timeout recycling a slot whose phone is away: once a minute per absent device, forever. When the redial lands inside 2s, this line and the `connected after` line that follows it are the whole trace of the recycle: the device row stays `offline` and writes no transition line. On 2026-10-21, 81 of 1,574 recycles (5%) took longer, up to 25s, and still wrote the `offline -> reconnecting -> offline` pair. |
 | `... closed: code=1006 reason="" clean=false after N s connected[, last relay ping N s ago \| , no relay ping seen]; redial in N ms` | warn | The relay's keepalive reaped this socket (a missed pong), or the TCP peer died. The line this whole trace exists for. On an undici socket the line names when the relay last pinged it (every 30 s on the hosted relay, read from undici's `undici:websocket:ping` diagnostics channel), or says `no relay ping seen`; a ping age past ~30 s means the relay's side had stopped reaching the desktop. |
 | `... closed: code=4000 reason="peer_closed" ...` | warn | The phone's half left; the relay tore this half down with it. |
 | `... closed: code=4409 reason="slot_busy" ...` | warn | A third peer on the slot, or this desktop's own stale socket still counted at the relay; the contention probe evicts the dead one within 2s. |
@@ -420,7 +432,7 @@ device id or `pairing`; no slot ids, no key material, no message content.
 | `... forced redial (<reason>) from <state>[, last relay ping N s ago \| , no relay ping seen]` | warn | `redialNow({ force })` acting: the session's spent budget, a system resume on a session with no phone attached, or the per-socket byte cap. The ping clause (only from `connected`, undici sockets only, as on the close line) tells a dead path, where the pings stopped too, from a silent phone on a live one, where they kept arriving. |
 | `[mobile-bridge] system resumed from sleep: redialed N, probed N, skipped N of N device session(s)` | log | The per-session resume decisions. |
 | `[mobile-bridge] screen unlocked: probed N of N device session(s)` | log | Only when at least one probe actually left. |
-| `[mobile-bridge] device <id8> <from> -> <to> (transport <state>)` | log / warn | Every change of the reported connection state: `-> connected` and `-> connecting` at `log`; `-> offline`, `-> reconnecting`, `-> closed` at `warn`. |
+| `[mobile-bridge] device <id8> <from> -> <to> (transport <state>)` | log / warn | Every change of the reported connection state: `-> connected` and `-> connecting` at `log`; `-> offline`, `-> reconnecting`, `-> closed` at `warn`. A reconnect shorter than `RECONNECT_GRACE_MS` (2s) changes nothing and writes nothing once the device has a presence verdict, so `-> reconnecting` then means the relay link was down for longer than that. Before its first verdict, a drop writes `-> reconnecting` at once. The `(transport <state>)` clause is the raw relay socket state, not the reported one, so an absent phone reads `connected -> offline (transport connected)`. |
 | `[mobile-bridge] device <id8> handshake established` | log | A KK handshake completed. |
 | `[mobile-bridge] device <id8> handshake failed: ...` | warn | A garbled or injected handshake frame; a fresh initiation follows in `HANDSHAKE_RETRY_MS`. |
 | `[mobile-bridge] device <id8> rejected a frame: ...` | warn | A frame the session could not open, one line per 10s window per device with the suppressed count. |

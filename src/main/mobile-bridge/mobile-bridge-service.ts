@@ -84,7 +84,13 @@ const FRAME_REJECTED_LOG_WINDOW_MS = 10_000;
  */
 const SLOW_REQUEST_WARN_MS = 750;
 
-/** The transition lines that persist on every build (log-mirror.ts keeps `warn` unconditionally). */
+/**
+ * The transition lines that persist on every build (log-mirror.ts keeps `warn`
+ * unconditionally). The relay's once-a-minute park recycle of an absent phone
+ * normally never reaches them: the session holds 'offline' through a reconnect
+ * shorter than its RECONNECT_GRACE_MS, so '-> reconnecting' means the relay
+ * link was down longer than that, an outage or a slow dial.
+ */
 const CONNECTION_STATES_LOGGED_AT_WARN: ReadonlySet<MobileDeviceConnectionState> = new Set(['offline', 'reconnecting', 'closed']);
 
 /**
@@ -819,12 +825,13 @@ export class MobileBridgeService extends EventEmitter {
    * sessions. Deliberately excludes the ephemeral pairing transport (see
    * startPairing()) - it has its own error surface via 'pairingEnded', and
    * including it would flap this steady-state field during every pairing
-   * ceremony.
+   * ceremony. Reads each session's relayLinkState, so a reconnect shorter
+   * than the session's hold leaves it, and the 'stateChanged' signature, alone.
    */
   private aggregateRelayState(): MobileBridgeTransportState {
     if (this.sessions.size === 0) return 'idle';
     const states = new Set<MobileBridgeTransportState>();
-    for (const session of this.sessions.values()) states.add(session.transportState);
+    for (const session of this.sessions.values()) states.add(session.relayLinkState);
     if (states.has('connected')) return 'connected';
     if (states.has('connecting')) return 'connecting';
     if (states.has('reconnecting')) return 'reconnecting';

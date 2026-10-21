@@ -99,6 +99,10 @@ class FakeBridgeSession extends EventEmitter {
   connectionState: MobileDeviceConnectionState = 'idle';
   /** Mutable, same reasoning as connectionState above - read by the same listener for the "(transport <transportState>)" suffix. */
   transportState: TransportState = 'idle';
+  /** What the service's relayState aggregate reads; these tests never arm the real session's reconnect hold, so it follows transportState. */
+  get relayLinkState(): TransportState {
+    return this.transportState;
+  }
   /** Mutable, same reasoning as above - read by the slow-request line, which names it only when the transport still holds bytes. */
   transportBufferedBytes: number | null = null;
   start = vi.fn();

@@ -76,12 +76,15 @@ const PEER_PRESENCE_TIMEOUT_MS = 5 * 1000;
 const PEER_PRESENCE_FAILURES_BEFORE_ABSENT = 2;
 
 /**
- * How long a known-good session keeps reporting 'connected' while its
- * transport reconnects and re-handshakes. The relay force-closes BOTH peers
- * when either drops, so an ordinary phone reload costs a ~500ms reconnect
- * (RelayClient's INITIAL_BACKOFF_MS) plus one handshake round trip. Without
- * this hold the UI would flicker connected -> reconnecting -> connecting ->
- * connected on every reload.
+ * How long a session keeps reporting its last presence verdict, 'connected'
+ * or 'offline', while its transport reconnects. The relay force-closes BOTH
+ * peers when either drops, so an ordinary phone reload costs a ~500ms
+ * reconnect (RelayClient's INITIAL_BACKOFF_MS) plus one handshake round trip.
+ * Without this hold the UI would flicker connected -> reconnecting ->
+ * connecting -> connected on every reload. An absent phone needs the same
+ * hold: the relay closes its parked socket every 60 s (code 4408) and the
+ * redial is back in about 1 s (500 ms backoff, a ~450 ms dial), which would
+ * otherwise read offline -> reconnecting -> offline once a minute.
  */
 const RECONNECT_GRACE_MS = 2 * 1000;
 
@@ -240,6 +243,8 @@ export class BridgeSession extends EventEmitter {
   private initiationsSent = 0;
   private presenceTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The presence verdict connectionState reports while reconnectGraceTimer is armed. */
+  private reconnectHeldState: 'connected' | 'offline' = 'connected';
   /**
    * Application frames encoded while a rekey's msg1 is outstanding on an
    * established session, waiting to be sealed under the keys that rekey
@@ -269,8 +274,22 @@ export class BridgeSession extends EventEmitter {
     return this.streams !== null;
   }
 
-  /** The underlying transport's current connection state, for the service's aggregate MobileBridgeStatus.relayState. */
+  /** The underlying transport's current connection state, as the service's transition lines report it. */
   get transportState(): TransportState {
+    return this.transport.state;
+  }
+
+  /**
+   * The relay link as the service's aggregate MobileBridgeStatus.relayState
+   * reads it: the transport state, except that a reconnect inside the hold
+   * (see RECONNECT_GRACE_MS) still reads 'connected', the same hysteresis
+   * connectionState applies. The hold only arms on leaving 'connected', and
+   * its expiry announces itself, so the aggregate catches up on its own.
+   * Without this, the relay's once-a-minute park recycle of an absent phone
+   * moved the aggregate and sent the renderer two re-fetches per recycle.
+   */
+  get relayLinkState(): TransportState {
+    if (this.reconnectGraceTimer) return 'connected';
     return this.transport.state;
   }
 
@@ -285,10 +304,10 @@ export class BridgeSession extends EventEmitter {
    * service turns that into the renderer's 'stateChanged' notification.
    */
   get connectionState(): MobileDeviceConnectionState {
-    // A known-good session riding out a sub-second relay blip: hold the last
-    // good value rather than flickering through the reconnect AND the
-    // re-handshake that follows it.
-    if (this.reconnectGraceTimer) return 'connected';
+    // A session riding out a sub-second relay blip: hold the last presence
+    // verdict rather than flickering through the reconnect AND (for a present
+    // phone) the re-handshake that follows it.
+    if (this.reconnectGraceTimer) return this.reconnectHeldState;
     const transport = this.transport.state;
     if (transport !== 'connected') return transport;
     if (this.peerPresence === 'present' && this.isEstablished) return 'connected';
@@ -321,12 +340,13 @@ export class BridgeSession extends EventEmitter {
     if (state === 'connected') {
       // A fresh socket gets a fresh probe budget and knows nothing about the
       // new slot yet. The reconnect grace (if one is armed) deliberately
-      // stays armed until the handshake actually completes: the flicker it
-      // suppresses spans the re-handshake too.
+      // stays armed until the handshake completes or RECONNECT_GRACE_MS
+      // elapses, whichever comes first: the flicker it suppresses spans the
+      // re-handshake too.
       this.failedPresenceProbes = 0;
       this.peerSeenOnThisConnection = false;
-    } else if (this.peerPresence === 'present') {
-      this.armReconnectGrace();
+    } else if (this.peerPresence !== 'unknown') {
+      this.armReconnectGrace(this.peerPresence === 'present' ? 'connected' : 'offline');
     }
     // Emitted before the branch below (and its early return) so every
     // transition - including into 'connected' - reaches the service's
@@ -349,19 +369,24 @@ export class BridgeSession extends EventEmitter {
     this.outstandingHandshakes = [];
     this.dropRekeyHold();
     this.clearHandshakeRetryTimer();
-    // No socket means no probe can be answered; the transport branch of
-    // connectionState governs the badge until the next 'connected' edge.
+    // No socket means no probe can be answered. Until the next 'connected'
+    // edge the badge reads the reconnect hold while one is armed, and the
+    // transport branch of connectionState after that.
     this.clearPresenceTimer();
   }
 
   /**
-   * Holds the last known-good 'connected' across a brief transport outage.
-   * Cleared by a completed handshake (the blip healed and the badge never
-   * moved) or by its own expiry, which MUST notify - a silent expiry would
-   * strand the badge on a stale 'connected' with nothing to trigger a re-read.
+   * Holds the last presence verdict across a brief transport outage. A hold
+   * already armed keeps its value and its deadline. Cleared by a completed
+   * handshake (the blip healed and the badge never moved), by an absence
+   * verdict, or by its own expiry, which MUST notify - a silent expiry would
+   * strand the badge on a stale value with nothing to trigger a re-read. An
+   * 'offline' hold that outlives the reconnect needs no clear of its own:
+   * a connected transport with an absent peer reads 'offline' anyway.
    */
-  private armReconnectGrace(): void {
+  private armReconnectGrace(held: 'connected' | 'offline'): void {
     if (this.reconnectGraceTimer) return;
+    this.reconnectHeldState = held;
     this.reconnectGraceTimer = setTimeout(() => {
       this.reconnectGraceTimer = null;
       if (this.disposed) return;
@@ -546,7 +571,8 @@ export class BridgeSession extends EventEmitter {
    * Runs synchronously inside the probe callback and arms no timer of its
    * own: RelayClient.redialNow() emits 'reconnecting' before it dials, so
    * onTransportState()'s leave-connected cleanup runs re-entrantly here
-   * (presence is already 'absent', so no reconnect grace arms) and the next
+   * (presence is already 'absent', so the reconnect grace holds 'offline',
+   * never 'connected') and the next
    * 'connected' edge re-initiates. No loop: the new socket's first
    * exhaustion is a connect-edge episode the second condition rejects. On a
    * self-hosted relay with a park timeout longer than REHANDSHAKE_INTERVAL_MS
