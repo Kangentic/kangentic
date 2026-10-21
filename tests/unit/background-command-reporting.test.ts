@@ -18,11 +18,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { EventType } from '../../src/shared/types';
-import type { BackgroundCommandSpec } from '../../src/shared/background-command-spec';
+import type { BackgroundCallMatch, BackgroundCommandSpec } from '../../src/shared/background-command-spec';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
 import {
   appendBackgroundLaunch,
+  appendBackgroundStop,
   emitOnlyWhenDetailMatches,
   extractDetail,
   extractTool,
@@ -129,12 +130,25 @@ function withNested(value: Record<string, unknown>, key: string, changes: Record
   return { ...value, [key]: { ...base, ...changes } };
 }
 
+/** What the hint bridge prints for a hint spec and a payload (empty for no hint). */
+function runHintSpec(hintSpec: object, payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(hintSpec), 'utf8').toString('base64');
+  return execFileSync(process.execPath, [HINT_BRIDGE, encoded], { input: JSON.stringify(payload), timeout: 5000 }).toString('utf8');
+}
+
 /** What the hint bridge prints for the payload (empty for no hint). */
 function runHint(adapter: AdapterUnderTest, payload: Record<string, unknown>): string {
   const hintSpec = backgroundShellHintSpecOf(adapter.spec);
   if (!hintSpec) return '';
-  const encoded = Buffer.from(JSON.stringify(hintSpec), 'utf8').toString('base64');
-  return execFileSync(process.execPath, [HINT_BRIDGE, encoded], { input: JSON.stringify(payload), timeout: 5000 }).toString('utf8');
+  return runHintSpec(hintSpec, payload);
+}
+
+/**
+ * A copy of `match` that also carries an `idPattern`, as a directive or hint spec built before the
+ * id shape became a literal in the bridges would. The payload types no longer have the field.
+ */
+function withStaleIdPattern<Match extends object>(match: Match, idPattern: string): Match {
+  return { ...match, idPattern } as unknown as Match;
 }
 
 interface Case {
@@ -382,6 +396,68 @@ describe('appendBackgroundLaunch in the real bridge', () => {
     });
   });
 
+  // Settings written before the shape became a literal, or a hand-built directive, can still send an
+  // idPattern. The bridge must ignore it: it neither widens the shape nor narrows it.
+  describe('a payload that still carries an idPattern', () => {
+    it('ignores ".*": a 65 character id is still not reported', () => {
+      const directive = appendBackgroundLaunch(withStaleIdPattern(LAUNCH_MATCH, '.*'));
+      // Control: a valid id lands under the same directive, so only the id shape rejects the long one.
+      expect(typesOf(runBridge(EventType.ToolEnd, [...OWN_EVENT, directive], launchPayload('srv-1')))).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, directive], launchPayload('a'.repeat(65)));
+      expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ tool: 'run_shell' });
+    });
+
+    it('ignores "^zzz$": a valid id is still reported', () => {
+      const directive = appendBackgroundLaunch(withStaleIdPattern(LAUNCH_MATCH, '^zzz$'));
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, directive], launchPayload('srv-1'));
+      expect(typesOf(lines)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ detail: 'srv-1', tool: 'run_shell' });
+    });
+  });
+
+  // The hint answers the same launch the hold reports, so a v2 spec built by hand reads the same
+  // match and the same id shape. The reply puts the id where {{shellId}} stands.
+  describe('the hint bridge on a v2 spec for the same launch', () => {
+    const HINT_REPLY = { additionalContext: 'shell {{shellId}}' };
+    const HINT_SPEC = { launch: { ...LAUNCH_MATCH }, reply: HINT_REPLY };
+
+    it('answers an id at the 64 character bound', () => {
+      const id = 'a'.repeat(64);
+      const printed = runHintSpec(HINT_SPEC, launchPayload(id));
+      expect(printed).not.toBe('');
+      expect(JSON.parse(printed)).toEqual({ additionalContext: `shell ${id}` });
+      expect(printed).not.toContain('{{shellId}}');
+    });
+
+    it.each([
+      ['65 characters', 'a'.repeat(65)],
+      ['a dot', 'srv.1'],
+      ['a space', 'srv 1'],
+    ])('prints nothing for an id with %s', (_description, id) => {
+      // Control: a valid id is answered under the same spec, so only the id shape silences the hint.
+      expect(runHintSpec(HINT_SPEC, launchPayload('srv-1'))).not.toBe('');
+
+      expect(runHintSpec(HINT_SPEC, launchPayload(id))).toBe('');
+    });
+
+    it('ignores an idPattern of ".*": a 65 character id is still not answered', () => {
+      const staleSpec = { launch: withStaleIdPattern(HINT_SPEC.launch, '.*'), reply: HINT_REPLY };
+      // Control: a valid id is answered under the same spec.
+      expect(runHintSpec(staleSpec, launchPayload('srv-1'))).not.toBe('');
+
+      expect(runHintSpec(staleSpec, launchPayload('a'.repeat(65)))).toBe('');
+    });
+
+    it('ignores an idPattern of "^zzz$": a valid id is still answered', () => {
+      const staleSpec = { launch: withStaleIdPattern(HINT_SPEC.launch, '^zzz$'), reply: HINT_REPLY };
+      const printed = runHintSpec(staleSpec, launchPayload('srv-1'));
+      expect(printed).not.toBe('');
+      expect(JSON.parse(printed)).toEqual({ additionalContext: 'shell srv-1' });
+    });
+  });
+
   describe('the hook\'s own event is suppressed by emitOnlyWhenDetailMatches', () => {
     // The gate reads the extracted detail, so extractDetail comes first. The gate and the
     // launch are independent of each other's list order.
@@ -420,6 +496,66 @@ describe('appendBackgroundLaunch in the real bridge', () => {
       const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, directive], payload);
       expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
       expect(lines[0]).toMatchObject({ tool: 'run_shell' });
+    });
+  });
+});
+
+describe('appendBackgroundStop in the real bridge', () => {
+  /** A synthetic stop: the tool "stop_shell" names the shell it stopped at input.id. */
+  const STOP_MATCH: BackgroundCallMatch = {
+    toolField: 'tool_name',
+    tools: ['stop_shell'],
+    when: [],
+    unless: [],
+    idSources: [{ path: ['input', 'id'] }],
+  };
+
+  function stopPayload(id: string): Record<string, unknown> {
+    return { tool_name: 'stop_shell', input: { id }, status: 'stopped' };
+  }
+
+  const OWN_EVENT = [extractTool('tool_name')];
+
+  describe('the id shape', () => {
+    it('reports an id at the 64 character bound', () => {
+      const id = 'a'.repeat(64);
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, appendBackgroundStop(STOP_MATCH)], stopPayload(id));
+      expect(typesOf(lines)).toEqual([EventType.BackgroundShellEnd, EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ detail: id, tool: 'stop_shell' });
+    });
+
+    it.each([
+      ['65 characters', 'a'.repeat(65)],
+      ['a dot', 'srv.1'],
+      ['a space', 'srv 1'],
+    ])('writes only the hook\'s own event for an id with %s', (_description, id) => {
+      const directives = [...OWN_EVENT, appendBackgroundStop(STOP_MATCH)];
+      // Control: a valid id ends a shell under the same directive, so only the id shape rejects this one.
+      expect(typesOf(runBridge(EventType.ToolEnd, directives, stopPayload('srv-1')))).toEqual([EventType.BackgroundShellEnd, EventType.ToolEnd]);
+
+      const lines = runBridge(EventType.ToolEnd, directives, stopPayload(id));
+      expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ tool: 'stop_shell' });
+    });
+  });
+
+  // Same as for a launch: a leftover idPattern neither widens the id shape nor narrows it.
+  describe('a payload that still carries an idPattern', () => {
+    it('ignores ".*": a 65 character id is still not ended', () => {
+      const directives = [...OWN_EVENT, appendBackgroundStop(withStaleIdPattern(STOP_MATCH, '.*'))];
+      // Control: a valid id ends a shell under the same directive.
+      expect(typesOf(runBridge(EventType.ToolEnd, directives, stopPayload('srv-1')))).toEqual([EventType.BackgroundShellEnd, EventType.ToolEnd]);
+
+      const lines = runBridge(EventType.ToolEnd, directives, stopPayload('a'.repeat(65)));
+      expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ tool: 'stop_shell' });
+    });
+
+    it('ignores "^zzz$": a valid id is still ended', () => {
+      const directives = [...OWN_EVENT, appendBackgroundStop(withStaleIdPattern(STOP_MATCH, '^zzz$'))];
+      const lines = runBridge(EventType.ToolEnd, directives, stopPayload('srv-1'));
+      expect(typesOf(lines)).toEqual([EventType.BackgroundShellEnd, EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ detail: 'srv-1', tool: 'stop_shell' });
     });
   });
 });

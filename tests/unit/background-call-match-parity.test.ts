@@ -15,8 +15,12 @@ const AGENT_DIR = path.resolve(__dirname, '../../src/main/agent');
 const BEGIN = '// BEGIN background-call-match';
 const END = '// END background-call-match';
 
+function bridgeSourceOf(file: string): string {
+  return fs.readFileSync(path.join(AGENT_DIR, file), 'utf-8').replace(/\r\n/g, '\n');
+}
+
 function matcherBlockOf(file: string): string {
-  const source = fs.readFileSync(path.join(AGENT_DIR, file), 'utf-8').replace(/\r\n/g, '\n');
+  const source = bridgeSourceOf(file);
   const start = source.indexOf(BEGIN);
   const end = source.indexOf(END);
   expect(start, `${file} has no ${BEGIN}`).toBeGreaterThanOrEqual(0);
@@ -39,16 +43,22 @@ describe('background call matcher parity', () => {
       expect(block).toContain(`function ${name}(`);
     }
   });
+});
 
-  // Every regex the block builds at run time comes from the bridge's argv, which
-  // CodeQL reports as js/regex-injection. The one it keeps is an id source's
-  // pattern: adapter data that has to travel, so that alert is dismissed. CodeQL
-  // runs only after a merge to main, so this test is what stops a second one, such
-  // as the id shape the block used to read from its payload, from landing unflagged.
-  it('builds a regex at run time only from an id source pattern', () => {
-    const block = matcherBlockOf('event-bridge.js');
-    expect(block.match(/new RegExp\(/g)).toEqual(['new RegExp(']);
-    expect(block).toContain('new RegExp(source.pattern)');
+describe('regexes the bridges build at run time', () => {
+  // Every regex a bridge builds at run time comes from its argv, which CodeQL
+  // reports as js/regex-injection. The ones kept are patterns an adapter sends:
+  // an id source's pattern in the shared block, and the event bridge's detail
+  // match directives. They are adapter data that has to travel, so each site
+  // stays and its alert is won't-fix. CodeQL runs only after a merge to main, so
+  // this list is what stops another one, such as the id shape the block used to
+  // read from its payload, from landing unflagged. It sees only an explicit
+  // RegExp call, not a string handed to `.match` or `.search`.
+  it.each([
+    ['event-bridge.js', ['new RegExp(source.pattern)', 'new RegExp(payload.pattern)', 'new RegExp(payload.pattern)', 'new RegExp(payload.pattern)']],
+    ['background-shell-hint-bridge.js', ['new RegExp(source.pattern)']],
+  ])('%s builds a regex only from a pattern an adapter sends', (file, expectedCalls) => {
+    expect(bridgeSourceOf(file).match(/(?:\bnew\s+)?\bRegExp\s*\([^)]*\)/g)).toEqual(expectedCalls);
   });
 });
 
