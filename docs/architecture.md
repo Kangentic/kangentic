@@ -31,6 +31,9 @@ with a crash policy and stderr capture:
   write of the Knowledge Graph index (the `memory_*`, vec0 and FTS tables, the turn-usage ledger, the usage aggregates behind the dashboard and `kangentic_get_usage_stats` (`usage.read`),
   spawn links, task summaries), the map pass, searches, Ask preparation, storage upkeep, the
   parse and stitch of agent transcripts for the Conversation window, the phone and MCP, the
+  Conversation window's history pages, search-hit lookups and timelines (`transcript.page`,
+  `transcript.locate`, `transcript.timeline`, one at a time through a queue with depth and wait
+  caps, so no read can run into main's call timer), the
   structured transcript archive (`archive.session` on a settled turn, a suspend or an exit, and the
   project-open `archive.sweep`, written whether or not `knowledgeGraph.indexingEnabled` is on), the
   recap tail a resume of a deleted conversation reads (`transcript.recapTail`), the
@@ -576,12 +579,15 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 |---------|---------|---------|
 | `search:everything` | invoke | Unified search across tasks, backlog items, session events (`events.jsonl`), registered projects, and past agent conversations. Powers the global search palette (Ctrl+Shift+F / Ctrl+F). A `#<number>` query (e.g. `#42`) short-circuits to a ticket lookup: only board tasks whose display ID prefix-matches the number, skipping backlog, session-event, conversation, and project hits entirely. |
 
-### Transcript (2 channels)
+### Transcript (5 channels)
 Read-only structured-transcript access for the conversation viewer. Prefer the explicit `projectId`, falling back to the ambient current project.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. When the agent deleted its own file, the read falls back to Kangentic's structured transcript archive, then to the index's text-only chunks; the response's `archivedAgentName` names the agent when the newest session came from the archive. |
+| `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session's whole task. Powers the conversation viewer. The retrieval worker parses and stitches it (`transcript.task`) and answers as JSON main relays without parsing (the preload parses it): the whole response, `{ unchanged, revision }` when the caller's `knownRevision` is current, or a `TranscriptDeltaResponse` carrying only the entries changed since a revision the worker still keeps. When the agent deleted its own file, the read falls back to Kangentic's structured transcript archive, then to the index's text-only chunks; the response's `archivedAgentName` names the agent when the newest session came from the archive. Each session's read is its newest 16 MiB (the tail); the response's `conversations` reports every conversation's whole size and where its tail starts, which turns on the viewer's history paging. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
+| `transcript:page` | invoke | One page (8 MiB of source) of a conversation's history before a cursor, after it, or around a position (`TranscriptPageRequest`), read by the adapter's `readTranscriptPage` in the retrieval worker (`transcript.page`), from the archive when the file is gone. Answers `reset` when the source was rewritten, `busy` when the worker's history queue is full, and `superseded` when a newer request from the same window took its place. JSON relayed like `transcript:get`. |
+| `transcript:locate` | invoke | The page holding one turn, for a search hit in history the viewer has not loaded (`transcript.locate`): `found` with the page, `in_tail`, or `not_found`. Narrows by the turn's time from the timeline, then walks back from the tail within one deadline per call. |
+| `transcript:timeline` | invoke | A coarse position-to-time map of one conversation (64 samples, `transcript.timeline`), for the scrollbar's date label and a column tab's jumps. Unavailable for an agent that records no timestamps. |
 
 ### Knowledge Graph (14 channels)
 Conversation-memory semantic layer and the Knowledge Graph surface built on it.

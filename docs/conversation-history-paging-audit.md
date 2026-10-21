@@ -8,8 +8,12 @@ after three crashes it stays off.
 
 **Verdict: yes for Claude, conditional on the checks listed under "Not measured".** Seven options
 follow, A to G. The recommended one, C, is a separate bounded page call that loads earlier history
-while the user scrolls up. One 8 MiB page costs the worker about half of today's tail read. Nothing
-was built; this records the options, the measurements behind them and the recommended design.
+while the user scrolls up. One 8 MiB page costs the worker about half of today's tail read. This
+records the options, the measurements behind them and the recommended design. C was then built,
+with the decisions below the options (a whole-transcript scrollbar, jumps, column tabs and every
+agent with a transcript); `docs/architecture.md` (Transcript) and `docs/agent-integration.md`
+(`readTranscriptPage`) describe what shipped. The rows marked pending stay pending until they are
+read in the running app.
 
 The safety bar was fixed before measuring. A design passes only if all four hold:
 
@@ -198,12 +202,28 @@ These were stopped because the rigs slowed the machine for other work. Run them 
   Jump to latest drops every page.
 - **The moving seam.** Claude's incremental parse grows the tail to 32 MiB, then re-reads it at
   16 MiB, so the tail's first byte jumps forward. The merge fetches the hole between the old and the
-  new cursor as one more page.
+  new cursor as one more page. As built, the window keeps what the re-read tail dropped as a block
+  between the two notices' cursors instead (`retainSeam`), so no read is needed.
 
 ### Stage 2: other agents
 
 Fix the three locators, then add `parseTranscriptWindow` to Qwen and Droid. Codex, Kimi and Grok
 need a line count carried in the cursor. OpenCode needs a row cursor outside the byte contract.
+
+As built, every adapter got `readTranscriptPage` over its own tail's line parser instead: no
+`parseTranscriptWindow` and no locator change was needed, since a page reads the file the adapter's
+own parse reads. Qwen, Droid, Codex, Kimi and Grok carry a line count in the cursor. OpenCode's
+cursor names a message, and its unit is the characters of stored data. A legacy single-document
+Gemini file does not page. Where a page edge cuts state that crosses lines, the result is what the
+tail's own start already did:
+
+- A Codex page's replies before its own first `turn_context` have no model.
+- A Kimi text run cut by a page edge shows as two rows.
+- An Antigravity error whose tool call sits on the far side of a page edge shows nothing.
+- A Gemini message re-emitted across a page edge keeps its later copy, which is the whole-file rule.
+
+Grok's reasoning records became thinking rows of their own: the parser used to carry them onto the
+next reply, which lost them at every page edge and at the tail's start.
 
 ### Stage 3: jumping into unloaded history (the start of D)
 
