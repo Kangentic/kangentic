@@ -32,6 +32,21 @@
  * already-condemned parents to match Windows `taskkill /T` on POSIX - see that
  * file's header):
  *   - Self-skip: own PID and walked parent PIDs are never killed.
+ *   - Identity (Windows): a candidate is a pid from a scan that can be seconds
+ *     old (the cache below), and Windows hands a freed pid to new processes.
+ *     So once the pty host's Stop is registered (`setIdentityTreeStop`, from
+ *     `register-all.ts`, which runs before the dev boot sweep too), each
+ *     candidate is stopped there, tree and all, only while its pid still names
+ *     the process created at the `CreationDate` the scan read
+ *     (`stopProcessTree`). The stops are posted together, so a hung host holds
+ *     the caller one Stop budget, not one each. A row with no creation time is
+ *     skipped. Off Windows,
+ *     and in the E2E janitor, which calls it directly, a kill is by bare pid
+ *     (`killProcess`).
+ *   - Stale parent pids: a parent pid Windows reused can only make a process
+ *     look supervised (`hasLiveParent`) or add a pid to the self-skip walk, so
+ *     it spares and never selects. `taskkill /T` does not follow one either
+ *     (`src/main/shared/child-tree-stop.ts`).
  *   - Orphan gate: a process whose parent is still alive is never killed by
  *     EITHER entry point (it is actively supervised - a live Playwright worker,
  *     the dogfooding `npm start` window, a `/preview` window, a terminal the
@@ -63,6 +78,7 @@
 
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { isProcessAlive } from '../shared/process-liveness';
+import type { StopProcessOutcome } from '../pty/process-tag/tagged-reap';
 
 export interface ZombieScanOptions {
   /** Filesystem root to match orphan paths against (worktrees + node_modules). */
@@ -75,12 +91,21 @@ export interface ReapedProcess {
   pid: number;
   commandLine: string;
   reason: 'worktree-orphan' | 'main-checkout-orphan' | 'worktree-path-orphan';
+  /** The creation time its scan row carried (Windows), which the kill is checked against. */
+  startedAtMs?: number;
 }
 
 export interface ProcessRow {
   pid: number;
   ppid: number;
   commandLine: string;
+  /**
+   * Creation time in epoch ms, from `Win32_Process.CreationDate` (Windows
+   * scans only). Measured to land on the same millisecond the pty host's
+   * reader reads off the process (483 of 483 processes), so it names the
+   * process a kill may end.
+   */
+  startedAtMs?: number;
   /**
    * Absolute path of the process image, when the scan collected it. Only the
    * UNFILTERED scan (`scanAllProcesses`) populates this; the image-filtered
@@ -109,6 +134,33 @@ export interface WorktreeReapOptions {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 1500;
 const DEFAULT_WORKTREE_SCAN_TIMEOUT_MS = 5000;
+
+/**
+ * Stops a process and its tree in the pty host, only while `pid` still names
+ * the process created at `startedAtMs` (`SessionManager.stopProcessByCreationTime`).
+ */
+export type IdentityTreeStop = (target: { pid: number; startedAtMs: number }) => Promise<StopProcessOutcome>;
+
+let identityTreeStop: IdentityTreeStop | null = null;
+
+/** Registered once the pty host is up (`register-all.ts`); null clears it. */
+export function setIdentityTreeStop(next: IdentityTreeStop | null): void {
+  identityTreeStop = next;
+}
+
+/**
+ * `CreationDate` as the scans' JSON carries it, in epoch ms: Windows
+ * PowerShell writes `/Date(<ms>)/`, PowerShell 7 an ISO string with an
+ * offset. Undefined for anything else.
+ */
+export function parseCimCreationDate(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const legacy = /^\/Date\((-?\d+)\)\/$/.exec(value);
+  if (legacy) return Number(legacy[1]);
+  // Date.parse reads three fraction digits; CIM carries up to seven.
+  const parsed = Date.parse(value.replace(/(\.\d{3})\d+/, '$1'));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 /**
  * Short-lived cache of the last successful process scan. The startup retry pass
@@ -339,7 +391,7 @@ export async function scanAllProcessesCached(scanTimeoutMs: number): Promise<Pro
 async function scanAllProcessesWindows(scanTimeoutMs: number): Promise<ProcessRow[]> {
   const psCommand =
     'Get-CimInstance Win32_Process '
-    + '| Select-Object ProcessId,ParentProcessId,CommandLine,ExecutablePath '
+    + '| Select-Object ProcessId,ParentProcessId,CommandLine,ExecutablePath,CreationDate '
     + '| ConvertTo-Json -Compress';
   const stdout = await runCommandWithTimeout(
     'powershell',
@@ -350,7 +402,7 @@ async function scanAllProcessesWindows(scanTimeoutMs: number): Promise<ProcessRo
 }
 
 /**
- * Parse the Windows scan's JSON into rows. A single-row result arrives as one
+ * Parse either Windows scan's JSON into rows. A single-row result arrives as one
  * object rather than an array, which is why this normalizes before iterating.
  * Rows missing `ProcessId` are dropped; every other field degrades to a default
  * so one malformed entry cannot lose the whole scan.
@@ -375,6 +427,7 @@ export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
       ParentProcessId?: number;
       CommandLine?: string | null;
       ExecutablePath?: string | null;
+      CreationDate?: unknown;
     };
     if (typeof typedRow.ProcessId !== 'number') continue;
     result.push({
@@ -382,6 +435,7 @@ export function parseProcessRowsFromJson(stdout: string): ProcessRow[] {
       ppid: typeof typedRow.ParentProcessId === 'number' ? typedRow.ParentProcessId : 0,
       commandLine: typeof typedRow.CommandLine === 'string' ? typedRow.CommandLine : '',
       executablePath: typeof typedRow.ExecutablePath === 'string' ? typedRow.ExecutablePath : undefined,
+      startedAtMs: parseCimCreationDate(typedRow.CreationDate),
     });
   }
   return result;
@@ -399,37 +453,15 @@ async function scanProcessesWindows(scanTimeoutMs: number): Promise<ProcessRow[]
   // ConvertTo-Json -Compress to keep stdout small.
   const psCommand =
     "Get-CimInstance Win32_Process -Filter \"Name='electron.exe' OR Name='node.exe'\" " +
-    "| Select-Object ProcessId,ParentProcessId,CommandLine " +
+    "| Select-Object ProcessId,ParentProcessId,CommandLine,CreationDate " +
     "| ConvertTo-Json -Compress";
   const stdout = await runCommandWithTimeout(
     'powershell',
     ['-NoProfile', '-NonInteractive', '-Command', psCommand],
     { timeoutMs: scanTimeoutMs, windowsHide: true },
   );
-  if (!stdout) return [];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return [];
-  }
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  const result: ProcessRow[] = [];
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') continue;
-    const typedRow = row as {
-      ProcessId?: number;
-      ParentProcessId?: number;
-      CommandLine?: string | null;
-    };
-    if (typeof typedRow.ProcessId !== 'number') continue;
-    result.push({
-      pid: typedRow.ProcessId,
-      ppid: typeof typedRow.ParentProcessId === 'number' ? typedRow.ParentProcessId : 0,
-      commandLine: typeof typedRow.CommandLine === 'string' ? typedRow.CommandLine : '',
-    });
-  }
-  return result;
+  // It selects no ExecutablePath, so every row's is undefined.
+  return parseProcessRowsFromJson(stdout);
 }
 
 async function scanProcessesUnix(scanTimeoutMs: number): Promise<ProcessRow[]> {
@@ -522,6 +554,7 @@ export function findZombies(
         pid: row.pid,
         commandLine: row.commandLine,
         reason: 'worktree-orphan',
+        startedAtMs: row.startedAtMs,
       });
       continue;
     }
@@ -530,6 +563,7 @@ export function findZombies(
         pid: row.pid,
         commandLine: row.commandLine,
         reason: 'main-checkout-orphan',
+        startedAtMs: row.startedAtMs,
       });
     }
   }
@@ -628,6 +662,7 @@ export function findWorktreePathProcesses(
       pid: row.pid,
       commandLine: row.commandLine,
       reason: 'worktree-path-orphan',
+      startedAtMs: row.startedAtMs,
     });
   }
   return reaped;
@@ -763,7 +798,9 @@ export async function describeWorktreeHolders(
 
 /**
  * Kill a process and its children. Best-effort; failures are logged and
- * swallowed so one stuck PID doesn't abort the whole sweep.
+ * swallowed so one stuck PID doesn't abort the whole sweep. By bare pid: the
+ * E2E janitor's kill, and the reaps' only where no identity stop is
+ * registered or off Windows (see the header).
  */
 export async function killProcess(pid: number): Promise<void> {
   if (process.platform === 'win32') {
@@ -851,20 +888,63 @@ export async function reapWorktreeElectronZombies(
     console.log('[REAPER] no zombies found');
     return [];
   }
+  return endCandidates(candidates);
+}
 
+function candidateLabel(candidate: ReapedProcess): string {
+  return `pid=${candidate.pid} reason=${candidate.reason} cmd=${candidate.commandLine.slice(0, 200)}`;
+}
+
+/**
+ * End each candidate with what it started, and return those now gone. On
+ * Windows with the pty host's Stop registered, by identity there (see the
+ * header). Otherwise by pid (`killProcess`), one at a time.
+ */
+async function endCandidates(candidates: readonly ReapedProcess[]): Promise<ReapedProcess[]> {
+  const stopByIdentity = process.platform === 'win32' ? identityTreeStop : null;
+  if (stopByIdentity) return stopCandidatesByIdentity(candidates, stopByIdentity);
   const killed: ReapedProcess[] = [];
   for (const candidate of candidates) {
     try {
       await _internals.killProcess(candidate.pid);
-      console.log(
-        `[REAPER] killed pid=${candidate.pid} reason=${candidate.reason} cmd=${candidate.commandLine.slice(0, 200)}`,
-      );
+      console.log(`[REAPER] killed ${candidateLabel(candidate)}`);
       killed.push(candidate);
     } catch (error) {
       console.warn(`[REAPER] kill failed for pid=${candidate.pid}:`, error);
     }
   }
   return killed;
+}
+
+/**
+ * Stop every candidate by identity in the pty host, all posted at once. The
+ * host runs Stops one at a time, and each waiting Stop gets its budget back as
+ * the one before it starts, so a free host finishes them all, and a Stop that
+ * hangs times the rest out with it: the caller's git queue then waits one Stop
+ * budget, not one per candidate. A row with no creation time is skipped, and
+ * one whose pid changed hands since the scan is left alone.
+ */
+async function stopCandidatesByIdentity(candidates: readonly ReapedProcess[], stop: IdentityTreeStop): Promise<ReapedProcess[]> {
+  const gone = await Promise.all(candidates.map(async (candidate): Promise<boolean> => {
+    const label = candidateLabel(candidate);
+    if (candidate.startedAtMs === undefined) {
+      console.warn(`[REAPER] skipped ${label}: its scan row has no creation time to check the pid against`);
+      return false;
+    }
+    try {
+      const outcome = await stop({ pid: candidate.pid, startedAtMs: candidate.startedAtMs });
+      if (outcome === 'failed') {
+        console.warn(`[REAPER] could not stop ${label}`);
+        return false;
+      }
+      console.log(`[REAPER] ${outcome === 'stopped' ? 'killed' : 'already gone'} ${label}`);
+      return true;
+    } catch (error) {
+      console.warn(`[REAPER] kill failed for pid=${candidate.pid}:`, error);
+      return false;
+    }
+  }));
+  return candidates.filter((candidate, index) => gone[index]);
 }
 
 /**
@@ -904,20 +984,7 @@ export async function reapProcessesForWorktree(
     skipPids,
   );
   if (candidates.length === 0) return [];
-
-  const killed: ReapedProcess[] = [];
-  for (const candidate of candidates) {
-    try {
-      await _internals.killProcess(candidate.pid);
-      console.log(
-        `[REAPER] killed pid=${candidate.pid} reason=${candidate.reason} cmd=${candidate.commandLine.slice(0, 200)}`,
-      );
-      killed.push(candidate);
-    } catch (error) {
-      console.warn(`[REAPER] kill failed for pid=${candidate.pid}:`, error);
-    }
-  }
-  return killed;
+  return endCandidates(candidates);
 }
 
 // ---------------------------------------------------------------------------

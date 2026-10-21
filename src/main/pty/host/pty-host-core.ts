@@ -27,10 +27,11 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { isProcessAlive } from '../../shared/process-liveness';
 import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 import { HostProcessTable } from './host-process-table';
-import { endDeadRootOrphans, type DeadRootOrphanApi } from './dead-root-orphans';
+import { endDeadRootOrphans, type DeadRootOrphanApi, type PinnedRoot } from './dead-root-orphans';
 import {
   KILL_SNAPSHOT_CAP_MS,
   NO_AGENT_EXIT_WAIT,
+  SPAWN_CLOCK_SLACK_MS,
   agentDescendantsOf,
   pruneExitedRoots,
   waitForExitedRootTrees,
@@ -116,7 +117,8 @@ export interface PtyHostCoreDeps {
    */
   onBatchStarted?: (method: QueuedPtyHostMethod) => void;
   /**
-   * Ends what a session's shell left running when it exited on its own
+   * Pins every Windows PTY root from its pid to its exit, and ends what a
+   * session's shell left running when it exited on its own
    * (`dead-root-orphans.ts`). Only the utility host passes it: the in-process
    * core runs the unit tests' fake PTYs, whose pids name real processes.
    */
@@ -174,17 +176,37 @@ interface HostSession {
   livePtyId: number | null;
 }
 
-interface PtyEntry {
-  ptyId: number;
-  sessionId: string;
+/**
+ * A PTY root the host can pin (`PinnedRoot`). The pin is taken once node-pty
+ * has set the root's pid and closed as the host handles the root's exit. By
+ * then node-pty has recorded the exit, so its kill no longer reaches for the
+ * pid (`conpty-console-list.ts`). Until then a pid node-pty's own handle no
+ * longer holds (it closes it before it reports the exit) cannot change hands.
+ * Holding it longer would keep the dead shell in the process listing, where
+ * the reap's protection walk from main would reach the leftovers under it.
+ */
+interface RootPinHolder {
   pty: nodePty.IPty;
   exited: boolean;
+  /** Wall clock just before the spawn. */
+  spawnedAtMs: number;
+  rootPin: PinnedRoot | null;
+  /** The root's creation time from its pin, kept once the pin is closed. */
+  rootStartedAtMs: number | null;
+}
+
+interface RawPtyEntry extends RootPinHolder {
   /** A kill was sent. A second one is dropped: killing a ConPTY twice
    *  corrupts its heap on Windows. */
   killed: boolean;
+}
+
+interface PtyEntry extends RawPtyEntry {
+  ptyId: number;
+  sessionId: string;
   disposables: nodePty.IDisposable[];
-  /** Wall clock just before the spawn: a child of this shell was created after it. */
-  spawnedAtMs: number;
+  /** The root's exit time from its pin, read as the host handles the exit. */
+  rootExitedAtMs: number | null;
   /** A WSL root: the orphan cleanup has nothing to look at. */
   wslRoot: boolean;
   /** Written to an agent the shell left running, so it exits on its own. */
@@ -213,9 +235,8 @@ export class PtyHostCore {
   private processTable: HostProcessTable | null = null;
   /** Kills what a finished task left running, created on first use. */
   private taggedReaper: TaggedReaper | null = null;
-  /** Raw PTYs (`spawnRaw`), by ptyId. `killed` guards a second kill, which
-   *  corrupts a ConPTY's heap on Windows. */
-  private readonly rawPtys = new Map<number, { pty: nodePty.IPty; killed: boolean }>();
+  /** Raw PTYs (`spawnRaw`), by ptyId. */
+  private readonly rawPtys = new Map<number, RawPtyEntry>();
   /** Agent CLI runs (`cliSpawn`), with piped stdio. */
   private readonly cliProcesses: HostCliProcesses;
   private readonly firstOutput = new FirstOutputTracker();
@@ -232,11 +253,19 @@ export class PtyHostCore {
   private exitedRoots: ExitedRoot[] = [];
   /** The POSIX pre-kill `ps` listing in flight, shared by kills that arrive together. */
   private preKillListing: Promise<ProcessInfo[]> | null = null;
+  /** The orphan API once loaded, so a pin is taken in the turn a pid becomes known. */
+  private orphanApi: DeadRootOrphanApi | null = null;
+  /** Its load in flight. A failed load is tried again next time. */
+  private orphanApiLoad: Promise<DeadRootOrphanApi | null> | null = null;
+  /** A failed load is logged once per host. */
+  private orphanApiLoadFailureLogged = false;
 
   constructor(private readonly deps: PtyHostCoreDeps) {
     this.spawnPty = deps.spawnPty ?? nodePty.spawn;
     this.now = deps.now ?? Date.now;
-    this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild);
+    // Loaded ahead, so the first PTY is pinned in the turn its pid is known.
+    if (this.onWindows) void this.ensureOrphanApi();
+    this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild, undefined, (pid) => this.pinRun(pid));
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data, endOffset) => {
         this.consumeFirstOutput(sessionId, data);
@@ -335,6 +364,9 @@ export class PtyHostCore {
       killed: false,
       disposables: [],
       spawnedAtMs,
+      rootPin: null,
+      rootStartedAtMs: null,
+      rootExitedAtMs: null,
       wslRoot: isWslRoot(params.file),
       exitSequence: params.exitSequence ?? ['\x03'],
       taskId: params.taskId ?? null,
@@ -346,7 +378,10 @@ export class PtyHostCore {
       (data) => timeSyncWork('pty:data', () => this.onPtyData(entry, data)),
       (exitCode) => this.onPtyExit(entry, exitCode),
     ));
-    if (!pidGate) return { ok: true, pid: pty.pid };
+    if (!pidGate) {
+      this.pinRootOf(entry);
+      return { ok: true, pid: pty.pid };
+    }
     return pidGate.outcome.then((outcome) => this.answerGatedSpawn(entry, pidGate, outcome, previousScrollback));
   }
 
@@ -369,8 +404,9 @@ export class PtyHostCore {
       return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode)), previousScrollback };
     }
     if (outcome.kind === 'timedOut') {
-      console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s PTY reported no pid and no exit within the wait; answering without its pid`);
+      console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s PTY reported no pid and no exit within the wait; answering without its pid, so its root is not pinned and nothing it leaves running at a natural exit is cleaned up`);
     }
+    this.pinRootOf(entry);
     pidGate.release();
     return { ok: true, pid: entry.pty.pid };
   }
@@ -645,7 +681,7 @@ export class PtyHostCore {
     if (roots.length === 0 || this.shuttingDown) return NO_AGENT_EXIT_WAIT;
     // The Win32 API is needed only for a killed root read by parentage.
     const needsParentage = roots.some((root) => !root.orphanCleanup && !root.descendants);
-    const api = needsParentage && this.deps.loadOrphanApi ? await this.deps.loadOrphanApi() : null;
+    const api = needsParentage ? await this.ensureOrphanApi() : null;
     return waitForExitedRootTrees(
       api,
       roots,
@@ -657,6 +693,97 @@ export class PtyHostCore {
         isAlive: this.deps.isProcessAlive ?? isProcessAlive,
       },
     );
+  }
+
+  /** `deps.platform`, else this process's, is Windows. */
+  private get onWindows(): boolean {
+    return (this.deps.platform ?? process.platform) === 'win32';
+  }
+
+  /**
+   * The orphan API, loaded once and kept (the utility host on Windows only;
+   * null elsewhere). A load that fails is logged once and tried again on the
+   * next use.
+   */
+  private ensureOrphanApi(): Promise<DeadRootOrphanApi | null> {
+    const load = this.deps.loadOrphanApi;
+    if (!load) return Promise.resolve(null);
+    if (this.orphanApi) return Promise.resolve(this.orphanApi);
+    this.orphanApiLoad ??= load().then(
+      (api) => {
+        this.orphanApi = api;
+        return api;
+      },
+      (error: unknown) => {
+        this.orphanApiLoad = null;
+        if (!this.orphanApiLoadFailureLogged) {
+          this.orphanApiLoadFailureLogged = true;
+          console.warn('[pty-host] could not load the Windows process API:', error instanceof Error ? error.message : String(error));
+        }
+        return null;
+      },
+    );
+    return this.orphanApiLoad;
+  }
+
+  /**
+   * Pin a Windows PTY root once node-pty has set its pid (`RootPinHolder`): at
+   * once when the orphan API is loaded, else when its load lands, unless the
+   * root's exit was handled first.
+   */
+  private pinRootOf(holder: RootPinHolder): void {
+    if (!this.deps.loadOrphanApi || !this.onWindows) return;
+    const pin = (api: DeadRootOrphanApi | null): void => {
+      if (!api || holder.exited || holder.rootPin || holder.pty.pid <= 0) return;
+      try {
+        holder.rootPin = api.pinRoot(holder.pty.pid, holder.spawnedAtMs - SPAWN_CLOCK_SLACK_MS);
+      } catch (error) {
+        console.warn('[pty-host] could not pin a PTY root:', error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (holder.rootPin) holder.rootStartedAtMs = holder.rootPin.startedAtMs;
+    };
+    if (this.orphanApi) pin(this.orphanApi);
+    else void this.ensureOrphanApi().then(pin);
+  }
+
+  /**
+   * Pin an agent CLI run's pid while its tree kill runs (`child-tree-stop.ts`):
+   * the run is this host's child and has not exited, so the pid is still its
+   * own. Answers what closes the pin, or null without the orphan API.
+   */
+  private pinRun(pid: number): (() => void) | null {
+    if (!this.orphanApi || !this.onWindows) return null;
+    try {
+      const pin = this.orphanApi.pinRoot(pid, 0);
+      return pin ? () => pin.release() : null;
+    } catch (error) {
+      console.warn('[pty-host] could not pin a CLI run:', error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  }
+
+  /**
+   * Read the root's exit time off its pin and close the pin. Null without one,
+   * or when the read fails. Never throws: it runs inside the exit handling,
+   * which must still tell main the PTY ended.
+   */
+  private unpinRoot(holder: RootPinHolder): number | null {
+    const pin = holder.rootPin;
+    if (!pin) return null;
+    holder.rootPin = null;
+    try {
+      return pin.readExitedAtMs();
+    } catch (error) {
+      console.warn('[pty-host] could not read a PTY root\'s exit time:', error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      try {
+        pin.release();
+      } catch {
+        // The handle is the host's own; nothing else holds it.
+      }
+    }
   }
 
   private sleepUnref(ms: number): Promise<void> {
@@ -720,6 +847,7 @@ export class PtyHostCore {
    */
   spawnRaw(params: PtyHostRawSpawnParams): PtyHostRawSpawnResult | Promise<PtyHostRawSpawnResult> {
     let rawPty: nodePty.IPty;
+    const spawnedAtMs = this.now();
     try {
       refuseOwnExecutable(params.file);
       rawPty = this.spawnPty(params.file, params.args, {
@@ -733,7 +861,8 @@ export class PtyHostCore {
       return { ok: false, error: toPtyHostError(error) };
     }
     const { ptyId } = params;
-    this.rawPtys.set(ptyId, { pty: rawPty, killed: false });
+    const raw: RawPtyEntry = { pty: rawPty, killed: false, exited: false, spawnedAtMs, rootPin: null, rootStartedAtMs: null };
+    this.rawPtys.set(ptyId, raw);
     // Answered once node-pty has set the pid, as a session spawn is (`spawn`).
     const pidGate = rawPty.pid > 0 ? null : new RootPidGate(rawPty);
     subscribeThroughGate(
@@ -741,13 +870,17 @@ export class PtyHostCore {
       pidGate,
       (data) => this.deps.emit({ type: 'rawData', ptyId, data }),
       (exitCode, signal) => {
-        const killed = this.rawPtys.get(ptyId)?.killed === true;
+        raw.exited = true;
+        this.unpinRoot(raw);
         this.rawPtys.delete(ptyId);
         this.deps.emit({ type: 'rawExit', ptyId, exitCode, signal: signal ?? null });
-        if (!killed) this.releaseExitedPty(rawPty);
+        if (!raw.killed) this.releaseExitedPty(rawPty);
       },
     );
-    if (!pidGate) return { ok: true, pid: rawPty.pid };
+    if (!pidGate) {
+      this.pinRootOf(raw);
+      return { ok: true, pid: rawPty.pid };
+    }
     return pidGate.outcome.then((outcome): PtyHostRawSpawnResult => {
       if (outcome.kind === 'failed') {
         pidGate.discard();
@@ -757,6 +890,7 @@ export class PtyHostCore {
       if (outcome.kind === 'timedOut') {
         console.warn(`[pty-host] raw PTY ${ptyId} reported no pid and no exit within the wait; answering without its pid`);
       }
+      this.pinRootOf(raw);
       pidGate.release();
       return { ok: true, pid: rawPty.pid };
     });
@@ -845,7 +979,7 @@ export class PtyHostCore {
    */
   private listDescendantsBeforeKill(entry: PtyEntry): Promise<RootDescendant[]> | null {
     const list = this.deps.listProcessesBeforeKill;
-    if (!list || (this.deps.platform ?? process.platform) === 'win32') return null;
+    if (!list || this.onWindows) return null;
     if (!this.isLedgerRoot(entry)) return null;
     const rootPid = entry.pty.pid;
     // Kills that arrive together (a quit, several To Do moves) share one `ps`.
@@ -861,16 +995,16 @@ export class PtyHostCore {
   /** Remember a root main killed, for a reap's wait (`exited-root-wait.ts`). */
   private recordKilledRoot(entry: PtyEntry, descendants: Promise<RootDescendant[]> | null): void {
     if (!this.isLedgerRoot(entry)) return;
-    const onWindows = (this.deps.platform ?? process.platform) === 'win32';
     // Windows reads the shell's children by parentage at wait time; POSIX
     // needs the pre-kill listing. Without either there is nothing to wait on.
-    if (onWindows ? !this.deps.loadOrphanApi : !descendants) return;
+    if (this.onWindows ? !this.deps.loadOrphanApi : !descendants) return;
     const now = this.now();
     this.exitedRoots = pruneExitedRoots(this.exitedRoots, now);
     this.exitedRoots.push({
       taskId: entry.taskId,
       rootPid: entry.pty.pid,
       spawnedAtMs: entry.spawnedAtMs,
+      rootStartedAtMs: entry.rootStartedAtMs,
       exitedAtMs: now,
       orphanCleanup: null,
       descendants,
@@ -966,6 +1100,7 @@ export class PtyHostCore {
   private onPtyExit(entry: PtyEntry, exitCode: number): void {
     if (entry.exited) return;
     entry.exited = true;
+    entry.rootExitedAtMs = this.unpinRoot(entry);
     for (const disposable of entry.disposables) {
       try {
         disposable.dispose();
@@ -1004,6 +1139,7 @@ export class PtyHostCore {
       taskId: entry.taskId,
       rootPid: entry.pty.pid,
       spawnedAtMs: entry.spawnedAtMs,
+      rootStartedAtMs: entry.rootStartedAtMs,
       exitedAtMs,
       orphanCleanup,
       descendants: null,
@@ -1028,7 +1164,7 @@ export class PtyHostCore {
    * another process by then.
    */
   private releaseExitedPty(pty: nodePty.IPty): void {
-    if ((this.deps.platform ?? process.platform) !== 'win32') return;
+    if (!this.onWindows) return;
     try {
       pty.kill();
     } catch {
@@ -1042,28 +1178,36 @@ export class PtyHostCore {
    * The agent is asked to exit through that console first and terminated only
    * if it is still running after the grace. A kill we sent closed the console
    * itself, and a quit's exits are main's kills, so neither is looked at.
+   * It runs only with the shell's exact creation and exit times, read off its
+   * pin: a guessed window can take an earlier or later owner's process for
+   * the shell's (`dead-root-orphans.ts`). Without them what the shell ran is
+   * left running and logged.
    * The cleanup when one started (it settles, never rejects, and releases the
    * PTY when it ends); null otherwise.
    */
   private endOrphansOf(entry: PtyEntry): Promise<void> | null {
-    const loadOrphanApi = this.deps.loadOrphanApi;
-    if (!loadOrphanApi || (this.deps.platform ?? process.platform) !== 'win32') return null;
+    if (!this.deps.loadOrphanApi || !this.onWindows) return null;
     // Read at the exit, not the spawn: on Windows node-pty sets the pid after
     // spawn() returns (`root-pid-gate.ts`), and keeps it after the exit.
     if (entry.killed || this.shuttingDown || entry.wslRoot || entry.pty.pid <= 0) return null;
-    const exitedAtMs = this.now();
-    return this.runOrphanCleanup(entry, exitedAtMs, loadOrphanApi);
+    // Both times come off a pin, which only a loaded API takes.
+    const api = this.orphanApi;
+    if (!api || entry.rootStartedAtMs === null || entry.rootExitedAtMs === null) {
+      console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s shell exited on its own, but its lifetime could not be read; what it ran is left running`);
+      return null;
+    }
+    return this.runOrphanCleanup(entry, api, entry.rootStartedAtMs, entry.rootExitedAtMs);
   }
 
-  private async runOrphanCleanup(entry: PtyEntry, exitedAtMs: number, loadOrphanApi: () => Promise<DeadRootOrphanApi>): Promise<void> {
+  private async runOrphanCleanup(entry: PtyEntry, api: DeadRootOrphanApi, rootStartedAtMs: number, rootExitedAtMs: number): Promise<void> {
     const shortSessionId = entry.sessionId.slice(0, 8);
     try {
       const result = await endDeadRootOrphans(
-        await loadOrphanApi(),
+        api,
         {
           rootPid: entry.pty.pid,
-          spawnedAtMs: entry.spawnedAtMs,
-          exitedAtMs,
+          rootStartedAtMs,
+          rootExitedAtMs,
           protectedPids: new Set([process.pid, process.ppid, ...this.liveRootPids()]),
         },
         {

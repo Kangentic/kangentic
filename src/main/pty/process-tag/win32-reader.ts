@@ -328,6 +328,30 @@ function readCreationTime(api: Win32Api, handle: NativeHandle): bigint | null {
   return creation[0] > 0n ? creation[0] : null;
 }
 
+/** The exit time, once the exit code says the process has exited; null while it runs or when either read fails. */
+function readExitTime(api: Win32Api, handle: NativeHandle): bigint | null {
+  const exitCode = exitCodeOf(api, handle);
+  if (exitCode === null || exitCode === STILL_ACTIVE) return null;
+  const exit = [0n];
+  const unused = [0n];
+  if (!api.getProcessTimes(handle, unused, exit, unused, unused)) return null;
+  return exit[0] > 0n ? exit[0] : null;
+}
+
+/**
+ * `PROCESS_BASIC_INFORMATION.InheritedFromUniqueProcessId` (offset 40 on
+ * 64-bit), read on the handle itself, so it names the parent of exactly the
+ * process the handle holds. The 48-byte layout is the 64-bit one, as the PEB
+ * reads here assume: a 32-bit host's call fails on the length and reads null,
+ * so `pinRoot` takes no pin.
+ */
+function readParentPid(api: Win32Api, handle: NativeHandle): number | null {
+  const basicInformation = Buffer.alloc(48);
+  const returned = [0];
+  if (api.queryInformationProcess(handle, PROCESS_BASIC_INFORMATION_CLASS, basicInformation, 48, returned) !== 0) return null;
+  return Number(basicInformation.readBigUInt64LE(40));
+}
+
 /** The process's exit code (`STILL_ACTIVE` while it runs), or null when the call failed. */
 function exitCodeOf(api: Win32Api, handle: NativeHandle): number | null {
   const exitCode = [0];
@@ -519,6 +543,13 @@ export async function listWin32Processes(loadApi: () => Promise<Win32Api> = shar
  * working directory, and opens a process only in the caller's own Windows
  * session and owned by the caller's user. A terminate re-checks the creation
  * time on the handle it terminates through, as the reap's kill does.
+ *
+ * `pinRoot` keeps a limited handle on a PTY root the host just started, so its
+ * pid cannot be reused until the host handles its exit. It accepts only the
+ * caller's own child (the parent pid read on the handle itself) created no
+ * earlier than the clock read before the spawn. Measured on Windows 11 build
+ * 26200 with node-pty: a ConPTY shell's parent is the process that spawned it,
+ * and it is created 28 to 127 ms after that clock reading.
  */
 export async function loadWin32OrphanApi(loadApi: () => Promise<Win32Api> = sharedWin32Api): Promise<DeadRootOrphanApi> {
   const api = await loadApi();
@@ -556,6 +587,35 @@ export async function loadWin32OrphanApi(loadApi: () => Promise<Win32Api> = shar
         return api.terminateProcess(handle, 1) !== 0;
       } finally {
         api.closeHandle(handle);
+      }
+    },
+    pinRoot: (pid, notBeforeMs) => {
+      if (pid <= 4) return null;
+      const handle = api.openProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+      if (isNullHandle(api, handle)) return null;
+      let kept = false;
+      try {
+        const creation = readCreationTime(api, handle);
+        if (creation === null || readParentPid(api, handle) !== process.pid) return null;
+        const startedAtMs = filetimeToEpochMs(creation);
+        if (startedAtMs < notBeforeMs) return null;
+        kept = true;
+        let released = false;
+        return {
+          startedAtMs,
+          readExitedAtMs: () => {
+            if (released) return null;
+            const exit = readExitTime(api, handle);
+            return exit === null ? null : filetimeToEpochMs(exit);
+          },
+          release: () => {
+            if (released) return;
+            released = true;
+            api.closeHandle(handle);
+          },
+        };
+      } finally {
+        if (!kept) api.closeHandle(handle);
       }
     },
   };

@@ -5,6 +5,7 @@ import { describeAutomation } from '../../../../shared/automation-describe';
 import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
 import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../../shared/child-env';
+import { killChildTreeNow } from '../../../shared/child-tree-stop';
 import type { AutomationAdapter, AutomationContext } from '../../shared/automation-adapter';
 import { AutomationTimeoutError } from '../../shared/automation-errors';
 
@@ -137,16 +138,12 @@ function runToCompletion(options: {
       apply();
     };
 
+    // `taskkill /T` on Windows, the only way to reach a child tree there, and
+    // only while the shell has not exited (`child-tree-stop.ts`); SIGKILL to
+    // the process GROUP `detached` created on POSIX.
     const killTree = (): void => {
-      if (child.pid === undefined) return;
       try {
-        if (process.platform === 'win32') {
-          // `taskkill /T` is the only way to reach a Windows child tree.
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-        } else {
-          // Negative pid targets the process GROUP `detached` created.
-          process.kill(-child.pid, 'SIGKILL');
-        }
+        killChildTreeNow(child, { leadsGroup: true });
       } catch {
         // Already gone between the deadline and the kill. Nothing to do.
       }

@@ -176,11 +176,15 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `connection_list`), and the
   reap maps the type to that code. The pass a reap failed in (`failurePass`: `first`, `second`,
   `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
-  returns the same code and pass (`StopProcessResult`), and main reports it as stage `stop`. A
-  refusal or a survivor is an answer, and main never reports it.
+  the user asks for from the list returns the same code and pass (`StopProcessResult`), and main
+  reports it as stage `stop`. A refusal or a survivor is an answer, and main never reports it. The
+  removal-failure reap's holder Stop (`SessionManager.stopProcessByCreationTime`) only logs its
+  failure.
 - **The dead-shell orphan cleanup is a second kill path with its own identity, not a reap.** When a
   session's shell exits on its own on Windows, `host/dead-root-orphans.ts` finds the shell's
-  children created between its spawn and its exit, and their descendants created after their own
+  children created between the shell's own creation and exit, read off the handle the pty host
+  holds on every Windows PTY root from its pid to its exit (`pinRoot`; without both times the
+  cleanup does not run), and their descendants created after their own
   parent, through `loadWin32OrphanApi` (`win32-reader.ts`): own session and user only, never a
   protected pid (the host, main, a live PTY root), and no environment, command line or working
   directory read. It asks the agent to exit first (see [[pty-teardown-grace]]) and terminates
@@ -195,6 +199,19 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
   terminates through. A scan that cannot read the caller's own session or user fails, so the reap
   reports `reap_error`, rather than returning a table in which nothing reads as tagged.
+- **No kill follows a parent pid Windows may have reused.** A Windows process keeps its dead
+  parent's pid, and Windows hands that pid on. A walk that kills (a reap's targets, a Stop's
+  `subtreeOf`) links a child only when it was created after its parent, and never enters a process
+  with no identity, whose link cannot be checked. Every Windows tree kill is `taskkill /T /F`
+  (measured: it skips a process older than its parent pid's current owner), through
+  `child-tree-stop.ts` except the quit failsafe's and the E2E janitor's (`killProcess` in
+  `zombie-reaper.ts`), of a pid something still pins: Node's handle on a child that has not
+  exited, the pty host's `pinRoot`, or this process's own. The by-pid stops that hold no pin are
+  the listed residuals (`killChildTreeByPid` after a host loss or at quit, `killProcess` for the
+  janitor and where no identity Stop is registered). The removal-failure reap kills through the host's
+  identity-checked Stop (`setIdentityTreeStop`). What still names a bare pid, and why, is in
+  `docs/worktree-strategy.md`, "Parent pids Windows reuses". Do not add a terminate primitive
+  outside `process-kill-sites.test.ts`'s classified files, or a tree-kill package.
 
 ## Enforcement (self-maintaining)
 
@@ -245,6 +262,20 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   still count, and it feeds that scan through the real plan, which must reap the tab's processes.
   Kangentic's own node-pty shells never show their pseudo console window, so only a real Windows
   Terminal reproduces the tab; the behavior test below drives one.
+- **Test (reused parent pids):** `tests/unit/process-kill-sites.test.ts` fails on a terminate
+  primitive (taskkill, TerminateProcess, `process.kill`, Stop-Process, `.Kill(`, wmic) outside its
+  classified files, a taskkill that is not `/T /F` of one pid, a tree-kill package, and a
+  `child-tree-stop.ts` header that stops naming the probe. `task-reap-plan.test.ts` pins that a
+  reap and a Stop never walk through a process with no identity or to an older one through a
+  reused pid; `task-tagged-reap.test.ts` and `zombie-reaper.test.ts` the removal reap's Stop by
+  creation time; `dead-root-orphans.test.ts`, `exited-root-wait.test.ts` and
+  `win32-reader-gates.test.ts` the pin and the exact lifetime; `child-tree-stop.test.ts`,
+  `spawn-with-abort.test.ts` and `project-entry-search-tree-kill.test.ts` that no taskkill names a
+  child that has exited. `task-process-readers.test.ts` and `session-reap-real-processes.test.ts`
+  run the pin and the Stop by creation time on real Windows processes, and
+  `taskkill-stale-parent.test.ts` reruns the taskkill probe
+  (`scripts/probe-taskkill-stale-parent.mjs`) on Windows in `task-reap-real-processes.yml`,
+  skipping with the reason when no pid collision comes within its budget.
 - **Test (preview stop):** `tests/unit/worktree-preview-stop.test.ts` runs the dev-build preview
   stop against a real child speaking `dev.js`'s side of the stop file, pins the file names and
   bounds against the scripts, and checks that `reapTaskLeftovers` calls it under

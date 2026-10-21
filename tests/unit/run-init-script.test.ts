@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // a clean close(exitCode), captured stdout/stderr, or `hang` (never closes) so
 // abort/timeout can be exercised. A shell command no longer gets Node's
 // `signal` option: spawnWithAbort settles the abort itself and kills the
-// child's whole tree (killChildTreeByPid, mocked below), so the abort tests
+// child's whole tree (killChildTreeNow, mocked below), so the abort tests
 // drive the AbortController and, where it matters, emit the late `close` the
 // killed shell produces by hand.
 //
@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // to start a process does. Every other behavior keeps pid 4242.
 //
 // vi.hoisted() so these exist before vi.mock() runs.
-const { mockSpawn, recordedSpawnCalls, spawnOverrides, mockKillChildTreeByPid } = vi.hoisted(() => {
+const { mockSpawn, recordedSpawnCalls, spawnOverrides, mockKillChildTreeNow } = vi.hoisted(() => {
   const recordedSpawnCalls: Array<{ command: string; options: { cwd?: string; shell?: boolean; windowsHide?: boolean; detached?: boolean; signal?: AbortSignal } }> = [];
   const spawnOverrides: Array<{
     match: (command: string) => boolean;
@@ -57,13 +57,13 @@ const { mockSpawn, recordedSpawnCalls, spawnOverrides, mockKillChildTreeByPid } 
 
   // The tree kill closes the killed shell a moment later, as the real one does;
   // an aborted call settles on that close (or at TREE_EXIT_WAIT_MS without it).
-  const mockKillChildTreeByPid = vi.fn(() => {
+  const mockKillChildTreeNow = vi.fn(() => {
     const killedChild = mockSpawn.mock.results[mockSpawn.mock.results.length - 1]?.value as
       { emit: (event: string, ...values: unknown[]) => boolean } | undefined;
     queueMicrotask(() => { killedChild?.emit('close', null, 'SIGKILL'); });
   });
 
-  return { mockSpawn, recordedSpawnCalls, spawnOverrides, mockKillChildTreeByPid };
+  return { mockSpawn, recordedSpawnCalls, spawnOverrides, mockKillChildTreeNow };
 });
 
 vi.mock('node:child_process', () => ({
@@ -73,7 +73,7 @@ vi.mock('node:child_process', () => ({
 // Never a real kill from a unit test: on POSIX the real helper signals the pid's
 // process group, and 4242 could be anything on the machine running the suite.
 vi.mock('../../src/main/shared/child-tree-stop', () => ({
-  killChildTreeByPid: mockKillChildTreeByPid,
+  killChildTreeNow: mockKillChildTreeNow,
 }));
 
 import { runInitScript } from '../../src/main/git/run-init-script';
@@ -181,26 +181,26 @@ describe('runInitScript', () => {
     controller.abort();
     await expect(promise).rejects.toThrow(/external abort/);
 
-    expect(mockKillChildTreeByPid).toHaveBeenCalledWith(4242);
+    expect(mockKillChildTreeNow).toHaveBeenCalledWith(expect.objectContaining({ pid: 4242 }), { leadsGroup: true });
     expect(recordedSpawnCalls[0].options.signal).toBeUndefined();
     // POSIX: the script leads its own process group so the group kill reaches
     // it all. Windows has no groups; `taskkill /T` walks the tree there.
     expect(recordedSpawnCalls[0].options.detached).toBe(process.platform !== 'win32');
 
     vi.useFakeTimers();
-    mockKillChildTreeByPid.mockClear();
+    mockKillChildTreeNow.mockClear();
     const timedOut = runInitScript('slow-script', '/worktree/path', { timeoutMs: 1000 });
     const assertion = expect(timedOut).rejects.toThrow(/timeout after 1000ms/);
     await vi.advanceTimersByTimeAsync(1000);
     await assertion;
-    expect(mockKillChildTreeByPid).toHaveBeenCalledWith(4242);
+    expect(mockKillChildTreeNow).toHaveBeenCalledWith(expect.objectContaining({ pid: 4242 }), { leadsGroup: true });
   });
 
   it('settles an abort only once the killed tree has closed, so nothing it started is still running', async () => {
     // A settled creation is what lets a removal or a new creation at the same
     // worktree path go ahead, and `taskkill /T` takes a moment of its own.
     spawnOverrides.push({ match: () => true, behavior: { hang: true } });
-    mockKillChildTreeByPid.mockImplementationOnce(() => undefined);
+    mockKillChildTreeNow.mockImplementationOnce(() => undefined);
     const controller = new AbortController();
     let settled = false;
 
@@ -209,7 +209,7 @@ describe('runInitScript', () => {
     controller.abort();
     for (let flushCount = 0; flushCount < 10; flushCount++) await Promise.resolve();
 
-    expect(mockKillChildTreeByPid).toHaveBeenCalledWith(4242);
+    expect(mockKillChildTreeNow).toHaveBeenCalledWith(expect.objectContaining({ pid: 4242 }), { leadsGroup: true });
     expect(settled).toBe(false);
 
     lastChild().emit('close', 1, null);
@@ -221,7 +221,7 @@ describe('runInitScript', () => {
     // forever; the wait for the close is bounded.
     vi.useFakeTimers();
     spawnOverrides.push({ match: () => true, behavior: { hang: true } });
-    mockKillChildTreeByPid.mockImplementationOnce(() => undefined);
+    mockKillChildTreeNow.mockImplementationOnce(() => undefined);
     const controller = new AbortController();
 
     const promise = runInitScript('npm install', '/worktree/path', { timeoutMs: 60_000, signal: controller.signal });
@@ -240,7 +240,7 @@ describe('runInitScript', () => {
   it('rejects an abort at once when the child has no pid: no tree kill, nothing left on the clock', async () => {
     // A child that never started has no pid to kill and no close to wait for, so
     // the abort settles on the spot. Reverting the `child.pid === undefined`
-    // branch in spawn-with-abort.ts would hand killChildTreeByPid an undefined
+    // branch in spawn-with-abort.ts would hand killChildTreeNow a child with no
     // pid and park the call behind the TREE_EXIT_WAIT_MS timer instead.
     vi.useFakeTimers();
     const baselineTimerCount = vi.getTimerCount();
@@ -258,7 +258,7 @@ describe('runInitScript', () => {
     for (let flushCount = 0; flushCount < 10; flushCount++) await Promise.resolve();
 
     expect(String(outcome)).toMatch(/external abort/);
-    expect(mockKillChildTreeByPid).not.toHaveBeenCalled();
+    expect(mockKillChildTreeNow).not.toHaveBeenCalled();
     // The wall-clock timer was cleared on settle and no tree-exit timer was armed.
     expect(vi.getTimerCount()).toBe(baselineTimerCount);
   });
@@ -279,7 +279,7 @@ describe('runInitScript', () => {
     // The default tree-kill mock emits the killed shell's close on a microtask.
     await assertion;
 
-    expect(mockKillChildTreeByPid).toHaveBeenCalledWith(4242);
+    expect(mockKillChildTreeNow).toHaveBeenCalledWith(expect.objectContaining({ pid: 4242 }), { leadsGroup: true });
     expect(vi.getTimerCount()).toBe(baselineTimerCount);
   });
 

@@ -1063,6 +1063,46 @@ describe('stopProcessTree', () => {
     expect(reader.kills).toEqual([]);
   });
 
+  it('stops a process named by the creation time another scan read, which the worktree-removal reap sends on Windows', async () => {
+    const root = { ...tagged(2001, TASK, '133500000000002001'), startedAtMs: 1_792_057_142_367 };
+    const child = { ...tagged(2002, TASK, '133500000000002002', PROJECT, 2001), startedAtMs: 1_792_057_142_400 };
+    const reader = new FakeReader([[root, child], []]);
+    const result = await stopProcessTree({ pid: 2001, startKey: '', startedAtMs: 1_792_057_142_367, mainPid: MAIN_PID }, deps(reader));
+    expect(result.outcome).toBe('stopped');
+    expect(reader.kills.map((kill) => kill.pid).sort()).toEqual([2001, 2002]);
+  });
+
+  it('answers ended, killing nothing, when the pid now names a process created at another time', async () => {
+    // Windows handed 2001 to a newer process after the removal reap's scan.
+    const newcomer = { ...tagged(2001, TASK, '133500000000009999'), startedAtMs: 1_792_057_150_000 };
+    const reader = new FakeReader([[newcomer]]);
+    expect((await stopProcessTree({ pid: 2001, startKey: '', startedAtMs: 1_792_057_142_367, mainPid: MAIN_PID }, deps(reader))).outcome).toBe('ended');
+    // Neither key: nothing matches, whatever the scan reads.
+    expect((await stopProcessTree({ pid: 2001, startKey: '', mainPid: MAIN_PID }, deps(new FakeReader([[newcomer]])))).outcome).toBe('ended');
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('answers ended, killing nothing, when the creation time matches but the scan read no start key for that pid', async () => {
+    // A kill refuses a process with an empty key, so a Stop must not name one (or what runs under it), whatever
+    // start time its row carries. The readers set a row's key and start time together, so this is the guard
+    // standing alone: a key-less row that reads the same creation time the removal reap asked for.
+    const creationTime = 1_792_057_142_367;
+    const unopened = { ...tagged(2001, TASK, ''), startedAtMs: creationTime };
+    const child = { ...tagged(2002, TASK, 'start-2002', PROJECT, 2001), startedAtMs: creationTime + 33 };
+    const reader = new FakeReader([[unopened, child]]);
+    expect((await stopProcessTree({ pid: 2001, startKey: '', startedAtMs: creationTime, mainPid: MAIN_PID }, deps(reader))).outcome).toBe('ended');
+    // Positive control: the scan ran and listed the pid at that creation time with no key, so 'ended' is the empty-key refusal.
+    expect(reader.scanCount).toBe(1);
+    expect(reader.scans[0].processes.some((scanned) => scanned.pid === 2001 && scanned.startKey === '' && scanned.startedAtMs === creationTime)).toBe(true);
+    expect(reader.kills).toEqual([]);
+
+    // The same request against the same process read with a key names it and stops its tree.
+    const opened = { ...unopened, startKey: '133500000000002001' };
+    const control = new FakeReader([[opened, child], []]);
+    expect((await stopProcessTree({ pid: 2001, startKey: '', startedAtMs: creationTime, mainPid: MAIN_PID }, deps(control))).outcome).toBe('stopped');
+    expect(control.kills.map((kill) => kill.pid).sort()).toEqual([2001, 2002]);
+  });
+
   it('answers failed, not ended, when the scan lists nothing at all, and names the step and pass', async () => {
     const reader = new FakeReader([]);
     reader.scans = [{ processes: [], unreadableCount: 0 }];

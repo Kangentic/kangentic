@@ -40,6 +40,8 @@ export class HostCliProcesses {
     /** This app's executables, which a run may never start. Read at each
      *  start by default, since main reports its own in the host's init. */
     private readonly ownExecutable?: string,
+    /** Windows: holds the run's pid while its `taskkill` runs (`ChildTreeStopOptions.pinRoot`). */
+    private readonly pinRoot?: (pid: number) => (() => void) | null,
   ) {}
 
   start(params: PtyHostCliSpawnParams): void {
@@ -131,9 +133,10 @@ export class HostCliProcesses {
   }
 
   /** Stop a run and what it started (`stopChildTree`): its `taskkill` goes
-   *  through this runner's spawn, and the run is its own latch, so a second
-   *  stop of it spawns no second `taskkill`. */
+   *  through this runner's spawn, the run is its own latch, so a second stop
+   *  of it spawns no second `taskkill`, and the run's pid is pinned while
+   *  taskkill runs where the host can pin it. */
   private stopRun(run: CliRun): void {
-    stopChildTree(run.child, { leadsGroup: run.leadsGroup, spawnProcess: this.spawnChild, treeKillLatch: run });
+    stopChildTree(run.child, { leadsGroup: run.leadsGroup, spawnProcess: this.spawnChild, treeKillLatch: run, pinRoot: this.pinRoot });
   }
 }

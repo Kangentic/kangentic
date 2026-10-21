@@ -547,12 +547,30 @@ export async function reapTaggedOnce(
   }
 }
 
-/** A stop the user asked for, of one process a report named. */
+/**
+ * A stop of one process and its tree, named by identity: one a report named,
+ * which the user asked to stop, or one the worktree-removal reap found holding
+ * its worktree (`zombie-reaper.ts`).
+ */
 export interface StopProcessRequest {
   pid: number;
-  /** The identity key the report carried; a process with another is not the one named. */
+  /** The identity key the report carried; a process with another is not the one named. Empty when `startedAtMs` names it instead. */
   startKey: string;
+  /**
+   * Its creation time, read by a scan outside the reader (the removal reap's
+   * `Win32_Process` query, whose `CreationDate` lands on the same millisecond
+   * as the reader's: 483 of 483 processes measured). Read only when
+   * `startKey` is empty. With neither, nothing matches.
+   */
+  startedAtMs?: number;
   mainPid: number;
+}
+
+/** Whether a scanned process is the one a stop request names (see `StopProcessRequest`). */
+function isRequestedProcess(scanned: ScannedProcess, request: StopProcessRequest): boolean {
+  if (scanned.pid !== request.pid || scanned.startKey === '') return false;
+  if (request.startKey) return scanned.startKey === request.startKey;
+  return request.startedAtMs !== undefined && scanned.startedAtMs === request.startedAtMs;
 }
 
 /** `ended`: it was already gone. `failed`: it, or a process under it, is still running. */
@@ -582,7 +600,9 @@ export function stopAnswer(outcome: StopProcessOutcome): StopProcessResult {
  * asked from the list. Its tag and directory were checked when the report was
  * made; here only its identity is, and Kangentic's own tree and every held PTY
  * stay out of reach exactly as in a reap. A window or a tmux server is stopped
- * here, since the user chose it by name.
+ * here, since the user chose it by name. The worktree-removal reap stops the
+ * orphans holding a worktree the same way, by the creation time its own scan
+ * read, so a pid that changed hands since that scan is never touched.
  *
  * It stops the tree the first scan saw, and adopts nothing later: a child
  * started between that scan and the kill is left, since once its parent is
@@ -599,8 +619,8 @@ export async function stopProcessTree(
   try {
     // A scan that lists nothing failed (see `empty_scan`); it says nothing about whether the process ended.
     const scan = requireProcesses(await deps.reader.scan());
-    const target = scan.processes.find((scanned) => scanned.pid === request.pid && scanned.startKey === request.startKey);
-    if (!target || target.exited || !request.startKey) return stopAnswer('ended');
+    const target = scan.processes.find((scanned) => isRequestedProcess(scanned, request));
+    if (!target || target.exited) return stopAnswer('ended');
     const safetyPids = buildSafetyProtectedPids({ processes: scan.processes, mainPid: request.mainPid, liveRootPids: deps.liveRootPids() });
     if (safetyPids.has(target.pid)) return stopAnswer('failed');
     const tree = subtreeOf(target, scan.processes, safetyPids);

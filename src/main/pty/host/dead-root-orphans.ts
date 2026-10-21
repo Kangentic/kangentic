@@ -33,6 +33,16 @@
  * (`loadWin32OrphanApi`). Nothing here reads an environment, a command line or
  * a working directory.
  *
+ * The shell's lifetime is read, not guessed. The host pins every Windows PTY
+ * root (`pinRoot`) from the moment node-pty sets its pid until the host
+ * handles its exit. The pin is a handle of the host's own, so the pid cannot
+ * change hands meanwhile, and it reads the exact creation and exit times off
+ * the process. Both bounds matter. A stranger whose recorded parent was an
+ * earlier owner of the pid was created before the shell, and a newcomer that
+ * took the pid after the exit, with everything it started, was created after
+ * it. A clock read around the spawn or the exit would let either through.
+ * Without both times the cleanup does not run.
+ *
  * POSIX does not run this. When a terminal's session leader exits the kernel
  * hangs up the terminal's foreground process group, which ends a foreground
  * agent. That has not been observed on a real PTY in this repo.
@@ -54,20 +64,39 @@ export interface OrphanIdentity {
 
 export interface DeadRootOrphanTarget extends OrphanProcessRow, OrphanIdentity {}
 
+/**
+ * A handle the host holds on one of its own PTY roots, from the moment node-pty
+ * sets the root's pid until the host handles its exit. While it is open the
+ * pid cannot be handed to another process.
+ */
+export interface PinnedRoot {
+  /** The root's creation time, read on the pinned handle. */
+  startedAtMs: number;
+  /** The root's exit time, read on the pinned handle; null while it runs, once released, or when unreadable. */
+  readExitedAtMs(): number | null;
+  /** Close the handle. A second call does nothing. */
+  release(): void;
+}
+
 export interface DeadRootOrphanApi {
   listProcesses(): Promise<OrphanProcessRow[]>;
   /** Creation time of a process in the caller's own session and user, else null (gone, another user's, unreadable). */
   identityOf(pid: number): OrphanIdentity | null;
   /** Terminates the process only while its creation time still matches. */
   terminate(target: DeadRootOrphanTarget): boolean;
+  /**
+   * Pin a PTY root this process just started: only a child of this process
+   * created at or after `notBeforeMs`, else null.
+   */
+  pinRoot(pid: number, notBeforeMs: number): PinnedRoot | null;
 }
 
 export interface DeadRootOrphanParams {
   rootPid: number;
-  /** Wall clock just before the shell was spawned. */
-  spawnedAtMs: number;
-  /** Wall clock when the shell's exit was observed. Every real child was created before it. */
-  exitedAtMs: number;
+  /** The shell's creation time. A direct child created before it names an earlier owner of the pid. */
+  rootStartedAtMs: number;
+  /** The shell's exit time. A direct child created after it names a later owner of the pid. */
+  rootExitedAtMs: number;
   /** Never touched: this process, main, and every PTY root the host still holds. */
   protectedPids: ReadonlySet<number>;
 }
@@ -102,13 +131,6 @@ export interface DeadRootOrphanResult {
 export const DEAD_ROOT_ORPHAN_EXIT_GRACE_MS = 10_000;
 export const DEAD_ROOT_ORPHAN_POLL_MS = 250;
 
-/**
- * The clock reading is taken before the spawn call, and Windows records the
- * creation time a little later, so a real child is never earlier than this. The
- * slack covers clock granularity only.
- */
-const SPAWN_CLOCK_SLACK_MS = 1000;
-
 /** The dead shell's children created inside its lifetime, then their descendants, parents first. */
 export function planDeadRootOrphans(
   rows: readonly OrphanProcessRow[],
@@ -136,9 +158,8 @@ export function planDeadRootOrphans(
     pending.push(target);
   };
 
-  const earliestChildMs = params.spawnedAtMs - SPAWN_CLOCK_SLACK_MS;
   for (const child of childrenByParent.get(params.rootPid) ?? []) {
-    consider(child, (identity) => identity.startedAtMs >= earliestChildMs && identity.startedAtMs <= params.exitedAtMs);
+    consider(child, (identity) => identity.startedAtMs >= params.rootStartedAtMs && identity.startedAtMs <= params.rootExitedAtMs);
   }
   while (pending.length > 0) {
     const parent = pending.shift() as DeadRootOrphanTarget;

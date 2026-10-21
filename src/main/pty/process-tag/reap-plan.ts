@@ -71,6 +71,20 @@
  * On Windows a dead parent's pid stays in its children's ppid field and can be
  * reused by an unrelated process, so a parent link counts only when the child
  * started after the parent. A recycled ppid therefore never links a stranger.
+ * That check needs both start times, and a walk that kills (a reap's targets,
+ * a Stop's tree) never enters a process with no identity (an empty start key:
+ * on Windows one the reader never opened, on macOS another user's). The kill
+ * refuses such a process. On Windows its parent link cannot be checked either,
+ * so it lends none to what runs under it. On Linux and macOS no start time is
+ * read and the link is taken as it reads: their kernels hand an orphan to init,
+ * a subreaper or launchd, so a ppid there never names a dead process. The walk
+ * stops at a macOS process with no identity all the same, by decision: what
+ * only a walk through another user's process could reach (a withheld Apple
+ * tool under a `sudo -u` back to the user) is left running, never reached
+ * through a process the reap cannot name. A same-user process there that
+ * carries the tag is still a root of its own. The walks that only protect or
+ * spare keep the permissive link, since a wrong link there adds protection
+ * and removes none.
  *
  * One more root, for macOS, where SIP hides the environment of Apple's own
  * tools (`docs/worktree-strategy.md`): a process whose environment was
@@ -177,6 +191,15 @@ function isRealChild(parent: ScannedProcess, child: ScannedProcess): boolean {
   return child.startedAtMs >= parent.startedAtMs;
 }
 
+/**
+ * Whether a walk that kills may enter `scanned`: only with an identity the
+ * kill can re-check, which on Windows is also what makes its parent link
+ * checkable (see the module comment).
+ */
+function hasIdentity(scanned: ScannedProcess): boolean {
+  return scanned.startKey !== '';
+}
+
 function indexByPid(processes: readonly ScannedProcess[]): Map<number, ScannedProcess> {
   const byPid = new Map<number, ScannedProcess>();
   for (const scanned of processes) byPid.set(scanned.pid, scanned);
@@ -235,11 +258,12 @@ export function buildSafetyProtectedPids(input: Pick<ReapPlanInput, 'processes' 
 
 /**
  * `root` and every real descendant outside `blocked`, for a stop the user
- * asked for by name. Pids 0 to 4 are never included.
+ * asked for by name. Pids 0 to 4 are never included, and neither is a process
+ * with no identity, nor anything reached only through one.
  */
 export function subtreeOf(root: ScannedProcess, processes: readonly ScannedProcess[], blocked: ReadonlySet<number>): ScannedProcess[] {
   const pids = new Set<number>();
-  collectSubtree(root, indexChildren(processes), pids, blocked);
+  collectSubtree(root, indexChildren(processes), pids, blocked, hasIdentity);
   return processes.filter((scanned) => pids.has(scanned.pid) && scanned.pid > LOWEST_KILLABLE_PID);
 }
 
@@ -537,9 +561,13 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     // What goes with the root: descendants inside its directories that carry
     // its tag or whose environment could not be read (a withheld Apple tool
     // between two tagged node processes). Under a withheld root, no tag or a
-    // reaped task's, never a cleared one.
+    // reaped task's, never a cleared one. Never one with no identity: the
+    // kill would refuse it, and its parent link cannot be checked. On Windows
+    // a process the reader never opened has no directory either, so the
+    // directory test mostly decides this already.
     collectSubtree(scanned, children, collectedPids, blockedPids, (child) => (
-      isInsideAny(child.workingDirectory, root.scope, caseInsensitive)
+      hasIdentity(child)
+      && isInsideAny(child.workingDirectory, root.scope, caseInsensitive)
       && (root.taskId === null
         ? child.tagValue === null || reapedTaskIds.has(child.tagValue)
         : child.tagValue === root.taskId || Boolean(child.environmentUnreadable) || Boolean(child.environmentWithheld))

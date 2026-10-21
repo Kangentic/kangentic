@@ -196,6 +196,35 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     expect(stopBudgets).toEqual([30_000]);
   });
 
+  it('asks the host to stop a worktree holder by its creation time, within 5 s, since the removal waits inside its project\'s git queue', async () => {
+    // The literal is the point, as for the reap's budget above.
+    const requests: unknown[] = [];
+    const budgets: number[] = [];
+    const manager = managerWithHost({
+      stopReportedProcess: async (request, timeoutMs) => {
+        requests.push(request);
+        budgets.push(timeoutMs);
+        return { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
+      },
+    });
+    expect(await manager.stopProcessByCreationTime(4242, 1_792_057_142_367)).toBe('stopped');
+    expect(requests).toEqual([{ pid: 4242, startKey: '', startedAtMs: 1_792_057_142_367, mainPid: process.pid }]);
+    expect(budgets).toEqual([5_000]);
+  });
+
+  it('keeps a worktree holder stop that failed in the local log, since it is not a Stop the user asked for', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unfinished = managerWithHost({
+      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: 'process_list', failurePass: 'first', failureReason: 'the snapshot failed' }),
+    });
+    expect(await unfinished.stopProcessByCreationTime(4242, 1)).toBe('failed');
+    const timedOut = managerWithHost({ stopReportedProcess: async () => { throw new PtyHostTimeoutError('stopReportedProcess'); } });
+    expect(await timedOut.stopProcessByCreationTime(4242, 1)).toBe('failed');
+    expect(reportHandledError).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('[REAPER] worktree holder stop failed (pid=4242): the snapshot failed');
+    warn.mockRestore();
+  });
+
   it('reports nothing for a Stop that answered, a refusal or a survivor included', async () => {
     const manager = managerWithHost({
       stopReportedProcess: async () => ({ outcome: 'failed', failureCode: null, failurePass: null, failureReason: null }),

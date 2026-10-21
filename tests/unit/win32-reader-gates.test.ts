@@ -133,6 +133,16 @@ function creationOf(pid: number): bigint {
   return CREATION_BASE + BigInt(pid);
 }
 
+/** An exited fake process's exit time: one second (10,000,000 FILETIME ticks) after its creation. */
+function exitTimeOf(pid: number): bigint {
+  return creationOf(pid) + 10_000_000n;
+}
+
+/** A FILETIME as epoch milliseconds, the way the reader converts it. */
+function filetimeMs(filetime: bigint): number {
+  return Number((filetime - 116_444_736_000_000_000n) / 10_000n);
+}
+
 /** Per-process addresses; every one stays under 4 GB for pids below 4096, so a 32-bit PEB can point at it. */
 function addressesOf(pid: number) {
   const base = BigInt(pid) * 0x100000n;
@@ -331,10 +341,11 @@ class FakeWin32 {
       wowOut[0] = (fakeProcess?.wow64 || fakeProcess?.wow64WalkFails) ? 1 : 0;
       return 1;
     },
-    getProcessTimes: (handle, creation) => {
+    getProcessTimes: (handle, creation, exit) => {
       const fakeProcess = this.byPid.get(handleOf(handle).pid);
       if (!fakeProcess || fakeProcess.creationUnreadable) return 0;
       creation[0] = creationOf(fakeProcess.pid);
+      exit[0] = fakeProcess.exited ? exitTimeOf(fakeProcess.pid) : 0n;
       return 1;
     },
     // STILL_ACTIVE (259) for a running process, as winbase.h defines it.
@@ -400,7 +411,8 @@ class FakeWin32 {
       return 1;
     },
     // 0 is STATUS_SUCCESS, unlike the BOOL calls around it. Class 0 is
-    // ProcessBasicInformation (PebBaseAddress at offset 8); class 26 is
+    // ProcessBasicInformation (PebBaseAddress at offset 8, UniqueProcessId at
+    // 32, InheritedFromUniqueProcessId at 40); class 26 is
     // ProcessWow64Information (the 32-bit PEB's address, 0 for a 64-bit process).
     queryInformationProcess: (handle, infoClass, buffer) => {
       const pid = handleOf(handle).pid;
@@ -408,6 +420,8 @@ class FakeWin32 {
       const fakeProcess = this.byPid.get(pid);
       if (infoClass === 0) {
         buffer.writeBigUInt64LE(addressesOf(pid).peb, 8);
+        buffer.writeBigUInt64LE(BigInt(pid), 32);
+        buffer.writeBigUInt64LE(BigInt(fakeProcess?.ppid ?? 0), 40);
         return 0;
       }
       if (infoClass === 26) {
@@ -1335,6 +1349,67 @@ describe('loadWin32OrphanApi: what a dead shell left running', () => {
     expect(fake.terminatedHandleIds).toHaveLength(1);
     expect(api.terminate({ ...target, startKey: '' })).toBe(false);
     expect(fake.leakedHandleIds()).toEqual([]);
+  });
+
+  it('pins only a child of this process, created no earlier than asked, and holds that one handle until it is released', async () => {
+    const shell: FakeProcess = { pid: 700, ppid: process.pid, image: 'pwsh.exe' };
+    const fake = new FakeWin32([
+      shell,
+      // Another process's child: a pid that changed hands before the pin.
+      { pid: 710, ppid: 4321, image: 'stranger.exe' },
+      { pid: 720, ppid: process.pid, image: 'pwsh.exe', creationUnreadable: true },
+      { pid: 730, ppid: process.pid, image: 'pwsh.exe', openRefused: true },
+    ]);
+    const api = await loadWin32OrphanApi(async () => fake.api);
+    const createdBefore = fake.createdHandleIds.length;
+
+    for (const refused of [710, 720, 730, 4]) expect(api.pinRoot(refused, 0)).toBeNull();
+    // Created before the clock the host read ahead of the spawn: not the shell it started.
+    expect(api.pinRoot(700, filetimeMs(creationOf(700)) + 1)).toBeNull();
+    expect(fake.leakedHandleIds()).toEqual([]);
+
+    const pin = api.pinRoot(700, filetimeMs(creationOf(700)));
+    expect(pin).not.toBeNull();
+    expect(pin?.startedAtMs).toBe(filetimeMs(creationOf(700)));
+    // One limited handle, no PROCESS_VM_READ and no PROCESS_TERMINATE, still open.
+    expect(fake.opens.filter((open) => open.pid === 700).map((open) => open.access)).toEqual([PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION]);
+    expect(fake.leakedHandleIds()).toHaveLength(1);
+    expect(fake.createdHandleIds.length).toBeGreaterThan(createdBefore);
+
+    // Running: no exit time. Exited: the exit time read on the same handle.
+    expect(pin?.readExitedAtMs()).toBeNull();
+    shell.exited = true;
+    expect(pin?.readExitedAtMs()).toBe(filetimeMs(exitTimeOf(700)));
+
+    pin?.release();
+    pin?.release();
+    expect(pin?.readExitedAtMs()).toBeNull();
+    expectEveryHandleClosedOnce(fake);
+  });
+
+  it('never pins, or even opens, a pid at or below 4, though this process is its parent and the table would open it', async () => {
+    const fake = new FakeWin32([
+      // Each of these would pin if asked: it opens, its creation time reads, and this process is its parent.
+      // Only the pid guard refuses them, which a table that refuses to open an unlisted pid cannot show.
+      { pid: 0, ppid: process.pid, image: 'System Idle Process' },
+      { pid: 2, ppid: process.pid },
+      { pid: 4, ppid: process.pid, image: 'System' },
+      // Positive control, one above the guard: the same shape pins.
+      { pid: 5, ppid: process.pid },
+    ]);
+    const api = await loadWin32OrphanApi(async () => fake.api);
+    // The load's own token handle is the only one so far.
+    const createdAfterLoad = fake.createdHandleIds.length;
+
+    for (const reserved of [0, 2, 4]) expect(api.pinRoot(reserved, 0)).toBeNull();
+    expect(fake.openedPids()).toEqual([]);
+    expect(fake.createdHandleIds).toHaveLength(createdAfterLoad);
+
+    const pin = api.pinRoot(5, 0);
+    expect(pin).not.toBeNull();
+    expect(fake.openedPids()).toEqual([5]);
+    pin?.release();
+    expectEveryHandleClosedOnce(fake);
   });
 
   it('fails to load, opening no process, when its own session cannot be read', async () => {

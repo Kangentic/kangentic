@@ -11,6 +11,7 @@ import {
   TREE_STOP_GRACE_MS,
   childHasExited,
   killChildTreeByPid,
+  killChildTreeNow,
   signalChildOrGroup,
   stopChildTree,
   type StoppableChild,
@@ -40,15 +41,35 @@ function fakeChild(pid: number | undefined = 4321): StoppableChild & { signals: 
   return child;
 }
 
-/** A spawn double whose returned handle supports the `.on().unref()` chain. */
-function fakeSpawn(): { spawnProcess: typeof spawn; calls: Array<{ command: string; args: readonly string[]; options: unknown }> } {
+/**
+ * A spawn double whose returned handle supports the `.on().unref()` chain.
+ * `emit` fires the listeners taskkill's handle was given (`exit`, `error`).
+ */
+function fakeSpawn(): {
+  spawnProcess: typeof spawn;
+  calls: Array<{ command: string; args: readonly string[]; options: unknown }>;
+  emit(event: 'exit' | 'error'): void;
+} {
   const calls: Array<{ command: string; args: readonly string[]; options: unknown }> = [];
-  const handle = { on: () => handle, unref: () => handle };
+  const listeners: Array<{ event: string; listener: () => void }> = [];
+  const handle = {
+    on: (event: string, listener: () => void) => {
+      listeners.push({ event, listener });
+      return handle;
+    },
+    unref: () => handle,
+  };
   const spawnProcess = ((command: string, args: readonly string[], options: unknown) => {
     calls.push({ command, args, options });
     return handle;
   }) as unknown as typeof spawn;
-  return { spawnProcess, calls };
+  return {
+    spawnProcess,
+    calls,
+    emit: (event) => {
+      for (const entry of listeners) if (entry.event === event) entry.listener();
+    },
+  };
 }
 
 describe('child-tree-stop', () => {
@@ -116,6 +137,86 @@ describe('child-tree-stop', () => {
       expect(calls.map((call) => [call.command, ...call.args])).toEqual([['taskkill', '/pid', '99', '/T', '/F']]);
       expect(processKill).not.toHaveBeenCalled();
     });
+
+    it('pins the run\'s pid before taskkill starts and holds the pin until taskkill exits, releasing it once', () => {
+      const { spawnProcess, calls, emit } = fakeSpawn();
+      const order: string[] = [];
+      const release = vi.fn(() => order.push('release'));
+      const pinRoot = vi.fn((pid: number) => {
+        order.push(`pin ${pid}`);
+        return release;
+      });
+      const recordingSpawn = ((...args: Parameters<typeof spawn>) => {
+        order.push('taskkill');
+        return (spawnProcess as (...spawnArgs: Parameters<typeof spawn>) => unknown)(...args);
+      }) as unknown as typeof spawn;
+      stopChildTree(fakeChild(4321), { leadsGroup: false, spawnProcess: recordingSpawn, pinRoot });
+      expect(calls).toHaveLength(1);
+      expect(release).not.toHaveBeenCalled();
+      emit('exit');
+      emit('error');
+      expect(order).toEqual(['pin 4321', 'taskkill', 'release']);
+    });
+
+    it('releases the pin when taskkill cannot start', () => {
+      const { spawnProcess, emit } = fakeSpawn();
+      const release = vi.fn();
+      stopChildTree(fakeChild(), { leadsGroup: false, spawnProcess, pinRoot: () => release });
+      emit('error');
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('releases the pin once and rethrows when taskkill cannot be spawned at all, so no pin outlives a stop that never started', () => {
+      const release = vi.fn();
+      const pinRoot = vi.fn((_pid: number) => release);
+      const spawnProcess = (() => {
+        throw new Error('spawn EAGAIN');
+      }) as unknown as typeof spawn;
+      const child = fakeChild(4321);
+      expect(() => stopChildTree(child, { leadsGroup: false, spawnProcess, pinRoot })).toThrow('spawn EAGAIN');
+      // Positive control: the pin was taken before the spawn threw, so the release is the catch's own.
+      expect(pinRoot).toHaveBeenCalledWith(4321);
+      expect(release).toHaveBeenCalledTimes(1);
+      expect(child.signals).toEqual([]);
+      expect(processKill).not.toHaveBeenCalled();
+    });
+
+    it('releases the pin once, however late taskkill\'s own events come, when the spawn throws after taskkill\'s handle took a listener', () => {
+      const release = vi.fn();
+      const lateListeners: Array<() => void> = [];
+      const spawnProcess = (() => {
+        const handle = {
+          on: (event: string, listener: () => void) => {
+            // Stands in for any throw after a listener was attached: the first `on` took one, the second throws.
+            if (event === 'exit') throw new Error('listener refused');
+            lateListeners.push(listener);
+            return handle;
+          },
+          unref: () => handle,
+        };
+        return handle;
+      }) as unknown as typeof spawn;
+      expect(() => stopChildTree(fakeChild(), { leadsGroup: false, spawnProcess, pinRoot: () => release })).toThrow('listener refused');
+      expect(release).toHaveBeenCalledTimes(1);
+      // The attached listener is still live: taskkill failing to start later must not release the pin a second time.
+      expect(lateListeners).toHaveLength(1);
+      for (const listener of lateListeners) listener();
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+
+    it('killChildTreeNow takes a running child\'s tree, and leaves an exited one alone, whose pid nothing pins any more', () => {
+      const { spawnProcess, calls } = fakeSpawn();
+      const running = fakeChild(4321);
+      killChildTreeNow(running, { leadsGroup: true, spawnProcess });
+      expect(calls.map((call) => [call.command, ...call.args])).toEqual([['taskkill', '/pid', '4321', '/T', '/F']]);
+
+      const exited = fakeChild(4322);
+      exited.exit();
+      killChildTreeNow(exited, { leadsGroup: true, spawnProcess });
+      expect(calls).toHaveLength(1);
+      expect(exited.signals).toEqual([]);
+      expect(processKill).not.toHaveBeenCalled();
+    });
   });
 
   describe('on POSIX', () => {
@@ -177,6 +278,16 @@ describe('child-tree-stop', () => {
         throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
       });
       expect(() => killChildTreeByPid(79)).not.toThrow();
+    });
+
+    it('killChildTreeNow SIGKILLs the group at once, even once the leader has exited, since its group lives on', () => {
+      const { spawnProcess, calls } = fakeSpawn();
+      const leader = fakeChild(500);
+      killChildTreeNow(leader, { leadsGroup: true, spawnProcess });
+      leader.exit();
+      killChildTreeNow(leader, { leadsGroup: true, spawnProcess });
+      expect(processKill.mock.calls).toEqual([[-500, 'SIGKILL'], [-500, 'SIGKILL']]);
+      expect(calls).toEqual([]);
     });
   });
 

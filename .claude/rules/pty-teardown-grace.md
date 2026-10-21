@@ -104,8 +104,12 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   still-open console input (`spawn/exited-console-input.ts`, the one channel that reaches it),
   waits up to `DEAD_ROOT_ORPHAN_EXIT_GRACE_MS` (10 s) for the processes it found to exit by
   themselves, and only then terminates what is left, by identity, each through a handle whose
-  creation time is re-checked. Measured on Claude Code 2.1.294: asked this way, Claude ran its
-  SessionEnd hook and exited about 600 ms after the write with its transcript whole; terminated,
+  creation time is re-checked. The shell's own lifetime bounds what counts as its child: the host
+  holds a handle on every Windows PTY root from its pid to its exit (`pinRoot`) and reads the exact
+  creation and exit times off it, and without them the cleanup does not run. The exited-root wait
+  uses the pinned creation time too, and the spawn clock without one, since it only waits.
+  Measured on Claude Code 2.1.294: asked this way, Claude ran its SessionEnd hook and exited
+  about 600 ms after the write with its transcript whole; terminated,
   it runs no SessionEnd hook and writes no exit records. On 2.1.302 Claude's Esc, pause, Ctrl+C,
   `/exit` sequence written this way ended it idle, busy and with a permission prompt open, young
   and mature, 0.9 to 1.2 s after the write; the old `\x03` + `/exit\r` approved the open prompt's
@@ -195,7 +199,8 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   `tests/unit/claude-model-picker-probe.test.ts` pins the probe's env, its graceful exit, and its
   no-key-into-a-dialog guards;
   `tests/unit/claude-json-lock.test.ts` pins the file lock's acquire, wait, stale break, and
-  ELOCKED skip. `tests/unit/dead-root-orphans.test.ts` pins the orphan cleanup's identity window,
+  ELOCKED skip. `tests/unit/dead-root-orphans.test.ts` pins the orphan cleanup's identity window
+  (the pinned creation and exit, the pin taken and released, no cleanup without one),
   that it asks before it terminates and terminates nothing that exits within the grace, and that a
   kill, a quit, a WSL root, POSIX and the in-process core never run it;
   `tests/unit/exited-console-input.test.ts` pins the node-pty fields the ask writes through.

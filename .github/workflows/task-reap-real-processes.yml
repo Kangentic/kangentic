@@ -29,6 +29,12 @@ name: Task reap against real processes
 # process-tag/ the tests import (the Windows Toolhelp listing among them, and
 # the process-tree probe that listing uses on POSIX), and vitest.config.mts,
 # whose aliases and defines every one of these tests runs under.
+#
+# On Windows it also reruns the measurement every tree stop rests on: that
+# `taskkill /T` skips a process older than its parent pid's current owner
+# (src/main/shared/child-tree-stop.ts). The probe forces a pid collision on
+# throwaway pings and prints the branch it took; a run with no collision in its
+# budget skips with the reason.
 
 on:
   pull_request:
@@ -41,6 +47,9 @@ on:
       - 'src/main/activity-engine/background-shell/process-tree.ts'
       - 'src/main/git/zombie-reaper.ts'
       - 'src/main/shared/process-liveness.ts'
+      - 'src/main/shared/child-tree-stop.ts'
+      - 'scripts/probe-taskkill-stale-parent.mjs'
+      - 'tests/unit/taskkill-stale-parent.test.ts'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
       - 'tests/unit/task-reap-plan.test.ts'
@@ -59,6 +68,9 @@ on:
       - 'src/main/activity-engine/background-shell/process-tree.ts'
       - 'src/main/git/zombie-reaper.ts'
       - 'src/main/shared/process-liveness.ts'
+      - 'src/main/shared/child-tree-stop.ts'
+      - 'scripts/probe-taskkill-stale-parent.mjs'
+      - 'tests/unit/taskkill-stale-parent.test.ts'
       - 'tests/unit/session-reap-real-processes.test.ts'
       - 'tests/unit/task-process-readers.test.ts'
       - 'tests/unit/task-reap-plan.test.ts'
@@ -143,3 +155,10 @@ jobs:
         env:
           KANGENTIC_REAP_REQUIRE_ALL_CASES: '1'
         run: npx vitest run tests/unit/session-reap-real-processes.test.ts tests/unit/task-process-readers.test.ts tests/unit/task-reap-plan.test.ts tests/unit/task-tagged-reap.test.ts tests/unit/process-label.test.ts tests/unit/local-connections.test.ts
+      # Verbose and not silent, so the job log says whether a collision happened
+      # and what taskkill did, or why the run skipped.
+      - name: Probe taskkill against a reused parent pid (Windows)
+        if: runner.os == 'Windows'
+        env:
+          KANGENTIC_PID_REUSE_PROBE: '1'
+        run: npx vitest run tests/unit/taskkill-stale-parent.test.ts --silent=false --reporter=verbose

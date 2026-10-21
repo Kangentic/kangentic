@@ -71,7 +71,7 @@ import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
-import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
+import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
  *  1 s grace between them, the kills and a survivor check. Counted from when
@@ -94,6 +94,14 @@ const SPAWN_SETTLE_TIMEOUT_MS = 10_000;
 /** The leftover list's recheck: one handle read per process, so a host this
  *  slow is busy, and the next recheck asks again. */
 const REPORTED_PROCESS_CHECK_TIMEOUT_MS = 5_000;
+/** A worktree holder's stop by creation time (`stopProcessByCreationTime`),
+ *  which waits inside the project's git queue. One measured 1.1 s on Windows,
+ *  most of it the reap's 1 s grace. The host runs Stops one at a time, and
+ *  only another Stop starting gives a waiting one its budget back. The removal
+ *  posts every holder's Stop at once, so a Stop that hangs holds that queue
+ *  this long at most, about the removal reap's own 5 s scan cap, where a
+ *  reap's budget would hold it 30 s. */
+const WORKTREE_HOLDER_STOP_TIMEOUT_MS = 5_000;
 
 /** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
@@ -2652,6 +2660,36 @@ export class SessionManager extends EventEmitter {
     }
     noteHostStopResult(result);
     return result.outcome;
+  }
+
+  /**
+   * Stop a process that holds a worktree its removal could not delete, with
+   * everything under it, by the creation time the removal's own scan read
+   * (`zombie-reaper.ts`, Windows). The pty host stops it only while that pid
+   * still names the process created then, through the same identity-checked
+   * kill and protections a Stop uses. Never throws: anything but an answer in
+   * time reads `failed`.
+   *
+   * The removal runs inside its project's git queue, and the host runs Stops
+   * one at a time, so this waits at most `WORKTREE_HOLDER_STOP_TIMEOUT_MS`,
+   * not a reap's budget: a Stop queued behind a slow one would otherwise hold
+   * every worktree operation of the project. One that times out still finishes in the host, and the removal
+   * falls through to naming its holders, as a failed kill did before. Its
+   * failures stay in the local log, as the kill by pid it replaced did: they
+   * are not a Stop the user asked for.
+   */
+  async stopProcessByCreationTime(pid: number, startedAtMs: number): Promise<StopProcessOutcome> {
+    const request: StopProcessRequest = { pid, startKey: '', startedAtMs, mainPid: process.pid };
+    try {
+      const result = await this.host.stopReportedProcess(request, WORKTREE_HOLDER_STOP_TIMEOUT_MS, (lateResult) => {
+        console.log(`[REAPER] a worktree holder stop that timed out finished later: ${lateResult.outcome} (pid=${pid})`);
+      });
+      if (result.failureCode) console.warn(`[REAPER] worktree holder stop failed (pid=${pid}): ${result.failureReason}`);
+      return result.outcome;
+    } catch (error) {
+      console.warn(`[REAPER] worktree holder stop failed (pid=${pid}):`, error instanceof Error ? error.message : String(error));
+      return 'failed';
+    }
   }
 
   /**

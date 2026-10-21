@@ -14,6 +14,7 @@ import { UtilityPtyHostTransport } from '../pty/host/utility-pty-host-transport'
 import { setOffMainExecutor } from '../utility-process/off-main-exec';
 import { setOffMainPtySpawner } from '../utility-process/off-main-pty';
 import { setOffMainCliSpawner } from '../utility-process/off-main-cli';
+import { setIdentityTreeStop } from '../git/zombie-reaper';
 import { PATHS } from '../config/paths';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
@@ -131,6 +132,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // And the agent CLIs' headless runs (Ask, task summaries, auto-name), which
   // a summary backfill starts dozens of times a minute.
   setOffMainCliSpawner((command, args, options) => sessionManager.spawnCliInPtyHost(command, args, options));
+  // And the worktree-removal reap's kills on Windows, by the creation time its
+  // scan read, so a pid that changed hands since is never killed.
+  setIdentityTreeStop((target) => sessionManager.stopProcessByCreationTime(target.pid, target.startedAtMs));
   // Raw terminal transcripts, each written to its session's own project. The
   // pty host writes them over its own connection; this sink is what the host
   // core uses if it ever falls back to running in this process. A project

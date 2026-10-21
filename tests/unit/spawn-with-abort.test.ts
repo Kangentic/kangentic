@@ -160,6 +160,58 @@ describe('spawnWithAbort env option', () => {
 });
 
 /**
+ * An aborted init script loses its whole tree through `taskkill /T` on
+ * Windows, by the shell's pid. Node pins that pid only until it has handled the
+ * shell's exit, and a shell can exit while something it started still holds
+ * its output pipes open, so `close` (which settles the call) comes later. An
+ * abort in that gap must not tree-kill a pid that may name a stranger by then
+ * (src/main/shared/child-tree-stop.ts).
+ */
+describe('spawnWithAbort on Windows: the tree kill on an abort', () => {
+  const originalPlatform = process.platform;
+  const taskkillHandle = { on: () => taskkillHandle, unref: () => taskkillHandle };
+
+  beforeEach(() => {
+    spawnMock.mockReset();
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+
+  function runningShell(): FakeChild & { pid: number; exitCode: number | null; signalCode: NodeJS.Signals | null } {
+    const shell = Object.assign(fakeChild(), { pid: 4321, exitCode: null as number | null, signalCode: null as NodeJS.Signals | null });
+    spawnMock.mockImplementation((command: string) => (command === 'taskkill' ? taskkillHandle : shell));
+    return shell;
+  }
+
+  const taskkillCalls = (): unknown[][] => spawnMock.mock.calls.filter(([command]) => command === 'taskkill');
+
+  it('takes a running shell\'s tree by its pid', async () => {
+    const shell = runningShell();
+    const abort = new AbortController();
+    const pending = spawnWithAbort(SHELL_TARGET, { timeoutMs: 60_000, signal: abort.signal });
+    abort.abort();
+    shell.emit('close', 1, null);
+    await expect(pending).rejects.toThrow('aborted (external abort)');
+    expect(taskkillCalls().map(([, args]) => args)).toEqual([['/pid', '4321', '/T', '/F']]);
+  });
+
+  it('starts no taskkill once the shell has exited, though its pipes are still open', async () => {
+    const shell = runningShell();
+    const abort = new AbortController();
+    const pending = spawnWithAbort(SHELL_TARGET, { timeoutMs: 60_000, signal: abort.signal });
+    // Node has handled the exit; something the script started still holds stdout.
+    shell.exitCode = 0;
+    abort.abort();
+    shell.emit('close', 0, null);
+    await expect(pending).rejects.toThrow('aborted (external abort)');
+    expect(taskkillCalls()).toEqual([]);
+  });
+});
+
+/**
  * The init script can start anything, so on macOS it runs through node-pty's
  * spawn-helper, which clears Crashpad's inherited exception port before exec
  * (src/main/pty/spawn/shell-launch.ts). git itself does not.

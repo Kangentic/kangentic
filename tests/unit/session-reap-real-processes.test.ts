@@ -398,6 +398,26 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(await waitUntilDead([reportedPid])).toEqual([]);
   }, 60_000);
 
+  it.runIf(process.platform === 'win32')('stops a worktree holder by the creation time the removal reap\'s Win32_Process scan read, and refuses one a millisecond off', async () => {
+    const scratch = makeScratch();
+    const sleeperPath = writeSleeper(scratch.root);
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const pidFile = path.join(scratch.root, 'holder.pid');
+    spawn(process.execPath, [launcherPath, sleeperPath, pidFile], { stdio: 'ignore', env: envWithTag(null), windowsHide: true, cwd: scratch.worktree });
+    const holderPid = await waitForPidFile(pidFile);
+
+    const row = (await scanAllProcesses(SCAN_TIMEOUT_MS)).find((candidate) => candidate.pid === holderPid);
+    expect(row?.startedAtMs).toEqual(expect.any(Number));
+    const deps = { reader: reader!, liveRootPids: () => [] };
+
+    // The CIM creation time must land on the reader's exact millisecond, or the Stop names nothing.
+    expect((await stopProcessTree({ pid: holderPid, startKey: '', startedAtMs: row!.startedAtMs! + 1, mainPid: process.pid }, deps)).outcome).toBe('ended');
+    expect(isProcessAlive(holderPid)).toBe(true);
+
+    expect((await stopProcessTree({ pid: holderPid, startKey: '', startedAtMs: row!.startedAtMs!, mainPid: process.pid }, deps)).outcome).toBe('stopped');
+    expect(await waitUntilDead([holderPid])).toEqual([]);
+  }, 60_000);
+
   it('spares a live descendant of the reaping process, another task, a cleared tag, and tagged processes working outside the task', async () => {
     const scratch = makeScratch();
     const sleeperPath = writeSleeper(scratch.root);

@@ -35,6 +35,8 @@ import type { PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 
 const ROOT_PID = 500;
 const SPAWNED_AT = 10_000;
+/** The shell's own creation time, as its pin reads it. */
+const ROOT_CREATED_AT = SPAWNED_AT + 30;
 const EXITED_AT = 70_000;
 const TASK = 'task-a';
 
@@ -69,13 +71,17 @@ class FakeProcessTable {
       this.alive.delete(target.pid);
       return true;
     },
+    // Every fake shell is this process's child, created just after the spawn
+    // clock and exiting when the tests set the clock to EXITED_AT.
+    pinRoot: () => ({ startedAtMs: ROOT_CREATED_AT, readExitedAtMs: () => EXITED_AT, release: () => undefined }),
   };
 
   readonly terminated: number[] = [];
 }
 
+/** A root main killed. No pinned creation time unless a test gives one, so the wait falls back to the spawn clock. */
 function killedRoot(overrides: Partial<ExitedRoot> = {}): ExitedRoot {
-  return { taskId: TASK, rootPid: ROOT_PID, spawnedAtMs: SPAWNED_AT, exitedAtMs: EXITED_AT, orphanCleanup: null, descendants: null, ...overrides };
+  return { taskId: TASK, rootPid: ROOT_PID, spawnedAtMs: SPAWNED_AT, rootStartedAtMs: null, exitedAtMs: EXITED_AT, orphanCleanup: null, descendants: null, ...overrides };
 }
 
 function fakeSteps(alivePids: Set<number> = new Set()) {
@@ -158,6 +164,26 @@ describe('waitForExitedRootTrees', () => {
     const { steps } = fakeSteps();
     const result = await waitForExitedRootTrees(table.api, [killedRoot()], new Set([640]), steps);
     expect(result).toEqual({ found: [], stillRunning: [], waitedMs: 0 });
+  });
+
+  it('bounds the window by the shell\'s pinned creation time, and falls back to the spawn clock without one, since a wait only waits', async () => {
+    // Created just before the shell: an earlier owner of the pid started it.
+    const processes: FakeProcess[] = [
+      { pid: 650, ppid: ROOT_PID, image: 'earlier-owner-child.exe', startedAtMs: SPAWNED_AT - 500 },
+      { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
+    ];
+    const pinned = new FakeProcessTable(processes);
+    const pinnedWait = waitForExitedRootTrees(pinned.api, [killedRoot({ rootStartedAtMs: ROOT_CREATED_AT })], new Set(), fakeSteps().steps);
+    const unpinned = new FakeProcessTable(processes);
+    const unpinnedWait = waitForExitedRootTrees(unpinned.api, [killedRoot()], new Set(), fakeSteps().steps);
+    await vi.advanceTimersByTimeAsync(0);
+    pinned.exit(600);
+    pinned.exit(650);
+    unpinned.exit(600);
+    unpinned.exit(650);
+    await vi.advanceTimersByTimeAsync(DEAD_ROOT_ORPHAN_POLL_MS);
+    expect((await pinnedWait).found).toEqual(['claude.exe']);
+    expect((await unpinnedWait).found).toEqual(['earlier-owner-child.exe', 'claude.exe']);
   });
 
   it('waits out an orphan cleanup still asking a natural exit\'s agent to leave, without listing for it', async () => {
@@ -375,6 +401,23 @@ describe('PtyHostCore.awaitAgentExit', () => {
     expect(table.terminated).toEqual([]);
   });
 
+  it('after a kill, waits for nothing an earlier owner of the shell\'s pid started, by the creation time its pin read', async () => {
+    const table = new FakeProcessTable([
+      { pid: 650, ppid: ROOT_PID, image: 'earlier-owner-child.exe', startedAtMs: SPAWNED_AT - 500 },
+      { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
+    ]);
+    const rig = makeCore({ table });
+    rig.core.spawn(spawnParams());
+    await vi.advanceTimersByTimeAsync(0);
+    killThenExit(rig);
+
+    const wait = rig.core.awaitAgentExit([TASK]);
+    await advance(rig, DEAD_ROOT_ORPHAN_POLL_MS);
+    table.exit(600);
+    await advance(rig, DEAD_ROOT_ORPHAN_POLL_MS * 2);
+    await expect(wait).resolves.toMatchObject({ found: ['claude.exe'], stillRunning: [] });
+  });
+
   it('a reap asked for right after the kill, before the shell has exited, already waits', async () => {
     const table = new FakeProcessTable([
       { pid: 600, ppid: ROOT_PID, image: 'claude.exe', startedAtMs: SPAWNED_AT + 2_000 },
@@ -425,6 +468,8 @@ describe('PtyHostCore.awaitAgentExit', () => {
     ]);
     const rig = makeCore({ table });
     rig.core.spawn(spawnParams());
+    // The pin lands before the shell exits, as it does for a real shell.
+    await vi.advanceTimersByTimeAsync(0);
     rig.setClock(EXITED_AT);
     rig.fakeFor(ROOT_PID).exit(1);
     await vi.advanceTimersByTimeAsync(0);
