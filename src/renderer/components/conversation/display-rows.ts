@@ -270,7 +270,7 @@ function rowResultsFor(entry: TranscriptEntry, resultsByUseId: Map<string, Displ
 // hmr-safe: a pure cache keyed by data objects; a fresh map after a reload only recomputes.
 const resultByToolResultEntry = new WeakMap<TranscriptEntry, DisplayRowResult>();
 
-function resultsByUseIdOf(entries: TranscriptEntry[]): Map<string, DisplayRowResult> {
+function resultsByUseIdOf(entries: ReadonlyArray<TranscriptEntry>): Map<string, DisplayRowResult> {
   const resultsByUseId = new Map<string, DisplayRowResult>();
   for (const entry of entries) {
     if (entry.kind !== 'tool_result' || !entry.toolUseId) continue;
@@ -315,7 +315,7 @@ function buildRow(entry: TranscriptEntry, results: Map<string, DisplayRowResult>
  * assistant turn is folded into that turn's row (not emitted as its own
  * row); an unowned one (e.g. after a resume) renders standalone.
  */
-export function reconcileDisplayRows(previousRows: DisplayRow[], entries: TranscriptEntry[]): DisplayRow[] {
+export function reconcileDisplayRows(previousRows: DisplayRow[], entries: ReadonlyArray<TranscriptEntry>): DisplayRow[] {
   const previousByUuid = new Map<string, DisplayRow>();
   for (const row of previousRows) previousByUuid.set(row.uuid, row);
 

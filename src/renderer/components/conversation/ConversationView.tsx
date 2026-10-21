@@ -30,16 +30,17 @@
  */
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive, FileText } from 'lucide-react';
+import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive, FileText, Loader2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { ConversationSearchBar, type ConversationSearchBarHandle } from './ConversationSearchBar';
-import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX } from './ConversationScrollbar';
+import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX, type LogicalScroll } from './ConversationScrollbar';
 import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
-import { FAR_FROM_BOTTOM_PX, isScrolledToBottom } from './scrollbar-math';
+import { FAR_FROM_BOTTOM_PX, isScrolledToBottom, logicalAtOffset, offsetAtLogical } from './scrollbar-math';
 import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
+import type { EdgeStatus } from './use-conversation-paging';
 import { planApprovalLabel, presentedPlan, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
@@ -60,13 +61,41 @@ import type {
 const RESULT_CLAMP_CHARS = 4000;
 const HIGHLIGHT_DURATION_MS = 4000;
 
+/** Height of the loading row at a paged window's edge. */
+const EDGE_ROW_PX = 48;
+/** How near an edge, in viewports, the next page starts loading. */
+const PREFETCH_VIEWPORTS = 2;
+
 /** Where the viewer opens by default (no `scrollToTurnUuid`): the latest
  *  message, or centered on the row matching the terminal's visible
- *  scrollback (see `tui-anchor.ts`). Computed by `ConversationWindow`. */
-export type InitialPosition = { kind: 'bottom' } | { kind: 'uuid'; uuid: string };
+ *  scrollback (see `tui-anchor.ts`). Computed by `ConversationWindow`. The
+ *  start is where Jump to start opens a paged window. */
+export type InitialPosition = { kind: 'bottom' } | { kind: 'top' } | { kind: 'uuid'; uuid: string };
+
+/**
+ * A paged window's edges and coordinates (`useConversationPaging`). Absent for
+ * a conversation the tail holds whole, which renders exactly as it always has.
+ */
+export interface ConversationViewPaging {
+  topEdge: EdgeStatus | null;
+  bottomEdge: EdgeStatus | null;
+  /** Whether the rendered rows run to the newest message. */
+  reachesTail: boolean;
+  logicalByUuid: ReadonlyMap<string, number>;
+  logicalStart: number;
+  logicalEnd: number;
+  logicalTotal: number;
+  timeAt: (logical: number) => number | null;
+  onNearEdge: (edge: 'top' | 'bottom') => void;
+  onReaderMove: (uuid: string | null) => void;
+  onRetry: (edge: 'top' | 'bottom') => void;
+  onJumpToStart: () => void;
+  onJumpToLatest: () => void;
+  onFarJump: (logical: number) => void;
+}
 
 interface ConversationViewProps {
-  entries: TranscriptEntry[];
+  entries: ReadonlyArray<TranscriptEntry>;
   degraded: boolean;
   source: TranscriptSource;
   unavailableReason?: TranscriptUnavailableReason;
@@ -98,7 +127,13 @@ interface ConversationViewProps {
   isolatedDividers?: ReadonlySet<string>;
   /** The search field's placeholder; it names the tab the search covers. */
   searchPlaceholder?: string;
+  /** Set when the transcript is larger than the tail: the window pages its history. */
+  paging?: ConversationViewPaging;
 }
+
+/** Where a settle loop is headed: a row by uuid (found again every tick, so a
+ *  page landing above it mid-settle cannot shift it), the top, or the end. */
+type SettleTarget = { uuid: string } | 'start' | 'end';
 
 /**
  * Bounded settle loop that drives the scroll container's `scrollTop`
@@ -133,11 +168,17 @@ interface ConversationViewProps {
  * backgrounded / not-yet-visible window) sidesteps that path entirely while
  * still converging on the real, measured position within a few ticks.
  * Cancelled by any user wheel/pointerdown on the scroll container.
+ *
+ * The target row is found by uuid on every tick (`rowsRef` holds the rows the
+ * last commit rendered), so a history page landing above it mid-settle moves
+ * the target's index without moving the target. `onIdleRef` runs when a loop
+ * ends, so a paged window checks its edges once the view stands still.
  */
 function useScrollSettle(
   containerRef: RefObject<HTMLDivElement | null>,
-  rows: DisplayRow[],
+  rowsRef: RefObject<DisplayRow[]>,
   getVirtualItems: () => SettleVirtualItem[],
+  onIdleRef: RefObject<(() => void) | null>,
 ) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isSettlingRef = useRef(false);
@@ -171,8 +212,8 @@ function useScrollSettle(
   // unmounted component already makes this safe without an explicit cancel:
   // React clears `containerRef.current` to null on unmount, and `step()`
   // below bails immediately when the container is gone.
-  const settleToIndex = useCallback(
-    (index: number, options?: { align?: 'center' | 'start' | 'end'; onSettled?: () => void; instant?: boolean }) => {
+  const settleTo = useCallback(
+    (target: SettleTarget, options?: { align?: 'center' | 'start'; onSettled?: () => void; instant?: boolean }) => {
       cancel();
       isSettlingRef.current = true;
       const align = options?.align ?? 'center';
@@ -182,16 +223,30 @@ function useScrollSettle(
       let previousScrollTop: number | null = null;
       let stableTicks = 0;
       let tick = 0;
+      const finish = () => {
+        isSettlingRef.current = false;
+        timerRef.current = null;
+        options?.onSettled?.();
+        onIdleRef.current?.();
+      };
 
       const step = () => {
         const container = containerRef.current;
         if (!container) return;
-        if (align === 'end') {
+        if (target === 'end') {
           // Browsers clamp an over-large scrollTop assignment to the real
           // max automatically, so this always lands exactly at the tail
           // regardless of how precise the estimate is.
           container.scrollTop = container.scrollHeight;
+        } else if (target === 'start') {
+          container.scrollTop = 0;
         } else {
+          const rows = rowsRef.current;
+          const index = rows.findIndex((row) => row.uuid === target.uuid);
+          if (index < 0) {
+            finish();
+            return;
+          }
           // Prefer the virtualizer's OWN item for this index when available.
           // The item exists from the first tick if the target is already
           // within the render range, but its start/size are only the static
@@ -212,8 +267,7 @@ function useScrollSettle(
         // loop also drives, which genuinely needs the retries - see the loop's
         // own doc comment above).
         if (options?.instant) {
-          isSettlingRef.current = false;
-          options?.onSettled?.();
+          finish();
           return;
         }
 
@@ -226,9 +280,7 @@ function useScrollSettle(
         previousScrollTop = currentScrollTop;
         tick += 1;
         if (stableTicks >= STABLE_TICKS_NEEDED || tick >= MAX_TICKS) {
-          isSettlingRef.current = false;
-          timerRef.current = null;
-          options?.onSettled?.();
+          finish();
           return;
         }
         timerRef.current = setTimeout(step, TICK_MS);
@@ -238,10 +290,10 @@ function useScrollSettle(
       // once the container's real (measured) dimensions have settled.
       step();
     },
-    [containerRef, rows, cancel, getVirtualItems],
+    [containerRef, rowsRef, cancel, getVirtualItems, onIdleRef],
   );
 
-  return { settleToIndex, isSettlingRef };
+  return { settleTo, isSettlingRef };
 }
 
 export function ConversationView({
@@ -259,6 +311,7 @@ export function ConversationView({
   dividerColumns,
   isolatedDividers,
   searchPlaceholder,
+  paging,
 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchBarRef = useRef<ConversationSearchBarHandle>(null);
@@ -291,6 +344,18 @@ export function ConversationView({
     return next;
   }, [entries]);
 
+  // What the settle loop and the paging checks read between commits. Declared
+  // before the positioning layout effect below, which reads them on mount.
+  const rowsRef = useRef<DisplayRow[]>(rows);
+  const pagingRef = useRef<ConversationViewPaging | undefined>(paging);
+  useLayoutEffect(() => {
+    rowsRef.current = rows;
+    pagingRef.current = paging;
+  });
+
+  const topEdge = paging?.topEdge ?? null;
+  const bottomEdge = paging?.bottomEdge ?? null;
+  const paddingStart = topEdge ? EDGE_ROW_PX : 0;
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => containerRef.current,
@@ -304,10 +369,21 @@ export function ConversationView({
     // rendered text until a scroll forces a full remeasure.
     getItemKey: (index) => rows[index].uuid,
     overscan: 8,
+    // A paged window's loading rows sit in the padding, so the row under the
+    // reader is always a real one.
+    paddingStart,
+    paddingEnd: bottomEdge ? EDGE_ROW_PX : 0,
+    // A paged window grows above the reader: TanStack Virtual's documented chat
+    // pattern keeps the row under them in place when a page lands. -1 means the
+    // view never counts as at the end, so a card expanding at the bottom does
+    // not pin it there. Unset (the defaults) for a conversation held whole.
+    anchorTo: paging ? 'end' : undefined,
+    scrollEndThreshold: paging ? -1 : undefined,
   });
 
   const getVirtualItems = useCallback(() => virtualizer.getVirtualItems(), [virtualizer]);
-  const { settleToIndex, isSettlingRef } = useScrollSettle(containerRef, rows, getVirtualItems);
+  const settleIdleRef = useRef<(() => void) | null>(null);
+  const { settleTo, isSettlingRef } = useScrollSettle(containerRef, rowsRef, getVirtualItems, settleIdleRef);
 
   // Core navigate-to-turn logic, shared by the scrollToTurnUuid prop effect,
   // the mount-time initial-position effect, and the in-viewer search bar's
@@ -353,9 +429,9 @@ export function ConversationView({
         const key = expandKey;
         setExpandedKeys((previous) => new Set(previous).add(key));
       }
-      settleToIndex(index, { align: 'center', onSettled: options?.onSettled, instant: options?.instant });
+      const targetRowUuid = rows[index].uuid;
+      settleTo({ uuid: targetRowUuid }, { align: 'center', onSettled: options?.onSettled, instant: options?.instant });
       if (flash) {
-        const targetRowUuid = rows[index].uuid;
         setHighlightedUuid(targetRowUuid);
         if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
         highlightTimerRef.current = setTimeout(() => {
@@ -365,7 +441,7 @@ export function ConversationView({
       }
       return true;
     },
-    [rows, entries, settleToIndex],
+    [rows, entries, settleTo],
   );
 
   // The in-viewer search bar's own navigation (result click / prev / next)
@@ -413,8 +489,8 @@ export function ConversationView({
       const found = navigateToUuid(initialPosition.uuid, { flash: false });
       if (found) return;
     }
-    settleToIndex(rows.length - 1, { align: 'end' });
-  }, [rows.length, scrollToTurnUuid, initialPosition, navigateToUuid, onConsumedScroll, settleToIndex]);
+    settleTo(initialPosition.kind === 'top' ? 'start' : 'end');
+  }, [rows.length, scrollToTurnUuid, initialPosition, navigateToUuid, onConsumedScroll, settleTo]);
 
   // Post-mount scrollToTurnUuid changes (a search-palette navigate while this
   // window is already open). Skips the value the mount effect already
@@ -457,17 +533,86 @@ export function ConversationView({
   // state so this never fires on the initial load (previousCount starts
   // null) - only on a genuine append after the view is already showing
   // something.
+  //
+  // A paged window keys on the newest row instead of the count: a page landing
+  // above the reader grows the count too, and must never pull them down.
+  const pagingActive = !!paging;
+  const tailUuid = paging?.reachesTail && rows.length > 0 ? rows[rows.length - 1].uuid : null;
   const previousRowCountRef = useRef<number | null>(null);
+  const previousTailUuidRef = useRef<string | null>(null);
   useEffect(() => {
     const previousCount = previousRowCountRef.current;
+    const previousTailUuid = previousTailUuidRef.current;
     previousRowCountRef.current = rows.length;
+    previousTailUuidRef.current = tailUuid;
     if (previousCount === null) return;
-    if (rows.length <= previousCount) return;
+    const appended = pagingActive
+      ? previousTailUuid !== null && tailUuid !== null && tailUuid !== previousTailUuid
+      : rows.length > previousCount;
+    if (!appended) return;
     if (!autoFollowNewMessages) return;
     if (!isAtBottomRef.current) return;
     if (isSettlingRef.current) return;
     virtualizer.scrollToEnd({ behavior: 'smooth' });
-  }, [rows.length, autoFollowNewMessages, virtualizer, isSettlingRef]);
+  }, [rows.length, tailUuid, pagingActive, autoFollowNewMessages, virtualizer, isSettlingRef]);
+
+  // A paged window: report the row under the reader, and ask for the next page
+  // once an edge is within two viewports. Never while a settle loop is moving
+  // the view; it checks again when the loop ends.
+  const checkPaging = useCallback(() => {
+    const container = containerRef.current;
+    const current = pagingRef.current;
+    if (!container || !current || isSettlingRef.current) return;
+    const viewport = container.clientHeight;
+    if (viewport <= 0) return;
+    const item = virtualizer.getVirtualItemForOffset(container.scrollTop + 1);
+    current.onReaderMove(item ? rowsRef.current[item.index]?.uuid ?? null : null);
+    if (current.topEdge === 'loading' && container.scrollTop < PREFETCH_VIEWPORTS * viewport) {
+      current.onNearEdge('top');
+    }
+    const below = container.scrollHeight - container.scrollTop - viewport;
+    if (current.bottomEdge === 'loading' && below < PREFETCH_VIEWPORTS * viewport) {
+      current.onNearEdge('bottom');
+    }
+  }, [virtualizer, isSettlingRef]);
+  useLayoutEffect(() => {
+    settleIdleRef.current = checkPaging;
+  });
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !pagingActive) return undefined;
+    let frame: number | null = null;
+    const handleScroll = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        checkPaging();
+      });
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [hasRows, pagingActive, checkPaging]);
+  // A page that landed, or an edge that changed, may leave the reader still
+  // near an edge: check again without waiting for a scroll.
+  useEffect(() => {
+    checkPaging();
+  }, [rows, topEdge, bottomEdge, checkPaging]);
+
+  // The top loading row lives in the padding, and the padding shrinks without
+  // a row changing when an empty page reaches the start. TanStack Virtual
+  // anchors only on a change of rows, so hold the content in place by hand.
+  const firstRowUuid = rows.length > 0 ? rows[0].uuid : null;
+  const previousTopRef = useRef({ paddingStart, firstRowUuid });
+  useLayoutEffect(() => {
+    const previous = previousTopRef.current;
+    previousTopRef.current = { paddingStart, firstRowUuid };
+    if (previous.firstRowUuid !== firstRowUuid || previous.paddingStart === paddingStart) return;
+    const container = containerRef.current;
+    if (container) container.scrollTop += paddingStart - previous.paddingStart;
+  }, [paddingStart, firstRowUuid]);
 
   useEffect(() => {
     return () => {
@@ -490,13 +635,56 @@ export function ConversationView({
 
   // "Jump to latest" pill: near the tail, a smooth scroll reads as a natural
   // continuation; far away, smooth-scrolling the whole distance takes an
-  // uncomfortably long time, so snap instantly instead.
+  // uncomfortably long time, so snap instantly instead. A paged window that
+  // does not reach the newest message drops its pages and opens at the tail.
   const handleJumpToLatest = useCallback(() => {
+    const current = pagingRef.current;
+    if (current && !current.reachesTail) {
+      current.onJumpToLatest();
+      return;
+    }
     const container = containerRef.current;
     const totalSize = virtualizer.getTotalSize();
     const distanceFromBottom = container ? totalSize - (container.scrollTop + container.clientHeight) : 0;
     virtualizer.scrollToEnd({ behavior: distanceFromBottom > FAR_FROM_BOTTOM_PX ? 'auto' : 'smooth' });
   }, [virtualizer]);
+
+  // The scrollbar's whole-transcript coordinate: each row's logical position,
+  // non-decreasing (a Route divider takes the row before it), mapped to and
+  // from pixels through the virtualizer's own measurements.
+  const logicalByUuid = paging?.logicalByUuid ?? null;
+  const logicalStart = paging?.logicalStart ?? 0;
+  const logicalEnd = paging?.logicalEnd ?? 0;
+  const logicalTotal = paging?.logicalTotal ?? 0;
+  const pagingTimeAt = paging?.timeAt;
+  const onFarJump = paging?.onFarJump;
+  const rowLogical = useMemo(() => {
+    if (!logicalByUuid) return null;
+    const values = new Array<number>(rows.length);
+    let previous = logicalStart;
+    for (let index = 0; index < rows.length; index += 1) {
+      previous = Math.max(previous, logicalByUuid.get(rows[index].uuid) ?? previous);
+      values[index] = previous;
+    }
+    return values;
+  }, [logicalByUuid, logicalStart, rows]);
+  const logicalScroll = useMemo((): LogicalScroll | null => {
+    if (!rowLogical || !pagingTimeAt || !onFarJump) return null;
+    const itemAt = (index: number) => virtualizer.measurementsCache[index];
+    return {
+      total: logicalTotal,
+      atOffset: (offset) => logicalAtOffset({
+        offset, rowLogical, itemAt, itemForOffset: (value) => virtualizer.getVirtualItemForOffset(value), logicalEnd,
+      }),
+      offsetAt: (logical) => offsetAtLogical({
+        logical, rowLogical, itemAt, logicalEnd,
+        startLoaded: topEdge === null, endLoaded: bottomEdge === null,
+        maxOffset: Math.max(0, virtualizer.getTotalSize() - (containerRef.current?.clientHeight ?? 0)),
+      }),
+      timeAt: pagingTimeAt,
+      onFarRelease: onFarJump,
+    };
+  }, [rowLogical, pagingTimeAt, onFarJump, virtualizer, logicalTotal, logicalEnd, topEdge, bottomEdge]);
 
   // source === 'none': no content at all. Explain why per unavailable reason.
   if (source === 'none') {
@@ -552,6 +740,12 @@ export function ConversationView({
           data-testid="conversation-scroll-container"
         >
           <div style={{ height: totalSize, position: 'relative', width: '100%' }}>
+            {paging && topEdge && (
+              <EdgeRow edge="top" status={topEdge} top={0} onRetry={paging.onRetry} onJumpToStart={paging.onJumpToStart} />
+            )}
+            {paging && bottomEdge && (
+              <EdgeRow edge="bottom" status={bottomEdge} top={totalSize - EDGE_ROW_PX} onRetry={paging.onRetry} />
+            )}
             {virtualItems.map((virtualRow) => {
               const row = rows[virtualRow.index];
               const isHighlighted = highlightedUuid === row.uuid;
@@ -570,8 +764,10 @@ export function ConversationView({
               // and bottom edges match that rhythm. The right side is handled
               // separately (see rowStyle below) - it must clear the overlaid
               // scrollbar rail, not just match the left inset.
-              const gapClass = `pl-3 ${virtualRow.index === 0 ? 'pt-3' : 'pt-1.5'} ${
-                virtualRow.index === rows.length - 1 ? 'pb-3' : 'pb-1.5'
+              // A paged window's edge row stands in for the full gap, so a row
+              // keeps its own padding when a page lands above or below it.
+              const gapClass = `pl-3 ${virtualRow.index === 0 && !topEdge ? 'pt-3' : 'pt-1.5'} ${
+                virtualRow.index === rows.length - 1 && !bottomEdge ? 'pb-3' : 'pb-1.5'
               }`;
               // Right padding clears the overlaid scrollbar rail with the same
               // visual gap the thumb keeps from the window's own right edge, so
@@ -633,8 +829,59 @@ export function ConversationView({
           rows={rows}
           onJumpToLatest={handleJumpToLatest}
           onShowRailChange={setHasScrollbar}
+          logical={logicalScroll}
+          windowReachesTail={paging ? paging.reachesTail : true}
         />
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The row at a paged window's edge, in the virtualizer's padding: the next
+ * page is loading there, or it failed and can be tried again. The top one also
+ * offers Jump to start.
+ */
+function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
+  edge: 'top' | 'bottom';
+  status: EdgeStatus;
+  top: number;
+  onRetry: (edge: 'top' | 'bottom') => void;
+  onJumpToStart?: () => void;
+}) {
+  const failed = status === 'error';
+  let label: string;
+  if (edge === 'top') label = failed ? "Couldn't load earlier messages" : 'Loading earlier messages';
+  else label = failed ? "Couldn't load later messages" : 'Loading later messages';
+  return (
+    <div
+      className="absolute left-0 flex w-full items-center justify-center gap-2 text-xs text-fg-muted"
+      style={{ top, height: EDGE_ROW_PX }}
+      data-testid={`conversation-edge-${edge}`}
+      data-status={status}
+    >
+      {!failed && <Loader2 size={13} className="animate-spin" />}
+      <span>{label}</span>
+      {failed && (
+        <button
+          type="button"
+          onClick={() => onRetry(edge)}
+          className="text-accent hover:underline"
+          data-testid={`conversation-edge-${edge}-retry`}
+        >
+          Retry
+        </button>
+      )}
+      {!failed && onJumpToStart && (
+        <button
+          type="button"
+          onClick={onJumpToStart}
+          className="text-accent hover:underline"
+          data-testid="conversation-edge-jump-to-start"
+        >
+          Jump to start
+        </button>
       )}
     </div>
   );

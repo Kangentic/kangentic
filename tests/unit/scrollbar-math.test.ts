@@ -3,6 +3,8 @@ import {
   computeThumbGeometry,
   thumbPositionToOffset,
   isScrolledToBottom,
+  logicalAtOffset,
+  offsetAtLogical,
   MIN_THUMB_SIZE_PX,
   BOTTOM_EPSILON_PX,
 } from '../../src/renderer/components/conversation/scrollbar-math';
@@ -86,6 +88,35 @@ describe('isScrolledToBottom', () => {
   it('honors a custom epsilon override', () => {
     expect(isScrolledToBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 600 }, 150)).toBe(true);
     expect(isScrolledToBottom({ scrollTop: 300, scrollHeight: 1000, clientHeight: 600 }, 50)).toBe(false);
+  });
+});
+
+describe('logicalAtOffset and offsetAtLogical (a paged window)', () => {
+  // Ten rows of 100px each; row i sits at logical 10*i, the window ends at 100.
+  const rowLogical = Array.from({ length: 10 }, (_, index) => index * 10);
+  const itemAt = (index: number) => (index >= 0 && index < 10 ? { index, start: index * 100, size: 100 } : undefined);
+  const itemForOffset = (offset: number) => itemAt(Math.min(9, Math.max(0, Math.floor(offset / 100))));
+  const mapping = { rowLogical, itemAt, logicalEnd: 100 };
+
+  it('interpolates a pixel offset through the row it lands in', () => {
+    expect(logicalAtOffset({ ...mapping, itemForOffset, offset: 0 })).toBe(0);
+    expect(logicalAtOffset({ ...mapping, itemForOffset, offset: 150 })).toBe(15);
+    expect(logicalAtOffset({ ...mapping, itemForOffset, offset: 5000 })).toBe(100);
+  });
+
+  it('maps a logical position back to its pixel offset', () => {
+    const offset = offsetAtLogical({ ...mapping, logical: 15, startLoaded: false, endLoaded: false, maxOffset: 400 });
+    expect(offset).toBe(150);
+    expect(logicalAtOffset({ ...mapping, itemForOffset, offset: offset! })).toBe(15);
+  });
+
+  it('answers null past an edge with more to load, and clamps past one with none', () => {
+    const before = { ...mapping, logical: -5, maxOffset: 400 };
+    expect(offsetAtLogical({ ...before, startLoaded: false, endLoaded: false })).toBeNull();
+    expect(offsetAtLogical({ ...before, startLoaded: true, endLoaded: false })).toBe(0);
+    const after = { ...mapping, logical: 120, maxOffset: 400 };
+    expect(offsetAtLogical({ ...after, startLoaded: false, endLoaded: false })).toBeNull();
+    expect(offsetAtLogical({ ...after, startLoaded: false, endLoaded: true })).toBe(400);
   });
 });
 

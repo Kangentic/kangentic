@@ -16,13 +16,41 @@
  * rather than the virtualizer's own reactive fields - the virtualizer sets
  * those same DOM properties under the hood, so this stays fully decoupled
  * from @tanstack/react-virtual's API surface while remaining exact.
+ *
+ * A paged window (`logical`) sizes and places the thumb against the WHOLE
+ * transcript, not the rows loaded: the container still scrolls natively, and
+ * its offsets map to and from the transcript's logical positions. A drag
+ * inside the loaded rows scrolls them; a drag past them shows placeholder rows
+ * and the target's date, and loads the page there on release.
  */
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { ArrowDown, Hash } from 'lucide-react';
-import { formatTime } from '../../lib/datetime';
+import { formatMonthDayTime, formatTime } from '../../lib/datetime';
 import { computeThumbGeometry, thumbPositionToOffset, isScrolledToBottom, FAR_FROM_BOTTOM_PX, type ScrollGeometry } from './scrollbar-math';
+import { ConversationSkeleton } from './ConversationSkeleton';
 import type { DisplayRow } from './display-rows';
+
+/** A paged window's drag: the logical position at the thumb's top, whether it
+ *  is past the loaded rows, and the viewport's logical size when it started. */
+interface LogicalDrag {
+  logical: number;
+  far: boolean;
+  viewportLogical: number;
+}
+
+/** A paged window's whole-transcript coordinate, as the scrollbar reads it. */
+export interface LogicalScroll {
+  total: number;
+  /** The logical position at a pixel offset of the scroll content. */
+  atOffset: (offset: number) => number;
+  /** The pixel offset of a logical position, or null outside the loaded rows. */
+  offsetAt: (logical: number) => number | null;
+  /** The time at a logical position, or null where there are no timestamps. */
+  timeAt: (logical: number) => number | null;
+  /** A drag released past the loaded rows: load the page there. */
+  onFarRelease: (logical: number) => void;
+}
 
 interface ConversationScrollbarProps {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -32,6 +60,10 @@ interface ConversationScrollbarProps {
    *  viewport), so ConversationView can reclaim the row's extra right-side
    *  clearance when there's no scrollbar to clear. */
   onShowRailChange?: (showRail: boolean) => void;
+  /** Set for a paged window: the thumb covers the whole transcript. */
+  logical?: LogicalScroll | null;
+  /** False when the loaded rows stop short of the newest message: Jump to latest shows. */
+  windowReachesTail?: boolean;
 }
 
 /** Flush to the window's right edge (no inset gap) with a visible track
@@ -58,11 +90,22 @@ export const ROW_LEFT_INSET_PX = 12;
  *  instead of duplicating the rail's own geometry as a second magic number. */
 export const CONTENT_RIGHT_CLEARANCE_PX = (RAIL_WIDTH_PX - THUMB_MARGIN_PX) + ROW_LEFT_INSET_PX;
 
-export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onShowRailChange }: ConversationScrollbarProps) {
+export function ConversationScrollbar({
+  containerRef,
+  rows,
+  onJumpToLatest,
+  onShowRailChange,
+  logical = null,
+  windowReachesTail = true,
+}: ConversationScrollbarProps) {
   const [geometry, setGeometry] = useState<ScrollGeometry>({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [isHoveringRail, setIsHoveringRail] = useState(false);
-  const dragStateRef = useRef<{ pointerId: number; startClientY: number; startThumbTop: number } | null>(null);
+  // A paged window's drag: the logical position under the thumb, and whether
+  // it is past the loaded rows (a far drag).
+  const [dragLogical, setDragLogical] = useState<LogicalDrag | null>(null);
+  const dragLogicalRef = useRef<LogicalDrag | null>(null);
+  const dragStateRef = useRef<{ pointerId: number; startClientY: number; startThumbTop: number; viewportLogical: number } | null>(null);
   const scrollReadRafRef = useRef<number | null>(null);
   const dragApplyRafRef = useRef<number | null>(null);
   const pendingDragOffsetRef = useRef<number | null>(null);
@@ -97,12 +140,27 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
   }, [containerRef, readGeometry, rows.length]);
 
   const railSize = geometry.clientHeight;
-  const { thumbTop, thumbSize } = computeThumbGeometry({
-    scrollOffset: geometry.scrollTop,
-    totalSize: geometry.scrollHeight,
-    viewportSize: railSize,
-    railSize,
-  });
+  // A paged window measures in logical units: where the viewport's top and
+  // bottom fall in the whole transcript.
+  const logicalTop = logical ? logical.atOffset(geometry.scrollTop) : 0;
+  const viewportLogical = logical
+    ? Math.max(1, logical.atOffset(geometry.scrollTop + geometry.clientHeight) - logicalTop)
+    : 0;
+  // A far drag scrolls nothing, so its thumb follows the pointer's target.
+  const farDrag = logical && dragLogical?.far ? dragLogical : null;
+  const { thumbTop, thumbSize } = logical
+    ? computeThumbGeometry({
+      scrollOffset: farDrag ? farDrag.logical : logicalTop,
+      totalSize: logical.total,
+      viewportSize: farDrag ? farDrag.viewportLogical : viewportLogical,
+      railSize,
+    })
+    : computeThumbGeometry({
+      scrollOffset: geometry.scrollTop,
+      totalSize: geometry.scrollHeight,
+      viewportSize: railSize,
+      railSize,
+    });
 
   const flushDragOffset = useCallback(() => {
     dragApplyRafRef.current = null;
@@ -115,36 +173,57 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragStateRef.current = { pointerId: event.pointerId, startClientY: event.clientY, startThumbTop: thumbTop };
+    dragStateRef.current = { pointerId: event.pointerId, startClientY: event.clientY, startThumbTop: thumbTop, viewportLogical };
     setIsDragging(true);
-  }, [thumbTop]);
+  }, [thumbTop, viewportLogical]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const dragState = dragStateRef.current;
     if (!dragState || dragState.pointerId !== event.pointerId) return;
     const deltaY = event.clientY - dragState.startClientY;
-    const offset = thumbPositionToOffset({
-      thumbTop: dragState.startThumbTop + deltaY,
-      thumbSize,
-      totalSize: geometry.scrollHeight,
-      viewportSize: railSize,
-      railSize,
-    });
+    let offset: number | null;
+    if (logical) {
+      // The viewport's logical size is held from the drag's start, so a page
+      // landing mid-drag does not resize the thumb under the pointer.
+      const target = thumbPositionToOffset({
+        thumbTop: dragState.startThumbTop + deltaY,
+        thumbSize,
+        totalSize: logical.total,
+        viewportSize: dragState.viewportLogical,
+        railSize,
+      });
+      offset = logical.offsetAt(target);
+      dragLogicalRef.current = { logical: target, far: offset === null, viewportLogical: dragState.viewportLogical };
+      setDragLogical(dragLogicalRef.current);
+    } else {
+      offset = thumbPositionToOffset({
+        thumbTop: dragState.startThumbTop + deltaY,
+        thumbSize,
+        totalSize: geometry.scrollHeight,
+        viewportSize: railSize,
+        railSize,
+      });
+    }
     pendingDragOffsetRef.current = offset;
-    if (dragApplyRafRef.current === null) {
+    if (offset !== null && dragApplyRafRef.current === null) {
       dragApplyRafRef.current = requestAnimationFrame(flushDragOffset);
     }
-  }, [thumbSize, geometry.scrollHeight, railSize, flushDragOffset]);
+  }, [logical, thumbSize, geometry.scrollHeight, railSize, flushDragOffset]);
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragStateRef.current?.pointerId !== event.pointerId) return;
     dragStateRef.current = null;
     setIsDragging(false);
+    // Released past the loaded rows: load the page there.
+    const released = dragLogicalRef.current;
+    dragLogicalRef.current = null;
+    setDragLogical(null);
+    if (released?.far && logical) logical.onFarRelease(released.logical);
     if (dragApplyRafRef.current !== null) {
       cancelAnimationFrame(dragApplyRafRef.current);
       flushDragOffset();
     }
-  }, [flushDragOffset]);
+  }, [logical, flushDragOffset]);
 
   useEffect(() => {
     return () => {
@@ -155,7 +234,9 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
 
   const distanceFromBottom = geometry.scrollHeight - (geometry.scrollTop + geometry.clientHeight);
   const isAtBottom = isScrolledToBottom(geometry);
-  const showRail = geometry.scrollHeight > railSize && railSize > 0;
+  // A paged window always has more transcript than it shows, so its track shows.
+  const showRail = railSize > 0 && (logical !== null || geometry.scrollHeight > railSize);
+  const dragLabelTs = logical && dragLogical ? logical.timeAt(dragLogical.logical) : null;
 
   useEffect(() => {
     onShowRailChange?.(showRail);
@@ -180,6 +261,11 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
 
   return (
     <>
+      {farDrag && (
+        // Past the loaded rows: placeholder rows stand in until the release
+        // loads the page there.
+        <ConversationSkeleton labelTs={null} className="absolute top-0 bottom-0 left-0" style={{ right: RAIL_WIDTH_PX }} />
+      )}
       {showRail && (
         <div
           className={`absolute top-0 bottom-0 right-0 select-none transition-colors duration-150 ${
@@ -201,7 +287,18 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
             style={{ top: thumbTop, height: thumbSize, right: THUMB_MARGIN_PX }}
             data-testid="conversation-scrollbar-thumb"
           />
-          {isDragging && anchoredRow && (
+          {isDragging && logical && dragLabelTs !== null && (
+            // A paged window's label: the date and time under the thumb, from
+            // the whole transcript rather than the rows loaded.
+            <div
+              className="absolute right-full mr-2 whitespace-nowrap rounded-md border border-edge bg-surface-raised px-2 py-1.5 text-[11px] text-fg shadow-lg"
+              style={{ top: Math.max(0, thumbTop) }}
+              data-testid="conversation-scrollbar-bubble"
+            >
+              {formatMonthDayTime(dragLabelTs)}
+            </div>
+          )}
+          {isDragging && !logical && anchoredRow && (
             <div
               className="absolute right-full mr-2 whitespace-nowrap rounded-md border border-edge bg-surface-raised px-2 py-1.5 text-[11px] text-fg shadow-lg flex flex-col gap-1"
               style={{ top: Math.max(0, thumbTop) }}
@@ -216,13 +313,13 @@ export function ConversationScrollbar({ containerRef, rows, onJumpToLatest, onSh
           )}
         </div>
       )}
-      {!isAtBottom && geometry.scrollHeight > 0 && (
+      {(!isAtBottom || !windowReachesTail) && geometry.scrollHeight > 0 && (
         <button
           type="button"
           onClick={handleJumpClick}
           className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full border border-edge bg-surface-raised px-3 py-1.5 text-xs text-fg-secondary shadow-lg hover:bg-surface-hover transition-colors"
           data-testid="conversation-jump-to-latest"
-          data-far={distanceFromBottom > FAR_FROM_BOTTOM_PX ? 'true' : undefined}
+          data-far={distanceFromBottom > FAR_FROM_BOTTOM_PX || !windowReachesTail ? 'true' : undefined}
         >
           <ArrowDown size={13} />
           Jump to latest

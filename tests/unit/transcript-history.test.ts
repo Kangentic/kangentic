@@ -268,6 +268,25 @@ describe('readHistoryTimeline and locateHistoryTurn', () => {
     expect(byWalk.status).toBe('found');
   });
 
+  it('takes a hit with only its uuid to the conversation and time its chunk records', async () => {
+    const { database } = fixture({ turns: 30 });
+    const insertChunk = (agentSessionId: string) => database.prepare(
+      `INSERT INTO memory_chunks (doc_id, seq, session_id, task_id, agent_session_id, role, text, content_hash,
+         token_estimate, ts_start, turn_uuid_start, created_at)
+       VALUES (?, 0, 'session-1', 'task-1', ?, 'user', 'question 3', 'hash', 3, ?, 'user-3', ?)`,
+    ).run(`doc-${agentSessionId}`, agentSessionId, Date.UTC(2026, 8, 30, 12, 3, 0), new Date().toISOString());
+
+    // A chunk naming a conversation with no transcript is authoritative: the
+    // task's own file is not walked, which shows the lookup was used at all.
+    insertChunk('conversation-with-no-file');
+    expect(await locateHistoryTurn(database, { sessionId: 'session-1', turnUuid: 'user-3' })).toEqual({ status: 'not_found' });
+
+    database.prepare('DELETE FROM memory_chunks').run();
+    insertChunk(AGENT_SESSION_ID);
+    const found = await locateHistoryTurn(database, { sessionId: 'session-1', turnUuid: 'user-3' });
+    expect(found.status === 'found' && found.page.entries.some((entry) => entry.uuid === 'user-3')).toBe(true);
+  });
+
   it('answers not_found for a turn no conversation holds', async () => {
     const { database } = fixture({ turns: 10 });
     expect(await locateHistoryTurn(database, { sessionId: 'session-1', turnUuid: 'missing' })).toEqual({ status: 'not_found' });

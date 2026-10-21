@@ -209,6 +209,21 @@ export function sliceConversationByRoute(
 }
 
 /**
+ * A column's stays as the time each covers, oldest first: a stay runs until the
+ * next stay of any column begins, as `sliceConversationByRoute` assigns turns.
+ * A paged window uses them to load a column's own history and skip the rest.
+ */
+export function columnTimeRanges(route: ReadonlyArray<TaskReportRouteColumn>, swimlaneId: string): Array<{ start: number; end: number }> {
+  const stays = staysOf(route);
+  const ranges: Array<{ start: number; end: number }> = [];
+  stays.forEach((stay, index) => {
+    if (stay.column.swimlaneId !== swimlaneId) return;
+    ranges.push({ start: stay.startMs, end: stays[index + 1]?.startMs ?? Infinity });
+  });
+  return ranges;
+}
+
+/**
  * The uuid of the first turn of one stay in its column's tab, the place a
  * repeat-stay row on the Route card opens at. Null when that stay has no turns.
  */

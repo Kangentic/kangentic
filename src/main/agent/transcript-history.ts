@@ -279,7 +279,13 @@ function positionForTime(samples: Array<{ position: number; ts: number }>, ts: n
 
 /** Bounds on the fallback walk for a turn the timeline did not land on. */
 const LOCATE_WALK_MAX_BYTES = 512 * 1024 * 1024;
-const LOCATE_WALK_MAX_MS = 4_000;
+/**
+ * One deadline for a whole locate call, every conversation together. The queue
+ * lets a read start up to `maxWaitMs` (5 s) late and main gives the call 15 s,
+ * so 6 s of work plus one page read past the deadline stays well inside it. A
+ * call that ran into main's timer would kill the worker.
+ */
+const LOCATE_MAX_MS = 6_000;
 /** Conversations of a task tried when a hit names none. */
 const LOCATE_MAX_CONVERSATIONS = 3;
 
@@ -297,6 +303,32 @@ function chunkFacts(db: Database.Database, chunkId: number): { conversationId: s
     const row = db.prepare('SELECT agent_session_id AS conversationId, ts_start AS ts FROM memory_chunks WHERE id = ?')
       .get(chunkId) as { conversationId: string | null; ts: number | null } | undefined;
     return row?.conversationId ? { conversationId: row.conversationId, ts: row.ts } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The conversation and time the index records for a turn, for a hit that
+ * carries only its uuid (the palette hands the window nothing else). A chunk
+ * opens at the turn a hit lands on, so its first turn names it. The uuid column
+ * has no index and the table holds every chunk's text, so the read goes through
+ * `idx_memory_chunks_session` over the task's own sessions.
+ */
+function turnFacts(db: Database.Database, sessionId: string, turnUuid: string): { conversationId: string; ts: number | null } | null {
+  try {
+    const anchor = findTranscriptRecord(db, sessionId)?.record;
+    if (!anchor) return null;
+    const sessionIds = (anchor.task_id ? new SessionRepository(db).listForTaskNewestFirst(anchor.task_id) : [anchor])
+      .map((session) => session.id);
+    if (sessionIds.length === 0) return null;
+    const row = db.prepare(
+      `SELECT agent_session_id AS conversationId, ts_start AS ts FROM memory_chunks
+       WHERE session_id IN (${sessionIds.map(() => '?').join(', ')})
+         AND turn_uuid_start = ? AND agent_session_id IS NOT NULL
+       LIMIT 1`,
+    ).get(...sessionIds, turnUuid) as { conversationId: string; ts: number | null } | undefined;
+    return row ?? null;
   } catch {
     return null;
   }
@@ -328,13 +360,18 @@ function holds(page: TranscriptHistoryPage | null, turnUuid: string): boolean {
  * budget. Never throws.
  */
 export async function locateHistoryTurn(db: Database.Database, request: LocateRequest): Promise<TranscriptLocateResponse> {
-  const fromChunk = request.chunkId != null ? chunkFacts(db, request.chunkId) : null;
+  const startedAt = Date.now();
+  const outOfTime = (): boolean => Date.now() - startedAt >= LOCATE_MAX_MS;
+  const fromChunk = request.chunkId != null
+    ? chunkFacts(db, request.chunkId)
+    : turnFacts(db, request.sessionId, request.turnUuid);
   const turnTs = request.turnTs ?? fromChunk?.ts ?? null;
   const conversations = fromChunk
     ? [fromChunk.conversationId]
     : taskConversations(db, request.sessionId).slice(0, LOCATE_MAX_CONVERSATIONS);
 
   for (const conversationId of conversations) {
+    if (outOfTime()) break;
     const resolved = await resolveSessionTranscript(db, conversationId);
     if (!resolved) continue;
     if (resolved.entries.some((entry) => entry.uuid === request.turnUuid)) return { status: 'in_tail' };
@@ -365,9 +402,8 @@ export async function locateHistoryTurn(db: Database.Database, request: LocateRe
     // the tail one page at a time, within a budget.
     const marker = resolved.entries.find((entry) => entry.kind === 'system' && entry.subtype === 'truncated' && entry.earlierHistory);
     let cursor = marker?.kind === 'system' ? marker.earlierHistory?.cursor : undefined;
-    const startedAt = Date.now();
     let walked = 0;
-    while (cursor && walked < LOCATE_WALK_MAX_BYTES && Date.now() - startedAt < LOCATE_WALK_MAX_MS) {
+    while (cursor && walked < LOCATE_WALK_MAX_BYTES && !outOfTime()) {
       const page = pageOf(await readHistoryPage(db, { conversationId, direction: 'before', cursor, untilPosition: until }));
       if (!page) break;
       if (holds(page, request.turnUuid)) return { status: 'found', page };
