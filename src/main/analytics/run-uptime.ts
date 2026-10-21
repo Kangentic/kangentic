@@ -192,6 +192,31 @@ export function previousRunLastAliveAt(): string | null {
   return previousRun?.lastAliveAt ?? null;
 }
 
+/**
+ * One local log line naming how the PREVIOUS run ended, e.g.
+ * `[startup] previous run: exit=abrupt uptime=4h12m lastAliveAt=<iso>`.
+ *
+ * Reads the record initRunUptimeTracking took before it started this run's,
+ * so it can be called any time after that. Logged by a dev build only
+ * (index.ts), to tell a closed terminal from a crash. A crash shows an
+ * `abrupt` exit with the last checkpoint time, beside a log with no
+ * `[SHUTDOWN]` lines.
+ */
+export function previousRunLogLine(): string {
+  if (!previousRun) return '[startup] previous run: none';
+  const lastAliveAt = previousRun.lastAliveAt ?? 'unknown';
+  return `[startup] previous run: exit=${previousRun.exit} uptime=${formatUptimeSeconds(previousRun.uptimeSeconds)} lastAliveAt=${lastAliveAt}`;
+}
+
+function formatUptimeSeconds(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  if (hours > 0) return `${hours}h${minutes}m`;
+  if (minutes > 0) return `${minutes}m${seconds}s`;
+  return `${seconds}s`;
+}
+
 /** Bucket a run's uptime so the dashboard reads as a distribution. */
 export function bucketUptimeSeconds(seconds: number): string {
   if (seconds < 60) return '<1m';

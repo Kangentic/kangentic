@@ -1,8 +1,8 @@
 /**
  * Executing unit tests for startHardShutdownFailsafe (src/main/shutdown.ts).
  *
- * tests/unit/before-quit-drain-wiring.test.ts pins that src/main/index.ts contains the literal
- * source text `startHardShutdownFailsafe(() => recordRunExit('failsafe'))`, but it is a
+ * tests/unit/before-quit-drain-wiring.test.ts pins that src/main/index.ts arms the failsafe with
+ * a callback that runs `recordRunExit('failsafe')`, but it is a
  * static source-text scan by design (see that file's own header) - it never imports
  * startHardShutdownFailsafe, never trips the timer, and never checks that the callback ran.
  * This file drives the real function on fake timers instead, so a deleted or throwing

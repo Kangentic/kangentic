@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import { relaunchApp, devRestartFileFrom, isRestartRequested } from './app-relaunch';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
@@ -38,7 +39,7 @@ const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId, HEARTBEAT_INTERVAL_MS } from './analytics/analytics';
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
-import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
+import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
 import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
@@ -954,6 +955,9 @@ let mcpServerHandle: McpHttpServerHandle | null = null;
 let mcpServerSettled = false;
 let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
+// Dev only: the previous run's ending is logged once per launch, not again for
+// a window rebuilt on macOS activate or a second-instance launch.
+let previousRunLogged = false;
 let stopHostMemorySampler: (() => void) | null = null;
 // DESKTOP-16 bounded-reload guard for the main window's render-process-gone
 // handler below. See renderer-recovery.ts for why the decision logic lives
@@ -1562,6 +1566,16 @@ const createWindow = () => {
       return null;
     }
   })();
+
+  // Dev only: say how the previous run ended, in the local log. Waits for the
+  // boot's project open so the line lands in that project's log, beside the
+  // previous run's [SHUTDOWN] lines; with no project it goes to the app log.
+  // Production builds drop it via __KANGENTIC_DEV__ dead-code elimination.
+  if (__KANGENTIC_DEV__ && !previousRunLogged) {
+    previousRunLogged = true;
+    const logPreviousRun = () => console.log(previousRunLogLine());
+    void preloadPromise.then(logPreviousRun, logPreviousRun);
+  }
 
   mainWindow.webContents.on('did-finish-load', async () => {
     mark('did_finish_load');
@@ -2495,8 +2509,14 @@ function performShutdown(options?: PerformShutdownOptions): boolean {
 
   // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything.
   // It overwrites the clean exit recorded below, so a quit that had to be
-  // force-killed reports as `failsafe` on the next launch, not `clean`.
-  startHardShutdownFailsafe(() => recordRunExit('failsafe'));
+  // force-killed reports as `failsafe` on the next launch, not `clean`. A dev
+  // build also writes the queued log lines, `[SHUTDOWN] hard-failsafe:fired`
+  // among them. The kill takes the process down before its process.exit, so
+  // no 'exit' listener runs on this path.
+  startHardShutdownFailsafe(() => {
+    recordRunExit('failsafe');
+    if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
+  });
 
   // The only analytics in the quit path is this synchronous disk write: the
   // next launch's app_launch reports this run's duration and that it ended
@@ -2539,10 +2559,18 @@ app.on('before-quit', createBeforeQuitHandler({
   requestQuit: () => app.quit(),
 }));
 
-// Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
+// Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit.
+//
+// Log lines are written on a setImmediate (diagnostics/async-file-queue.ts)
+// that process.exit never reaches, so everything this shutdown logs, from
+// `[SHUTDOWN] cleanup:start` to `cleanup:done`, used to be lost and a closed
+// terminal read like a crash. A dev build writes them synchronously first.
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    if (performShutdown()) process.exit(0);
+    if (performShutdown()) {
+      if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
+      process.exit(0);
+    }
   });
 }
 
@@ -2557,5 +2585,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 // statement rather than a third entry in the tuple above, whose literal
 // before-quit-drain-wiring.test.ts anchors on.
 process.on('SIGHUP', () => {
-  if (performShutdown()) process.exit(0);
+  if (performShutdown()) {
+    if (__KANGENTIC_DEV__) drainQueuedAppendsSync();
+    process.exit(0);
+  }
 });
+
+// Dev-only backstop for any other process.exit. An 'exit' listener runs
+// synchronously, so the queued lines can still be written. After the signal
+// handlers' own drain it finds nothing left.
+if (__KANGENTIC_DEV__) process.on('exit', () => drainQueuedAppendsSync());

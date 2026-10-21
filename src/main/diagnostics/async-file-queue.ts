@@ -28,13 +28,32 @@ import * as path from 'node:path';
  * per-path flush task, the rename observes every prior append's effect on
  * disk (no in-flight write can land in the rotated `.1` copy), which is why
  * the rotating writer no longer needs synchronous I/O.
+ *
+ * Exit drain: a process that exits in the same tick it logs (the signal
+ * handlers in index.ts call `process.exit` right after the shutdown cleanup)
+ * never reaches the `setImmediate`, so those lines were lost.
+ * `drainQueuedAppendsSync` writes whatever is still queued, synchronously, for
+ * a dev build to call on the way out. A flush registers the batch it took off
+ * the queue in `inFlightBatches` until its append settles, so the drain can
+ * write that batch ahead of the lines queued after it.
  */
 
 /** Suffix for the rotated-out copy of a size-capped file (`<file>.1`). */
 export const ROTATED_FILE_SUFFIX = '.1';
 
+/**
+ * A batch a flush took off its queue and has not finished appending. The
+ * drain sets `claimedByDrain` when it writes the batch itself, and the flush
+ * then skips its own append.
+ */
+interface InFlightBatch {
+  text: string;
+  claimedByDrain: boolean;
+}
+
 const queues = new Map<string, string[]>();
 const pendingFlush = new Map<string, Promise<void>>();
+const inFlightBatches = new Map<string, InFlightBatch>();
 const dirReady = new Set<string>();
 // Rotation bookkeeping, populated only for paths written via
 // `queueAppendWithRotation`. `rotationMaxBytes` holds the per-file cap;
@@ -154,7 +173,8 @@ async function flush(filePath: string): Promise<void> {
   while (true) {
     const queue = queues.get(filePath);
     if (!queue || queue.length === 0) return;
-    const batch = queue.splice(0, queue.length).join('');
+    const batch: InFlightBatch = { text: queue.splice(0, queue.length).join(''), claimedByDrain: false };
+    inFlightBatches.set(filePath, batch);
     try {
       const directory = path.dirname(filePath);
       if (!dirReady.has(directory)) {
@@ -162,16 +182,72 @@ async function flush(filePath: string): Promise<void> {
         dirReady.add(directory);
       }
       await ensureRotationCounterSeeded(filePath);
-      await maybeRotate(filePath, batch.length);
-      await fs.promises.appendFile(filePath, batch, 'utf-8');
-      if (rotationMaxBytes.has(filePath)) {
-        rotationBytes.set(filePath, (rotationBytes.get(filePath) ?? 0) + batch.length);
+      // The exit drain may have written this batch during the awaits above.
+      if (batch.claimedByDrain) continue;
+      await maybeRotate(filePath, batch.text.length);
+      if (batch.claimedByDrain) continue;
+      await fs.promises.appendFile(filePath, batch.text, 'utf-8');
+      if (!batch.claimedByDrain && rotationMaxBytes.has(filePath)) {
+        rotationBytes.set(filePath, (rotationBytes.get(filePath) ?? 0) + batch.text.length);
       }
     } catch {
       // Best-effort: drop this batch. Disk full / permissions / locked
       // file are non-fatal for diagnostic writers. Continue draining the
       // queue in case a subsequent batch targets a different code path.
+    } finally {
+      if (inFlightBatches.get(filePath) === batch) inFlightBatches.delete(filePath);
     }
+  }
+}
+
+/**
+ * Write everything still queued, synchronously, before the process exits.
+ *
+ * For an exit that never turns the event loop again: the signal handlers'
+ * `process.exit`, a `process.on('exit')` listener, and the hard failsafe's
+ * kill. Call it from a dev build only (`__KANGENTIC_DEV__`); the steady-state
+ * path stays async because a per-call `appendFileSync` cost 5-50 ms on
+ * Windows. Here it runs once, with nothing left to block.
+ *
+ * Per file, a batch a flush already took off the queue is written first, then
+ * the queued lines, so nothing lands after a line queued later. The flush then
+ * skips that batch. One case cannot be fully ordered: a batch whose
+ * `fs.promises.appendFile` has already handed its write to the thread pool
+ * cannot be recalled. The drain writes it again ahead of the queued lines, so
+ * none of its lines are lost and one copy always precedes the later lines, but
+ * the thread pool's copy can land as well, as a duplicate either right before
+ * the drain's write or after the later lines.
+ *
+ * Ignores the rotation cap for this one write, and drops the in-memory byte
+ * count so a later flush reseeds it from the file. Never throws.
+ */
+export function drainQueuedAppendsSync(): void {
+  const filePaths = new Set<string>([...inFlightBatches.keys(), ...queues.keys()]);
+  for (const filePath of filePaths) {
+    let text = '';
+    const inFlight = inFlightBatches.get(filePath);
+    if (inFlight) {
+      inFlight.claimedByDrain = true;
+      inFlightBatches.delete(filePath);
+      text += inFlight.text;
+    }
+    const queue = queues.get(filePath);
+    if (queue && queue.length > 0) text += queue.splice(0, queue.length).join('');
+    if (text.length === 0) continue;
+    // Synchronous on purpose. The process exits right after, so an async
+    // write would never run. Best-effort like the flush; inside the try, so a
+    // failure drops this file's lines and the drain moves on to the next file.
+    try {
+      const directory = path.dirname(filePath);
+      if (!dirReady.has(directory)) {
+        fs.mkdirSync(directory, { recursive: true });
+        dirReady.add(directory);
+      }
+      fs.appendFileSync(filePath, text, 'utf-8');
+    } catch {
+      // This runs on the way out, with nothing left to report to.
+    }
+    rotationBytes.delete(filePath);
   }
 }
 
@@ -191,6 +267,7 @@ export async function flushAllForTest(): Promise<void> {
 export function resetForTest(): void {
   queues.clear();
   pendingFlush.clear();
+  inFlightBatches.clear();
   dirReady.clear();
   rotationMaxBytes.clear();
   rotationBytes.clear();

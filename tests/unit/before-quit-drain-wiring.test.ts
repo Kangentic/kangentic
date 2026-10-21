@@ -114,6 +114,21 @@ function sliceBalancedBlock(source: string, searchFromIndex: number): string {
   throw new Error('sliceBalancedBlock: unbalanced braces after searchFromIndex');
 }
 
+/**
+ * A signal route runs the synchronous shutdown and then process.exit()s with
+ * no loop turn. Log lines are written on a setImmediate that exit never
+ * reaches, so a dev build must drain the queue in between, or the shutdown it
+ * just ran leaves no [SHUTDOWN] lines and a closed terminal reads like a crash.
+ */
+function expectShutdownThenDrainThenExit(handlerRegion: string, routeName: string): void {
+  const shutdownIndex = handlerRegion.indexOf('if (performShutdown()) {');
+  const drainIndex = handlerRegion.indexOf('if (__KANGENTIC_DEV__) drainQueuedAppendsSync();');
+  const exitIndex = handlerRegion.indexOf('process.exit(0);');
+  expect(shutdownIndex, `${routeName} must run the synchronous shutdown`).toBeGreaterThan(-1);
+  expect(drainIndex, `${routeName} must drain the log queue in a dev build`).toBeGreaterThan(shutdownIndex);
+  expect(exitIndex, `${routeName} must exit with no loop turn, after the drain`).toBeGreaterThan(drainIndex);
+}
+
 function makeDeferredDrain() {
   let resolveDrain: (result: PtyExitDrainResult) => void = () => undefined;
   let rejectDrain: (error: Error) => void = () => undefined;
@@ -503,8 +518,9 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
   });
 
   it('keeps the signal path synchronous (SIGINT/SIGTERM exit without running the loop)', () => {
-    const signalBlock = INDEX_SOURCE.slice(INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)"), INDEX_SOURCE.length);
-    expect(signalBlock).toContain('if (performShutdown()) process.exit(0);');
+    const signalStart = INDEX_SOURCE.indexOf("for (const signal of ['SIGINT', 'SIGTERM'] as const)");
+    expect(signalStart, 'src/main/index.ts must handle SIGINT and SIGTERM').toBeGreaterThan(-1);
+    expectShutdownThenDrainThenExit(sliceBalancedBlock(INDEX_SOURCE, signalStart), 'the SIGINT/SIGTERM handler');
   });
 
   it('records a clean exit when the hosting terminal closes (SIGHUP), on the same bare signal route', () => {
@@ -513,12 +529,41 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
     // terminal closed read as `abrupt` on the next launch.
     const hangupStart = INDEX_SOURCE.indexOf("process.on('SIGHUP', () => {");
     expect(hangupStart, 'src/main/index.ts must handle SIGHUP').toBeGreaterThan(-1);
-    const hangupHandler = INDEX_SOURCE.slice(hangupStart, INDEX_SOURCE.indexOf('});', hangupStart) + 3);
-    expect(hangupHandler).toContain('if (performShutdown()) process.exit(0);');
+    const hangupHandler = sliceBalancedBlock(INDEX_SOURCE, hangupStart);
+    expectShutdownThenDrainThenExit(hangupHandler, 'the SIGHUP handler');
     expect(
       hangupHandler,
       'SIGHUP process.exit()s with no loop turn, so nothing may stay deferred there',
     ).not.toContain('allowGrace');
+  });
+
+  it('drains the log queue from a dev-only exit listener, as a backstop for any other process.exit', () => {
+    expect(INDEX_SOURCE).toContain("if (__KANGENTIC_DEV__) process.on('exit', () => drainQueuedAppendsSync());");
+  });
+
+  /**
+   * The previous run's ending goes into the local log in a dev build only, and
+   * after the boot's project open so it lands in that project's log beside the
+   * previous run's [SHUTDOWN] lines. __KANGENTIC_DEV__ is a compile-time
+   * constant pinned to false under vitest, so a source pin is the only test
+   * that can see the gate (as in mobile-bridge/dev-quick-pair-gate.test.ts).
+   */
+  it('logs how the previous run ended once per launch, dev-gated, after the boot project open settles', () => {
+    const preloadStart = INDEX_SOURCE.indexOf('const preloadPromise = (async () => {');
+    expect(preloadStart, 'createWindow must start the boot project open as preloadPromise').toBeGreaterThan(-1);
+    const gateStart = INDEX_SOURCE.indexOf('if (__KANGENTIC_DEV__ && !previousRunLogged) {', preloadStart);
+    expect(gateStart, 'the previous-run line must be dev-gated and logged once, after preloadPromise starts').toBeGreaterThan(-1);
+    const gateRegion = sliceBalancedBlock(INDEX_SOURCE, gateStart);
+    expect(gateRegion).toContain('previousRunLogged = true;');
+    expect(gateRegion).toContain('console.log(previousRunLogLine())');
+    expect(
+      gateRegion,
+      'the line must wait for the project open, on success and on failure alike',
+    ).toContain('preloadPromise.then(logPreviousRun, logPreviousRun)');
+    expect(
+      [...INDEX_SOURCE.matchAll(/previousRunLogLine\(\)/g)],
+      'previousRunLogLine() may be called only inside that gate, or production builds keep it',
+    ).toHaveLength(1);
   });
 
   /**
@@ -542,10 +587,20 @@ describe('the before-quit drain is wired into src/main/index.ts', () => {
       region,
       'the clean exit must be recorded synchronously before the cleanup, so the next launch can report this run',
     ).toContain("recordRunExit('clean')");
+    const failsafeStart = region.indexOf('startHardShutdownFailsafe(() => {');
+    expect(failsafeStart, 'performShutdown must arm the hard failsafe with a callback').toBeGreaterThan(-1);
+    const failsafeCallback = sliceBalancedBlock(region, failsafeStart);
+    const failsafeRecordIndex = failsafeCallback.indexOf("recordRunExit('failsafe');");
+    const failsafeDrainIndex = failsafeCallback.indexOf('if (__KANGENTIC_DEV__) drainQueuedAppendsSync();');
     expect(
-      region,
+      failsafeRecordIndex,
       'the hard failsafe must overwrite the clean record, or a force-killed quit reports as clean',
-    ).toContain("startHardShutdownFailsafe(() => recordRunExit('failsafe'))");
+    ).toBeGreaterThan(-1);
+    expect(
+      failsafeDrainIndex,
+      'the failsafe kills its own tree before its process.exit, so no exit listener runs. A dev build must drain the log queue in the callback',
+    ).toBeGreaterThan(-1);
+    expect(failsafeRecordIndex, 'the run record comes first: it is what the next launch reports').toBeLessThan(failsafeDrainIndex);
     expect(region, 'no event may be fired from the quit path: it cannot land').not.toContain('trackEvent(');
     expect(region, 'no heartbeat may be fired from the quit path: it cannot land').not.toContain('trackHeartbeat(');
     expect(region, 'performShutdown must stay synchronous').not.toContain('await ');
