@@ -247,7 +247,7 @@ export function taskCardFrameClass(
   const border = view.isHighlighted
     ? 'border-[2px] border-fg-faint/60'
     : view.isIdle ? 'border-edge/40' : 'border-edge hover:border-edge-input';
-  return `border rounded-md ${padding} bg-surface-raised ${border} ${view.isIdle ? 'animate-pulse-subtle' : ''}`;
+  return `border rounded-md ${padding} bg-surface-raised ${border}`;
 }
 
 /**

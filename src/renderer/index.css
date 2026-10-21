@@ -758,11 +758,13 @@
   animation: grow-in 250ms ease-out forwards;
 }
 
-/* Radiating attention pulse for idle / awaiting-permission cards.
+/* Radiating pulse for the Knowledge Graph's loading placeholders. Idle task
+   cards wore it too until it was taken off them: the ring grows by a share of
+   the card's width, so a wide card drew a large halo, and the card's idle mark
+   already says the agent is waiting.
    Compositor-only: the box-shadow ring is static on the ::before, and only
-   transform + opacity animate. Animating box-shadow directly (the previous
-   approach) repaints the whole card every frame for as long as the agent stays
-   paused. */
+   transform + opacity animate. Animating box-shadow directly repaints the
+   element every frame. */
 .animate-pulse-subtle {
   position: relative;
 }
