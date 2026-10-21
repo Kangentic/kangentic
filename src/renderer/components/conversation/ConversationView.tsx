@@ -36,7 +36,13 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { ConversationSearchBar, type ConversationSearchBarHandle } from './ConversationSearchBar';
-import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX, type LogicalScroll } from './ConversationScrollbar';
+import {
+  ConversationScrollbar,
+  CONTENT_RIGHT_CLEARANCE_PX,
+  ROW_LEFT_INSET_PX,
+  type FarSeekOutcome,
+  type LogicalScroll,
+} from './ConversationScrollbar';
 import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
 import { FAR_FROM_BOTTOM_PX, isScrolledToBottom, logicalAtOffset, offsetAtLogical } from './scrollbar-math';
 import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
@@ -92,9 +98,7 @@ export interface ConversationViewPaging {
   onJumpToStart: () => void;
   onJumpToLatest: () => void;
   /** Load the page at a logical position in place, under a far scrollbar drag; null drops it. */
-  onFarSeek: (logical: number | null) => void;
-  /** A far drag's page is on its way. */
-  seeking: boolean;
+  onFarSeek: (logical: number | null) => Promise<FarSeekOutcome>;
 }
 
 interface ConversationViewProps {
@@ -661,7 +665,6 @@ export function ConversationView({
   const logicalTotal = paging?.logicalTotal ?? 0;
   const pagingTimeAt = paging?.timeAt;
   const onFarSeek = paging?.onFarSeek;
-  const seeking = paging?.seeking ?? false;
   const rowLogical = useMemo(() => {
     if (!logicalByUuid) return null;
     const values = new Array<number>(rows.length);
@@ -687,9 +690,8 @@ export function ConversationView({
       }),
       timeAt: pagingTimeAt,
       onFarSeek,
-      seeking,
     };
-  }, [rowLogical, pagingTimeAt, onFarSeek, seeking, virtualizer, logicalTotal, logicalEnd, topEdge, bottomEdge]);
+  }, [rowLogical, pagingTimeAt, onFarSeek, virtualizer, logicalTotal, logicalEnd, topEdge, bottomEdge]);
 
   // source === 'none': no content at all. Explain why per unavailable reason.
   if (source === 'none') {

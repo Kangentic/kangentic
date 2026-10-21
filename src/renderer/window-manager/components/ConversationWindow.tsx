@@ -512,7 +512,6 @@ export function ConversationWindow({
     jumpToStart,
     jumpToLatest,
     seekLogical,
-    seeking,
   } = paging;
   const viewPaging = useMemo((): ConversationViewPaging | undefined => {
     if (!pagingWindow) return undefined;
@@ -531,9 +530,8 @@ export function ConversationWindow({
       onJumpToStart: jumpToStart,
       onJumpToLatest: jumpToLatest,
       onFarSeek: seekLogical,
-      seeking,
     };
-  }, [pagingWindow, topEdge, bottomEdge, onNearEdge, onReaderMove, retryEdge, jumpToStart, jumpToLatest, seekLogical, seeking]);
+  }, [pagingWindow, topEdge, bottomEdge, onNearEdge, onReaderMove, retryEdge, jumpToStart, jumpToLatest, seekLogical]);
   let searchPlaceholder: string | undefined;
   if (paging.historyUnloaded) {
     searchPlaceholder = columnOnScreen ? `Search loaded ${columnOnScreen.name} messages` : 'Search loaded messages';

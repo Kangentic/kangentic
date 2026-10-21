@@ -51,13 +51,19 @@ export interface LogicalScroll {
   /** The time at a logical position, or null where there are no timestamps. */
   timeAt: (logical: number) => number | null;
   /** A drag resting or released past the loaded rows: load the page there. Null drops the read. */
-  onFarSeek: (logical: number | null) => void;
-  /** That page is on its way. */
-  seeking: boolean;
+  onFarSeek: (logical: number | null) => Promise<FarSeekOutcome>;
 }
+
+/**
+ * How a far drag's read ended: its page is in the window, it came back without
+ * the page, or a newer read, a jump or a cancel took its place.
+ */
+export type FarSeekOutcome = 'landed' | 'failed' | 'dropped';
 
 /** How long a far drag rests before the page under it is read. */
 const FAR_REST_MS = 120;
+/** How long a held far drag waits to ask once more after its read came back without the page. */
+const FAR_RETRY_MS = 1000;
 
 interface ConversationScrollbarProps {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -121,6 +127,9 @@ export function ConversationScrollbar({
   const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The far position last asked for, so a rest and a release ask once.
   const askedFarRef = useRef<number | null>(null);
+  // The far position already asked for a second time, so a read that keeps
+  // failing under a held pointer is retried once, not in a loop.
+  const retriedFarRef = useRef<number | null>(null);
   const logicalRef = useRef<LogicalScroll | null>(logical);
   useLayoutEffect(() => {
     logicalRef.current = logical;
@@ -134,10 +143,39 @@ export function ConversationScrollbar({
   }, []);
 
   const askForFar = useCallback((target: number | null) => {
-    if (askedFarRef.current === target) return;
-    askedFarRef.current = target;
-    logicalRef.current?.onFarSeek(target);
-  }, []);
+    const ask = (asked: number | null): void => {
+      if (askedFarRef.current === asked) return;
+      askedFarRef.current = asked;
+      const seek = logicalRef.current?.onFarSeek(asked);
+      if (asked === null || !seek) return;
+      void seek.then((outcome) => {
+        // A newer ask took this one's place and answers for itself.
+        if (askedFarRef.current !== asked) return;
+        askedFarRef.current = null;
+        if (outcome === 'dropped') return;
+        if (dragStateRef.current) {
+          // Still resting out there after a read that came back without the
+          // page: ask once more, on the rest timer, so a move cancels it.
+          const drag = dragLogicalRef.current;
+          if (outcome === 'failed' && drag?.far && drag.logical === asked && retriedFarRef.current !== asked) {
+            retriedFarRef.current = asked;
+            clearRestTimer();
+            restTimerRef.current = setTimeout(() => {
+              restTimerRef.current = null;
+              ask(asked);
+            }, FAR_RETRY_MS);
+          }
+          return;
+        }
+        // A release waiting on it: a failed read lets the placeholders go now,
+        // and a landed one by the time its rows have rendered at the latest.
+        const letGo = () => setHeldFar((held) => (held && held.logical === asked ? null : held));
+        if (outcome === 'failed') letGo();
+        else setTimeout(letGo, FAR_RETRY_MS);
+      });
+    };
+    ask(target);
+  }, [clearRestTimer]);
 
   const readGeometry = useCallback(() => {
     const container = containerRef.current;
@@ -286,26 +324,15 @@ export function ConversationScrollbar({
 
   // A far target's page landed (the window now holds the target): scroll to it,
   // and take the placeholders down a frame later, once the rows there have
-  // rendered. A read that ended without it lets a held release go, and lets a
-  // drag that is still out there ask again.
+  // rendered.
   useEffect(() => {
     const pending = dragLogicalRef.current?.far ? dragLogicalRef.current : heldFar;
     if (!logical || !pending) return undefined;
     const offset = logical.offsetAt(pending.logical);
-    let frame: number | null = null;
-    if (offset === null) {
-      if (logical.seeking) return undefined;
-      askedFarRef.current = null;
-      if (dragStateRef.current) return undefined;
-      frame = requestAnimationFrame(() => setHeldFar(null));
-      return () => {
-        if (frame !== null) cancelAnimationFrame(frame);
-      };
-    }
+    if (offset === null) return undefined;
     const container = containerRef.current;
     if (container) container.scrollTop = offset;
-    askedFarRef.current = null;
-    frame = requestAnimationFrame(() => {
+    let frame: number | null = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         frame = null;
         if (dragStateRef.current) {
