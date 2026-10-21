@@ -377,6 +377,10 @@ With the slot holding a copy of the card, S1 measured a 7.0ms p95 with no missed
 machine, and S6 put the overlay up 29 to 30ms after the pointerdown with no long frame. The copy does
 not show up at all.
 
+The committed drop uses the same slot. `rawDropPosition` (`board-drop-preview.ts`) turns it into the
+raw position of the card holding the slot, and `TaskRepository.move` writes that position, so a lane
+with gaps in its positions takes the card where the gap showed.
+
 ## Drag start at 100 cards (2026-10-20)
 
 The September table declined splitting `TaskCard` into a sortable wrapper and a memoized body: the

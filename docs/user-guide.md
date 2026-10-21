@@ -135,6 +135,8 @@ conversation and sends the task once more.
 
 Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (the destination changes the model or effort); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
 
+While you drag a card into another column, the cards there part at the slot it would take, and a dimmed copy of the card holds that slot. Releasing the card places it at that slot. A card dragged out of Done onto a column is restored to the same slot.
+
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 
 Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
