@@ -109,6 +109,25 @@ function summarizeToolInputForSearch(input: unknown): string {
   }
 }
 
+/**
+ * The length of a tool input's search summary, made once per input object.
+ * The signature needs only the length, and serializing every tool input of
+ * every row on every poll tick was the largest cost of a reconcile once older
+ * pages are loaded. A parsed entry's input never changes after it arrives.
+ */
+// hmr-safe: a pure cache keyed by data objects; a fresh map after a reload only recomputes.
+const toolInputLengthByInput = new WeakMap<object, number>();
+
+function toolInputSearchLength(input: unknown): number {
+  if (input === null || input === undefined) return 0;
+  if (typeof input !== 'object') return summarizeToolInputForSearch(input).length;
+  const known = toolInputLengthByInput.get(input);
+  if (known !== undefined) return known;
+  const length = summarizeToolInputForSearch(input).length;
+  toolInputLengthByInput.set(input, length);
+  return length;
+}
+
 function estimateRowHeight(entry: TranscriptEntry): number {
   let height = BASE_HEIGHT;
   switch (entry.kind) {
@@ -213,7 +232,7 @@ function computeSignature(entry: TranscriptEntry, results: Map<string, DisplayRo
         if (block.type === 'tool_use') {
           const result = results.get(block.id);
           parts.push(
-            `tool:${block.id}:${block.name}:${summarizeToolInputForSearch(block.input).length}`
+            `tool:${block.id}:${block.name}:${toolInputSearchLength(block.input)}`
             + (result ? `:${result.content.length}:${result.isError ? '1' : '0'}:${result.approval ?? ''}` : ':none'),
           );
         } else {
@@ -225,19 +244,54 @@ function computeSignature(entry: TranscriptEntry, results: Map<string, DisplayRo
   return parts.join('|');
 }
 
+/** The one results map every row without tool calls shares. Never written to. */
+const NO_RESULTS = new Map<string, DisplayRowResult>();
+
 /** This entry's own tool_use results, scoped out of the whole-transcript
  *  `resultsByUseId` map (see the file doc comment for why row-scoping is the
  *  memo-bail win). */
 function rowResultsFor(entry: TranscriptEntry, resultsByUseId: Map<string, DisplayRowResult>): Map<string, DisplayRowResult> {
+  if (entry.kind !== 'assistant') return NO_RESULTS;
   const results = new Map<string, DisplayRowResult>();
-  if (entry.kind === 'assistant') {
-    for (const block of entry.blocks) {
-      if (block.type !== 'tool_use') continue;
-      const result = resultsByUseId.get(block.id);
-      if (result) results.set(block.id, result);
-    }
+  for (const block of entry.blocks) {
+    if (block.type !== 'tool_use') continue;
+    const result = resultsByUseId.get(block.id);
+    if (result) results.set(block.id, result);
   }
-  return results;
+  return results.size === 0 ? NO_RESULTS : results;
+}
+
+/**
+ * Each tool_result entry's folded result, made once per entry object, so an
+ * unchanged result keeps its identity across reconciles. That identity is what
+ * lets a row whose entry object did not change skip its signature entirely.
+ * The shape comes from `buildResultsByUseId`, so the two never drift.
+ */
+// hmr-safe: a pure cache keyed by data objects; a fresh map after a reload only recomputes.
+const resultByToolResultEntry = new WeakMap<TranscriptEntry, DisplayRowResult>();
+
+function resultsByUseIdOf(entries: TranscriptEntry[]): Map<string, DisplayRowResult> {
+  const resultsByUseId = new Map<string, DisplayRowResult>();
+  for (const entry of entries) {
+    if (entry.kind !== 'tool_result' || !entry.toolUseId) continue;
+    let result = resultByToolResultEntry.get(entry);
+    if (!result) {
+      result = buildResultsByUseId([entry]).get(entry.toolUseId);
+      if (!result) continue;
+      resultByToolResultEntry.set(entry, result);
+    }
+    resultsByUseId.set(entry.toolUseId, result);
+  }
+  return resultsByUseId;
+}
+
+function sameResults(previous: Map<string, DisplayRowResult>, current: Map<string, DisplayRowResult>): boolean {
+  if (previous === current) return true;
+  if (previous.size !== current.size) return false;
+  for (const [toolUseId, result] of current) {
+    if (previous.get(toolUseId) !== result) return false;
+  }
+  return true;
 }
 
 function buildRow(entry: TranscriptEntry, results: Map<string, DisplayRowResult>): DisplayRow {
@@ -265,7 +319,7 @@ export function reconcileDisplayRows(previousRows: DisplayRow[], entries: Transc
   const previousByUuid = new Map<string, DisplayRow>();
   for (const row of previousRows) previousByUuid.set(row.uuid, row);
 
-  const resultsByUseId = buildResultsByUseId(entries);
+  const resultsByUseId = resultsByUseIdOf(entries);
 
   const ownedToolUseIds = new Set<string>();
   for (const entry of entries) {
@@ -302,12 +356,23 @@ export function reconcileDisplayRows(previousRows: DisplayRow[], entries: Transc
     // must still bust this row even though the assistant entry object itself
     // never changed.
     const currentResults = rowResultsFor(entry, resultsByUseId);
+    // The same entry object with the same result objects renders the same:
+    // reuse it without building its signature.
+    if (previous && previous.entry === entry && sameResults(previous.results, currentResults)) {
+      rows.push(previous);
+      continue;
+    }
     const candidateSignature = computeSignature(entry, currentResults);
     if (previous && previous.signature === candidateSignature) {
       rows.push(previous);
       continue;
     }
     rows.push(buildRow(entry, currentResults));
+  }
+  // Nothing changed: hand back the previous array itself, so every memo keyed
+  // on the rows (search, the virtualizer's count) skips its work too.
+  if (rows.length === previousRows.length && rows.every((row, index) => row === previousRows[index])) {
+    return previousRows;
   }
   return rows;
 }

@@ -6494,8 +6494,36 @@ export type TranscriptToolApproval = 'automatic' | 'user';
  * (telemetry only) - this preserves the actual conversation content for
  * display in the Transcript tab.
  */
+/**
+ * Where a transcript entry sits in its conversation's source, so the
+ * Conversation viewer can place it on a scrollbar that spans the whole
+ * transcript and page older history in around it.
+ */
+export interface TranscriptEntryOrigin {
+  /** The agent's own session id for the conversation (one transcript file, or
+   *  one session's rows in a database). Resume rows sharing a file share it. */
+  conversationId: string;
+  /** The entry's position in that source, in the adapter's unit: the byte its
+   *  line starts at for a JSONL transcript. Rises through the conversation. */
+  position: number;
+}
+
+/**
+ * On a `truncated` system entry: how to read the history before it. `cursor`
+ * is the adapter's own encoding and goes back to `transcripts.page` verbatim;
+ * `position` is where the entries after the notice begin, in the same unit as
+ * `TranscriptEntryOrigin.position`.
+ */
+export interface TranscriptEarlierHistory {
+  conversationId: string;
+  cursor: string;
+  position: number;
+}
+
 export type TranscriptEntry =
-  | { kind: 'user'; uuid: string; ts: number; text: string }
+  // origin: where the entry came from, set by parsers that can page their
+  // history (`TranscriptEntryOrigin`). Absent elsewhere, and on older archives.
+  | { kind: 'user'; uuid: string; ts: number; text: string; origin?: TranscriptEntryOrigin }
   // agentName is set only when this entry was stitched into a cross-session
   // task-level view (resolveTaskTranscript) whose sessions used different
   // agents - the role badge prefers it over the response's single top-level
@@ -6506,19 +6534,21 @@ export type TranscriptEntry =
   // them (see TranscriptTurnUsage). It is not shown in the viewer today; it is
   // captured so consumption/burn-rate analysis can read it straight off the
   // conversation. Absent when the agent/turn reported no usage.
-  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[] }
+  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[]; origin?: TranscriptEntryOrigin }
   // approval: who let the call run, where the agent records it: 'automatic' for
   // a hook (Kangentic's plan approval), 'user' for the person. Absent when the
   // agent records nothing, or a rule or mode allowed it.
   // plan: the plan an approved plan exit returned, for an agent whose call
   // carried none in its input (Claude 2.1.303 calls ExitPlanMode with `{}` and
   // records the plan on the result line).
-  | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean; approval?: TranscriptToolApproval; plan?: string }
+  | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean; approval?: TranscriptToolApproval; plan?: string; origin?: TranscriptEntryOrigin }
   // Non-conversation events surfaced explicitly instead of being rendered as
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
   // slash-command invocations and their local stdout, and (session_boundary)
   // the seam between two sessions stitched into one task-level view.
-  | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string };
+  // earlierHistory: on a `truncated` notice from a pageable conversation, the
+  // cursor the viewer pages older history from (`TranscriptEarlierHistory`).
+  | { kind: 'system'; uuid: string; ts: number; subtype: TranscriptSystemSubtype; text: string; origin?: TranscriptEntryOrigin; earlierHistory?: TranscriptEarlierHistory };
 
 /**
  * The `kind: 'system'` entry variants.
@@ -8201,6 +8231,12 @@ export interface ElectronAPI {
   // Conversation viewer (structured transcripts)
   transcripts: {
     get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse | TranscriptUnchangedResponse | TranscriptDeltaResponse>;
+    /** One page of a conversation's earlier (or, after a jump, later) history. */
+    page: (input: TranscriptPageRequest) => Promise<TranscriptPageResponse>;
+    /** The page holding one turn, for a search hit outside the loaded history. */
+    locate: (input: TranscriptLocateRequest) => Promise<TranscriptLocateResponse>;
+    /** A coarse position-to-time map of one conversation, for the scrollbar's drag label. */
+    timeline: (input: TranscriptTimelineRequest) => Promise<TranscriptTimelineResponse>;
     listSessions: (
       taskId: string,
       projectId?: string | null,
@@ -9167,7 +9203,120 @@ export interface TranscriptGetResponse {
    *  own file is gone, or null when none was. Drives the viewer's archive banner;
    *  `source` describes only the latest session. Absent from older responses. */
   archivedAgentName?: string | null;
+  /** Each contributing conversation's extent, once per agent session id, so the
+   *  viewer can size a scrollbar over the whole transcript and page the part the
+   *  tail left out. Absent from older responses and the mocks, which leaves
+   *  paging off. */
+  conversations?: ConversationExtent[];
 }
+
+/**
+ * One conversation's size and how much of it the tail holds, in the unit of
+ * `TranscriptEntryOrigin.position` (bytes for a JSONL transcript).
+ */
+export interface ConversationExtent {
+  /** The agent's own session id (`TranscriptEntryOrigin.conversationId`). */
+  conversationId: string;
+  /** The whole conversation's size. */
+  totalPosition: number;
+  /** Where the tail the response carries begins: 0 when it holds everything. */
+  tailStartPosition: number;
+  /** Whether `transcripts.page` can read this conversation's earlier history. */
+  pageable: boolean;
+  /** False for an agent whose transcript records no timestamps: its entries are
+   *  ordered by position and a drag over it shows no date. */
+  hasTimestamps: boolean;
+}
+
+/** Which way a history page reads from its cursor. */
+export type TranscriptPageDirection = 'before' | 'after' | 'around';
+
+/**
+ * A request for one page of a conversation's history (`transcripts.page`):
+ * the page ending at `cursor` (`before`), starting at it (`after`), or centred
+ * on `position` (`around`). `untilPosition` is the tail's start, so a forward
+ * read never reaches the part the tail already holds or a half-written line.
+ */
+export interface TranscriptPageRequest {
+  projectId?: string | null;
+  /** The agent's own session id (`ConversationExtent.conversationId`). */
+  conversationId: string;
+  direction: TranscriptPageDirection;
+  cursor?: string;
+  position?: number;
+  untilPosition?: number;
+  /** The token of the pages the caller holds; a mismatch answers `reset`. */
+  sourceToken?: string;
+  /** The caller's window, so a newer request from it supersedes a queued older one. */
+  requestKey?: string;
+}
+
+/** One page of a conversation's history. Entries are clamped like the tail's. */
+export interface TranscriptHistoryPage {
+  conversationId: string;
+  /** Identifies the source the cursors belong to; it changes when the file is rewritten. */
+  sourceToken: string;
+  startCursor: string;
+  endCursor: string;
+  startPosition: number;
+  endPosition: number;
+  totalPosition: number;
+  reachedStart: boolean;
+  reachedEnd: boolean;
+  entries: TranscriptEntry[];
+}
+
+/** Why a page could not be read. */
+export type TranscriptPageUnavailableReason =
+  | 'unsupported_agent'
+  | 'not_found'
+  | 'file_missing'
+  | 'read_failed'
+  | 'record_too_large'
+  | 'worker_unavailable';
+
+export type TranscriptPageResponse =
+  | ({ status: 'ok' } & TranscriptHistoryPage)
+  /** The source was rewritten or shrank: the caller drops its pages and starts again. */
+  | { status: 'reset'; conversationId: string }
+  | { status: 'unavailable'; reason: TranscriptPageUnavailableReason }
+  /** A newer request from the same window took this one's place in the queue. */
+  | { status: 'superseded' }
+  /** Too many reads queued: the caller tries again on its next scroll. */
+  | { status: 'busy' };
+
+/** Find the page holding one turn, for a search palette hit in unloaded history. */
+export interface TranscriptLocateRequest {
+  projectId?: string | null;
+  /** Any session of the task (Kangentic or agent id). */
+  sessionId: string;
+  turnUuid: string;
+  turnTs?: number | null;
+  chunkId?: number | null;
+  requestKey?: string;
+}
+
+export type TranscriptLocateResponse =
+  | { status: 'found'; page: TranscriptHistoryPage }
+  /** The turn is in the tail the viewer already holds. */
+  | { status: 'in_tail' }
+  | { status: 'not_found' }
+  | { status: 'unavailable'; reason: TranscriptPageUnavailableReason }
+  | { status: 'superseded' }
+  | { status: 'busy' };
+
+/** A coarse map from position to time over one conversation, for the drag label. */
+export interface TranscriptTimelineRequest {
+  projectId?: string | null;
+  conversationId: string;
+  requestKey?: string;
+}
+
+export type TranscriptTimelineResponse =
+  | { status: 'ok'; conversationId: string; samples: Array<{ position: number; ts: number }> }
+  | { status: 'unavailable'; reason: TranscriptPageUnavailableReason }
+  | { status: 'superseded' }
+  | { status: 'busy' };
 
 /** Returned by `transcripts.get` instead of a full `TranscriptGetResponse`
  *  when the caller's `knownRevision` matches the task's current revision -
@@ -9203,6 +9352,9 @@ export function applyTranscriptDelta(held: TranscriptEntry[], delta: TranscriptD
 /** One selectable session in the conversation viewer's session picker. */
 export interface ConversationSessionMeta {
   sessionId: string;
+  /** The agent's own session id, when the session has one: the
+   *  `TranscriptEntryOrigin.conversationId` its entries carry. */
+  agentSessionId?: string | null;
   agentName: string;
   startedAt: string;
   exitedAt: string | null;

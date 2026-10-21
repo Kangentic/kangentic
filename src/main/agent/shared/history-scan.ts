@@ -171,6 +171,11 @@ export interface JsonlWindow {
   startByte: number;
   /** Byte offset to pass as the next call's `startByte`. Equals `totalBytes` at EOF. */
   nextByteOffset: number;
+  /** One past the last whole line in `text`: `nextByteOffset + 1` mid-file, the
+   *  file's size at EOF, and `startByte` when the window held no whole line. A
+   *  window read up to a line start ends exactly there, which is how history
+   *  pages tile a file without the opaque `nextByteOffset`. */
+  endByte: number;
   /** Source bytes before `startByte` that this window does not cover. */
   omittedBytes: number;
   /** Physical lines before `startByte`. Only computed when `countOmittedLines`. */
@@ -203,7 +208,7 @@ export interface JsonlWindowOptions {
 }
 
 /** Count newline bytes in `[0, endByte)` without materializing the range. */
-async function countNewlinesBefore(filePath: string, endByte: number): Promise<number> {
+export async function countNewlinesBefore(filePath: string, endByte: number): Promise<number> {
   if (endByte <= 0) return 0;
   let handle;
   try {
@@ -255,7 +260,7 @@ export async function readJsonlWindow(
   options: JsonlWindowOptions,
 ): Promise<JsonlWindow> {
   const empty: JsonlWindow = {
-    text: '', startByte: 0, nextByteOffset: 0, omittedBytes: 0, omittedLineCount: 0, totalBytes: 0,
+    text: '', startByte: 0, nextByteOffset: 0, endByte: 0, omittedBytes: 0, omittedLineCount: 0, totalBytes: 0,
   };
   let handle;
   try {
@@ -278,7 +283,7 @@ export async function readJsonlWindow(
         ? await countNewlinesBefore(filePath, size)
         : 0;
       return {
-        ...empty, startByte: size, nextByteOffset: size, omittedBytes: size, omittedLineCount, totalBytes: size,
+        ...empty, startByte: size, nextByteOffset: size, endByte: size, omittedBytes: size, omittedLineCount, totalBytes: size,
       };
     }
 
@@ -351,7 +356,15 @@ export async function readJsonlWindow(
       ? await countNewlinesBefore(filePath, startByte)
       : 0;
 
-    return { text, startByte, nextByteOffset, omittedBytes: startByte, omittedLineCount, totalBytes: size };
+    return {
+      text,
+      startByte,
+      nextByteOffset,
+      endByte: requestedStart + sliceEnd,
+      omittedBytes: startByte,
+      omittedLineCount,
+      totalBytes: size,
+    };
   } catch {
     return empty;
   } finally {

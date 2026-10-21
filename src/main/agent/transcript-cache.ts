@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import type { TranscriptEntry } from '../../shared/types';
 import { touchBounded } from './shared/bounded-lru';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { parseWindowBytes } from './shared/transcript-truncation';
 
 /** Per-block/content clamp so a multi-MB transcript never ships whole over IPC
  *  into React state. Individual spans over this are truncated with a marker.
@@ -24,14 +25,14 @@ export const MAX_SPAN_CHARS = 20_000;
  * proportional to their source file, and a handful of 50MB transcripts would
  * otherwise dwarf everything else. Whichever bound binds first evicts.
  *
- * THE BYTE BUDGET COUNTS SOURCE BYTES, NOT RETAINED HEAP. `record.size` is the
- * transcript's size on disk, which is a CONSERVATIVE proxy: measured on a real
- * 137.9MB transcript, a whole-file parse retained 12.7MB of entries (0.09x
- * source), and these records are truncated on top of that. So the nominal 192MB
- * corresponds to well under 192MB of heap in practice. The one place the proxy
- * understates cost is tool-heavy transcripts, because `truncateEntries` passes
- * `tool_use` blocks through by reference with their `input` deliberately
- * unclamped.
+ * THE BYTE BUDGET COUNTS SOURCE BYTES, NOT RETAINED HEAP: the bytes a record's
+ * entries can have been parsed from (`retainedSourceBytes`), at most two parse
+ * windows of the file. That is a CONSERVATIVE proxy: measured on a real 137.9MB
+ * transcript, a whole-file parse retained 12.7MB of entries (0.09x source), and
+ * these records are truncated on top of that. So the nominal 192MB corresponds
+ * to well under 192MB of heap in practice. The one place the proxy understates
+ * cost is tool-heavy transcripts, because `truncateEntries` passes `tool_use`
+ * blocks through by reference with their `input` deliberately unclamped.
  *
  * Kept at 192MB rather than lowered: the working set this exists to hold was
  * measured at 20 files / 319MB behind a single mobile Home-feed refresh, and
@@ -94,10 +95,23 @@ interface CacheRecord {
   sourcePath: string;
   mtimeMs: number;
   size: number;
+  /** The conversation's size in its adapter's position unit (the file's size by default). */
+  totalPosition: number;
   truncatedEntries: TranscriptEntry[];
 }
 
 const cache = new Map<string, CacheRecord>();
+
+/**
+ * Source bytes a record's entries can have been parsed from. A parse reads at
+ * most two windows of a file however large it is (`MAX_PARSE_SOURCE_BYTES`, and
+ * Claude's incremental append re-windows past two), so charging the whole file
+ * let one 548 MB transcript take the entire budget and evict every other
+ * session behind a single Conversation window.
+ */
+export function retainedSourceBytes(fileSize: number): number {
+  return Math.min(fileSize, 2 * parseWindowBytes());
+}
 
 /** Move `key` to the most-recently-used end and evict past both bounds. The
  *  eviction itself lives in `shared/bounded-lru.ts`: this loop used to be
@@ -107,7 +121,7 @@ function touch(key: string, record: CacheRecord): void {
   touchBounded(cache, key, record, {
     limit: CACHE_LIMIT,
     byteBudget: CACHE_BYTE_BUDGET,
-    sizeOf: (held) => held.size,
+    sizeOf: (held) => retainedSourceBytes(held.size),
     minRetained: 1,
   });
 }
@@ -115,6 +129,8 @@ function touch(key: string, record: CacheRecord): void {
 export interface ParsedTranscriptResult {
   entries: TranscriptEntry[];
   sourcePath: string | null;
+  /** The conversation's size in its adapter's position unit; the file's size when the adapter gives none. */
+  totalPosition?: number;
 }
 
 /**
@@ -149,17 +165,19 @@ export async function getCachedTranscript(
     }
     if (stat && stat.mtimeMs === cached.mtimeMs && stat.size === cached.size) {
       touch(key, cached);
-      return { entries: cached.truncatedEntries, sourcePath: cached.sourcePath };
+      return { entries: cached.truncatedEntries, sourcePath: cached.sourcePath, totalPosition: cached.totalPosition };
     }
   }
 
   const parsed = await parse();
   const truncatedEntries = timeSyncWork('transcript:truncate', () => truncateEntries(parsed.entries));
 
+  let totalPosition = parsed.totalPosition;
   if (parsed.sourcePath) {
     try {
       const stat = await fs.stat(parsed.sourcePath);
-      touch(key, { sourcePath: parsed.sourcePath, mtimeMs: stat.mtimeMs, size: stat.size, truncatedEntries });
+      totalPosition ??= stat.size;
+      touch(key, { sourcePath: parsed.sourcePath, mtimeMs: stat.mtimeMs, size: stat.size, totalPosition, truncatedEntries });
     } catch {
       // File disappeared between the parse and this stat (a genuine race, or
       // the parser located a path that does not actually exist): nothing
@@ -171,7 +189,7 @@ export async function getCachedTranscript(
     cache.delete(key);
   }
 
-  return { entries: truncatedEntries, sourcePath: parsed.sourcePath };
+  return { entries: truncatedEntries, sourcePath: parsed.sourcePath, totalPosition };
 }
 
 /**

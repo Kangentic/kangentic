@@ -3,10 +3,50 @@ import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { retrievalClient } from '../../retrieval/retrieval-client';
+import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
-import type { ConversationSessionMeta, TranscriptGetRequest } from '../../../shared/types';
+import type {
+  ConversationSessionMeta,
+  TranscriptGetRequest,
+  TranscriptLocateRequest,
+  TranscriptLocateResponse,
+  TranscriptPageDirection,
+  TranscriptPageRequest,
+  TranscriptPageResponse,
+  TranscriptTimelineRequest,
+  TranscriptTimelineResponse,
+} from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+
+const PAGE_DIRECTIONS: ReadonlySet<TranscriptPageDirection> = new Set(['before', 'after', 'around']);
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function optionalPosition(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+}
+
+/** A page request as the renderer sent it, checked field by field. Null when unusable. */
+function validPageRequest(request: TranscriptPageRequest): Omit<TranscriptPageRequest, 'projectId'> | null {
+  if (typeof request?.conversationId !== 'string' || request.conversationId.length === 0) return null;
+  if (!PAGE_DIRECTIONS.has(request.direction)) return null;
+  return {
+    conversationId: request.conversationId,
+    direction: request.direction,
+    cursor: optionalString(request.cursor),
+    position: optionalPosition(request.position),
+    untilPosition: optionalPosition(request.untilPosition),
+    sourceToken: optionalString(request.sourceToken),
+    requestKey: optionalString(request.requestKey),
+  };
+}
+
+/** A failed worker call as an answer, so a viewer's edge row offers Retry instead of throwing. */
+function unavailableAnswer(error: unknown): { status: 'unavailable'; reason: 'worker_unavailable' | 'read_failed' } {
+  return { status: 'unavailable', reason: error instanceof RetrievalUnavailableError ? 'worker_unavailable' : 'read_failed' };
+}
 
 /**
  * IPC handlers for the human-facing conversation viewer. Read-only, so they
@@ -54,6 +94,72 @@ export function registerTranscriptHandlers(context: IpcContext): void {
     },
   );
 
+  // History paging for the Conversation viewer. Each reads in the retrieval
+  // worker, one at a time, and answers JSON main relays unparsed.
+  ipcMain.handle(
+    IPC.TRANSCRIPT_PAGE,
+    async (_event, request: TranscriptPageRequest): Promise<string> => {
+      const projectId = request?.projectId ?? context.currentProjectId;
+      const valid = validPageRequest(request);
+      if (!projectId || !valid) {
+        return JSON.stringify({ status: 'unavailable', reason: 'not_found' } satisfies TranscriptPageResponse);
+      }
+      try {
+        return await retrievalClient.call('transcript.page', {
+          projectId,
+          request: valid,
+          remoteTargets: collectRemoteTargets(agentRegistry),
+        });
+      } catch (error) {
+        return JSON.stringify(unavailableAnswer(error) satisfies TranscriptPageResponse);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.TRANSCRIPT_LOCATE,
+    async (_event, request: TranscriptLocateRequest): Promise<string> => {
+      const projectId = request?.projectId ?? context.currentProjectId;
+      if (!projectId || typeof request?.sessionId !== 'string' || typeof request.turnUuid !== 'string') {
+        return JSON.stringify({ status: 'not_found' } satisfies TranscriptLocateResponse);
+      }
+      try {
+        return await retrievalClient.call('transcript.locate', {
+          projectId,
+          request: {
+            sessionId: request.sessionId,
+            turnUuid: request.turnUuid,
+            turnTs: typeof request.turnTs === 'number' && Number.isFinite(request.turnTs) ? request.turnTs : null,
+            chunkId: typeof request.chunkId === 'number' && Number.isInteger(request.chunkId) ? request.chunkId : null,
+            requestKey: optionalString(request.requestKey),
+          },
+          remoteTargets: collectRemoteTargets(agentRegistry),
+        });
+      } catch (error) {
+        return JSON.stringify(unavailableAnswer(error) satisfies TranscriptLocateResponse);
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC.TRANSCRIPT_TIMELINE,
+    async (_event, request: TranscriptTimelineRequest): Promise<TranscriptTimelineResponse> => {
+      const projectId = request?.projectId ?? context.currentProjectId;
+      if (!projectId || typeof request?.conversationId !== 'string' || request.conversationId.length === 0) {
+        return { status: 'unavailable', reason: 'not_found' };
+      }
+      try {
+        return await retrievalClient.call('transcript.timeline', {
+          projectId,
+          request: { conversationId: request.conversationId, requestKey: optionalString(request.requestKey) },
+          remoteTargets: collectRemoteTargets(agentRegistry),
+        });
+      } catch (error) {
+        return unavailableAnswer(error);
+      }
+    },
+  );
+
   ipcMain.handle(
     IPC.TRANSCRIPT_LIST_SESSIONS,
     async (
@@ -67,6 +173,7 @@ export function registerTranscriptHandlers(context: IpcContext): void {
       const sessions = new SessionRepository(db).listForTaskNewestFirst(taskId);
       return sessions.map((record) => ({
         sessionId: record.id,
+        agentSessionId: record.agent_session_id,
         agentName: agentRegistry.getBySessionType(record.session_type)?.displayName ?? record.session_type,
         startedAt: record.started_at,
         exitedAt: record.exited_at,

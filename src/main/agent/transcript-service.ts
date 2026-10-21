@@ -23,11 +23,19 @@ import {
   isCachedFileUnchanged,
   peekCachedFileSignature,
   resetForTests as resetTranscriptCacheForTests,
+  retainedSourceBytes,
   truncateEntries,
 } from './transcript-cache';
-import { readArchivedConversation, type ArchivedConversation } from '../retrieval/archive/transcript-archive';
+import {
+  archiveRowLineStart,
+  readArchivedConversation,
+  type ArchivedConversation,
+} from '../retrieval/archive/transcript-archive';
 import { parseWindowBytes, prependTruncationMarker } from './shared/transcript-truncation';
+import { encodeJsonlCursor } from './shared/jsonl-history-page';
+import type { AgentAdapter } from './agent-adapter';
 import type {
+  ConversationExtent,
   ConversationSessionMeta,
   SessionRecord,
   TranscriptEntry,
@@ -44,6 +52,9 @@ export interface ResolvedTranscript {
   entries: TranscriptEntry[];
   degraded: boolean;
   unavailableReason?: TranscriptUnavailableReason;
+  /** The conversation's extent for a paging viewer, or null when it has no
+   *  source to page (the index fallback, no history, no agent session id). */
+  extent: ConversationExtent | null;
 }
 
 /** A task's entire lifecycle, stitched from every session it has ever
@@ -70,6 +81,8 @@ export interface ResolvedTaskTranscript {
    * latest session, so the viewer's banner reads this instead.
    */
   archivedAgentName: string | null;
+  /** Each contributing conversation's extent, once per agent session id. */
+  conversations: ConversationExtent[];
 }
 
 /** A conversation's indexed chunks, in order: the fields the fallback reads. */
@@ -104,20 +117,61 @@ const displayEntriesByArchivedRead = new WeakMap<ArchivedConversation, Transcrip
  * older rows were left out and the same per-span clamp. Empty when the archive
  * does not hold it.
  */
-async function entriesFromArchive(db: Database.Database, agentSessionId: string): Promise<TranscriptEntry[]> {
+async function entriesFromArchive(
+  db: Database.Database,
+  agentSessionId: string,
+): Promise<{ entries: TranscriptEntry[]; totalPosition: number }> {
   let archived: ArchivedConversation | null;
   try {
     archived = await readArchivedConversation(db, agentSessionId, parseWindowBytes());
   } catch (error) {
     console.warn(`transcript archive read failed for ${agentSessionId}:`, error);
-    return [];
+    return { entries: [], totalPosition: 0 };
   }
-  if (!archived || archived.entries.length === 0) return [];
+  if (!archived || archived.entries.length === 0) return { entries: [], totalPosition: 0 };
+  return { entries: archivedDisplayEntries(archived, agentSessionId), totalPosition: archived.totalBytes };
+}
+
+function archivedDisplayEntries(archived: ArchivedConversation, agentSessionId: string): TranscriptEntry[] {
   const known = displayEntriesByArchivedRead.get(archived);
   if (known) return known;
-  const display = prependTruncationMarker(truncateEntries(archived.entries), archived.omittedBytes, archived.totalBytes);
+  // The archive's row offsets point at the newline before a row's first line;
+  // the notice and its cursor use that line's own start, as a live read does.
+  const firstLineStart = archiveRowLineStart(archived.omittedBytes);
+  const display = prependTruncationMarker(truncateEntries(archived.entries), firstLineStart, archived.totalBytes, {
+    conversationId: agentSessionId,
+    cursor: encodeJsonlCursor({ byte: firstLineStart, line: null }),
+  });
   displayEntriesByArchivedRead.set(archived, display);
   return display;
+}
+
+/** Where a conversation's tail begins: its `truncated` notice's position, or 0
+ *  when the tail holds the whole conversation. */
+function tailStartPositionOf(entries: TranscriptEntry[]): number {
+  for (const entry of entries) {
+    if (entry.kind === 'system' && entry.subtype === 'truncated' && entry.earlierHistory) {
+      return entry.earlierHistory.position;
+    }
+  }
+  return 0;
+}
+
+/** A conversation's extent, from what its read returned. */
+function extentOf(
+  adapter: AgentAdapter | undefined,
+  conversationId: string,
+  entries: TranscriptEntry[],
+  totalPosition: number,
+  pageable: boolean,
+): ConversationExtent {
+  return {
+    conversationId,
+    totalPosition,
+    tailStartPosition: tailStartPositionOf(entries),
+    pageable,
+    hasTimestamps: adapter?.transcriptHasTimestamps !== false,
+  };
 }
 
 /** Reconstruct lossy display entries from indexed chunks when the native
@@ -151,9 +205,9 @@ async function entriesFromIndex(db: Database.Database, docId: string): Promise<T
 export async function readSavedConversation(
   db: Database.Database,
   agentSessionId: string,
-): Promise<{ entries: TranscriptEntry[]; source: 'archive' | 'index' } | null> {
+): Promise<{ entries: TranscriptEntry[]; source: 'archive' | 'index'; totalPosition?: number } | null> {
   const archived = await entriesFromArchive(db, agentSessionId);
-  if (archived.length > 0) return { entries: archived, source: 'archive' };
+  if (archived.entries.length > 0) return { entries: archived.entries, source: 'archive', totalPosition: archived.totalPosition };
   const indexed = await entriesFromIndex(db, agentSessionId);
   if (indexed.length > 0) return { entries: indexed, source: 'index' };
   return null;
@@ -165,7 +219,7 @@ export async function readSavedConversation(
  * workflow when the id is that workflow's conversation id
  * (`workflowAgentSessionRecord`). `title` names the workflow.
  */
-function findTranscriptRecord(db: Database.Database, anyId: string): { record: SessionRecord; title: string | null } | null {
+export function findTranscriptRecord(db: Database.Database, anyId: string): { record: SessionRecord; title: string | null } | null {
   const record = new SessionRepository(db).findByAnyId(anyId);
   if (record) return { record, title: null };
   let row: { title: string; agent_name: string | null; agent_session_id: string; agent_cwd: string | null; created_at: string } | undefined;
@@ -226,6 +280,7 @@ export async function resolveSessionTranscript(
     const agentSessionId = record.agent_session_id;
     let entries: TranscriptEntry[];
     let sourcePath: string | null = null;
+    let totalPosition = 0;
     try {
       const cached = await getCachedTranscript(
         record.session_type,
@@ -234,6 +289,7 @@ export async function resolveSessionTranscript(
       );
       entries = cached.entries;
       sourcePath = cached.sourcePath;
+      totalPosition = cached.totalPosition ?? 0;
     } catch (error) {
       // A genuine parser failure (permission error, corrupt JSONL, adapter
       // regression) must not look identical to "session has no transcript yet":
@@ -243,14 +299,30 @@ export async function resolveSessionTranscript(
     }
     if (entries.length > 0) {
       // Already truncated inside the cache.
-      return { ...base, source: 'live', sourcePath, entries, degraded: false };
+      return {
+        ...base,
+        source: 'live',
+        sourcePath,
+        entries,
+        degraded: false,
+        extent: extentOf(adapter, agentSessionId, entries, totalPosition, !!adapter.readTranscriptPage),
+      };
     }
     // Native file gone or empty: the archived copy first, which keeps the
     // structure and is not degraded, then the index's chunks, which keep the
     // text only and are.
     const saved = await readSavedConversation(db, agentSessionId);
     if (saved) {
-      return { ...base, source: saved.source, sourcePath, entries: saved.entries, degraded: saved.source === 'index' };
+      return {
+        ...base,
+        source: saved.source,
+        sourcePath,
+        entries: saved.entries,
+        degraded: saved.source === 'index',
+        extent: saved.source === 'archive'
+          ? extentOf(adapter, agentSessionId, saved.entries, saved.totalPosition ?? 0, true)
+          : null,
+      };
     }
     return {
       ...base,
@@ -259,14 +331,23 @@ export async function resolveSessionTranscript(
       entries: [],
       degraded: false,
       unavailableReason: 'file_missing',
+      extent: null,
     };
   }
 
   // No structured parser, or no agent_session_id yet: archive, then index
   // fallback, else none.
-  const saved = await readSavedConversation(db, record.agent_session_id ?? record.id);
+  const savedId = record.agent_session_id ?? record.id;
+  const saved = await readSavedConversation(db, savedId);
   if (saved) {
-    return { ...base, source: saved.source, sourcePath: null, entries: saved.entries, degraded: saved.source === 'index' };
+    return {
+      ...base,
+      source: saved.source,
+      sourcePath: null,
+      entries: saved.entries,
+      degraded: saved.source === 'index',
+      extent: saved.source === 'archive' ? extentOf(adapter, savedId, saved.entries, saved.totalPosition ?? 0, true) : null,
+    };
   }
   return {
     ...base,
@@ -275,6 +356,7 @@ export async function resolveSessionTranscript(
     entries: [],
     degraded: false,
     unavailableReason: adapter?.parseTranscript ? 'no_agent_session_id' : 'unsupported_agent',
+    extent: null,
   };
 }
 
@@ -324,6 +406,7 @@ interface StitchMemoRecord {
     unavailableReason: TranscriptUnavailableReason | undefined;
     agentName: string;
     archivedAgentName: string | null;
+    conversations: ConversationExtent[];
   };
 }
 
@@ -359,11 +442,13 @@ const STITCH_MEMO_BYTE_BUDGET = 192 * 1024 * 1024;
 let stitchMemoByteBudget = STITCH_MEMO_BYTE_BUDGET;
 const stitchMemoByTaskId = new Map<string, StitchMemoRecord>();
 
-/** Source bytes behind one memo. Zero when the stitch had no statable file
- *  (an index/none source), which is also when its fast path is disabled. */
+/** Source bytes behind one memo, each file charged only the bytes its entries
+ *  can have been parsed from (`retainedSourceBytes`). Zero when the stitch had no
+ *  statable file (an index/none source), which is also when its fast path is
+ *  disabled. */
 function stitchMemoSourceBytes(record: StitchMemoRecord): number {
   let total = 0;
-  for (const signature of record.fileSignatures) total += signature.size;
+  for (const signature of record.fileSignatures) total += retainedSourceBytes(signature.size);
   return total;
 }
 
@@ -433,7 +518,7 @@ export function sameEntry(left: TranscriptEntry, right: TranscriptEntry): boolea
  *  made once per entry and agent so a re-stitch keeps the same objects. */
 const stampedByEntry = new WeakMap<TranscriptEntry, { agentName: string; stamped: TranscriptEntry }>();
 
-function stampAgent(entry: TranscriptEntry, agentName: string): TranscriptEntry {
+export function stampAgent(entry: TranscriptEntry, agentName: string): TranscriptEntry {
   if (entry.kind !== 'assistant') return entry;
   const known = stampedByEntry.get(entry);
   if (known && known.agentName === agentName) return known.stamped;
@@ -474,9 +559,21 @@ export function setStitchMemoBudgetForTests(bytes?: number): void {
   stitchMemoByteBudget = bytes ?? STITCH_MEMO_BYTE_BUDGET;
 }
 
+/** Each conversation's extent once: resume rows share a file and its extent. */
+function uniqueExtents(resolved: Array<{ resolved: ResolvedTranscript }>): ConversationExtent[] {
+  const byConversation = new Map<string, ConversationExtent>();
+  for (const { resolved: item } of resolved) {
+    if (item.extent && !byConversation.has(item.extent.conversationId)) {
+      byConversation.set(item.extent.conversationId, item.extent);
+    }
+  }
+  return [...byConversation.values()];
+}
+
 function toSessionMeta(record: SessionRecord, agentName: string): ConversationSessionMeta {
   return {
     sessionId: record.id,
+    agentSessionId: record.agent_session_id,
     agentName,
     startedAt: record.started_at,
     exitedAt: record.exited_at,
@@ -572,6 +669,7 @@ export async function resolveTaskTranscript(
             ),
             revision: memo.revision,
             archivedAgentName: memo.fileDerived.archivedAgentName,
+            conversations: memo.fileDerived.conversations,
           };
         }
       }
@@ -600,6 +698,7 @@ export async function resolveTaskTranscript(
 
   const taskId = anchor.task_id;
   const depsFingerprint = depsParts.join('|');
+  const conversations = uniqueExtents(resolvedBySession);
 
   // The expensive part (dedup by uuid, chronological sort, boundary-divider
   // insertion) is memoized per task: when every contributing session's
@@ -623,6 +722,7 @@ export async function resolveTaskTranscript(
         sessions: sessionMetas,
         revision: memo.revision,
         archivedAgentName,
+        conversations,
       };
     }
   }
@@ -715,6 +815,7 @@ export async function resolveTaskTranscript(
         unavailableReason: latest.unavailableReason,
         agentName: latest.agentName,
         archivedAgentName,
+        conversations,
       },
     });
     recordRevision(taskId, revision, entries);
@@ -732,5 +833,6 @@ export async function resolveTaskTranscript(
     sessions: sessionMetas,
     revision,
     archivedAgentName,
+    conversations,
   };
 }

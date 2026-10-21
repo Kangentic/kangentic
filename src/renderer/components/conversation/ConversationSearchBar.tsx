@@ -40,6 +40,23 @@ const DEBOUNCE_MS = 120;
 const MAX_RESULTS = 200;
 const SNIPPET_RADIUS = 40;
 
+/**
+ * Each row's lower-cased search text, made once per row object. Rows keep their
+ * identity across reconciles while unchanged, so a page loading above the reader
+ * re-scans its own rows only instead of lower-casing every row again.
+ */
+// hmr-safe: a pure cache keyed by row objects; a fresh map after a reload only recomputes.
+const lowerSearchTextByRow = new WeakMap<DisplayRow, string>();
+
+function lowerSearchText(row: DisplayRow): string {
+  let lower = lowerSearchTextByRow.get(row);
+  if (lower === undefined) {
+    lower = row.searchText.toLowerCase();
+    lowerSearchTextByRow.set(row, lower);
+  }
+  return lower;
+}
+
 function buildSnippet(text: string, matchStart: number, matchEnd: number): { snippet: string; snippetMatchStart: number; snippetMatchEnd: number } {
   const start = Math.max(0, matchStart - SNIPPET_RADIUS);
   const end = Math.min(text.length, matchEnd + SNIPPET_RADIUS);
@@ -56,7 +73,10 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
   function ConversationSearchBar({ rows, onNavigate, placeholder = 'Search this conversation' }, ref) {
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
-    const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+    // The current match is held by its row's uuid, not its index: a page of
+    // older messages loading above shifts every index, and the reader's place
+    // in the results must not move with it.
+    const [currentMatchUuid, setCurrentMatchUuid] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useImperativeHandle(ref, () => ({
@@ -72,7 +92,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
         // A new query starts with no current match. Reset here, the only place
         // the debounced query changes, rather than in an effect that syncs the
         // two.
-        setCurrentMatchIndex(-1);
+        setCurrentMatchUuid(null);
       }, DEBOUNCE_MS);
       return () => clearTimeout(timer);
     }, [query]);
@@ -82,7 +102,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
       if (needle.length === 0) return [];
       const results: SearchMatch[] = [];
       for (const row of rows) {
-        const haystack = row.searchText.toLowerCase();
+        const haystack = lowerSearchText(row);
         const matchIndex = haystack.indexOf(needle);
         if (matchIndex < 0) continue;
         const { snippet, snippetMatchStart, snippetMatchEnd } = buildSnippet(
@@ -96,9 +116,14 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
       return results;
     }, [rows, debouncedQuery]);
 
+    const currentMatchIndex = useMemo(
+      () => (currentMatchUuid === null ? -1 : matches.findIndex((match) => match.uuid === currentMatchUuid)),
+      [matches, currentMatchUuid],
+    );
+
     const goToMatchIndex = useCallback(
       (index: number) => {
-        setCurrentMatchIndex(index);
+        setCurrentMatchUuid(matches[index].uuid);
         onNavigate(matches[index].uuid);
       },
       [matches, onNavigate],
