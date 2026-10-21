@@ -165,6 +165,7 @@ scripts/
   dev.js                   # Development server (Vite + esbuild + Electron)
   build.js                 # Production build pipeline
   worktree-preview.js      # Opens native terminal for worktree dev server
+  dogfood-launcher.ps1     # Windows: root shortcut that runs npm run dev under a pinned parent PID
 ```
 
 ## Build System
@@ -194,6 +195,29 @@ Flags:
 **Single-instance lock warning:** a non-ephemeral launch whose Electron process exits almost immediately with code 0 means another Kangentic instance (usually the installed app) already holds the single-instance lock -- the loser exits silently and the holder's window is focused, which looks exactly like a successful dev launch while you are actually using the other build. `dev.js` detects that signature (non-ephemeral, exit 0, under 5s from spawn) and prints an unmissable warning: quit the other instance (including its tray icon and any background processes in Task Manager), then run `npm start` again. Ephemeral previews skip the lock and can never trigger it.
 
 **Dev build marker:** a dev build names itself `Kangentic (dev)` in the title-bar wordmark and in the OS window title, so a dogfooding `npm start` window is tellable from a packaged build in the taskbar without clicking into it. Both strings are gated on the build-time `__KANGENTIC_DEV__` flag and are dead-code-eliminated from a production build. A worktree preview is a dev window, so it gains the wordmark suffix on top of its preview pill, while its own `#<id> - <title>` label still wins the OS title. The two marketing captures (`walkthrough.capture.ts`, `agent-orchestration.capture.ts`) render against the Vite dev server, where the flag is true, so `hideDevOnlyChrome` in `tests/captures/helpers/capture-page.ts` hides the badge; a capture entry point that forgets the call fails `tests/unit/capture-dev-chrome-parity.test.ts`. The scene captures (`scenes.capture.ts`) render against the built demo, which has no badge, and call it only to satisfy that test.
+
+### Dogfooding on Windows (`scripts/dogfood-launcher.ps1`)
+
+A process tree killer that follows recorded parent PIDs without checking creation times can take the dogfooding `npm run dev` tree down from outside. Windows keeps a process's parent PID after that parent exits and later gives the number to a new process. When the killer's own tree holds that number, it counts the older orphan as a child and kills it with everything below it. Aspire's `dcp stop-process-tree` (Aspire 13.6.1, run for every resource tree when an AppHost stops) does this under a forced PID collision. `taskkill /T` and .NET `Process.Kill(entireProcessTree: true)` skip the orphan.
+
+Every process tree has exactly one exposed slot: the PID of the first exited process above its topmost live process. Moving the dev server changes which PID that is. It does not remove it.
+
+- Windows Terminal: `wt.exe` starts `WindowsTerminal.exe` and exits, so the terminal records a dead parent.
+- Anything Explorer starts, including a shortcut, a Start menu entry, and an editor with its integrated terminal: `userinit.exe` starts `explorer.exe` at sign-in and exits, so Explorer records a dead parent too.
+
+Windows does not reuse a PID while any handle to that process is open, and the launcher uses that to pin its slot. The `Kangentic (dev).lnk` shortcut runs the launcher in a console of its own. The launcher opens a second `conhost.exe` window running the host, the host opens a handle on the launcher, and the launcher exits. That window's console host records the launcher's PID as its parent, and the host keeps the PID taken for as long as the window is open. The launcher and its console have exited and neither appears in the process list, so a walk coming down from Explorer's slot stops above the window.
+
+The window's console host is `conhost.exe` by name. With the default terminal set to "Let Windows decide", Windows hands a new console to Windows Terminal, and the dev server would die with that window even though it is not the terminal's child.
+
+Measured with forced PID collisions against `dcp stop-process-tree`. An unpinned launcher's PID came back after 1,328 spawns, and the walk from it killed the console host, the shell, and the shell's child. With the pin, the launcher's PID never came back in 28,280 spawns, while its exited console host's PID came back after 5,656. The walk from that reused PID killed only the process holding it and left the dev window, its host, and its child running.
+
+To set it up, run this once from the checkout you dogfood:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dogfood-launcher.ps1 -CreateShortcut
+```
+
+It writes `Kangentic (dev).lnk` to the checkout root. Double-click it there to start the dev server, or pin it to the taskbar. Git ignores it through a `.gitignore` entry, and the checkout's absolute path inside it means each machine generates its own. `-ShortcutPath` writes it somewhere else, such as the Start menu. `-DevCommand` replaces `npm run dev` as the command the window runs. The window prints a green `Pinned:` line before it starts `npm run dev`. A red `NOT PROTECTED` line means the pin failed and the dev server was not started. When `npm run dev` exits, the window stays at a prompt that still holds the pin, so running it again there is covered too.
 
 ### Production (`npm run build` / `scripts/build.js`)
 
