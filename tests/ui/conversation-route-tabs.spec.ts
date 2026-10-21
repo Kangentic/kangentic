@@ -566,6 +566,52 @@ test.describe('Conversation window Route tabs', () => {
     }
   });
 
+  test('a poll that changes only which columns ran an isolated session repaints the tabs and dividers', async () => {
+    // A live poll whose tail is unchanged (same turns, same status) but whose
+    // sessions now list an isolated column must still repaint: the transcript
+    // signature carries the isolated columns, or React keeps the old object and
+    // the icon never arrives. The two responses differ in nothing else.
+    test.setTimeout(30_000);
+    const { browser, page } = await launch(ROUTE, { isolatedSwimlaneIds: ['lane-review'] });
+    try {
+      await page.evaluate(async ({ sessionId }) => {
+        interface SeededTranscript {
+          sessions: Array<{ isolatedSwimlaneId: string | null }>;
+          [field: string]: unknown;
+        }
+        const scope = window as unknown as {
+          __isolatedArrived: boolean;
+          __mockTranscriptsGetOverride: (input: { sessionId: string }) => unknown;
+          electronAPI: { transcripts: { get: (input: { sessionId: string; projectId: string | null }) => Promise<SeededTranscript> } };
+        };
+        const seeded = await scope.electronAPI.transcripts.get({ sessionId, projectId: null });
+        const early = {
+          ...seeded,
+          sessionStatus: 'running',
+          revision: 1,
+          sessions: seeded.sessions.filter((session) => session.isolatedSwimlaneId === null),
+        };
+        const late = { ...seeded, sessionStatus: 'running', revision: 2 };
+        scope.__isolatedArrived = false;
+        scope.__mockTranscriptsGetOverride = (input) => {
+          if (input.sessionId !== sessionId) return undefined;
+          return scope.__isolatedArrived ? late : early;
+        };
+      }, { sessionId: SESSION_ID });
+
+      await openConversation(page);
+      await expect(tab(page, 'lane-review')).toBeVisible();
+      await expect(page.getByTestId('isolated-icon')).toHaveCount(0);
+
+      await page.evaluate(() => { (window as unknown as { __isolatedArrived: boolean }).__isolatedArrived = true; });
+      // The poll runs every 2.5 s, which comes on top of a launch.
+      await expect(tab(page, 'lane-review').getByTestId('isolated-icon')).toHaveCount(1, { timeout: 8000 });
+      await expect(dividers(page).nth(1).getByTestId('isolated-icon')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a first route read that fails shows the whole conversation with no tab row', async () => {
     const { browser, page } = await launch();
     try {
