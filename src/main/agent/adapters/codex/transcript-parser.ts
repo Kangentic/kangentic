@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { codexHomeDir } from './config-toml';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 
 /**
@@ -47,110 +49,162 @@ export async function parseCodexTranscript(
   });
   if (window.totalBytes === 0) return [];
 
-  const entries: TranscriptEntry[] = [];
-  const lines = window.text.split(/\r?\n/);
-  let currentModel: string | undefined;
   // Line indices must stay absolute within the FILE, not relative to the
-  // window (the Grok precedent).
-  const lineIndexBase = window.omittedLineCount;
+  // window (the Grok precedent), so the lines are numbered from the count
+  // before it.
+  const entries = parseCodexLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readCodexTranscriptPage`), with the line count the uuids need.
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
+    conversationId: agentSessionId,
+    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
+  });
+}
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
+/**
+ * One page of a Codex rollout's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). Every uuid is named by its line, so
+ * cursors carry a line count.
+ */
+export function readCodexTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseCodexLines(agentSessionId, lines),
+  });
+}
+
+/** What one read carries from line to line: the model the last `turn_context` named. */
+interface CodexLineState {
+  model: string | undefined;
+}
+
+/**
+ * Parse whole lines into entries, each stamped with the byte its line starts at.
+ *
+ * The model starts unknown on every call, so assistant entries before a read's
+ * first `turn_context` carry none. The tail has always read its own start that
+ * way, and a history page reads its start the same way: carrying the model in
+ * from earlier lines would need state between reads, which a page keeps none
+ * of. Rollouts measured on the dev machine were at most 0.3 MB, far under the
+ * tail's cap, so in practice a rollout is read whole and never paged.
+ */
+function parseCodexLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  const state: CodexLineState = { model: undefined };
+  for (const { text: line, byte, line: lineNumber } of lines) {
     if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw)) continue;
+    const firstNew = entries.length;
+    parseCodexRecord(agentSessionId, line, lineNumber ?? 0, state, entries);
+    const origin = { conversationId: agentSessionId, position: byte };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+  }
+  return entries;
+}
 
-    const ts = parseTimestamp(raw.timestamp);
+/** Parse one JSONL record, appending what it yields and noting a new model. */
+function parseCodexRecord(
+  agentSessionId: string,
+  line: string,
+  lineNumber: number,
+  state: CodexLineState,
+  entries: TranscriptEntry[],
+): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(raw)) return;
 
-    if (raw.type === 'turn_context' && isRecord(raw.payload)) {
-      const model = raw.payload.model;
-      if (typeof model === 'string' && model.length > 0) currentModel = model;
-      continue;
-    }
+  const ts = parseTimestamp(raw.timestamp);
 
-    if (raw.type !== 'response_item' || !isRecord(raw.payload)) continue;
-    const payload = raw.payload;
-    // Session-scoped and ABSOLUTE. Both halves are load-bearing, and a rollout
-    // carries no per-record id to derive either from (only `function_call` /
-    // `function_call_output` have a `call_id`, and they share it as a pair).
-    //   - absolute, because these uuids are the persisted citation anchors
-    //     `sliceTranscriptAroundUuid` resolves against. The window-relative
-    //     counter this replaced renumbered every turn once a transcript grew
-    //     past the read cap and the tail window started sliding.
-    //   - session-scoped, because `resolveTaskTranscript` stitches every
-    //     session a task has had and dedups by uuid keeping the first. Two
-    //     Codex sessions on one task both minted `codex-0..N`, so the second
-    //     session's turns collided with the first's and vanished from the
-    //     Conversation tab. That bug did not need a large transcript.
-    const uuid = `${agentSessionId}:${lineIndexBase + lineIndex}`;
-
-    if (payload.type === 'message') {
-      const role = payload.role;
-      if (role !== 'user' && role !== 'assistant') continue; // skip developer/system
-      const text = joinContentText(payload.content);
-      if (text.length === 0) continue;
-      if (role === 'user') {
-        // Skip Codex's injected context wrappers (not authored by the user).
-        if (text.startsWith('<environment_context>') || text.startsWith('<user_instructions>')) {
-          continue;
-        }
-        entries.push({ kind: 'user', uuid, ts, text });
-      } else {
-        entries.push({ kind: 'assistant', uuid, ts, model: currentModel, blocks: [{ type: 'text', text }] });
-      }
-      continue;
-    }
-
-    if (payload.type === 'reasoning') {
-      const blocks: TranscriptBlock[] = [];
-      if (Array.isArray(payload.summary)) {
-        for (const item of payload.summary) {
-          if (isRecord(item) && typeof item.text === 'string' && item.text.length > 0) {
-            blocks.push({ type: 'thinking', text: item.text });
-          }
-        }
-      }
-      if (blocks.length > 0) {
-        entries.push({ kind: 'assistant', uuid, ts, model: currentModel, blocks });
-      }
-      continue;
-    }
-
-    if (payload.type === 'function_call') {
-      const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
-      const name = typeof payload.name === 'string' ? payload.name : 'function';
-      const input = typeof payload.arguments === 'string'
-        ? (tryParseJson(payload.arguments) ?? payload.arguments)
-        : payload.arguments;
-      entries.push({
-        kind: 'assistant',
-        uuid,
-        ts,
-        model: currentModel,
-        blocks: [{ type: 'tool_use', id: callId, name, input }],
-      });
-      continue;
-    }
-
-    if (payload.type === 'function_call_output') {
-      const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
-      entries.push({
-        kind: 'tool_result',
-        uuid,
-        ts,
-        toolUseId: callId,
-        content: stringifyOutput(payload.output),
-      });
-      continue;
-    }
+  if (raw.type === 'turn_context' && isRecord(raw.payload)) {
+    const model = raw.payload.model;
+    if (typeof model === 'string' && model.length > 0) state.model = model;
+    return;
   }
 
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+  if (raw.type !== 'response_item' || !isRecord(raw.payload)) return;
+  const payload = raw.payload;
+  // Session-scoped and ABSOLUTE. Both halves are load-bearing, and a rollout
+  // carries no per-record id to derive either from (only `function_call` /
+  // `function_call_output` have a `call_id`, and they share it as a pair).
+  //   - absolute, because these uuids are the persisted citation anchors
+  //     `sliceTranscriptAroundUuid` resolves against. The window-relative
+  //     counter this replaced renumbered every turn once a transcript grew
+  //     past the read cap and the tail window started sliding.
+  //   - session-scoped, because `resolveTaskTranscript` stitches every
+  //     session a task has had and dedups by uuid keeping the first. Two
+  //     Codex sessions on one task both minted `codex-0..N`, so the second
+  //     session's turns collided with the first's and vanished from the
+  //     Conversation tab. That bug did not need a large transcript.
+  const uuid = `${agentSessionId}:${lineNumber}`;
+
+  if (payload.type === 'message') {
+    const role = payload.role;
+    if (role !== 'user' && role !== 'assistant') return; // skip developer/system
+    const text = joinContentText(payload.content);
+    if (text.length === 0) return;
+    if (role === 'user') {
+      // Skip Codex's injected context wrappers (not authored by the user).
+      if (text.startsWith('<environment_context>') || text.startsWith('<user_instructions>')) {
+        return;
+      }
+      entries.push({ kind: 'user', uuid, ts, text });
+    } else {
+      entries.push({ kind: 'assistant', uuid, ts, model: state.model, blocks: [{ type: 'text', text }] });
+    }
+    return;
+  }
+
+  if (payload.type === 'reasoning') {
+    const blocks: TranscriptBlock[] = [];
+    if (Array.isArray(payload.summary)) {
+      for (const item of payload.summary) {
+        if (isRecord(item) && typeof item.text === 'string' && item.text.length > 0) {
+          blocks.push({ type: 'thinking', text: item.text });
+        }
+      }
+    }
+    if (blocks.length > 0) {
+      entries.push({ kind: 'assistant', uuid, ts, model: state.model, blocks });
+    }
+    return;
+  }
+
+  if (payload.type === 'function_call') {
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
+    const name = typeof payload.name === 'string' ? payload.name : 'function';
+    const input = typeof payload.arguments === 'string'
+      ? (tryParseJson(payload.arguments) ?? payload.arguments)
+      : payload.arguments;
+    entries.push({
+      kind: 'assistant',
+      uuid,
+      ts,
+      model: state.model,
+      blocks: [{ type: 'tool_use', id: callId, name, input }],
+    });
+    return;
+  }
+
+  if (payload.type === 'function_call_output') {
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : '';
+    entries.push({
+      kind: 'tool_result',
+      uuid,
+      ts,
+      toolUseId: callId,
+      content: stringifyOutput(payload.output),
+    });
+  }
 }
 
 /**

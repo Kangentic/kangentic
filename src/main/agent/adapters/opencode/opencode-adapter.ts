@@ -5,7 +5,13 @@ import { OpenCodeDetector } from './detector';
 import { OpenCodeCommandBuilder } from './command-builder';
 import { OpenCodeSessionHistoryParser } from './session-history-parser';
 import { createOpenCodeCommandInjectionVerifier } from './command-injection-verifier';
-import { parseOpenCodeTranscript, openCodeTranscriptSourcePath, mapOpenCodeRemoteEntries } from './transcript-parser';
+import {
+  capOpenCodeRemoteEntries,
+  mapOpenCodeRemoteEntries,
+  openCodeTranscriptSourcePath,
+  parseOpenCodeTranscript,
+  readOpenCodeTranscriptPage,
+} from './transcript-parser';
 import { migrateOpenCodeProjectData } from './project-relocation';
 import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import { discoverOpenCodeCapabilities } from './capability-discovery';
@@ -15,7 +21,17 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  AnswerFromContextOptions,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -443,15 +459,22 @@ export class OpenCodeAdapter implements AgentAdapter {
     if (target) {
       const messages = await fetchOpenCodeSessionMessages(target, agentSessionId);
       return {
-        entries: mapOpenCodeRemoteEntries(messages),
+        entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),
         sourcePath: `${target.url}/session/${agentSessionId}/message`,
       };
     }
-    const entries = await parseOpenCodeTranscript(agentSessionId);
+    const { entries, totalPosition } = await parseOpenCodeTranscript(agentSessionId);
     // The shared DB path is always known, so report it even when no entries
     // were found (empty session vs missing DB) - consistent with the
     // file-based adapters and gives the "not found" message a location to cite.
-    return { entries, sourcePath: openCodeTranscriptSourcePath() };
+    // The DB is shared by every session, so its file size is not this one's.
+    return { entries, sourcePath: openCodeTranscriptSourcePath(), totalPosition };
+  }
+
+  /** One page of a local session's history for the Conversation viewer; a remote one does not page. */
+  async readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    if (this.remoteTargetsByCwd.has(cwd)) return { status: 'unavailable', reason: 'unsupported_agent' };
+    return readOpenCodeTranscriptPage(openCodeTranscriptSourcePath(), agentSessionId, request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {

@@ -42,6 +42,7 @@ import type {
   TranscriptSource,
   TranscriptUnavailableReason,
 } from '../../shared/types';
+import { transcriptEntryKey } from '../../shared/types';
 
 export interface ResolvedTranscript {
   record: SessionRecord;
@@ -602,9 +603,11 @@ function toSessionMeta(record: SessionRecord, agentName: string): ConversationSe
  * DEDUP: a `--resume` session's native transcript REPLAYS its parent session's
  * full history (identical messages, identical per-message uuids), so naively
  * concatenating every session double-counts every shared turn. We deduplicate
- * by uuid keeping the FIRST occurrence. Unique uuids are also what the viewer
- * keys its rows and its virtualizer measurement cache on, so a duplicate would
- * otherwise break React reconciliation and stack rows on top of each other.
+ * by `transcriptEntryKey` keeping the FIRST occurrence: the uuid, plus the call
+ * a tool result answers, since one record's reply and its results share a
+ * uuid. Unique uuids are also what the viewer keys its rows and its virtualizer
+ * measurement cache on; a tool result folds into its call's card and is no row
+ * of its own, and the row builder drops any repeat uuid that would be.
  *
  * CHRONOLOGY: a session's turns are NOT contiguous in time. A main session is
  * suspended for an isolated-swimlane excursion and then RESUMED into the same
@@ -736,11 +739,14 @@ export async function resolveTaskTranscript(
   let entries: TranscriptEntry[] = [];
   timeSyncWork('transcript:stitch', () => {
     const tagged: TaggedEntry[] = [];
-    const seenUuids = new Set<string>();
+    const seenKeys = new Set<string>();
     for (const { session, resolved } of resolvedBySession) {
       for (const entry of resolved.entries) {
-        if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
-        seenUuids.add(entry.uuid);
+        // A resume replays parent turns verbatim. Keyed so the several entries
+        // one record yields (a reply and its tool results) all survive.
+        const key = transcriptEntryKey(entry);
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
         tagged.push({ entry: stampAgent(entry, resolved.agentName), sessionId: session.id });
       }
     }

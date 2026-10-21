@@ -1,13 +1,22 @@
 import { DroidDetector } from './detector';
 import { DroidCommandBuilder, removeMcpConfig, droidMcpWiringEnabled } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
-import { droidTranscriptFilePath, parseDroidTranscript } from './transcript-parser';
+import { droidTranscriptFilePath, parseDroidTranscript, readDroidTranscriptPage } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
   PermissionMode,
@@ -195,6 +204,11 @@ export class DroidAdapter implements AgentAdapter {
     const filePath = droidTranscriptFilePath(agentSessionId, cwd);
     const entries = await parseDroidTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /** One page of the transcript's history for the Conversation viewer. */
+  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    return readDroidTranscriptPage(agentSessionId, droidTranscriptFilePath(agentSessionId, cwd), request);
   }
 
   async discoverCapabilities(_cliPath: string): Promise<AgentCapabilities> {

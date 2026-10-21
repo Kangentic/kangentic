@@ -32,6 +32,7 @@ import type {
   TranscriptPageResponse,
   TranscriptTimelineResponse,
 } from '../../shared/types';
+import { transcriptEntryKey } from '../../shared/types';
 
 export interface HistoryPageRequest {
   conversationId: string;
@@ -67,13 +68,14 @@ function resolveConversation(db: Database.Database, conversationId: string): Res
   };
 }
 
-/** A page's entries as the tail's are: clamped, stamped with their agent, one per uuid. */
+/** A page's entries as the tail's are: clamped, stamped with their agent, deduplicated as the stitch does. */
 function displayEntries(entries: TranscriptEntry[], agentName: string): TranscriptEntry[] {
   const seen = new Set<string>();
   const result: TranscriptEntry[] = [];
   for (const entry of truncateEntries(entries)) {
-    if (seen.has(entry.uuid)) continue;
-    seen.add(entry.uuid);
+    const key = transcriptEntryKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
     result.push(stampAgent(entry, agentName));
   }
   return result;

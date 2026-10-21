@@ -1,7 +1,9 @@
 import os from 'node:os';
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptEntryOrigin } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { findSessionWireFile } from './session-history-parser';
 
@@ -44,8 +46,42 @@ export async function parseKimiTranscript(
   });
   if (window.totalBytes === 0) return [];
 
+  // Line indices stay absolute within the FILE, so the lines are numbered from
+  // the count before the window.
+  const entries = parseKimiLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readKimiTranscriptPage`), with the line count the uuids need.
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, {
+    conversationId: agentSessionId,
+    cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }),
+  });
+}
+
+/**
+ * One page of a Kimi wire file's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). Every uuid is named by its line, so
+ * cursors carry a line count.
+ */
+export function readKimiTranscriptPage(
+  agentSessionId: string,
+  filePath: string,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseKimiLines(agentSessionId, lines),
+  });
+}
+
+/**
+ * Parse whole lines into entries. A single-record entry is stamped with the
+ * byte its own line starts at; a flushed text run with the byte its first
+ * fragment's line starts at, the same line its uuid names.
+ */
+function parseKimiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
-  const lines = window.text.split(/\r?\n/);
   let pendingAssistantText = '';
   let pendingTs = 0;
   // The line the CURRENT pending run of ContentPart fragments started on,
@@ -56,39 +92,49 @@ export async function parseKimiTranscript(
   // never claim the same line.
   //
   // KNOWN RESIDUAL, over-cap transcripts only. This is the line the run starts
-  // on IN THIS WINDOW, which is its true start only while the whole run is
-  // visible. Once the tail window slides into the middle of a run, the flush
-  // anchors to the first fragment still visible instead. Usually harmless: the
-  // dropped fragment also changes the flushed text, so the chunk diverges and
-  // is re-inserted with the new anchor rather than keeping a stale one. It goes
+  // on IN THESE LINES, which is its true start only while the whole run is
+  // visible. The tail's start and each history page's edges are seams, and
+  // nothing crosses one. A seam between two fragments of one run cuts it in
+  // two: the lines before it flush their fragments at their end, under the
+  // run's own first line (the uuid a whole-file parse gives the run), and the
+  // lines after it start a fresh run named after the first fragment they hold.
+  // The viewer shows the two halves as two rows, and each half is trimmed on
+  // its own, so whitespace at the cut is lost. As the tail slides, its first
+  // run re-anchors the same way. Usually harmless for citations: the dropped
+  // fragment also changes the flushed text, so the chunk diverges and is
+  // re-inserted with the new anchor rather than keeping a stale one. It goes
   // stale only when the dropped leading fragment contributes nothing after
   // `.trim()` (a whitespace-only fragment), leaving byte-identical text under a
-  // shifted uuid. Resolving it means carrying the run's start across parses,
-  // which this deliberately stateless parser has no place to keep.
-  let pendingLineIndex = 0;
+  // shifted uuid. Resolving any of it means carrying the run's start across
+  // reads, which this deliberately stateless parser has no place to keep.
+  let pendingLineNumber = 0;
+  let pendingOrigin: TranscriptEntryOrigin = { conversationId: agentSessionId, position: 0 };
   // Session-scoped and ABSOLUTE; see the fuller note in the Codex parser, which
   // has the identical shape and the identical two bugs behind it. Kimi's wire
   // records carry no per-record id either (only ToolCall/ToolResult do, as a
   // shared pair).
-  const lineIndexBase = window.omittedLineCount;
-  const uuidForLine = (lineIndex: number): string => `${agentSessionId}:${lineIndexBase + lineIndex}`;
+  const uuidForLine = (lineNumber: number): string => `${agentSessionId}:${lineNumber}`;
 
   const flushAssistantText = (): void => {
     const text = pendingAssistantText.trim();
     if (text.length > 0) {
       entries.push({
         kind: 'assistant',
-        uuid: uuidForLine(pendingLineIndex),
+        uuid: uuidForLine(pendingLineNumber),
         ts: pendingTs,
         blocks: [{ type: 'text', text }],
+        origin: pendingOrigin,
       });
     }
     pendingAssistantText = '';
   };
 
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-    const line = lines[lineIndex];
+  for (const { text: line, byte, line: countedLine } of lines) {
     if (line.length === 0) continue;
+    // A page's first pass parses without line numbers only to find where its
+    // entries begin, then parses again numbered.
+    const lineNumber = countedLine ?? 0;
+    const origin: TranscriptEntryOrigin = { conversationId: agentSessionId, position: byte };
     let raw: unknown;
     try {
       raw = JSON.parse(line);
@@ -107,7 +153,7 @@ export async function parseKimiTranscript(
     if (type === 'TurnBegin' || type === 'SteerInput') {
       flushAssistantText();
       const text = extractUserInputText(payload.user_input);
-      if (text) entries.push({ kind: 'user', uuid: uuidForLine(lineIndex), ts, text });
+      if (text) entries.push({ kind: 'user', uuid: uuidForLine(lineNumber), ts, text, origin });
       continue;
     }
 
@@ -116,7 +162,8 @@ export async function parseKimiTranscript(
       if (fragment) {
         if (pendingAssistantText.length === 0) {
           pendingTs = ts;
-          pendingLineIndex = lineIndex;
+          pendingLineNumber = lineNumber;
+          pendingOrigin = origin;
         }
         pendingAssistantText += fragment;
       }
@@ -132,7 +179,7 @@ export async function parseKimiTranscript(
         ? (tryParseJson(callFunction.arguments) ?? callFunction.arguments)
         : callFunction.arguments;
       const blocks: TranscriptBlock[] = [{ type: 'tool_use', id, name, input }];
-      entries.push({ kind: 'assistant', uuid: uuidForLine(lineIndex), ts, blocks });
+      entries.push({ kind: 'assistant', uuid: uuidForLine(lineNumber), ts, blocks, origin });
       continue;
     }
 
@@ -141,21 +188,24 @@ export async function parseKimiTranscript(
       const returnValue = isRecord(payload.return_value) ? payload.return_value : {};
       entries.push({
         kind: 'tool_result',
-        uuid: uuidForLine(lineIndex),
+        uuid: uuidForLine(lineNumber),
         ts,
         toolUseId,
         content: extractToolResultContent(returnValue),
         isError: returnValue.is_error === true,
+        origin,
       });
       continue;
     }
 
-    // TurnEnd and any other event close out any pending assistant text.
+    // TurnEnd closes out any pending assistant text. Other events (StatusUpdate,
+    // hooks) pass through a run without ending it.
     if (type === 'TurnEnd') flushAssistantText();
   }
 
+  // Also where a run a seam cuts flushes its first half (see above).
   flushAssistantText();
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+  return entries;
 }
 
 /**

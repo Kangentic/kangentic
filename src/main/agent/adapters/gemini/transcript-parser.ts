@@ -1,8 +1,11 @@
 import fs from 'node:fs';
+import { open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
+import { encodeJsonlCursor, readJsonlHistoryPage, splitJsonlLines, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { computeGeminiProjectDirName } from './session-history-parser';
 
@@ -46,38 +49,8 @@ export async function parseGeminiTranscript(
     countOmittedLines: true,
   });
   if (window.totalBytes === 0) return [];
-  const content = window.text;
 
-  // Only used when a message lacks its own `id`. See the Qwen parser for why
-  // this is resolved up front rather than lazily.
-  const lineIndexBase = window.omittedLineCount;
-
-  // Dedupe by message id, last-wins, first-seen order preserved.
-  //
-  // The map KEY is the entry uuid. Deriving both from one value is the point:
-  // the key used to fall back to `gemini-${messagesById.size}` while the uuid
-  // fell back to `''`, so an id-less message was keyed distinctly but then
-  // emitted with a uuid shared by every other id-less message - and
-  // `resolveTaskTranscript` dedups by uuid keeping the first, so all but one
-  // vanished from the stitched Conversation tab. The fallback is now the
-  // session-scoped absolute line index used by the Codex and Kimi parsers.
-  const messagesById = new Map<string, Record<string, unknown>>();
-  const addMessage = (message: unknown, lineIndex: number, indexWithinLine: number | null): void => {
-    if (!isRecord(message)) return;
-    const type = message.type;
-    if (type !== 'user' && type !== 'gemini') return;
-    let messageId = typeof message.id === 'string' && message.id.length > 0 ? message.id : null;
-    if (messageId === null) {
-      const absoluteLine = lineIndexBase + lineIndex;
-      // A `$set` line seeds SEVERAL messages, so the line alone is not unique.
-      messageId = indexWithinLine === null
-        ? `${agentSessionId}:${absoluteLine}`
-        : `${agentSessionId}:${absoluteLine}.${indexWithinLine}`;
-    }
-    messagesById.set(messageId, message);
-  };
-
-  const trimmed = content.trim();
+  const trimmed = window.text.trim();
   // `window.omittedBytes === 0` is load-bearing, not belt-and-braces. The legacy
   // form is ONE JSON object spanning the whole file, so it is detected by the
   // file containing no newlines - but a tail window of a legacy document larger
@@ -90,88 +63,216 @@ export async function parseGeminiTranscript(
   const isWholeFile = window.omittedBytes === 0 && window.nextByteOffset >= window.totalBytes;
   if (isWholeFile && trimmed.startsWith('{') && trimmed.endsWith('}') && !trimmed.includes('\n')) {
     // Legacy single-object form: one JSON object with a messages[] array.
+    const kept = new Map<string, KeptMessage>();
     const parsed = tryParseJson(trimmed);
     if (isRecord(parsed) && Array.isArray(parsed.messages)) {
       // The legacy form is one object on one line, so every message shares
-      // line 0 and is distinguished by its index within the array.
-      for (const [index, message] of parsed.messages.entries()) addMessage(message, 0, index);
-    }
-  } else {
-    const lines = content.split(/\r?\n/);
-    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      const line = lines[lineIndex];
-      if (line.length === 0) continue;
-      const parsed = tryParseJson(line);
-      if (!isRecord(parsed)) continue;
-      // `$set` patch line: fold in any seeded messages, ignore other keys.
-      if (isRecord(parsed.$set)) {
-        if (Array.isArray(parsed.$set.messages)) {
-          for (const [index, message] of parsed.$set.messages.entries()) {
-            addMessage(message, lineIndex, index);
-          }
-        }
-        continue;
+      // line 0 and is distinguished by its index within the array. Its entries
+      // carry no `origin`, since one line holds nothing to page.
+      for (const [index, message] of parsed.messages.entries()) {
+        keepMessage(kept, agentSessionId, message, 0, index, null);
       }
-      addMessage(parsed, lineIndex, null);
     }
+    return entriesFromMessages(agentSessionId, kept);
   }
 
-  const entries: TranscriptEntry[] = [];
-  // The key IS the uuid (see `addMessage`).
-  for (const [uuid, message] of messagesById) {
-    const ts = parseTimestamp(message.timestamp);
+  // The line count is only used when a message lacks its own `id`. See the
+  // Qwen parser for why it is resolved up front rather than lazily.
+  const entries = parseGeminiLines(agentSessionId, splitJsonlLines(window.text, window.startByte, window.omittedLineCount));
+  if (window.omittedBytes <= 0) return entries;
+  // The notice carries the cursor the Conversation viewer pages the left-out
+  // history from (`readGeminiTranscriptPage`), with the line count the uuids
+  // need. A legacy document past the cap gets the notice without one. Its tail
+  // window held no whole line, and the page read refuses that form.
+  const history = await isLegacyGeminiDocument(filePath)
+    ? undefined
+    : { conversationId: agentSessionId, cursor: encodeJsonlCursor({ byte: window.startByte, line: window.omittedLineCount }) };
+  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes, history);
+}
 
-    if (message.type === 'user') {
-      const text = joinContentText(message.content);
-      if (text.length === 0) continue;
-      // Skip the CLI's injected opening context turn.
-      if (text.startsWith('<session_context>')) continue;
-      entries.push({ kind: 'user', uuid, ts, text });
+/**
+ * One page of a Gemini transcript's history for the Conversation viewer
+ * (`AgentAdapter.readTranscriptPage`). A message without its own id is named
+ * by its line, so cursors carry a line count. The legacy single document is
+ * one line with nothing before it to page, so it answers `unsupported_agent`.
+ */
+export async function readGeminiTranscriptPage(
+  agentSessionId: string,
+  filePath: string | null,
+  request: TranscriptPageReadRequest,
+): Promise<TranscriptPageReadResult> {
+  if (!filePath) return { status: 'unavailable', reason: 'file_missing' };
+  if (await isLegacyGeminiDocument(filePath)) return { status: 'unavailable', reason: 'unsupported_agent' };
+  return readJsonlHistoryPage({
+    filePath,
+    request,
+    countLines: true,
+    parseLines: (lines) => parseGeminiLines(agentSessionId, lines),
+  });
+}
+
+/** Head bytes read to tell the legacy single document from a current JSONL file. */
+const GENERATION_PROBE_BYTES = 4096;
+
+/**
+ * Whether a session file is the legacy single document, one JSON object
+ * carrying `messages[]` on one line. Reads the head only, never the whole
+ * file. A current file opens with a short header line that has no `messages`,
+ * so a first line that outruns the head is read as legacy too. Misreading a
+ * current file that way costs its paging, never its entries.
+ */
+async function isLegacyGeminiDocument(filePath: string): Promise<boolean> {
+  let handle;
+  try {
+    handle = await open(filePath, 'r');
+    const { size } = await handle.stat();
+    const buffer = Buffer.alloc(Math.min(size, GENERATION_PROBE_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const newline = buffer.subarray(0, bytesRead).indexOf(0x0a);
+    if (newline === -1 && bytesRead < size) return true;
+    const firstLine = tryParseJson(buffer.toString('utf8', 0, newline === -1 ? bytesRead : newline));
+    return isRecord(firstLine) && Array.isArray(firstLine.messages);
+  } catch {
+    return false;
+  } finally {
+    if (handle) await handle.close().catch(() => { /* swallow */ });
+  }
+}
+
+/** A message the dedupe kept, with the byte its kept emission's line starts at. */
+interface KeptMessage {
+  message: Record<string, unknown>;
+  /** Null for the legacy single document, whose entries carry no origin. */
+  position: number | null;
+}
+
+/**
+ * Parse whole JSONL lines into entries, for the tail and a history page alike.
+ * The dedupe runs within one call, which is one window of lines. A message
+ * re-emitted in a later window is parsed there again under the same uuid with
+ * its own line's origin. The viewer keeps the copy from the later position,
+ * which is the same last-emission rule.
+ */
+function parseGeminiLines(agentSessionId: string, lines: ReadonlyArray<JsonlLine>): TranscriptEntry[] {
+  const kept = new Map<string, KeptMessage>();
+  for (const { text, byte, line } of lines) {
+    if (text.length === 0) continue;
+    const parsed = tryParseJson(text);
+    if (!isRecord(parsed)) continue;
+    const lineNumber = line ?? 0;
+    // `$set` patch line: fold in any seeded messages, ignore other keys.
+    if (isRecord(parsed.$set)) {
+      if (Array.isArray(parsed.$set.messages)) {
+        for (const [index, message] of parsed.$set.messages.entries()) {
+          keepMessage(kept, agentSessionId, message, lineNumber, index, byte);
+        }
+      }
       continue;
     }
+    keepMessage(kept, agentSessionId, parsed, lineNumber, null, byte);
+  }
+  return entriesFromMessages(agentSessionId, kept);
+}
 
-    // gemini (assistant)
-    const model = typeof message.model === 'string' ? message.model : undefined;
-    const blocks: TranscriptBlock[] = [];
-    const toolResults: TranscriptEntry[] = [];
+/**
+ * Keep a message under its uuid. The last emission wins, and the message keeps
+ * its first-seen place, since a `set` on a present key does not move it.
+ *
+ * The map KEY is the entry uuid. Deriving both from one value is the point:
+ * the key used to fall back to `gemini-${messagesById.size}` while the uuid
+ * fell back to `''`, so an id-less message was keyed distinctly but then
+ * emitted with a uuid shared by every other id-less message - and
+ * `resolveTaskTranscript` dedups by uuid keeping the first, so all but one
+ * vanished from the stitched Conversation tab. The fallback is now the
+ * session-scoped absolute line index used by the Codex and Kimi parsers.
+ */
+function keepMessage(
+  kept: Map<string, KeptMessage>,
+  agentSessionId: string,
+  message: unknown,
+  lineNumber: number,
+  indexWithinLine: number | null,
+  position: number | null,
+): void {
+  if (!isRecord(message)) return;
+  const type = message.type;
+  if (type !== 'user' && type !== 'gemini') return;
+  let messageId = typeof message.id === 'string' && message.id.length > 0 ? message.id : null;
+  if (messageId === null) {
+    // A `$set` line seeds SEVERAL messages, so the line alone is not unique.
+    messageId = indexWithinLine === null
+      ? `${agentSessionId}:${lineNumber}`
+      : `${agentSessionId}:${lineNumber}.${indexWithinLine}`;
+  }
+  kept.set(messageId, { message, position });
+}
 
-    if (Array.isArray(message.thoughts)) {
-      for (const thought of message.thoughts) {
-        if (!isRecord(thought)) continue;
-        const subject = typeof thought.subject === 'string' ? thought.subject.trim() : '';
-        const description = typeof thought.description === 'string' ? thought.description.trim() : '';
-        const text = subject && description ? `${subject}: ${description}` : subject || description;
-        if (text.length > 0) blocks.push({ type: 'thinking', text });
-      }
-    }
+/** Map the kept messages to entries, each stamped with its kept emission's line. */
+function entriesFromMessages(agentSessionId: string, kept: Map<string, KeptMessage>): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = [];
+  // The key IS the uuid (see `keepMessage`).
+  for (const [uuid, { message, position }] of kept) {
+    const firstNew = entries.length;
+    appendMessageEntries(uuid, message, entries);
+    if (position === null) continue;
+    const origin = { conversationId: agentSessionId, position };
+    for (let index = firstNew; index < entries.length; index += 1) entries[index].origin = origin;
+  }
+  return entries;
+}
 
-    const contentText = typeof message.content === 'string'
-      ? message.content
-      : joinContentText(message.content);
-    if (contentText.trim().length > 0) blocks.push({ type: 'text', text: contentText });
+/** Append the entries one kept message yields. */
+function appendMessageEntries(uuid: string, message: Record<string, unknown>, entries: TranscriptEntry[]): void {
+  const ts = parseTimestamp(message.timestamp);
 
-    if (Array.isArray(message.toolCalls)) {
-      for (const call of message.toolCalls) {
-        if (!isRecord(call)) continue;
-        const id = typeof call.id === 'string' ? call.id : '';
-        const name = typeof call.name === 'string' ? call.name : 'tool';
-        blocks.push({ type: 'tool_use', id, name, input: call.args });
-        toolResults.push({
-          kind: 'tool_result',
-          uuid,
-          ts,
-          toolUseId: id,
-          content: extractToolCallOutput(call),
-          isError: call.status === 'error',
-        });
-      }
-    }
-
-    if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
-    for (const result of toolResults) entries.push(result);
+  if (message.type === 'user') {
+    const text = joinContentText(message.content);
+    if (text.length === 0) return;
+    // Skip the CLI's injected opening context turn.
+    if (text.startsWith('<session_context>')) return;
+    entries.push({ kind: 'user', uuid, ts, text });
+    return;
   }
 
-  return prependTruncationMarker(entries, window.omittedBytes, window.totalBytes);
+  // gemini (assistant)
+  const model = typeof message.model === 'string' ? message.model : undefined;
+  const blocks: TranscriptBlock[] = [];
+  const toolResults: TranscriptEntry[] = [];
+
+  if (Array.isArray(message.thoughts)) {
+    for (const thought of message.thoughts) {
+      if (!isRecord(thought)) continue;
+      const subject = typeof thought.subject === 'string' ? thought.subject.trim() : '';
+      const description = typeof thought.description === 'string' ? thought.description.trim() : '';
+      const text = subject && description ? `${subject}: ${description}` : subject || description;
+      if (text.length > 0) blocks.push({ type: 'thinking', text });
+    }
+  }
+
+  const contentText = typeof message.content === 'string'
+    ? message.content
+    : joinContentText(message.content);
+  if (contentText.trim().length > 0) blocks.push({ type: 'text', text: contentText });
+
+  if (Array.isArray(message.toolCalls)) {
+    for (const call of message.toolCalls) {
+      if (!isRecord(call)) continue;
+      const id = typeof call.id === 'string' ? call.id : '';
+      const name = typeof call.name === 'string' ? call.name : 'tool';
+      blocks.push({ type: 'tool_use', id, name, input: call.args });
+      toolResults.push({
+        kind: 'tool_result',
+        uuid,
+        ts,
+        toolUseId: id,
+        content: extractToolCallOutput(call),
+        isError: call.status === 'error',
+      });
+    }
+  }
+
+  if (blocks.length > 0) entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+  for (const result of toolResults) entries.push(result);
 }
 
 /**

@@ -74,7 +74,10 @@ import {
   createAntigravityInjectionVerifier,
   extractAntigravityUserTurn,
   extractUserRequestText,
+  readAntigravityTranscriptPage,
 } from '../../src/main/agent/adapters/antigravity/transcript-parser';
+import { expectPagesTile } from './helpers/history-page-tiling';
+import type { TranscriptEntry } from '../../src/shared/types';
 import {
   parseModelsOutput,
   discoverAntigravityCapabilities,
@@ -567,6 +570,54 @@ function writeTranscriptFixture(): string {
   return filePath;
 }
 
+/** Write steps as a transcript.jsonl with a trailing newline, as agy does. */
+function writeStepLines(lines: string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-transcript-paging-'));
+  const filePath = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(filePath, `${lines.join('\n')}\n`);
+  return filePath;
+}
+
+/** The byte each of `lines` starts at once written by `writeStepLines`. */
+function lineStartBytes(lines: string[]): number[] {
+  const starts: number[] = [];
+  let byte = 0;
+  for (const line of lines) {
+    starts.push(byte);
+    byte += Buffer.byteLength(line, 'utf8') + 1;
+  }
+  return starts;
+}
+
+/**
+ * A tail size near `target` whose window opens exactly on a line `opensTail`
+ * accepts. A tail read from byte `start - 1` drops through that newline and
+ * opens on the line at `start`, and the shared tiling check needs the tail's
+ * first line to yield its first entry.
+ */
+function tailBytesOpeningOn(lines: string[], opensTail: (line: string) => boolean, target: number): number {
+  const starts = lineStartBytes(lines);
+  const size = starts[starts.length - 1] + Buffer.byteLength(lines[lines.length - 1], 'utf8') + 1;
+  const index = lines.findIndex((line, lineIndex) => lineIndex > 0 && size - starts[lineIndex] <= target && opensTail(line));
+  if (index === -1) throw new Error('no line opens a tail that small');
+  return size - starts[index] + 1;
+}
+
+/** Keep, per uuid, the copy from the later position, as the viewer's merge
+ *  does with entries read on both sides of a seam. */
+function keepLaterCopies(entries: TranscriptEntry[]): TranscriptEntry[] {
+  const latest = new Map<string, number>();
+  for (const entry of entries) {
+    latest.set(entry.uuid, Math.max(latest.get(entry.uuid) ?? -1, entry.origin?.position ?? -1));
+  }
+  return entries.filter((entry) => (entry.origin?.position ?? -1) === latest.get(entry.uuid));
+}
+
+/** Entries sorted by origin position, the order the viewer draws a conversation in. */
+function inPositionOrder(entries: TranscriptEntry[]): TranscriptEntry[] {
+  return [...entries].sort((first, second) => (first.origin?.position ?? 0) - (second.origin?.position ?? 0));
+}
+
 describe('parseAntigravityTranscriptFile', () => {
   it('maps steps to entries, sorted by step_index with decoded tool args', async () => {
     const filePath = writeTranscriptFixture();
@@ -714,6 +765,125 @@ describe('parseAntigravityTranscriptFile', () => {
     try {
       const parsed = await parseAntigravityTranscriptFile(filePath);
       expect(parsed.entries[0].uuid).toBe('step-0');
+      // With no session to name, entries carry no origin either.
+      expect(parsed.entries.every((entry) => entry.origin === undefined)).toBe(true);
+    } finally {
+      fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+    }
+  });
+
+  it('pages its history in tiles that add up to the whole file', async () => {
+    // Steps here are in order and unique, with no ERROR_MESSAGE. Each of
+    // those couples two lines, and whether a seam falls between them depends
+    // on the page sizes. The test below pins them with the seam placed on purpose.
+    const sessionId = '3db42741-6af4-4632-99cf-e5f230f7bc94';
+    const at = (second: number): string => new Date(Date.UTC(2026, 7, 16, 16, 9, second)).toISOString();
+    const lines: string[] = [];
+    let stepIndex = 0;
+    for (let turn = 1; turn <= 10; turn += 1) {
+      const createdAt = at(turn * 4);
+      lines.push(JSON.stringify({
+        step_index: stepIndex++, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: createdAt,
+        content: `<USER_REQUEST>\nRename the owner field in file ${turn} ${'é漢'.repeat(turn % 4)}\n</USER_REQUEST>\n`
+          + '<ADDITIONAL_METADATA>\nThe current local time is: 2026-08-16T12:09:01-04:00.\n</ADDITIONAL_METADATA>',
+      }));
+      // Carries nothing the viewer renders, so it yields no entry.
+      lines.push(JSON.stringify({ step_index: stepIndex++, source: 'SYSTEM', type: 'CONVERSATION_HISTORY', status: 'DONE', created_at: createdAt }));
+      lines.push(JSON.stringify({
+        step_index: stepIndex++, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: createdAt,
+        thinking: `**Locating owner ${turn}**`,
+        tool_calls: [{ name: 'view_file', args: { AbsolutePath: JSON.stringify(`C:/Users/dev/ws/owner-${turn}.ts`) } }],
+      }));
+      lines.push(JSON.stringify({
+        step_index: stepIndex++, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: createdAt,
+        content: `Renamed the field in owner-${turn}.ts.`,
+      }));
+      if (turn % 4 === 0) {
+        lines.push(JSON.stringify({
+          step_index: stepIndex++, source: 'SYSTEM', type: 'CHECKPOINT', status: 'DONE', created_at: createdAt,
+          content: `{{ CHECKPOINT ${turn / 4} }} summary`,
+        }));
+      }
+    }
+    // A line longer than a page is skipped unparsed, so every line must fit one.
+    for (const line of lines) expect(Buffer.byteLength(line, 'utf8')).toBeLessThan(700);
+    const filePath = writeStepLines(lines);
+    try {
+      const whole = await expectPagesTile({
+        filePath,
+        conversationId: sessionId,
+        parseTail: async () => (await parseAntigravityTranscriptFile(filePath, sessionId)).entries,
+        readPage: (request) => readAntigravityTranscriptPage(sessionId, filePath, request),
+        tailBytes: tailBytesOpeningOn(lines, (line) => !line.includes('CONVERSATION_HISTORY'), 1500),
+        pageBytes: 700,
+      });
+      expect(whole.some((entry) => entry.kind === 'system' && entry.subtype === 'compaction')).toBe(true);
+    } finally {
+      fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a re-emitted step\'s later copy across a seam, and drops an error cut from its tool call', async () => {
+    const sessionId = '3db42741-6af4-4632-99cf-e5f230f7bc94';
+    const createdAt = '2026-08-16T16:09:01Z';
+    const step = (fields: Record<string, unknown>): string => JSON.stringify({ status: 'DONE', created_at: createdAt, ...fields });
+    const lines = [
+      step({ step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '<USER_REQUEST>\nCreate probe.txt containing ok\n</USER_REQUEST>' }),
+      step({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Checking the workspace first.' }),
+      step({
+        step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', thinking: '**Initiating File Creation**',
+        tool_calls: [{ name: 'write_to_file', args: { TargetFile: JSON.stringify('C:/Users/dev/ws/probe.txt'), CodeContent: JSON.stringify('ok') } }],
+      }),
+      // The tail opens here, so this error's tool call (step 2) is on the page.
+      step({ step_index: 3, source: 'MODEL', type: 'ERROR_MESSAGE', content: 'Error invalid tool call: tool call denied' }),
+      // Step 1 re-emitted on the tail's side of the seam.
+      step({ step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Checking the workspace first, then writing probe.txt.' }),
+      step({ step_index: 5, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'The write was denied.' }),
+      // Written out of order, as agy sometimes does.
+      step({ step_index: 4, source: 'SYSTEM', type: 'CHECKPOINT', content: '{{ CHECKPOINT 0 }} summary' }),
+    ];
+    const filePath = writeStepLines(lines);
+    const starts = lineStartBytes(lines);
+    try {
+      const whole = (await parseAntigravityTranscriptFile(filePath, sessionId)).entries;
+      setParseWindowBytesForTests(fs.statSync(filePath).size - starts[3] + 1);
+      let tail: TranscriptEntry[];
+      try {
+        tail = (await parseAntigravityTranscriptFile(filePath, sessionId)).entries;
+      } finally {
+        setParseWindowBytesForTests();
+      }
+      const notice = tail[0];
+      if (notice.kind !== 'system' || !notice.earlierHistory) throw new Error('expected a pageable notice');
+      expect(notice.earlierHistory.position).toBe(starts[3]);
+      const result = await readAntigravityTranscriptPage(sessionId, filePath, {
+        direction: 'before', cursor: notice.earlierHistory.cursor, maxBytes: 64 * 1024,
+      });
+      if (result.status !== 'ok') throw new Error(`expected a page, got ${JSON.stringify(result)}`);
+      expect(result.page.reachedStart).toBe(true);
+
+      // Within one read, entries come out in step_index order, each stamped
+      // with its own line, so positions need not rise.
+      const tailEntries = tail.slice(1);
+      expect(tailEntries.map((entry) => [entry.uuid, entry.origin?.position])).toEqual([
+        [`${sessionId}:step-1`, starts[4]],
+        [`${sessionId}:step-4`, starts[6]],
+        [`${sessionId}:step-5`, starts[5]],
+      ]);
+
+      // The whole file links the error to step 2's tool call. Across the seam
+      // the tail has no anchor for it, so it yields nothing rather than a guess.
+      const errorUuid = `${sessionId}:step-3`;
+      expect(whole.find((entry) => entry.uuid === errorUuid)).toMatchObject({
+        kind: 'tool_result', toolUseId: `${sessionId}:step-2-tool-0`, isError: true, origin: { position: starts[3] },
+      });
+      expect([...result.page.entries, ...tailEntries].some((entry) => entry.uuid === errorUuid)).toBe(false);
+
+      // Everything else matches exactly. The page's copy of step 1 loses to
+      // the tail's later one, which is the copy the whole file keeps. Compared
+      // in position order, the order the viewer draws a conversation in.
+      expect(inPositionOrder(keepLaterCopies([...result.page.entries, ...tailEntries])))
+        .toEqual(inPositionOrder(whole.filter((entry) => entry.uuid !== errorUuid)));
     } finally {
       fs.rmSync(path.dirname(filePath), { recursive: true, force: true });
     }

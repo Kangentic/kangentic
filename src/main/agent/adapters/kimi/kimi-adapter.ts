@@ -6,12 +6,21 @@ import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { KimiCommandBuilder } from './command-builder';
 import { KimiSessionHistoryParser } from './session-history-parser';
 import { createKimiCommandInjectionVerifier } from './command-injection-verifier';
-import { parseKimiTranscript, locateKimiTranscriptFile } from './transcript-parser';
+import { parseKimiTranscript, locateKimiTranscriptFile, readKimiTranscriptPage } from './transcript-parser';
 import { migrateKimiProjectData } from './project-relocation';
 import { discoverKimiCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions, SettingsChangeSpec, ParsedTranscript, SummarizeOptions } from '../../agent-adapter';
+import type {
+  AgentAdapter,
+  AgentInfo,
+  SpawnCommandOptions,
+  SettingsChangeSpec,
+  ParsedTranscript,
+  SummarizeOptions,
+  TranscriptPageReadRequest,
+  TranscriptPageReadResult,
+} from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -247,6 +256,16 @@ export class KimiAdapter implements AgentAdapter {
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseKimiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /**
+   * One page of the transcript's history for the Conversation viewer. A text
+   * run a page edge cuts comes back as two rows (see `parseKimiLines`).
+   */
+  async readTranscriptPage(agentSessionId: string, _cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
+    const filePath = locateKimiTranscriptFile(agentSessionId);
+    if (!filePath) return { status: 'unavailable', reason: 'file_missing' };
+    return readKimiTranscriptPage(agentSessionId, filePath, request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {

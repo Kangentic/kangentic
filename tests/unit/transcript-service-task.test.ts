@@ -465,6 +465,37 @@ describe('resolveTaskTranscript', () => {
     expect(kinds).toEqual(['user:shared-1', 'assistant:shared-2', 'boundary', 'user:new-3']);
   });
 
+  it('keeps every tool result a record yields under its reply\'s uuid, and still dedupes a replay of them', async () => {
+    // Gemini and OpenCode give a reply and its results one uuid, and Claude
+    // gives parallel results in one message one uuid. Keyed by uuid alone, the
+    // stitch kept the first entry and every tool card lost its result.
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-old' });
+    const newer = makeRecord({ id: 'session-new', started_at: '2026-06-01T12:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-new', status: 'running' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-old': older, 'session-new': newer },
+      sessionsByTask: { 'task-1': [newer, older] },
+      taskTitle: 'Wire the auth flow',
+    });
+    const record = [
+      { kind: 'assistant' as const, uuid: 'message-1', ts: 1, blocks: [
+        { type: 'tool_use' as const, id: 'call-a', name: 'read', input: {} },
+        { type: 'tool_use' as const, id: 'call-b', name: 'read', input: {} },
+      ] },
+      { kind: 'tool_result' as const, uuid: 'message-1', ts: 1, toolUseId: 'call-a', content: 'result a' },
+      { kind: 'tool_result' as const, uuid: 'message-1', ts: 1, toolUseId: 'call-b', content: 'result b' },
+    ];
+    getBySessionType.mockReturnValue({
+      displayName: 'Gemini CLI',
+      // The resume replays the record verbatim.
+      parseTranscript: vi.fn(async () => ({ entries: record, sourcePath: '/history/x.jsonl' })),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-new');
+
+    expect(result!.entries.map((entry) => (entry.kind === 'tool_result' ? `result:${entry.toolUseId}` : entry.kind)))
+      .toEqual(['assistant', 'result:call-a', 'result:call-b']);
+  });
+
   it('emits NO session_boundary for a wholly-replayed resume that adds no new turns (nothing to divide, no dangling divider)', async () => {
     // The exact bug from an isolated-swimlane round-trip: the "latest" session
     // is a --resume of the original and its transcript is an EXACT replay with

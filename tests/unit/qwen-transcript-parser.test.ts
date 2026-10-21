@@ -2,9 +2,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { parseQwenTranscript, locateQwenTranscriptFile } from '../../src/main/agent/adapters/qwen-code/transcript-parser';
+import {
+  parseQwenTranscript,
+  locateQwenTranscriptFile,
+  readQwenTranscriptPage,
+} from '../../src/main/agent/adapters/qwen-code/transcript-parser';
 import { qwenChatsDir } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
+import { expectPagesTile } from './helpers/history-page-tiling';
 
 const SESSION_ID = '1ac39801-6b52-4a0e-9d18-7c3f2ea4b510';
 
@@ -175,7 +180,39 @@ describe('parseQwenTranscript', () => {
       JSON.stringify({ type: 'user', message: { role: 'user', parts: [{ text: 'hi' }] } }),
     ].join('\n'));
     const entries = await parseQwenTranscript(SESSION_ID, tmpFile);
-    expect(entries).toEqual([{ kind: 'user', uuid: expect.any(String), ts: expect.any(Number), text: 'hi' }]);
+    expect(entries).toEqual([{
+      kind: 'user', uuid: expect.any(String), ts: expect.any(Number), text: 'hi',
+      origin: { conversationId: SESSION_ID, position: expect.any(Number) },
+    }]);
+  });
+
+  it('pages its history in tiles that add up to the whole file, line-numbered uuids included', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-transcript-'));
+    tmpFile = path.join(dir, `${SESSION_ID}.jsonl`);
+    const filePath = tmpFile;
+    let text = '';
+    for (let turn = 0; turn < 24; turn += 1) {
+      const timestamp = new Date(Date.UTC(2026, 9, 1, 9, turn)).toISOString();
+      // Every third record has no uuid of its own, so it is named by its line.
+      const uuid = turn % 3 === 0 ? {} : { uuid: `user-${turn}` };
+      text += `${JSON.stringify({ type: 'user', timestamp, ...uuid, message: { role: 'user', parts: [{ text: `question ${turn} ${'é漢'.repeat(turn % 5)}` }] } })}\n`;
+      text += `${JSON.stringify({ type: 'system', subtype: 'ui_telemetry', timestamp })}\n`;
+      text += `${JSON.stringify({
+        type: 'assistant', timestamp, uuid: `assistant-${turn}`, model: 'qwen3-coder',
+        message: { role: 'model', parts: [{ text: `answer ${turn}` }, { functionCall: { id: `call-${turn}`, name: 'read_file', args: { path: `f${turn}` } } }] },
+      })}\n`;
+      text += `${JSON.stringify({ type: 'user', timestamp, uuid: `result-${turn}`, message: { role: 'user', parts: [{ functionResponse: { id: `call-${turn}`, response: { output: `contents ${turn}` } } }] } })}\n`;
+    }
+    fs.writeFileSync(filePath, text);
+    const whole = await expectPagesTile({
+      filePath,
+      conversationId: SESSION_ID,
+      parseTail: () => parseQwenTranscript(SESSION_ID, filePath),
+      readPage: (request) => readQwenTranscriptPage(SESSION_ID, filePath, request),
+      tailBytes: 1500,
+      pageBytes: 700,
+    });
+    expect(whole.some((entry) => entry.uuid === `${SESSION_ID}:0`)).toBe(true);
   });
 });
 
