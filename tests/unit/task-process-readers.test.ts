@@ -25,7 +25,7 @@ import {
   type DarwinProcessRow,
 } from '../../src/main/pty/process-tag/darwin-reader';
 import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
-import { Win32TaggedProcessReader, findTagInWindowsEnvironment, listWin32Processes } from '../../src/main/pty/process-tag/win32-reader';
+import { Win32TaggedProcessReader, findTagInWindowsEnvironment, listWin32Processes, loadWin32OrphanApi } from '../../src/main/pty/process-tag/win32-reader';
 import { toProcessInfo } from '../../src/main/pty/host/host-process-table';
 import { seedsAndDescendants, type LocalConnection, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
 import type { SocketRow } from '../../src/main/pty/process-tag/local-connections';
@@ -1080,4 +1080,66 @@ describe.runIf(process.platform === 'win32')('Windows Toolhelp listing (real)', 
     const self = toProcessInfo(rows.find((row) => row.pid === process.pid)!);
     expect(self.comm).toBe(path.basename(process.execPath).toLowerCase().replace(/\.exe$/, ''));
   });
+});
+
+describe.runIf(process.platform === 'win32')('Windows PTY root pin (real)', () => {
+  it('pins a child of this process, reads its creation and exit times on the pinned handle, and refuses a process it did not start', async () => {
+    const spawnedAtMs = Date.now();
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    await new Promise((resolve) => child.once('spawn', resolve));
+    const api = await loadWin32OrphanApi();
+    const pin = api.pinRoot(child.pid!, spawnedAtMs - 1000);
+    try {
+      expect(pin).not.toBeNull();
+      expect(pin!.startedAtMs).toBeGreaterThanOrEqual(spawnedAtMs - 1000);
+      expect(pin!.startedAtMs).toBeLessThanOrEqual(Date.now());
+      expect(pin!.readExitedAtMs()).toBeNull();
+      // This process's own parent did not start it.
+      expect(api.pinRoot(process.ppid, 0)).toBeNull();
+
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill('SIGKILL');
+      await exited;
+      const exitedAtMs = pin!.readExitedAtMs();
+      expect(exitedAtMs).not.toBeNull();
+      expect(exitedAtMs!).toBeGreaterThanOrEqual(pin!.startedAtMs);
+      expect(exitedAtMs!).toBeLessThanOrEqual(Date.now());
+    } finally {
+      pin?.release();
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  });
+
+  it('pins the shell node-pty starts in a ConPTY, whose parent is the process that spawned it', async () => {
+    // The pty host pins every PTY root, and `pinRoot` takes only a child of this process, read as the
+    // parent pid on the handle itself. The child above proves that for `child_process`; this proves it
+    // for the path a session's shell takes, which creates its process through ConPTY.
+    const nodePty = await import('node-pty');
+    const api = await loadWin32OrphanApi();
+    const spawnedAtMs = Date.now();
+    const pty = nodePty.spawn(process.env.ComSpec ?? 'cmd.exe', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: os.tmpdir() });
+    const exited = new Promise<void>((resolve) => { pty.onExit(() => resolve()); });
+    let pin: ReturnType<typeof api.pinRoot> = null;
+    try {
+      // On Windows node-pty sets the pid when the output pipe connects, after spawn() has returned.
+      await expect.poll(() => pty.pid, { timeout: 10_000, interval: 25, message: 'node-pty did not set the shell\'s pid' }).toBeGreaterThan(0);
+      pin = api.pinRoot(pty.pid, spawnedAtMs - 1000);
+      expect(pin).not.toBeNull();
+      expect(pin!.startedAtMs).toBeGreaterThanOrEqual(spawnedAtMs - 1000);
+      expect(pin!.startedAtMs).toBeLessThanOrEqual(Date.now());
+      expect(pin!.readExitedAtMs()).toBeNull();
+    } finally {
+      pin?.release();
+      try {
+        pty.kill();
+      } catch {
+        // Already gone.
+      }
+      // Let the exit land, so no console or worker thread outlives the test.
+      let exitTimer: NodeJS.Timeout | undefined;
+      await Promise.race([exited, new Promise<void>((resolve) => { exitTimer = setTimeout(resolve, 10_000); })]);
+      clearTimeout(exitTimer);
+    }
+    // The pid poll and the exit wait are each bounded at 10 s, past vitest's 5 s default.
+  }, 30_000);
 });

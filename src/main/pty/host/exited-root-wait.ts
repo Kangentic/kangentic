@@ -23,7 +23,12 @@
  * it left running never exits by itself and is the reap's to end.
  * - A root main killed, on Windows: found by parentage and creation time
  *   exactly as the orphan cleanup finds its processes (`planDeadRootOrphans`);
- *   Windows never rewrites a parent pid.
+ *   Windows never rewrites a parent pid. The shell's own creation time, from
+ *   its pin, bounds the window below and the kill bounds it above. A root
+ *   with no pin falls back to the clock read before its spawn, less
+ *   `SPAWN_CLOCK_SLACK_MS`: that window could admit an earlier owner of the
+ *   pid's child, which only lengthens a wait that terminates nothing, where
+ *   skipping it would let the reap cut an agent's exit short.
  * - A root main killed, on POSIX: listed by the host just before it sent the
  *   kill, because the shell's death re-parents them and no parentage is left
  *   to read afterwards. They are watched by pid alone: the wait only waits, so
@@ -72,6 +77,15 @@ export const EXITED_ROOT_LEDGER_MS = 30_000;
  */
 export const KILL_SNAPSHOT_CAP_MS = 250;
 
+/**
+ * A root without a pinned creation time: the clock reading is taken before the
+ * spawn call and Windows records the creation a little later, so a real child
+ * is never earlier than the reading less this. It covers clock granularity. It
+ * is also the floor `pinRoot` accepts for a shell's own creation time
+ * (`pty-host-core.ts`).
+ */
+export const SPAWN_CLOCK_SLACK_MS = 1000;
+
 /** A process the host listed under a root before killing it (POSIX). */
 export interface RootDescendant {
   pid: number;
@@ -85,6 +99,8 @@ export interface ExitedRoot {
   rootPid: number;
   /** Wall clock just before the shell was spawned. */
   spawnedAtMs: number;
+  /** The shell's creation time from its pin (`PinnedRoot`), or null when it was never pinned. */
+  rootStartedAtMs: number | null;
   /** Wall clock when the kill was sent, or when the shell's exit was observed. */
   exitedAtMs: number;
   /** The orphan cleanup still running for a shell that exited on its own; null for a kill. */
@@ -191,7 +207,12 @@ export async function waitForExitedRootTrees(
     for (const root of parentageRoots) {
       const shellTree = planDeadRootOrphans(
         rows,
-        { rootPid: root.rootPid, spawnedAtMs: root.spawnedAtMs, exitedAtMs: root.exitedAtMs, protectedPids },
+        {
+          rootPid: root.rootPid,
+          rootStartedAtMs: root.rootStartedAtMs ?? root.spawnedAtMs - SPAWN_CLOCK_SLACK_MS,
+          rootExitedAtMs: root.exitedAtMs,
+          protectedPids,
+        },
         (pid) => api.identityOf(pid),
       );
       for (const target of agentProcessesUnder(shellTree, root.rootPid, (candidate) => candidate.image)) {

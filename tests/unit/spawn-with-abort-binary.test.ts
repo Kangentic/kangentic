@@ -19,12 +19,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
-const { spawnMock, killChildTreeByPidMock } = vi.hoisted(() => ({
+const { spawnMock, killChildTreeNowMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
-  killChildTreeByPidMock: vi.fn(),
+  killChildTreeNowMock: vi.fn(),
 }));
 vi.mock('node:child_process', () => ({ spawn: spawnMock }));
-vi.mock('../../src/main/shared/child-tree-stop', () => ({ killChildTreeByPid: killChildTreeByPidMock }));
+vi.mock('../../src/main/shared/child-tree-stop', () => ({ killChildTreeNow: killChildTreeNowMock }));
 // No macOS spawn-helper, whatever platform this runs on (see spawn-with-abort.test.ts).
 vi.mock('../../src/main/pty/spawn/spawn-helper-permissions', () => ({
   spawnHelperCandidatePaths: (): string[] => [],
@@ -71,7 +71,7 @@ function emitNodeAbortError(child: FakeChild): void {
 describe('spawnWithAbort kill mechanism per spawn shape', () => {
   beforeEach(() => {
     spawnMock.mockReset();
-    killChildTreeByPidMock.mockReset();
+    killChildTreeNowMock.mockReset();
   });
 
   afterEach(() => {
@@ -107,7 +107,7 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect((spawnOptions().signal as AbortSignal).aborted).toBe(true);
     emitNodeAbortError(child);
     await outcome;
-    expect(killChildTreeByPidMock).not.toHaveBeenCalled();
+    expect(killChildTreeNowMock).not.toHaveBeenCalled();
   });
 
   it('aborts a binary command through that signal on its timeout, without a tree kill', async () => {
@@ -122,7 +122,7 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect((spawnOptions().signal as AbortSignal).aborted).toBe(true);
     emitNodeAbortError(child);
     await outcome;
-    expect(killChildTreeByPidMock).not.toHaveBeenCalled();
+    expect(killChildTreeNowMock).not.toHaveBeenCalled();
   });
 
   it('contrast: a shell command gets no `signal`, leads its own group on POSIX, and loses its tree on abort', async () => {
@@ -138,8 +138,8 @@ describe('spawnWithAbort kill mechanism per spawn shape', () => {
     expect(options.detached).toBe(process.platform !== 'win32');
 
     external.abort();
-    expect(killChildTreeByPidMock).toHaveBeenCalledTimes(1);
-    expect(killChildTreeByPidMock).toHaveBeenCalledWith(4242);
+    expect(killChildTreeNowMock).toHaveBeenCalledTimes(1);
+    expect(killChildTreeNowMock).toHaveBeenCalledWith(child, { leadsGroup: true });
     // The killed shell closes (taskkill leaves exit code 1 on Windows); the
     // abort's wording stands rather than "exited with code 1".
     child.emit('close', 1, null);

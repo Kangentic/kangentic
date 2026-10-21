@@ -39,9 +39,11 @@ at the Windows timer floor.
 - **A shell that exits on its own has its leftovers ended in the host (Windows).** The host core
   asks the agent the dead shell left running to exit through that shell's still-open console, then
   terminates what is left after the grace, by parentage and creation time (`dead-root-orphans.ts`,
-  see [[pty-teardown-grace]]). Main sends each session's exit sequence in the spawn params for it.
+  see [[pty-teardown-grace]]). The shell's own lifetime comes off the handle the host holds on
+  every Windows PTY root from its pid to its exit (`pinRoot`), which also keeps node-pty's kill off
+  a reused pid. Main sends each session's exit sequence in the spawn params for it.
   Only the utility host is given the Windows API (`loadOrphanApi` in `pty-host-entry.ts`), so the
-  in-process core, the tests' and the post-crash fallback's, never runs it.
+  in-process core, the tests' and the post-crash fallback's, never runs it or pins anything.
 - **A host crash ends its PTYs and recovery resumes them.** Main first stops each lost PTY's
   process tree by pid (`stopLostPtyTree`, which only the utility transport implements): a closed
   pseudo console or a hangup usually ends the agent, but nothing guarantees it, and one left running
@@ -93,7 +95,8 @@ at the Windows timer floor.
   in the host the first, cold launch measured 51 ms and later ones stayed under 16 ms. Once posted
   a run never falls back to a local spawn, and a host crash fails it with `error`, `exit`, `close`
   rather than rerunning it (a second paid answer); main then stops the orphaned CLI's tree, since
-  on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, or the process
+  on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, with the run's
+  pid pinned by a host handle until taskkill exits, or the process
   group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
   them inside its exit bound. At quit, `stopAllCliRuns` also stops each run's tree from main by pid
   (`killChildTreeByPid`): with no terminal open the quit does not wait for the host, which can be

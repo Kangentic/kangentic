@@ -13,6 +13,7 @@ import {
   normalizeDirectory,
   planReap,
   planReapDetailed,
+  subtreeOf,
   type ReapTaskScope,
 } from '../../src/main/pty/process-tag/reap-plan';
 import type { LocalConnectionRead, ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
@@ -420,6 +421,101 @@ describe('buildProtectedPids', () => {
       scanned(6002, 6000, { tag: TASK, startedAtMs: 950 }),
     ];
     expect(plannedPids(processes)).toEqual([6000, 6002]);
+  });
+});
+
+/**
+ * Windows keeps a dead parent's pid in its children's ppid, and hands that pid
+ * to newer processes. These fixtures read the way the Windows reader scans:
+ * an opened process has a start key and a start time, and one it never opened
+ * (another session, a refused open) has neither.
+ */
+describe('a walk that kills never follows a parent pid it cannot check', () => {
+  const subtreePids = (root: ScannedProcess, processes: ScannedProcess[]): number[] => subtreeOf(root, processes, new Set([MAIN_PID]))
+    .map((entry) => entry.pid)
+    .sort((left, right) => left - right);
+
+  it('a Stop never passes through a process the reader could not open, or reaches what runs under it', () => {
+    const root = scanned(7000, 1, { tag: TASK, startedAtMs: 1_000 });
+    const processes = [
+      main,
+      root,
+      // Its ppid names the root, but with no identity nothing says it was not
+      // there before the root took that pid.
+      scanned(7001, 7000, { startKey: '', startedAtMs: null, workingDirectory: null }),
+      // A real child of 7001, and so possibly a stranger's.
+      scanned(7002, 7001, { tag: TASK, startedAtMs: 2_000 }),
+      scanned(7003, 7000, { tag: TASK, startedAtMs: 1_500 }),
+    ];
+    expect(subtreePids(root, processes)).toEqual([7000, 7003]);
+  });
+
+  it('a Stop leaves out a process older than its root whose ppid names the root, and what that process started', () => {
+    const root = scanned(7100, 1, { tag: TASK, startedAtMs: 1_000 });
+    const processes = [
+      main,
+      root,
+      // The dead first owner of pid 7100 started it; the root reused the pid later.
+      scanned(7101, 7100, { tag: TASK, startedAtMs: 500 }),
+      scanned(7102, 7101, { tag: TASK, startedAtMs: 600 }),
+      scanned(7103, 7100, { tag: TASK, startedAtMs: 1_200 }),
+    ];
+    expect(subtreePids(root, processes)).toEqual([7100, 7103]);
+  });
+
+  it('a reap never admits a descendant with no identity, nor one reached only through it', () => {
+    const processes = [
+      main,
+      scanned(7200, 1, { tag: TASK, startedAtMs: 1_000 }),
+      // Inside the worktree and unreadable, which would admit it, but with no
+      // identity the kill refuses it and its link to 7200 cannot be checked.
+      scanned(7201, 7200, { startKey: '', startedAtMs: null, environmentUnreadable: true }),
+      scanned(7202, 7201, { startedAtMs: 2_000, environmentUnreadable: true }),
+    ];
+    expect(plannedPids(processes)).toEqual([7200]);
+  });
+});
+
+/**
+ * macOS rows read differently: no start time (`startedAtMs: null`), so a parent
+ * link is taken as it reads; a readable same-user process has a start key; and
+ * another user's process has none (`startKey: ''`), since the kernel gives its
+ * start time to the caller's own processes only. The walk that kills stops at
+ * such a process all the same, by decision (the module comment of
+ * `reap-plan.ts`): a same-user process under another user's, say a `sudo -u`
+ * back to the user, is left running and reported, never reached through a
+ * process the reap cannot name.
+ */
+describe('on macOS, a walk that kills stops at another user\'s process', () => {
+  const macRow = (pid: number, ppid: number, options: ProcessOptions = {}): ScannedProcess => (
+    scanned(pid, ppid, { startKey: `${1_790_000_000 + pid}.000000`, ...options })
+  );
+  const agent = macRow(7300, 1, { tag: TASK });
+  // Its directory is the task's and its environment is unreadable, so a walk that
+  // asked only for those would admit it. Only its missing identity refuses it. (A
+  // real scan reads no directory of another user's process, which refuses it
+  // first; this pins the identity guard itself.)
+  const otherUsers = macRow(7301, 7300, { startKey: '', environmentUnreadable: true });
+  // The user's own process under it, with the tag kept: killed on that tag and its
+  // directory alone, as it would be with no one above it.
+  const taggedUnderIt = macRow(7302, 7301, { tag: TASK });
+  // The user's own Apple tool under it, whose environment SIP withholds: nothing
+  // but a walk down from the agent could take it, and it has a parent that is no launchd.
+  const withheldUnderIt = macRow(7303, 7301, { environmentWithheld: true });
+  const processes = [main, agent, otherUsers, taggedUnderIt, withheldUnderIt];
+
+  it('a reap never passes through it, so it is no target and a process only a walk through it could reach is left running', () => {
+    const plan = detailed(processes);
+    expect(plan.targets.map((target) => target.pid).sort((left, right) => left - right)).toEqual([7300, 7302]);
+    expect(plan.targets.map((target) => target.pid)).not.toContain(7301);
+    expect(plan.targets.map((target) => target.pid)).not.toContain(7303);
+    // 7302 goes on its own tag, so it is its own top; through 7301 it would be folded under the agent and unreported.
+    expect(plan.roots.map((root) => root.process.pid)).toEqual([7300, 7302]);
+  });
+
+  it('a Stop of the agent holds neither it nor anything under it', () => {
+    const subtree = subtreeOf(agent, processes, new Set([MAIN_PID])).map((entry) => entry.pid);
+    expect(subtree).toEqual([7300]);
   });
 });
 

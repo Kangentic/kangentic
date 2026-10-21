@@ -10,6 +10,7 @@
  */
 
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import type { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostCliProcesses, leadingExecutable } from '../../src/main/pty/host/host-cli-processes';
@@ -51,6 +52,47 @@ function nodeRun(processId: number, script: string): PtyHostCliSpawnParams {
     detached: process.platform !== 'win32',
   };
 }
+
+/**
+ * A Windows stop is `taskkill /PID <run> /T /F`, which opens the pid about
+ * 550 ms after it starts. The host pins the run's pid with a handle of its own
+ * until taskkill exits, so a run that exits by itself meanwhile cannot hand its
+ * pid to a stranger first (src/main/shared/child-tree-stop.ts).
+ */
+describe('host CLI runs: the Windows stop pins the run\'s pid', () => {
+  it('passes the host\'s pin to the tree stop, for the run\'s own pid, before taskkill starts', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const order: string[] = [];
+      const taskkillHandle = { on: () => taskkillHandle, unref: () => taskkillHandle };
+      const run = Object.assign(new EventEmitter(), {
+        pid: 4321,
+        exitCode: null,
+        signalCode: null,
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+        kill: vi.fn(),
+      });
+      const spawnChild = ((command: string, args: readonly string[]) => {
+        if (command !== 'taskkill') return run;
+        order.push(`taskkill ${args.join(' ')}`);
+        return taskkillHandle;
+      }) as unknown as typeof spawn;
+      const pinRoot = vi.fn((pid: number) => {
+        order.push(`pin ${pid}`);
+        return () => undefined;
+      });
+      const processes = new HostCliProcesses(() => undefined, spawnChild, NOT_THIS_PROCESS, pinRoot);
+      processes.start(nodeRun(1, 'setInterval(() => {}, 1000)'));
+      processes.stop(1);
+      expect(order).toEqual(['pin 4321', 'taskkill /pid 4321 /T /F']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    }
+  });
+});
 
 function text(events: PtyHostEvent[], stream: 'stdout' | 'stderr'): string {
   return events

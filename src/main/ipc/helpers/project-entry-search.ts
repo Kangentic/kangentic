@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
-import { execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { toForwardSlash } from '../../../shared/paths';
+import { stopChildTree } from '../../shared/child-tree-stop';
 import type { ProjectSearchEntry, ProjectSearchEntriesInput, ProjectSearchEntriesResult } from '../../../shared/types';
 
 const WORKSPACE_CACHE_TTL_MS = 15_000;
@@ -54,19 +55,13 @@ export function clearProjectEntrySearchCache(cwd?: string): void {
   inFlightWorkspaceIndexBuilds.clear();
 }
 
+/**
+ * `taskkill /T /F` on Windows, SIGTERM then SIGKILL on POSIX, and nothing once
+ * Node has handled the child's exit, since its handle no longer pins the pid
+ * (`child-tree-stop.ts`). The taskkill starts without blocking the main loop.
+ */
 function killProcessTree(child: ReturnType<typeof spawn>): void {
-  if (process.platform === 'win32' && child.pid) {
-    try {
-      execSync(`taskkill /PID ${child.pid} /T /F`, {
-        windowsHide: true,
-        stdio: 'ignore',
-      });
-    } catch {
-      // Process may already be dead
-    }
-  } else {
-    child.kill('SIGTERM');
-  }
+  stopChildTree(child, { leadsGroup: false });
 }
 
 function parentPathOf(input: string): string | undefined {

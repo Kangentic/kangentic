@@ -21,7 +21,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   buildSelfSkipSet,
   commandLineReferencesPath,
@@ -39,10 +39,14 @@ import {
   scanLivePids,
   parseLivePidsFromJson,
   parseLivePidsFromPs,
+  parseCimCreationDate,
+  setIdentityTreeStop,
   __resetScanCacheForTest,
   _internals,
+  type IdentityTreeStop,
   type ProcessRow,
 } from '../../src/main/git/zombie-reaper';
+import type { StopProcessOutcome } from '../../src/main/pty/process-tag/tagged-reap';
 
 const PROJECT_PATH = process.platform === 'win32'
   ? 'C:\\Users\\dev\\kangentic'
@@ -198,6 +202,29 @@ describe('findZombies', () => {
     expect(result).toHaveLength(1);
     expect(result[0].reason).toBe('worktree-orphan');
   });
+
+  // The kill is checked against the creation time the candidate carries, so a
+  // candidate that dropped it would reach the stop with nothing to check. One
+  // case per reason, with different values, so neither push can borrow the other's.
+  it('carries the scan row\'s creation time onto a worktree-orphan candidate', () => {
+    const rows: ProcessRow[] = [
+      { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234'), startedAtMs: 1_792_057_142_367 },
+    ];
+    const result = findZombies(rows, PROJECT_PATH, new Set(), allPids(rows));
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('worktree-orphan');
+    expect(result[0].startedAtMs).toBe(1_792_057_142_367);
+  });
+
+  it('carries the scan row\'s creation time onto a main-checkout-orphan candidate', () => {
+    const rows: ProcessRow[] = [
+      { pid: 300, ppid: 1, commandLine: asMainCheckoutCmd('--type=gpu-process'), startedAtMs: 1_792_603_136_502 },
+    ];
+    const result = findZombies(rows, PROJECT_PATH, new Set(), allPids(rows));
+    expect(result).toHaveLength(1);
+    expect(result[0].reason).toBe('main-checkout-orphan');
+    expect(result[0].startedAtMs).toBe(1_792_603_136_502);
+  });
 });
 
 describe('reapWorktreeElectronZombies', () => {
@@ -329,6 +356,43 @@ describe('reapWorktreeElectronZombies', () => {
     expect(result).toHaveLength(1); // only the successful kill
     expect(result[0].pid).toBe(201);
   });
+
+  /**
+   * The boot sweep runs after `register-all.ts` has registered the pty host's
+   * Stop, so on Windows it ends each orphan by identity there, like the
+   * per-worktree reap, and never by the bare pid its seconds-old scan read.
+   */
+  describe('on Windows, by identity in the pty host', () => {
+    const originalPlatform = process.platform;
+    const CREATED_AT = 1_792_057_142_367;
+    let stopByIdentity: ReturnType<typeof vi.fn<IdentityTreeStop>>;
+
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      stopByIdentity = vi.fn<IdentityTreeStop>(async () => 'stopped');
+      setIdentityTreeStop(stopByIdentity);
+    });
+
+    afterEach(() => {
+      setIdentityTreeStop(null);
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    });
+
+    it('stops each orphan by its pid and the creation time its scan read, and never by bare pid', async () => {
+      scanSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234'), startedAtMs: CREATED_AT },
+        { pid: 300, ppid: 1, commandLine: asMainCheckoutCmd('--type=gpu-process'), startedAtMs: CREATED_AT + 1 },
+      ]);
+
+      const result = await reapWorktreeElectronZombies({ projectPath: PROJECT_PATH });
+
+      expect(stopByIdentity).toHaveBeenCalledTimes(2);
+      expect(stopByIdentity).toHaveBeenCalledWith({ pid: 200, startedAtMs: CREATED_AT });
+      expect(stopByIdentity).toHaveBeenCalledWith({ pid: 300, startedAtMs: CREATED_AT + 1 });
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(result.map((entry) => entry.pid)).toEqual([200, 300]);
+    });
+  });
 });
 
 describe('findWorktreePathProcesses', () => {
@@ -351,6 +415,21 @@ describe('findWorktreePathProcesses', () => {
     const result = findWorktreePathProcesses(rows, worktreePath, new Set());
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(210);
+  });
+
+  it('a parent pid Windows handed to an unrelated process can only spare a pinner, never select one', () => {
+    // 220's real parent died; Windows gave its pid, 150, to a newer, unrelated
+    // process. The stale link reads as a live parent, so 220 is spared rather
+    // than killed, and nothing with a live parent is ever selected through it.
+    const rows: ProcessRow[] = [
+      { pid: 150, ppid: 1, commandLine: 'unrelated.exe', startedAtMs: 2_000 },
+      { pid: 220, ppid: 150, commandLine: asWorktreeNodeCmd('feature-abc-1234'), startedAtMs: 1_000 },
+      // Positive control: the same pinner under a parent that is gone is selected.
+      { pid: 230, ppid: 160, commandLine: asWorktreeNodeCmd('feature-abc-1234'), startedAtMs: 1_000 },
+    ];
+    expect(findWorktreePathProcesses(rows, worktreePath, new Set()).map((entry) => entry.pid)).toEqual([230]);
+    // The self-skip walk follows the same stale link only to skip more.
+    expect(buildSelfSkipSet(rows, 220).has(150)).toBe(true);
   });
 
   it('does NOT match a prefix-sibling worktree (trailing-separator boundary)', () => {
@@ -636,6 +715,116 @@ describe('reapProcessesForWorktree', () => {
     expect(result).toHaveLength(1);
     expect(result[0].pid).toBe(201);
   });
+
+  /**
+   * A candidate is a pid from a scan that can be seconds old, and Windows hands
+   * a freed pid to new processes, so `taskkill /PID` there could take a
+   * stranger and everything under it. With the pty host up the kill goes there
+   * instead, by the creation time the scan read.
+   */
+  describe('on Windows, by identity in the pty host', () => {
+    const originalPlatform = process.platform;
+    const CREATED_AT = 1_792_057_142_367;
+    let stopByIdentity: ReturnType<typeof vi.fn<IdentityTreeStop>>;
+
+    beforeEach(() => {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      stopByIdentity = vi.fn<IdentityTreeStop>(async () => 'stopped');
+      setIdentityTreeStop(stopByIdentity);
+    });
+
+    afterEach(() => {
+      setIdentityTreeStop(null);
+      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+    });
+
+    it('stops each candidate by its pid and the creation time its scan read, and never by bare pid', async () => {
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234'), startedAtMs: CREATED_AT },
+      ]);
+      const result = await reapProcessesForWorktree({ worktreePath });
+      expect(stopByIdentity).toHaveBeenCalledWith({ pid: 200, startedAtMs: CREATED_AT });
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(result.map((entry) => entry.pid)).toEqual([200]);
+    });
+
+    it('counts one that had already ended as gone, and keeps one the host could not stop out of the result', async () => {
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234'), startedAtMs: CREATED_AT },
+        { pid: 201, ppid: 1, commandLine: asWorktreeNodeCmd('feature-abc-1234'), startedAtMs: CREATED_AT + 1 },
+      ]);
+      stopByIdentity.mockResolvedValueOnce('ended').mockResolvedValueOnce('failed');
+      const result = await reapProcessesForWorktree({ worktreePath });
+      expect(result.map((entry) => entry.pid)).toEqual([200]);
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+
+    it('skips a candidate whose row carries no creation time, since nothing names the process its pid meant', async () => {
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234') },
+      ]);
+      const result = await reapProcessesForWorktree({ worktreePath });
+      expect(result).toEqual([]);
+      expect(stopByIdentity).not.toHaveBeenCalled();
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+
+    it('posts every candidate\'s stop before any one answers, then returns the ones not failed, in candidate order', async () => {
+      const warnSpy = vi.spyOn(console, 'warn');
+      // Each stop stays pending until the test answers it, keyed by pid so the
+      // answers can come in any order.
+      const answers = new Map<number, (outcome: StopProcessOutcome) => void>();
+      stopByIdentity.mockImplementation((target) => new Promise<StopProcessOutcome>((resolve) => {
+        answers.set(target.pid, resolve);
+      }));
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234', 'first'), startedAtMs: CREATED_AT },
+        // Between two good candidates, so a result that lost its place by index shows.
+        { pid: 203, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234', 'no-creation-time') },
+        { pid: 201, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234', 'second'), startedAtMs: CREATED_AT + 1 },
+        { pid: 202, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234', 'third'), startedAtMs: CREATED_AT + 2 },
+      ]);
+
+      const reaping = reapProcessesForWorktree({ worktreePath });
+
+      // Nothing has answered yet. A serial loop would still be waiting on the
+      // first, so only one stop would ever have been called.
+      await vi.waitFor(() => expect(stopByIdentity).toHaveBeenCalledTimes(3));
+      expect(stopByIdentity.mock.calls.map(([target]) => target.pid)).toEqual([200, 201, 202]);
+
+      // Out of candidate order: the third answers first, then the first, then the second.
+      answers.get(202)?.('ended');
+      answers.get(200)?.('stopped');
+      answers.get(201)?.('failed');
+      const result = await reaping;
+
+      // The failed one is out, and the rest keep the scan's order, not the order they answered in.
+      expect(result.map((entry) => entry.pid)).toEqual([200, 202]);
+      // The row with no creation time never reached the stop, and said why.
+      expect(answers.has(203)).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/pid=203 .*no creation time/));
+      expect(killSpy).not.toHaveBeenCalled();
+    });
+
+    it('kills by pid where no identity stop is registered, as the E2E janitor\'s process does', async () => {
+      setIdentityTreeStop(null);
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234'), startedAtMs: CREATED_AT },
+      ]);
+      await reapProcessesForWorktree({ worktreePath });
+      expect(killSpy).toHaveBeenCalledWith(200);
+    });
+
+    it('kills by pid off Windows, whose scans read no creation time and whose pids are handed out in order', async () => {
+      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+      scanCachedSpy.mockResolvedValue([
+        { pid: 200, ppid: 1, commandLine: asWorktreeCmd('feature-abc-1234') },
+      ]);
+      await reapProcessesForWorktree({ worktreePath });
+      expect(stopByIdentity).not.toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(200);
+    });
+  });
 });
 
 describe('scanProcessesCached', () => {
@@ -732,6 +921,26 @@ describe('parseProcessRowsFromJson', () => {
     expect(parseProcessRowsFromJson('{ truncated')).toEqual([]);
   });
 
+  it('reads CreationDate in the form Windows PowerShell writes it, and leaves it undefined when absent', () => {
+    // ConvertTo-Json on Windows PowerShell 5.1 writes a DateTime as "\/Date(<ms>)\/" (measured).
+    const rows = parseProcessRowsFromJson('[{"ProcessId":100,"ParentProcessId":4,"CommandLine":"a.exe","CreationDate":"\\/Date(1792057142367)\\/"},{"ProcessId":200,"ParentProcessId":4,"CommandLine":"b.exe","CreationDate":null}]');
+    expect(rows[0].startedAtMs).toBe(1_792_057_142_367);
+    expect(rows[1].startedAtMs).toBeUndefined();
+  });
+});
+
+describe('parseCimCreationDate', () => {
+  it('reads Windows PowerShell\'s /Date(ms)/ and PowerShell 7\'s ISO form with seven fraction digits and an offset', () => {
+    expect(parseCimCreationDate('/Date(1792057142367)/')).toBe(1_792_057_142_367);
+    expect(parseCimCreationDate('2026-10-21T12:00:00.1234567-05:00')).toBe(Date.UTC(2026, 9, 21, 17, 0, 0, 123));
+  });
+
+  it('answers undefined for anything else, so the row names no creation time', () => {
+    for (const value of [null, undefined, 42, '', 'yesterday', '/Date(abc)/']) {
+      expect(parseCimCreationDate(value)).toBeUndefined();
+    }
+  });
+
   /**
    * The shape tests above are hand-authored, so they only prove the parser
    * handles what we BELIEVE PowerShell emits. This one replays bytes actually
@@ -739,14 +948,26 @@ describe('parseProcessRowsFromJson', () => {
    * ProcessId,ParentProcessId,CommandLine,ExecutablePath | ConvertTo-Json
    * -Compress` on a Windows 11 host, so property casing, null encoding, and the
    * array-vs-object top level are pinned to the real format rather than to our
-   * reading of it. Line 1 of the fixture is the multi-row capture, line 2 the
-   * single-row capture. Rows are vendor and system processes only, no user
-   * paths. If PowerShell ever changes the shape, re-capture the fixture and this
-   * test names the drift the same day.
+   * reading of it. Line 1 of `win32-process-rows.jsonl` is the multi-row
+   * capture, line 2 the single-row capture. Rows are vendor and system
+   * processes only, no user paths. If PowerShell ever changes the shape,
+   * re-capture the fixture and this test names the drift the same day.
+   *
+   * A second fixture, `win32-process-rows-creation-date.jsonl`, pins the
+   * `CreationDate` column the same way: the query above with `CreationDate`
+   * added and a filter on pids 0, 4 and its own, run from Windows PowerShell
+   * 5.1 (line 1, `"/Date(<ms>)/"`) and from PowerShell 7 (line 2, an ISO string
+   * with an offset and five to six fraction digits). Pids 0 and 4 are the same
+   * two processes in both captures, which is what makes the two shapes
+   * comparable. A user path in line 2 is sanitized to `C:\Users\dev`.
    */
   describe('the real captured format', () => {
     const fixtureLines = fs
       .readFileSync(path.join(__dirname, '..', 'fixtures', 'win32-process-rows.jsonl'), 'utf-8')
+      .split('\n')
+      .filter((line) => line.trim() !== '');
+    const creationDateLines = fs
+      .readFileSync(path.join(__dirname, '..', 'fixtures', 'win32-process-rows-creation-date.jsonl'), 'utf-8')
       .split('\n')
       .filter((line) => line.trim() !== '');
 
@@ -790,6 +1011,49 @@ describe('parseProcessRowsFromJson', () => {
 
       expect(holders.map((holder) => holder.pid)).toEqual([9448]);
       expect(holders[0].image).toBe('ZSATray.exe');
+    });
+
+    // Pids 0 and 4 started with the machine, so both shells read the same two
+    // creation times. That millisecond is what a kill is checked against.
+    const SYSTEM_PROCESSES_CREATED_AT = 1_792_057_142_367;
+
+    it('reads every captured Windows PowerShell 5.1 CreationDate, written as /Date(ms)/, as epoch milliseconds', () => {
+      // The raw bytes, so the fixture cannot drift to another shape unseen.
+      expect(creationDateLines[0]).toContain('"CreationDate":"\\/Date(1792057142367)\\/"');
+      const rows = parseProcessRowsFromJson(creationDateLines[0]);
+
+      expect(rows.map((row) => row.pid)).toEqual([0, 4, 64008]);
+      expect(rows.map((row) => row.startedAtMs)).toEqual([
+        SYSTEM_PROCESSES_CREATED_AT,
+        SYSTEM_PROCESSES_CREATED_AT,
+        1_792_603_136_502,
+      ]);
+    });
+
+    it('reads every captured PowerShell 7 CreationDate, an ISO string with an offset, cutting its fraction to milliseconds', () => {
+      expect(creationDateLines[1]).toContain('"CreationDate":"2026-10-15T05:39:02.36777-04:00"');
+      expect(creationDateLines[1]).toContain('"CreationDate":"2026-10-21T13:18:58.418925-04:00"');
+      const rows = parseProcessRowsFromJson(creationDateLines[1]);
+
+      expect(rows.map((row) => row.pid)).toEqual([0, 4, 36224]);
+      // Five fraction digits for the system pair, six for the shell itself, none rounded up.
+      expect(rows.map((row) => row.startedAtMs)).toEqual([
+        SYSTEM_PROCESSES_CREATED_AT,
+        SYSTEM_PROCESSES_CREATED_AT,
+        Date.UTC(2026, 9, 21, 17, 18, 58, 418),
+      ]);
+    });
+
+    it('gives pids 0 and 4 the same millisecond from either shell\'s capture', () => {
+      const fromWindowsPowerShell = parseProcessRowsFromJson(creationDateLines[0]);
+      const fromPowerShell7 = parseProcessRowsFromJson(creationDateLines[1]);
+
+      for (const systemPid of [0, 4]) {
+        const legacyRow = fromWindowsPowerShell.find((row) => row.pid === systemPid);
+        const isoRow = fromPowerShell7.find((row) => row.pid === systemPid);
+        expect(legacyRow?.startedAtMs).toBe(SYSTEM_PROCESSES_CREATED_AT);
+        expect(isoRow?.startedAtMs).toBe(legacyRow?.startedAtMs);
+      }
     });
   });
 });

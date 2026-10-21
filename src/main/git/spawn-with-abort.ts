@@ -1,7 +1,7 @@
 import { spawn, type SpawnOptions } from 'node:child_process';
 import { resolveShellLaunch } from '../pty/spawn/shell-launch';
 import { withoutCrashpadPipeName } from '../shared/child-env';
-import { killChildTreeByPid } from '../shared/child-tree-stop';
+import { killChildTreeNow } from '../shared/child-tree-stop';
 import { spawnOffMainCli, type CliChildProcess } from '../utility-process/off-main-cli';
 
 /**
@@ -240,14 +240,17 @@ export function spawnWithAbort(
       // the children through their parent, which a dead shell no longer is.
       // Settle when the killed shell closes (every holder of its output pipes is
       // gone), or at TREE_EXIT_WAIT_MS, so an aborted call returns only once
-      // nothing it started is still running in its directory.
+      // nothing it started is still running in its directory. On Windows a
+      // shell that already exited, its pipes still held open by something it
+      // started, is not tree-killed: Node no longer pins its pid, which may name
+      // a stranger by then (`child-tree-stop.ts`).
       controller.signal.addEventListener('abort', () => {
         if (child.pid === undefined) {
           settleReject(abortedError());
           return;
         }
         treeKilled = true;
-        killChildTreeByPid(child.pid);
+        killChildTreeNow(child, { leadsGroup: true });
         treeExitWait = setTimeout(() => settleReject(abortedError()), TREE_EXIT_WAIT_MS);
         treeExitWait.unref?.();
       }, { once: true });

@@ -693,7 +693,12 @@ be closed (below) and on macOS, which neither probe has measured.
 So the host asks first (`src/main/pty/host/dead-root-orphans.ts`): it writes the session's exit
 sequence into the dead shell's console, waits up to 10 s for the processes it found to exit, and
 terminates only what is left, each through a handle whose creation time is re-checked (see
-`.claude/rules/pty-teardown-grace.md` and `.claude/rules/task-process-tag.md`). What outlives the
+`.claude/rules/pty-teardown-grace.md` and `.claude/rules/task-process-tag.md`). It finds them by
+the shell's own lifetime: the host holds a handle on every Windows PTY root from the moment
+node-pty sets its pid until it handles the exit (`pinRoot`), reads the exact creation and exit
+times off it, and runs no cleanup without both, so a child of an earlier or later owner of the
+shell's pid is never taken for the shell's (see "Parent pids Windows reuses" in
+[worktree-strategy.md](worktree-strategy.md)). What outlives the
 grace, a dev server the agent started included, is terminated, as a crashed pty host's tree stop
 does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits.
 On Linux that ends Claude gracefully: with its shell killed outright (`shell-killed` in the Linux
@@ -1000,7 +1005,7 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
   main by pid, since with no terminal open the quit does not wait for the host.
 - **Task leftover reap.** The host also scans for and stops what a task's agents left running
-  (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
+  (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
   It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.
   It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
   [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree).
@@ -1774,6 +1779,7 @@ phone needs and reads the rest by request.
 | AGENT_EXIT_REQUEST_TIMEOUT_MS | 15000 ms | How long main waits for the host to answer that wait: the longer of the bound and the orphan cleanup's 10 s grace, plus 5 s |
 | EXITED_ROOT_LEDGER_MS | 30000 ms | How long an exited task root stays in the pty host's ledger, longer than any `awaitAgentExit` wait on it |
 | KILL_SNAPSHOT_CAP_MS | 250 ms | POSIX: the longest a kill waits for the host's `ps` listing of the shell's agent before the hangup lands |
+| WORKTREE_HOLDER_STOP_TIMEOUT_MS | 5000 ms | How long a worktree removal's reap waits for the host to stop one holder by pid and creation time (`src/main/pty/session-manager.ts`). The removal waits inside its project's git queue, so a hung host holds that queue this long |
 | COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | A Command Terminal's leftover reap starts this long after it ends: the backstop for a WSL shell and the in-process core, which the agent-exit wait holds no ledger for |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
