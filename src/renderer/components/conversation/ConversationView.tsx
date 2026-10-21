@@ -46,6 +46,7 @@ import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
 import { formatTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
+import { IsolatedIcon } from '../IsolatedBadge';
 import type {
   TaskReportColumn,
   TranscriptEntry,
@@ -92,6 +93,9 @@ interface ConversationViewProps {
   /** The Route dividers among `entries` (`route-slice.ts`), by uuid, each with
    *  the column whose icon it draws. Absent when the window shows no tabs. */
   dividerColumns?: ReadonlyMap<string, TaskReportColumn>;
+  /** The Route dividers that draw the Split icon after their name: All's
+   *  dividers into a column that ran an isolated session. */
+  isolatedDividers?: ReadonlySet<string>;
   /** The search field's placeholder; it names the tab the search covers. */
   searchPlaceholder?: string;
 }
@@ -253,6 +257,7 @@ export function ConversationView({
   initialPosition,
   isFocused,
   dividerColumns,
+  isolatedDividers,
   searchPlaceholder,
 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -598,6 +603,7 @@ export function ConversationView({
                         expandedKeys={expandedKeys}
                         toggleExpanded={toggleExpanded}
                         dividerColumn={dividerColumns?.get(row.uuid)}
+                        dividerIsolated={isolatedDividers?.has(row.uuid) ?? false}
                       />
                     </div>
                   ) : (
@@ -657,13 +663,15 @@ interface ConversationRowProps {
   /** Set for a Route divider: the column whose icon it draws. The same object
    *  for the same divider on every render, so the memo still holds. */
   dividerColumn?: TaskReportColumn;
+  /** The Route divider leads into a column that ran an isolated session. */
+  dividerIsolated?: boolean;
 }
 
-function ConversationRow({ row, agentName, expandedKeys, toggleExpanded, dividerColumn }: ConversationRowProps) {
+function ConversationRow({ row, agentName, expandedKeys, toggleExpanded, dividerColumn, dividerIsolated = false }: ConversationRowProps) {
   const { entry, results } = row;
   if (entry.kind === 'user') return <UserRow text={entry.text} ts={entry.ts} />;
   if (entry.kind === 'system') {
-    if (dividerColumn) return <RouteDividerRow column={dividerColumn} text={entry.text} />;
+    if (dividerColumn) return <RouteDividerRow column={dividerColumn} text={entry.text} isolated={dividerIsolated} />;
     return <SystemRow subtype={entry.subtype} text={entry.text} />;
   }
   if (entry.kind === 'tool_result') return <OrphanToolResultRow entry={entry} expandedKeys={expandedKeys} toggleExpanded={toggleExpanded} />;
@@ -843,15 +851,18 @@ function SystemRow({
  * A Route divider (`route-slice.ts`): where a column's turns begin in All, or
  * where one stay begins in a column's tab. The column's icon in its own color
  * ties the line to its tab and its Route pill, and the label is a step
- * brighter than a session divider, since it is what a reader scans for.
+ * brighter than a session divider, since it is what a reader scans for. A
+ * move into a column that ran an isolated session ends in the Split icon, in
+ * the line's own tone.
  */
-function RouteDividerRow({ column, text }: { column: TaskReportColumn; text: string }) {
+function RouteDividerRow({ column, text, isolated }: { column: TaskReportColumn; text: string; isolated: boolean }) {
   return (
     <div className="flex items-center gap-3 py-1 text-fg-faint" data-testid="conversation-row-route-divider">
       <div className="flex-1 h-px bg-edge/70" />
       <span className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wider whitespace-nowrap">
         <ColumnGlyph column={column} size={12} color={column.color} />
         {text}
+        {isolated && <IsolatedIcon size={11} explained inheritTone />}
       </span>
       <div className="flex-1 h-px bg-edge/70" />
     </div>

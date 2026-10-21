@@ -871,6 +871,13 @@ test.describe('Completed task view', () => {
       const rows = runs.locator('[data-testid="completed-run-row"]');
       await expect(rows).toHaveCount(3);
       await expect(rows.locator('[data-testid="completed-copy-conversation-id"]')).toHaveText(['0407afe2', '0407afe2', '096842a0']);
+      // Code Review's own conversation is isolated: its pill leads with the Split icon, and its tip says so.
+      const pills = rows.locator('[data-testid="completed-copy-conversation-id"]');
+      await expect(pills.nth(2).getByTestId('isolated-icon')).toHaveCount(1);
+      await expect(pills.nth(0).getByTestId('isolated-icon')).toHaveCount(0);
+      await expect(pills.nth(1).getByTestId('isolated-icon')).toHaveCount(0);
+      await expect(pills.nth(2)).toHaveAccessibleDescription(/^Copy isolated conversation ID/);
+      await expect(pills.nth(0)).toHaveAccessibleDescription(/^Copy conversation ID/);
       await expect(rows.nth(1).locator('[data-testid="report-column-label"]')).toHaveText(['Planning', 'Executing']);
       await expect(rows.nth(0)).toContainText('Plan');
       await expect(rows.nth(2)).toContainText('Auto');

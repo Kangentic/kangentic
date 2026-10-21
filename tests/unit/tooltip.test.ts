@@ -46,7 +46,7 @@ import { KebabMenuCheckItem } from '../../src/renderer/components/KebabMenu';
 import { SegmentedControl, type SegmentedControlOption } from '../../src/renderer/components/SegmentedControl';
 import { ToggleSwitch } from '../../src/renderer/components/settings/shared';
 import { ButtonGroup } from '../../src/renderer/components/ButtonGroup';
-import { IsolatedBadge } from '../../src/renderer/components/IsolatedBadge';
+import { IsolatedBadge, IsolatedIcon } from '../../src/renderer/components/IsolatedBadge';
 
 const VIEWPORT = { width: 1000, height: 800 };
 
@@ -851,6 +851,35 @@ describe('IsolatedBadge tip', () => {
     expect(rootTag(markup)).not.toMatch(/\stitle=/);
     expect(rootTag(markup)).toContain('data-testid="isolated-badge"');
     expect(rootDescription(markup)).toBe(TIP_TEXT);
+  });
+
+  it('leads the word with the Split icon, which the word already explains', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedBadge));
+    expect(markup).toMatch(/<svg[^>]*lucide-split[^>]*>.*<\/svg>Isolated<\/span>$/);
+    expect(markup).toMatch(/<svg[^>]*aria-hidden="true"/);
+  });
+});
+
+describe('IsolatedIcon', () => {
+  it('leading a word, it is a bare muted svg with no name and no tip', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 12 }));
+    expect(markup.startsWith('<svg')).toBe(true);
+    expect(rootTag(markup)).toContain('aria-hidden="true"');
+    expect(rootTag(markup)).toContain('text-fg-muted');
+    expect(markup).not.toContain('aria-description');
+  });
+
+  it('explained, it names itself for a reader who cannot see it', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 13, explained: true }));
+    expect(markup.startsWith('<span')).toBe(true);
+    expect(rootTag(markup)).toContain('role="img"');
+    expect(rootTag(markup)).toContain('aria-label="Isolated session"');
+    expect(rootTag(markup)).not.toMatch(/\stitle=/);
+  });
+
+  it('takes the tone of the text around it with inheritTone', () => {
+    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 11, explained: true, inheritTone: true }));
+    expect(rootTag(markup)).not.toContain('text-fg-muted');
   });
 });
 

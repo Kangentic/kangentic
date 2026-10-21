@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, GripVertical, LayoutGrid, Bot, Split, Columns3Cog } from 'lucide-react';
+import { Plus, GripVertical, LayoutGrid, Bot, Columns3Cog } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tooltip } from '../../Tooltip';
+import { IsolatedIcon } from '../../IsolatedBadge';
 import { RegistryIcon, useSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
@@ -151,13 +152,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
             </span>
           </Tooltip>
         )}
-        {row.isolated && (
-          <Tooltip label="Isolated session">
-            <span className="flex-shrink-0 text-fg-muted">
-              <Split size={12} strokeWidth={2} />
-            </span>
-          </Tooltip>
-        )}
+        {row.isolated && <IsolatedIcon size={12} explained />}
         {row.automationCount > 0 && (
           <Tooltip label={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}>
             <span

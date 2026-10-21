@@ -7,6 +7,8 @@ import { describe, it, expect } from 'vitest';
 import {
   ALL_CONVERSATION_TAB,
   firstEntryOfStay,
+  isolatedSwimlaneIdsFromKey,
+  isolatedSwimlaneIdsKey,
   sliceConversationByRoute,
   visitDividerUuid,
 } from '../../src/renderer/components/conversation/route-slice';
@@ -126,6 +128,69 @@ describe('sliceConversationByRoute', () => {
 
     expect(uuids(slice.entries)).toEqual(uuids(ENTRIES));
     expect(slice.dividerColumns.size).toBe(0);
+    expect(slice.isolatedDividers.size).toBe(0);
+  });
+});
+
+describe('sliceConversationByRoute: dividers into an isolated column', () => {
+  const ISOLATED = new Set(['review']);
+  const markedColumns = (slice: ReturnType<typeof sliceConversationByRoute>) =>
+    [...slice.isolatedDividers].map((uuid) => slice.dividerColumns.get(uuid)?.swimlaneId);
+
+  it('All marks the move into the isolated column and no other', () => {
+    const slice = sliceConversationByRoute(ENTRIES, ROUTE, ALL_CONVERSATION_TAB, ISOLATED);
+
+    expect(markedColumns(slice)).toEqual(['review']);
+  });
+
+  it('a column tab marks none of its dated dividers, since its tab carries the icon', () => {
+    for (const tab of ['review', 'executing']) {
+      expect(sliceConversationByRoute(ENTRIES, ROUTE, tab, ISOLATED).isolatedDividers.size).toBe(0);
+    }
+  });
+
+  it('marks nothing when no isolated session ran', () => {
+    expect(sliceConversationByRoute(ENTRIES, ROUTE, ALL_CONVERSATION_TAB).isolatedDividers.size).toBe(0);
+  });
+});
+
+describe('isolatedSwimlaneIdsKey and isolatedSwimlaneIdsFromKey', () => {
+  const sessionsIn = (...swimlaneIds: Array<string | null>) =>
+    swimlaneIds.map((isolatedSwimlaneId) => ({ isolatedSwimlaneId }));
+
+  it('gives one key for the same columns whatever order their sessions come in', () => {
+    // A live poll that finds the same columns must give the same key, so the set built from it keeps its identity.
+    expect(isolatedSwimlaneIdsKey(sessionsIn('review', 'merge'))).toBe(isolatedSwimlaneIdsKey(sessionsIn('merge', 'review')));
+  });
+
+  it('skips a session that ran in no isolated column', () => {
+    expect(isolatedSwimlaneIdsKey(sessionsIn(null, 'review', null))).toBe(isolatedSwimlaneIdsKey(sessionsIn('review')));
+    expect(isolatedSwimlaneIdsKey(sessionsIn(null, null))).toBe('');
+  });
+
+  it('names a column once however many isolated sessions ran in it', () => {
+    expect(isolatedSwimlaneIdsKey(sessionsIn('review', 'review'))).toBe(isolatedSwimlaneIdsKey(sessionsIn('review')));
+    expect(isolatedSwimlaneIdsFromKey(isolatedSwimlaneIdsKey(sessionsIn('review', 'merge', 'review'))).size).toBe(2);
+  });
+
+  it('gives a different key for a different set of columns', () => {
+    const reviewOnly = isolatedSwimlaneIdsKey(sessionsIn('review'));
+    expect(isolatedSwimlaneIdsKey(sessionsIn('review', 'merge'))).not.toBe(reviewOnly);
+    expect(isolatedSwimlaneIdsKey(sessionsIn('merge'))).not.toBe(reviewOnly);
+  });
+
+  it('gives the empty key, and an empty set, when no session was isolated', () => {
+    expect(isolatedSwimlaneIdsKey([])).toBe('');
+    expect(isolatedSwimlaneIdsKey(sessionsIn(null))).toBe('');
+    // Splitting '' would give [''], a set holding a column with no name.
+    expect(isolatedSwimlaneIdsFromKey('').size).toBe(0);
+  });
+
+  it('reads a key back as exactly the columns it was built from', () => {
+    const columns = ['review', 'executing', 'merge'];
+    expect(isolatedSwimlaneIdsFromKey(isolatedSwimlaneIdsKey(sessionsIn(...columns)))).toEqual(new Set(columns));
+    expect(isolatedSwimlaneIdsFromKey(isolatedSwimlaneIdsKey(sessionsIn('review')))).toEqual(new Set(['review']));
+    expect(isolatedSwimlaneIdsFromKey(isolatedSwimlaneIdsKey(sessionsIn(null, 'merge', 'merge')))).toEqual(new Set(['merge']));
   });
 });
 

@@ -20,6 +20,11 @@
  * `TranscriptSystemSubtype` is deliberately left alone: the mobile wire mapper
  * and the protocol guard key on it, and these entries never leave the window.
  * `dividerColumns` names each divider's column so the row can draw its icon.
+ * `isolatedDividers` names each of All's dividers into a column that ran an
+ * isolated session, so the row can draw the Split icon after the name. A
+ * column tab's dividers are dates under a tab that already carries it. The
+ * mark is per column, not per stay: a column switched between Main and
+ * Isolated during the task marks every one of its stays.
  *
  * All draws a divider with the column's name where each stay's turns begin. A
  * column tab keeps only that column's stays and opens each with its start date.
@@ -30,7 +35,7 @@
  * was that dropped boundary draws no divider and is never a stay with no turns.
  */
 
-import type { TaskReportColumn, TaskReportRouteColumn, TranscriptEntry } from '../../../shared/types';
+import type { ConversationSessionMeta, TaskReportColumn, TaskReportRouteColumn, TranscriptEntry } from '../../../shared/types';
 import { formatMonthDayTime } from '../../lib/datetime';
 
 /** The tab holding the whole conversation. Every other tab id is a column's swimlane id. */
@@ -40,6 +45,31 @@ export interface ConversationSlice {
   entries: TranscriptEntry[];
   /** Each divider's uuid, mapped to the column whose icon it draws. */
   dividerColumns: Map<string, TaskReportColumn>;
+  /** The uuids of All's dividers into a column that ran an isolated session. */
+  isolatedDividers: Set<string>;
+}
+
+const NO_ISOLATED_COLUMNS: ReadonlySet<string> = new Set();
+
+const ISOLATED_KEY_SEPARATOR = '\u0000';
+
+/**
+ * The columns an isolated session ran in, from the sessions a conversation was
+ * stitched from, as one string. Sorted and without repeats, so a live poll that
+ * finds the same columns gives the same key and a set memoized on it keeps its
+ * identity. `isolatedSwimlaneIdsFromKey` reads it back.
+ */
+export function isolatedSwimlaneIdsKey(sessions: ReadonlyArray<Pick<ConversationSessionMeta, 'isolatedSwimlaneId'>>): string {
+  const swimlaneIds = new Set<string>();
+  for (const session of sessions) {
+    if (session.isolatedSwimlaneId) swimlaneIds.add(session.isolatedSwimlaneId);
+  }
+  return [...swimlaneIds].sort().join(ISOLATED_KEY_SEPARATOR);
+}
+
+/** The columns an `isolatedSwimlaneIdsKey` key names. */
+export function isolatedSwimlaneIdsFromKey(key: string): Set<string> {
+  return new Set(key === '' ? [] : key.split(ISOLATED_KEY_SEPARATOR));
 }
 
 interface Stay {
@@ -120,16 +150,19 @@ function isSessionBoundary(entry: TranscriptEntry): boolean {
  * The entries one tab shows: `ALL_CONVERSATION_TAB` for the whole conversation
  * with a divider at each column move, or a column's swimlane id for that
  * column's stays alone, each opened by its date. A Route with no parseable stay
- * leaves the entries as they are.
+ * leaves the entries as they are. `isolatedSwimlaneIds` are the columns an
+ * isolated session ran in, whose dividers in All are marked.
  */
 export function sliceConversationByRoute(
   entries: ReadonlyArray<TranscriptEntry>,
   route: ReadonlyArray<TaskReportRouteColumn>,
   tab: string,
+  isolatedSwimlaneIds: ReadonlySet<string> = NO_ISOLATED_COLUMNS,
 ): ConversationSlice {
   const dividerColumns = new Map<string, TaskReportColumn>();
+  const isolatedDividers = new Set<string>();
   const stays = staysOf(route);
-  if (stays.length === 0) return { entries: [...entries], dividerColumns };
+  if (stays.length === 0) return { entries: [...entries], dividerColumns, isolatedDividers };
 
   const assignment = assignStays(entries, stays);
   const showsAll = tab === ALL_CONVERSATION_TAB;
@@ -156,12 +189,15 @@ export function sliceConversationByRoute(
     if (stay && pendingDivider) {
       sliced.push(pendingDivider.entry);
       dividerColumns.set(pendingDivider.entry.uuid, pendingDivider.column);
+      if (showsAll && isolatedSwimlaneIds.has(pendingDivider.column.swimlaneId)) {
+        isolatedDividers.add(pendingDivider.entry.uuid);
+      }
       pendingDivider = null;
     }
     sliced.push(entry);
   });
 
-  return { entries: sliced, dividerColumns };
+  return { entries: sliced, dividerColumns, isolatedDividers };
 }
 
 /**

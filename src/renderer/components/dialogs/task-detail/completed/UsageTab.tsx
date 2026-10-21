@@ -154,6 +154,8 @@ function usePermissionLabel(): (agent: string, mode: string | null) => string | 
 interface RunsRow {
   run: TaskReportRun;
   conversationId: string;
+  /** The conversation is an isolated column's own, so its pill leads with the Split icon. */
+  isolated: boolean;
 }
 
 type RunsSortKey = 'column' | 'session' | 'started' | 'model' | 'effort' | 'permissions' | 'compactions' | 'runtime' | 'cost' | 'toolCalls';
@@ -181,7 +183,11 @@ function RunsCard({ report }: { report: TaskReport }) {
   const permissionLabel = usePermissionLabel();
   const rows = useMemo<RunsRow[]>(
     () => report.conversations
-      .flatMap((conversation) => conversation.runs.map((run) => ({ run, conversationId: conversation.conversationId })))
+      .flatMap((conversation) => conversation.runs.map((run) => ({
+        run,
+        conversationId: conversation.conversationId,
+        isolated: conversation.isolatedColumn !== null,
+      })))
       .sort((first, second) => Date.parse(first.run.startedAt) - Date.parse(second.run.startedAt)),
     [report.conversations],
   );
@@ -226,6 +232,7 @@ function RunsCard({ report }: { report: TaskReport }) {
                 key={row.run.recordId}
                 run={row.run}
                 conversationId={row.conversationId}
+                isolated={row.isolated}
                 showColumn={showColumn}
                 showCompactions={showCompactions}
                 permissionLabel={permissionLabel(row.run.agent, row.run.permissionMode)}
@@ -250,12 +257,14 @@ function RunsCard({ report }: { report: TaskReport }) {
 function RunRow({
   run,
   conversationId,
+  isolated,
   showColumn,
   showCompactions,
   permissionLabel,
 }: {
   run: TaskReportRun;
   conversationId: string;
+  isolated: boolean;
   showColumn: boolean;
   showCompactions: boolean;
   permissionLabel: string | null;
@@ -276,7 +285,7 @@ function RunRow({
         </td>
       )}
       <td className={cellClass('body', 'left', !showColumn)}>
-        <SessionPill conversationId={conversationId} />
+        <SessionPill conversationId={conversationId} isolated={isolated} />
       </td>
       <td className={cellClass('body', 'left')}>
         <Tooltip label={formatDateTime(run.startedAt)}>

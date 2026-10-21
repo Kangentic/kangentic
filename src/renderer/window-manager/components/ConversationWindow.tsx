@@ -34,7 +34,9 @@
  * on every open request, which catches a move that wrote no turn. A
  * Route pill asks for its column through `managedWindow.conversationTab`, and
  * an open window switches to it; a search hit or a Knowledge Graph source row
- * (`scrollToTurnUuid`) switches to All, where every turn is.
+ * (`scrollToTurnUuid`) switches to All, where every turn is. A column an
+ * isolated session ran in carries the Split icon after its name, on its tab and
+ * on its dividers in All.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -52,10 +54,13 @@ import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor'
 import {
   ALL_CONVERSATION_TAB,
   firstEntryOfStay,
+  isolatedSwimlaneIdsFromKey,
+  isolatedSwimlaneIdsKey,
   sliceConversationByRoute,
 } from '../../components/conversation/route-slice';
 import { Tabs, tabIds, type TabItem } from '../../components/Tabs';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
+import { IsolatedIcon } from '../../components/IsolatedBadge';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import { useLayerStore, useWindowManager } from '../context';
 import type { ManagedWindow } from '../store/types';
@@ -129,8 +134,9 @@ function responseAfterReply(
  * full structured clone on an idle poll - kept as defense in depth in case a
  * genuinely new revision ever ships with an unchanged tail. Captures appends
  * (entry count), a streaming last turn (its content length grows in place),
- * and status/degraded/source flips - the changes that actually warrant a
- * repaint. A mid-transcript edit with an unchanged length is not detected,
+ * status/degraded/source flips, and a change in which columns ran an isolated
+ * session (their tabs and dividers carry its icon) - the changes that actually
+ * warrant a repaint. A mid-transcript edit with an unchanged length is not detected,
  * but transcripts are append-and-stream, so that does not occur in practice. */
 function transcriptSignature(response: TranscriptGetResponse | null): string {
   if (!response) return 'null';
@@ -146,7 +152,7 @@ function transcriptSignature(response: TranscriptGetResponse | null): string {
       lastLen = last.text.length;
     }
   }
-  return `${count}:${last?.uuid ?? ''}:${last?.ts ?? 0}:${lastLen}:${response.sessionStatus ?? ''}:${response.degraded ? 1 : 0}:${response.source}`;
+  return `${count}:${last?.uuid ?? ''}:${last?.ts ?? 0}:${lastLen}:${response.sessionStatus ?? ''}:${response.degraded ? 1 : 0}:${response.source}:${isolatedSwimlaneIdsKey(response.sessions)}`;
 }
 
 // Controls whose own click/drag must win over a window drag or maximize toggle
@@ -346,9 +352,15 @@ export function ConversationWindow({
   const columnOnScreen = showTabs ? (awaitingColumn ? shownColumn : requestedColumn) : null;
   const activeTab = columnOnScreen ? columnOnScreen.swimlaneId : ALL_CONVERSATION_TAB;
   if (!awaitingColumn && shownTab !== activeTab) setShownTab(activeTab);
+  // The columns an isolated session ran in, from the sessions this conversation
+  // was stitched from: what ran, not what the column is set to now, which is
+  // also what the Usage tab marks. Built from a key so a live poll keeps the
+  // same set and the tabs it feeds.
+  const isolatedKey = isolatedSwimlaneIdsKey(response?.sessions ?? []);
+  const isolatedSwimlaneIds = useMemo(() => isolatedSwimlaneIdsFromKey(isolatedKey), [isolatedKey]);
   const slice = useMemo(
-    () => (showTabs && response ? sliceConversationByRoute(response.entries, route, activeTab) : null),
-    [showTabs, response, route, activeTab],
+    () => (showTabs && response ? sliceConversationByRoute(response.entries, route, activeTab, isolatedSwimlaneIds) : null),
+    [showTabs, response, route, activeTab, isolatedSwimlaneIds],
   );
   const visibleEntries = slice?.entries ?? response?.entries ?? EMPTY_ENTRIES;
   // A repeat-stay row asks for its stay's first turn; it scrolls there once the
@@ -364,9 +376,10 @@ export function ConversationWindow({
         id: column.swimlaneId,
         label: column.name,
         icon: <ColumnGlyph column={column} size={14} color={column.color} />,
+        badge: isolatedSwimlaneIds.has(column.swimlaneId) ? <IsolatedIcon size={13} explained /> : undefined,
       })),
     ],
-    [route],
+    [route, isolatedSwimlaneIds],
   );
   const handleSelectTab = useCallback((tab: string) => {
     setSelection(tab === ALL_CONVERSATION_TAB ? ALL_SELECTION : { swimlaneId: tab });
@@ -705,6 +718,7 @@ export function ConversationWindow({
                   : initialPosition ?? { kind: 'bottom' }}
                 isFocused={isFocused}
                 dividerColumns={slice?.dividerColumns}
+                isolatedDividers={slice?.isolatedDividers}
                 searchPlaceholder={columnOnScreen ? `Search ${columnOnScreen.name}` : undefined}
               />
             )}
