@@ -146,4 +146,5 @@ Two traps it exists to avoid. Vite's reload reason prints only to the DEV SERVER
 `vite.config.mts` ignores the RELATIVE glob `**/.kangentic/**`, so in a worktree checkout (which
 lives at `<repo>/.kangentic/worktrees/<n>`) that glob swallows the whole source tree and the
 watcher never fires - the probe uses the absolute-path ignores of the worktree config
-(`scripts/worktree-vite-config.js`) instead, which is also what the dogfooded `npm start` runs.
+(`scripts/worktree-vite-config.js`) instead, which is the config `scripts/dev.js` uses for any
+checkout under `.kangentic/worktrees/`. The main checkout's `npm start` still loads `vite.config.mts`.
