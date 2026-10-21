@@ -770,8 +770,10 @@ export async function resolveTaskTranscript(
         entries.push({
           kind: 'system',
           // Unique per crossing: the same session can be re-entered (main ->
-          // isolated -> main), so the entered session id alone is not unique.
-          uuid: `session-boundary-${item.sessionId}-${item.entry.uuid}`,
+          // isolated -> main), so the entered session id alone is not unique,
+          // and a reply and its tool result share a uuid, so a result names
+          // its call too.
+          uuid: `session-boundary-${item.sessionId}-${item.entry.uuid}${item.entry.kind === 'tool_result' ? `-${item.entry.toolUseId}` : ''}`,
           ts: item.entry.ts,
           subtype: 'session_boundary',
           text: resumed ? 'Resumed session' : 'New session',
