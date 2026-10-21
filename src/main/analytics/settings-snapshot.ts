@@ -156,13 +156,6 @@ export const SETTINGS_SNAPSHOT_ALLOWLIST: readonly SettingsSnapshotEntry[] = [
     read: (config) => config.agent?.maxConcurrentSessions,
   },
   {
-    id: 'agent.queueOverflow',
-    kind: 'enum',
-    values: ['queue', 'reject'],
-    defaultValue: DEFAULT_CONFIG.agent.queueOverflow,
-    read: (config) => config.agent?.queueOverflow,
-  },
-  {
     id: 'agent.autoResumeSessionsOnRestart',
     kind: 'boolean',
     defaultValue: DEFAULT_CONFIG.agent.autoResumeSessionsOnRestart,

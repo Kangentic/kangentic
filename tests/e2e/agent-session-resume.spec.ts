@@ -135,7 +135,6 @@ test.describe('Agent suspend/resume pipeline', () => {
           },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

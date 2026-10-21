@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const esbuild = require('esbuild');
-const rendererOptimizeDeps = require('./renderer-optimize-deps.json');
+const { worktreeViteCacheDir, worktreeViteConfig } = require('./worktree-vite-config');
 const { copyExternalScripts } = require('./copy-external-scripts');
 const { writeExitRecord } = require('./preview-exit-record');
 const {
@@ -210,6 +210,24 @@ const esbuildCommon = {
 let viteServer = null;
 let electronProc = null;
 
+/** Runs scripts/vite-prebundle.js for this worktree and resolves with its exit
+ *  code, or 1 when it could not start. Its output lands in this terminal, as
+ *  the server's own does. */
+function runDependencyPrebundle() {
+  return new Promise((resolve) => {
+    const prebundleProc = spawn(
+      process.execPath,
+      [path.join(__dirname, 'vite-prebundle.js'), projectDir, String(port)],
+      { stdio: 'inherit', windowsHide: true },
+    );
+    prebundleProc.on('close', (exitCode) => resolve(exitCode ?? 1));
+    prebundleProc.on('error', (spawnError) => {
+      console.warn('[dev] could not start the dependency pre-bundle:', spawnError);
+      resolve(1);
+    });
+  });
+}
+
 async function start() {
   // Ephemeral preview: prepare the data dir and START pre-cloning Project 1 NOW so
   // the (slow) git clone overlaps the Vite/esbuild build below. The main process then
@@ -308,63 +326,25 @@ async function start() {
   // Per-server Vite dep cache. Computed BEFORE createServer, which creates the
   // directory during boot, so the cold-cache message below stays accurate (the
   // old placement checked existsSync AFTER createServer had already made it).
-  //
-  // Worktree servers must NOT use the default <root>/node_modules/.vite: a
-  // worktree's node_modules is a junction to the main repo's (see
-  // src/main/git/node-modules-link.ts), so that default cacheDir physically IS
-  // the main `npm start` server's live cache. The worktree branch below resolves
-  // a different config than vite.config.mts (configFile:false, different root,
-  // preserveSymlinks), so every preview boot would invalidate and rewrite that
-  // shared cache under the running main server, whose in-memory `?v=<hash>`
-  // module URLs then no longer match disk. The first lazy island opened after a
-  // clobber (the Changes panel) failed with "Failed to fetch dynamically imported
-  // module", which the browser caches for the document lifetime. .kangentic/ is
-  // gitignored, covered by the worktree watch ignorePatterns, and removed by the
-  // ephemeral cleanup() on exit. Guarded by
-  // tests/unit/renderer-optimize-deps-parity.test.ts.
+  // A worktree server keeps its own cache out of the junction-shared
+  // node_modules (see worktreeViteCacheDir in worktree-vite-config.js).
   const viteCacheDir = isWorktree
-    ? path.join(projectDir, '.kangentic', 'vite-cache')
+    ? worktreeViteCacheDir(projectDir)
     : path.join(projectDir, 'node_modules', '.vite');
   const coldCache = !fs.existsSync(viteCacheDir);
 
   if (isWorktree) {
-    // Bypass vite.config.mts entirely. The config's watch.ignored pattern
-    // (**/.kangentic/**) matches every file in the worktree (since the worktree
-    // lives inside .kangentic/worktrees/), and Vite's mergeConfig concatenates
-    // arrays instead of replacing them, so we can't override it.
-    const tailwindcss = (await import('@tailwindcss/vite')).default;
-    const react = (await import('@vitejs/plugin-react')).default;
-    // Ignore runtime dirs that Electron/Claude write into during the session.
-    // We can't reuse vite.config.mts because its **/.kangentic/** pattern
-    // matches every file in the worktree. Use absolute paths instead.
-    const ignorePatterns = [
-      ...(['.kangentic', '.claude', '.codex', '.aider', '.vite', 'docs', 'tests'].map(
-        d => path.join(projectDir, d).replace(/\\/g, '/') + '/**'
-      )),
-      path.join(projectDir, 'kangentic.json').replace(/\\/g, '/'),
-      path.join(projectDir, 'kangentic.local.json').replace(/\\/g, '/'),
-    ];
-    viteServer = await createServer({
-      configFile: false,
-      root: projectDir,
-      // Isolated dep cache; see the viteCacheDir comment above. Never let a
-      // worktree server share node_modules/.vite with the main checkout.
-      cacheDir: viteCacheDir,
-      plugins: [tailwindcss(), react()],
-      resolve: {
-        alias: { '@shared': '/src/shared', '@kangentic/protocol': '/packages/protocol/src' },
-        preserveSymlinks: true,
-      },
-      optimizeDeps: {
-        include: rendererOptimizeDeps,
-      },
-      define: {
-        // Match the esbuild define so renderer code can use the same
-        // build-time constant. See vite.config.mts for the non-worktree path.
-        __KANGENTIC_DEV__: 'true',
-      },
-      server: { port, strictPort: true, watch: { ignored: ignorePatterns } },
-    });
+    // Bundle the renderer's dependencies in a child that exits, so this
+    // long-lived server starts on a warm cache instead of keeping the bundle's
+    // memory (see vite-prebundle.js for the measurement). A failed child costs
+    // only that memory: the server below bundles in-process, as it used to.
+    console.time('[dev] dependency pre-bundle');
+    const prebundleExitCode = await runDependencyPrebundle();
+    console.timeEnd('[dev] dependency pre-bundle');
+    if (prebundleExitCode !== 0) {
+      console.warn(`[dev] Dependency pre-bundle exited ${prebundleExitCode}; the dev server will bundle in-process.`);
+    }
+    viteServer = await createServer(await worktreeViteConfig(projectDir, port));
   } else {
     viteServer = await createServer({
       configFile: path.join(projectDir, 'vite.config.mts'),
@@ -444,7 +424,8 @@ async function start() {
   // on every project open with the live HTTP URL + per-launch token,
   // which is what `claude --mcp-config .kangentic/mcp-config.json`
   // consumes from outside Kangentic.
-  if (coldCache) {
+  // A worktree's cold cache was already filled by the pre-bundle above.
+  if (coldCache && !isWorktree) {
     console.log('[dev] Vite cache is cold -- warming up will take longer while Vite optimizes dependencies...');
   }
   console.time('[dev] warmup');
@@ -576,8 +557,11 @@ function cleanup(exitCode) {
   // as running the whole time. So everything is RENAMED into a trash folder in
   // .kangentic/ (instant on one drive) and a detached process deletes it after
   // this one exits. Kept out of the move: the PID file and the stopping marker,
-  // which tell the launcher this preview is still shutting down, and earlier
-  // trash a previous exit's deleter is still working on.
+  // which tell the launcher this preview is still shutting down, earlier trash
+  // a previous exit's deleter is still working on, and the Vite dependency
+  // cache. That cache is this worktree's own (worktreeViteCacheDir), so keeping
+  // it shares nothing with another server, and a relaunch starts warm instead
+  // of bundling every dependency again.
   let trashDir = null;
   if (ephemeral && isWorktreeCheckout && worktreeRemovalFollows) {
     // The worktree goes next, with everything in it. If its removal fails,
@@ -588,7 +572,7 @@ function cleanup(exitCode) {
       const kanDir = path.join(projectDir, '.kangentic');
       const viteDir = path.join(projectDir, '.vite');
       trashDir = path.join(kanDir, `trash-${process.pid}-${Date.now()}`);
-      const keptNames = new Set([path.basename(pidFilePath), path.basename(stoppingMarkerPath)]);
+      const keptNames = new Set([path.basename(pidFilePath), path.basename(stoppingMarkerPath), path.basename(worktreeViteCacheDir(projectDir))]);
       let kangenticEntries = [];
       try {
         kangenticEntries = fs.readdirSync(kanDir)

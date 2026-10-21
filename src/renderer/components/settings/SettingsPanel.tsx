@@ -64,6 +64,21 @@ export function SettingsPanel() {
     }
   }
 
+  // A caller that opens settings on a tab (`setLastSettingsTab` then
+  // `setSettingsOpen(true)`: a toast's action, a dialog's settings link) while
+  // the panel is already open on another tab. The initializer read the field
+  // at mount only, so follow it here. The effect below writes the panel's own
+  // tab back to the same field, which arrives equal to the selection and
+  // changes nothing.
+  const lastSettingsTab = useConfigStore((state) => state.lastSettingsTab);
+  const [seenLastSettingsTab, setSeenLastSettingsTab] = useState(lastSettingsTab);
+  if (lastSettingsTab !== seenLastSettingsTab) {
+    setSeenLastSettingsTab(lastSettingsTab);
+    if (lastSettingsTab && lastSettingsTab !== selectedTab && tabs.some((tab) => tab.id === lastSettingsTab)) {
+      setActiveTab(lastSettingsTab);
+    }
+  }
+
   // Give the panel a target whenever a project is open. `setSettingsOpen(true)`
   // (the Performance toast, the Changes kebab, the Knowledge Graph, the queued
   // placeholder) opens with no path. Project tabs still render through the

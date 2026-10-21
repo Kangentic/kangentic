@@ -79,7 +79,6 @@ test.beforeAll(async () => {
         cliPath: mockClaudePath(),
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: {
         worktreesEnabled: false, // Avoid worktree overhead in prompt tests

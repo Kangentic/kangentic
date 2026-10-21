@@ -945,14 +945,11 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
   },
   behavior: {
     ready: '[data-testid="setting-row-agent.maxConcurrentSessions"]',
-    alt: 'Settings on the Behavior tab: the concurrent session cap, what happens when it is reached, idle focus and timeout, auto-resume, and how windows dismiss and restore.',
-    // A full queue set to reject, and windows set to stay open on a click outside. Then the cut,
-    // and both put back behind it.
+    alt: 'Settings on the Behavior tab: the concurrent session cap, idle focus and timeout, auto-resume, and how windows dismiss and restore.',
+    // Windows set to stay open on a click outside. Then the cut, and it is put back behind it.
     choreography: [
-      pickSetting(settingRadio('agent.queueOverflow', 'Reject'), 1400),
       pickSetting(settingRadio('windowLightDismiss', 'Off'), 2000),
       { cut: true },
-      pickSetting(settingRadio('agent.queueOverflow', 'Queue')),
       pickSetting(settingRadio('windowLightDismiss', 'Focused')),
     ],
   },

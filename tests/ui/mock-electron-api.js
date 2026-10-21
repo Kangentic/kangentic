@@ -329,7 +329,6 @@
       permissionMode: 'acceptEdits',
       cliPaths: {},
       maxConcurrentSessions: 8,
-      queueOverflow: 'queue',
       idleTimeoutMinutes: 0,
       autoResumeSessionsOnRestart: false,
       executionServers: {},

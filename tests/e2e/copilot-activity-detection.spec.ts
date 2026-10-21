@@ -57,7 +57,6 @@ test.describe('Copilot Agent - Activity Detection', () => {
           cliPaths: { copilot: mockAgentPath('copilot') },
           permissionMode: 'default',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

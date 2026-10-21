@@ -121,7 +121,6 @@ test.describe('Task process reap', () => {
           cliPath: mockAgentPath('claude'),
           permissionMode: 'default',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: true },
       }),

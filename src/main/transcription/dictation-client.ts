@@ -34,7 +34,8 @@ const FINALIZE_TIMEOUT_MS = 30_000;
  *  in-process, so the recycle is a process exit: 3 GB of commit for an idle
  *  631 MB model was what fired the low-memory warning (#706). A worker that
  *  has only been pre-warmed holds the live model alone and is not
- *  recycled while under the ceiling - it IS the instant first press.
+ *  recycled while under the ceiling - it IS the instant first press - unless
+ *  a settings switch made it warm a second engine (warmedEngineKeys).
  *  TranscriptionService re-warms a recycled worker straight back to that
  *  baseline.
  *
@@ -76,9 +77,10 @@ interface PendingRequest {
  * Client for the `kangentic-dictation` utilityProcess worker (see
  * dictation-worker.ts for the wire protocol and DESKTOP-X for why the engine
  * runs there at all). Spawns lazily on first demand, recycles a worker that
- * has served a session once it has been idle for IDLE_SHUTDOWN_MS (a short
- * HEAVY_IDLE_SHUTDOWN_MS once its commit passes the ceiling, which also
- * recycles a prewarm-only worker that settings switches have grown), emitting
+ * has served a session or warmed a second engine once it has been idle for
+ * IDLE_SHUTDOWN_MS (a short HEAVY_IDLE_SHUTDOWN_MS once its commit passes the
+ * ceiling, read when a request settles and again at that short window, which
+ * also recycles a prewarm-only worker that has grown), emitting
  * `'recycled'` so the service can warm a fresh, small one, and restarts it
  * (with a crash cap) after an unexpected exit.
  *
@@ -101,6 +103,15 @@ export class DictationClient extends EventEmitter {
    *  commit ceiling (armIdleShutdown). Per child: cleared on every kill and
    *  exit. */
   private servedSession = false;
+  /** Engine keys the current child has been asked to warm. More than one
+   *  means a settings switch loaded a second engine, and a disposed engine's
+   *  arena stays reserved, so the child holds more than the one engine in use
+   *  (figures in IDLE_SHUTDOWN_MS's note). Such a child gets the long idle
+   *  window, as one that served a session does: the warm cap of 2 keeps a
+   *  switch back instant while the user is switching, and a recycle half an
+   *  hour later gives the second engine's commit back. Per child: cleared on
+   *  every kill and exit. */
+  private readonly warmedEngineKeys = new Set<string>();
   /** Sessions created and not yet finalized or cancelled. A recycle never
    *  fires while one is open. Every path that ends a session (finalize,
    *  cancel, a failed create, a kill, an exit) clears its entry, and
@@ -147,6 +158,7 @@ export class DictationClient extends EventEmitter {
     const child = this.ensureSpawned();
     if (!child) throw new Error(this.unavailableMessage());
     this.clearIdleTimer();
+    this.warmedEngineKeys.add(request.engineKey);
     try {
       await this.request<PrewarmMessage>(child, { type: 'prewarm', ...request }, ENSURE_ENGINE_TIMEOUT_MS);
     } finally {
@@ -336,6 +348,7 @@ export class DictationClient extends EventEmitter {
     // pre-warmed, has served no session) or on nothing, as a phantom recycle.
     this.clearIdleTimer();
     this.servedSession = false;
+    this.warmedEngineKeys.clear();
     this.activeSessions.clear();
     const lostSessionError = new Error('The dictation worker exited unexpectedly');
     for (const entry of this.pending.values()) {
@@ -361,27 +374,66 @@ export class DictationClient extends EventEmitter {
     this.killChild();
   }
 
-  /** Arm the idle recycle, but only for a child worth recycling: one that has
-   *  served a session and so holds the refinement model, or a prewarm-only
-   *  one past the commit ceiling. A prewarm-only child under it is left
-   *  resident on purpose. The second case is a settings switch: each language
-   *  or preset change pre-warms another engine, and a disposed one's arena
-   *  stays reserved, so a few switches leave an idle worker holding several
-   *  engines' commit. Recycled, it re-warms only the one in use (figures in
+  /** Arm the idle recycle. A child past the commit ceiling is recycled at
+   *  HEAVY_IDLE_SHUTDOWN_MS. Under it, the ceiling is read once more at that
+   *  point: a child can keep growing after its last request settled (a
+   *  finalize that stopped waiting while the accurate model kept loading), and
+   *  the settle-time reading would otherwise be the only one it gets. Past
+   *  that check, only a child worth recycling waits out the rest of
+   *  IDLE_SHUTDOWN_MS: one that served a session and so holds the refinement
+   *  model, or one a settings switch made warm a second engine. A prewarm-only
+   *  child holding its one engine under the ceiling is left resident on
+   *  purpose. Recycled, a child re-warms only the engine in use (figures in
    *  IDLE_SHUTDOWN_MS's note). */
   private armIdleShutdown(): void {
-    if (this.disposed || !this.child || this.idleTimer) return;
-    if (this.pending.size > 0 || this.activeSessions.size > 0) return;
-    const overCeiling = this.overCommitCeiling();
-    if (!this.servedSession && !overCeiling) return;
-    const delayMs = overCeiling ? HEAVY_IDLE_SHUTDOWN_MS : IDLE_SHUTDOWN_MS;
+    if (this.disposed || this.idleTimer || !this.isIdle()) return;
+    if (this.overCommitCeiling()) {
+      this.scheduleRecycle(HEAVY_IDLE_SHUTDOWN_MS, 'ceiling');
+      return;
+    }
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      if (!this.child || this.pending.size > 0 || this.activeSessions.size > 0) return;
-      this.killChild();
-      this.emit('recycled');
+      if (!this.isIdle()) return;
+      if (this.overCommitCeiling()) {
+        this.recycle('ceiling');
+        return;
+      }
+      const reason = this.longWindowReason();
+      if (reason) this.scheduleRecycle(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS, reason);
+    }, HEAVY_IDLE_SHUTDOWN_MS);
+    this.idleTimer.unref();
+  }
+
+  /** Why a child under the ceiling is worth recycling after a long quiet, or
+   *  null for the resident baseline. */
+  private longWindowReason(): 'served-session' | 'engine-switch' | null {
+    if (this.servedSession) return 'served-session';
+    if (this.warmedEngineKeys.size > 1) return 'engine-switch';
+    return null;
+  }
+
+  private scheduleRecycle(delayMs: number, reason: string): void {
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (this.isIdle()) this.recycle(reason);
     }, delayMs);
     this.idleTimer.unref();
+  }
+
+  /** Recycle the idle child and ask for a fresh baseline. Logged with the
+   *  reason and the commit given back, since otherwise a recycle shows only as
+   *  a new pid. */
+  private recycle(reason: string): void {
+    const pid = this.child?.pid;
+    const commitBytes = typeof pid === 'number' ? this.readCommitBytes(pid) : null;
+    const commitText = commitBytes === null ? 'unknown' : `${Math.round(commitBytes / (1024 * 1024))} MB`;
+    console.info(`[transcription] recycling the dictation worker (${reason}, commit ${commitText})`);
+    this.killChild();
+    this.emit('recycled');
+  }
+
+  private isIdle(): boolean {
+    return this.child !== null && this.pending.size === 0 && this.activeSessions.size === 0;
   }
 
   /** Whether the current child's commit has passed the ceiling, which earns
@@ -404,6 +456,7 @@ export class DictationClient extends EventEmitter {
     const child = this.child;
     this.child = null;
     this.servedSession = false;
+    this.warmedEngineKeys.clear();
     this.activeSessions.clear();
     this.intentionalKill = child;
     if (child) {

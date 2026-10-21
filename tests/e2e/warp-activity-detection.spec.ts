@@ -51,7 +51,6 @@ test.describe('Warp Agent - Activity Detection', () => {
           cliPaths: { warp: mockAgentPath('warp') },
           permissionMode: 'default',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

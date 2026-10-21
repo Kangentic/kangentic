@@ -3941,7 +3941,6 @@ export interface AppConfig {
     permissionMode: PermissionMode;
     cliPaths: Record<string, string | null>; // keyed by agent name, null = auto-detect
     maxConcurrentSessions: number;
-    queueOverflow: 'queue' | 'reject';
     idleTimeoutMinutes: number; // 0 = disabled
     autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click
     /** Global, agent-keyed remote-server identity (url + auth). Machine-scoped, mirrors cliPaths. */
@@ -4671,7 +4670,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     permissionMode: 'acceptEdits',
     cliPaths: {},
     maxConcurrentSessions: 8,
-    queueOverflow: 'queue',
     idleTimeoutMinutes: 0,
     autoResumeSessionsOnRestart: true,
     executionServers: {},

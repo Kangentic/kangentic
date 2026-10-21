@@ -59,7 +59,6 @@ test.beforeAll(async () => {
         cliPath: mockAgentPath('claude'),
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: {
         worktreesEnabled: true,

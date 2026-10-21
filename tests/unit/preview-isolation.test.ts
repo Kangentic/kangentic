@@ -382,7 +382,9 @@ describe('scripts/dev.js wiring', () => {
     const body = cleanupBody();
     expect(body).toContain('moveIntoTrash([...kangenticEntries, viteDir], trashDir)');
     // The PID file and marker stay out of the move, and so does trash an earlier deleter owns.
-    expect(body).toContain('new Set([path.basename(pidFilePath), path.basename(stoppingMarkerPath)])');
+    // So does the worktree's own Vite dependency cache: a relaunch then starts warm
+    // instead of bundling every dependency again (2.8 GB of commit cold, 0.5 GB warm).
+    expect(body).toContain('new Set([path.basename(pidFilePath), path.basename(stoppingMarkerPath), path.basename(worktreeViteCacheDir(projectDir))])');
     expect(body).toContain("!entryName.startsWith('trash-')");
   });
 

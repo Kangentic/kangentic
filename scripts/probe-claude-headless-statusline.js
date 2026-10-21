@@ -80,7 +80,7 @@ function parseArgs(argv) {
     // whether the headless statusline needs the alt-screen renderer.
     else if (arg === '--no-tui') out.noTui = true;
     // Add `enableAllProjectMcpServers: true` to settings so Claude launches the
-    // project's .mcp.json servers (e.g. context7 via npx) at boot - tests
+    // project's .mcp.json servers (e.g. context7) at boot - tests
     // whether MCP init defers the headless statusline.
     else if (arg === '--enable-project-mcp') out.enableProjectMcp = true;
     // Pass --mcp-config <path> through to the claude command.

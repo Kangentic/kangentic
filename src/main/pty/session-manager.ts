@@ -44,7 +44,7 @@ import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
 import type { HostExecRequest, HostExecResult, HostProcessInfo, PtyHostEvent, SeedFrameResult } from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
-import { EventType } from '../../shared/types';
+import { DEFAULT_CONFIG, EventType } from '../../shared/types';
 import type {
   PermissionMode,
   Session,
@@ -579,7 +579,9 @@ export class SessionManager extends EventEmitter {
         }
       },
       getActiveCount: () => this.activeCount,
-      maxConcurrent: 5,
+      // The configured cap arrives through setMaxConcurrent when the config is
+      // applied; until then the queue holds the same default a fresh config has.
+      maxConcurrent: DEFAULT_CONFIG.agent.maxConcurrentSessions,
     });
 
     const transport: PtyHostTransport = options.ptyHostTransport ?? this.createInProcessHost();

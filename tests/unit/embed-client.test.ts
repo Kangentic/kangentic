@@ -729,6 +729,34 @@ describe('EmbedClient', () => {
     }
   });
 
+  it('a worker under the ceiling when its last request settles, and past it by the short window, is recycled then', async () => {
+    // The ceiling used to be read only at the settle, so a worker that kept
+    // growing afterwards kept the long window.
+    vi.useFakeTimers();
+    try {
+      let commitBytes = WORKER_COMMIT_CEILING_BYTES - 1;
+      const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+      const client = new EmbedClient(TEST_MODEL, 'auto', undefined, { readCommitBytes });
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.pid = 4242;
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      commitBytes = WORKER_COMMIT_CEILING_BYTES + 1;
+      await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+      expect(child.kill).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('waitForInteractiveIdle resolves immediately when nothing is pending', async () => {
     const client = new EmbedClient(TEST_MODEL);
     await expect(client.waitForInteractiveIdle()).resolves.toBeUndefined();

@@ -132,7 +132,7 @@ sessions bypass all of this (not task agents).
 
 ## Queue
 
-- Configurable max concurrent sessions (`config.agent.maxConcurrentSessions`, config default: 8). The `SessionQueue` constructor initializes with a hardcoded limit of 5; the actual config value is applied via `setMaxConcurrent()` when config loads at startup.
+- Configurable max concurrent sessions (`config.agent.maxConcurrentSessions`, config default: 8). `SessionManager` builds its `SessionQueue` with that same default, and the configured value is applied through `setMaxConcurrent()` when config loads at startup.
 - When the limit is reached, the session receives a `queued` status placeholder.
 - When a running session exits or is suspended, `notifySlotFreed()` promotes the next queued entry.
 - Reentrancy-safe: a `_processing` flag prevents concurrent promotion, and a `_dirty` flag ensures re-iteration if the queue changed during a spawn await.

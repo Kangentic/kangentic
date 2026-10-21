@@ -69,6 +69,45 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
     }
   });
 
+  test('the action opens Settings on the Behavior tab, also from a panel already open on another tab', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Open Settings on Terminal first. The panel picks its tab at mount, so
+      // this is the case that needs the panel to follow the store's tab.
+      await page.locator('[data-testid="settings-button"]').click();
+      await page.getByTestId('settings-tab-terminal').click();
+      await expect(page.getByTestId('settings-tab-terminal')).toHaveClass(/font-medium/);
+
+      const event: HostMemoryPressureEvent = {
+        sample: {
+          ts: '2026-09-16T14:24:24.000Z',
+          platform: 'win32',
+          commitLimitBytes: 96_432_717_824,
+          commitRemainingBytes: 1.5 * 1024 * 1024 * 1024,
+          physicalTotalBytes: 34_060_931_072,
+          physicalFreeBytes: 5_005_045_760,
+          physicalAvailableBytes: null,
+        },
+        activeAgentCount: 2,
+      };
+      await page.evaluate((payload) => {
+        if (!window.__mockFireHostMemoryPressure) {
+          throw new Error('window.__mockFireHostMemoryPressure is not installed by the mock');
+        }
+        window.__mockFireHostMemoryPressure(payload);
+      }, event);
+
+      const toast = page.getByTestId('toast');
+      await expect(toast).toContainText('page file');
+      await toast.getByRole('button', { name: 'Behavior settings' }).click();
+
+      await expect(page.getByTestId('settings-tab-behavior')).toHaveClass(/font-medium/);
+      await expect(page.getByTestId('setting-row-agent.maxConcurrentSessions')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a recovery push from main dismisses the persistent warning toast', async () => {
     const { browser, page } = await launchPage();
     try {

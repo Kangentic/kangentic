@@ -885,8 +885,7 @@ These are global-only settings that apply to the entire app.
 
 | Setting | Description |
 |---------|-------------|
-| Max Concurrent Sessions | Limit how many agents can run at the same time |
-| When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
+| Max Concurrent Sessions | Limit how many agents can run at the same time. A request past the limit waits in the [Session Queue](#session-queue). |
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
 | Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
@@ -984,6 +983,8 @@ The base is not part of the branch name; the task's worktree records it as `kang
 ## Session Queue
 
 When the max concurrent sessions limit is reached, new sessions are queued automatically. Queued tasks show a "Queued" indicator on their card. When a running session exits or is suspended, the next queued session promotes automatically (FIFO order).
+
+The limit counts agents, not memory. On Windows each running agent reserves about 1 GB of commit, so a high limit can run the machine short before it fills. See [Low memory warning](#low-memory-warning-windows).
 
 ## Sidebar
 
@@ -1108,6 +1109,45 @@ What to expect while it is off:
 
 Only a graphics process that actually fails counts. Shutting down or restarting the computer with
 Kangentic open, ending it from Task Manager, or running out of memory does not turn acceleration off.
+
+## Low memory warning (Windows)
+
+Windows keeps a second memory budget besides RAM: commit, the memory programs have reserved. Every
+reservation counts against a limit of your RAM plus the page file, whether or not the program has
+used it yet. Kangentic checks the room left under that limit once a minute and warns when less than
+2 GB is left. On a machine whose limit is under 40 GB, the line is 5% of the limit instead. Task
+Manager's Memory percentage is RAM, so it can read half free while the warning is up. The figure to
+watch is Committed, under Performance > Memory. macOS and Linux report no commit figure, so the
+warning never shows there.
+
+Windows does not stop a program when the limit is reached. The next program that asks for memory is
+refused, and it usually crashes. That can be an agent, a dev server, or Kangentic itself.
+
+Where the reservations go, measured on Windows 11 with Claude Code 2.1.306:
+
+- Each Claude Code agent reserves about 1 GB, nearly all of it the `claude` process. The MCP servers
+  you configured start once per agent on top of that. A server launched through `npx -y` also keeps
+  an `npx` process of about 110 MB beside each agent.
+- Kangentic itself reserves about 3 GB, most of it the dictation and Knowledge Graph models when
+  those features are on.
+- Builds, test runs, dev servers and browsers that agents start come on top. One of them can reserve
+  several GB, and they are what usually tips a busy machine over.
+
+Two changes give agents more room:
+
+- **Give the page file a larger starting size.** A page file Windows manages grows as commit nears
+  the limit, but a burst of reservations can outrun the growth. Open System Properties > Advanced >
+  Performance Settings > Advanced > Virtual memory > Change, clear "Automatically manage paging file
+  size", and choose Custom size. Set the Initial size so the limit sits at least 8 GB above the
+  Committed figure you see with your usual agents running, and the Maximum size no lower than that.
+- **Run fewer agents at once.** Lower Max Concurrent Sessions in Settings > Behavior, which the
+  warning's Behavior settings button opens. Requests past the limit wait in the [Session Queue](#session-queue).
+
+For an MCP server launched through `npx`, install the package once and point its MCP config at the
+installed command, so no `npx` process sits beside each agent.
+
+The warning shows how long ago the reading was taken, and it clears by itself once the room climbs
+back past twice the line.
 
 Kangentic does not diagnose the cause, and deliberately does not guess at one. On the installs that
 failed at boot, the failures started seconds in, before any agent or terminal existed. A display

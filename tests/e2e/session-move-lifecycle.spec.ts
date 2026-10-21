@@ -51,7 +51,6 @@ function writeTestConfig(dataDir: string): void {
         cliPath: mockClaudePath(),
         permissionMode: 'default',
         maxConcurrentSessions: 10,
-        queueOverflow: 'queue',
       },
       git: {
         worktreesEnabled: false,

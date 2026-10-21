@@ -53,7 +53,6 @@ test.describe('OpenCode Agent - Activity Detection', () => {
           cliPaths: { opencode: mockAgentPath('opencode') },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

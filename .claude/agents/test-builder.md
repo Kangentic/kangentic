@@ -470,7 +470,6 @@ test.describe('My Feature', () => {
           cliPath: mockAgentPath('claude'),
           permissionMode: 'default',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

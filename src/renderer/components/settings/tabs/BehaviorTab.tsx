@@ -12,7 +12,7 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         icon={<Bot size={16} />}
         label="Sessions"
         description="How many agents run at once and what happens when idle."
-        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'agent.idleTimeoutMinutes', 'stopLeftoverProcesses']}
+        searchIds={['agent.maxConcurrentSessions', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'agent.idleTimeoutMinutes', 'stopLeftoverProcesses']}
       >
         <CardRow {...settingProps('agent.maxConcurrentSessions')}>
           <input
@@ -23,16 +23,6 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
             className={INPUT_CLASS}
           />
         </CardRow>
-        <CardChoiceRow
-          {...settingProps('agent.queueOverflow')}
-          options={[
-            { value: 'queue', label: 'Queue' },
-            { value: 'reject', label: 'Reject' },
-          ]}
-          value={globalConfig.agent.queueOverflow}
-          onChange={(value) => updateGlobal({ agent: { queueOverflow: value } })}
-          testId="queue-overflow-choice"
-        />
         <CardToggleRow
           {...settingProps('autoFocusIdleSession')}
           checked={globalConfig.autoFocusIdleSession}

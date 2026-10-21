@@ -101,7 +101,6 @@ function fullyDeviatedConfig(): AppConfig {
     agent: {
       ...DEFAULT_CONFIG.agent,
       maxConcurrentSessions: 2,
-      queueOverflow: 'reject',
       autoResumeSessionsOnRestart: false,
       idleTimeoutMinutes: 30,
     },
@@ -216,7 +215,6 @@ describe('buildSettingsSnapshot', () => {
       'knowledgeGraph.localModel': 'bge-small',
       'knowledgeGraph.acceleration': 'cpu',
       'agent.maxConcurrentSessions': '1-3',
-      'agent.queueOverflow': 'reject',
       'agent.autoResumeSessionsOnRestart': 'false',
       'agent.idleTimeoutMinutes': '16-60',
       'browserAutomation.enabled': 'false',
