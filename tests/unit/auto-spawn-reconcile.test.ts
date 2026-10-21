@@ -23,7 +23,7 @@ const mockSuspend = vi.fn(async () => {});
 const mockKill = vi.fn(async () => {});
 const mockRemoveByTaskId = vi.fn();
 const mockCancel = vi.fn();
-const mockGetUserPausedTaskIds = vi.fn(() => new Set<string>());
+const mockGetHeldPausedTaskIds = vi.fn(() => new Set<string>());
 const mockHasSessionForTask = vi.fn(() => false);
 const mockListSessions = vi.fn(
   (): Array<{ taskId: string; projectId: string; status: string }> => [],
@@ -46,7 +46,7 @@ const mockReconcileTaskSessionRef = vi.fn((..._args: unknown[]) => pointerIsLive
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    getUserPausedTaskIds = () => mockGetUserPausedTaskIds();
+    getHeldPausedTaskIds = () => mockGetHeldPausedTaskIds();
   },
 }));
 vi.mock('../../src/main/ipc/helpers', () => ({
@@ -113,7 +113,7 @@ function turnedOff(task: Task): StrategyChange {
 }
 
 const NO_DEPENDENCIES = {
-  userPausedTaskIds: new Set<string>(),
+  heldPausedTaskIds: new Set<string>(),
   hasSessionForTask: () => false,
 };
 
@@ -149,7 +149,7 @@ describe('planAutoSpawnReconcile', () => {
     // switched on. Only SESSION_RESUME clears that.
     const plan = planAutoSpawnReconcile([turnedOn()], {
       ...NO_DEPENDENCIES,
-      userPausedTaskIds: new Set(['task-1']),
+      heldPausedTaskIds: new Set(['task-1']),
     });
 
     expect(plan.toSpawn).toEqual([]);
@@ -296,7 +296,7 @@ describe('reconcileAutoSpawnChange', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetUserPausedTaskIds.mockReturnValue(new Set<string>());
+    mockGetHeldPausedTaskIds.mockReturnValue(new Set<string>());
     mockHasSessionForTask.mockReturnValue(false);
     mockListSessions.mockReturnValue([]);
     mockTaskGetById.mockReturnValue(makeTask({ session_id: 'sess-1' }));
@@ -347,7 +347,7 @@ describe('reconcileAutoSpawnChange', () => {
   });
 
   it('does not spawn a user-paused task', async () => {
-    mockGetUserPausedTaskIds.mockReturnValue(new Set(['task-1']));
+    mockGetHeldPausedTaskIds.mockReturnValue(new Set(['task-1']));
 
     reconcileAutoSpawnChange(makeContext(), 'proj-1', 'TEST', [turnedOn()]);
 

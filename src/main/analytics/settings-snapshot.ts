@@ -88,11 +88,17 @@ export function bucketConcurrentSessions(value: number): string {
   return '17+';
 }
 
-/** Default 0 (disabled) is never sent, so the buckets start at one minute. */
+/**
+ * Same rule as `bucketConcurrentSessions`: the default (30) is never sent, so
+ * it gets its own label and no range contains it. The minutes are read only
+ * while `agent.idleTimeoutEnabled` is on; the switch is its own entry.
+ */
 export function bucketIdleTimeoutMinutes(value: number): string {
   if (value <= 0) return '0';
   if (value <= 15) return '1-15';
-  if (value <= 60) return '16-60';
+  if (value <= 29) return '16-29';
+  if (value === 30) return '30';
+  if (value <= 60) return '31-60';
   return '61+';
 }
 

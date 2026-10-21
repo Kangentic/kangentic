@@ -53,7 +53,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = vi.fn(() => undefined);
-    getUserPausedTaskIds = () => new Set<string>();
+    getHeldPausedTaskIds = () => new Set<string>();
     insert = (...args: unknown[]) => mockSessionInsert(...args);
     updateAppliedSettings = vi.fn();
   },

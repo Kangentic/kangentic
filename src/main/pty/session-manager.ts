@@ -754,7 +754,16 @@ export class SessionManager extends EventEmitter {
           });
         }
       },
-      requestSuspend: (sessionId) => this.suspend(sessionId),
+      // The idle sweep's suspend. A task's agent is NOT suspended here: the
+      // 'idle-timeout' listener (ipc/handlers/sessions.ts) pauses it through
+      // `pauseTaskSession`, which records the pause before the PTY goes down.
+      // Suspending here first left the record `running` for a quit in the
+      // gap to resume on the next launch. A Command Terminal and a workflow's
+      // own agent have no task record to write, so they are suspended here.
+      requestSuspend: (sessionId) => {
+        const session = this.registry.get(sessionId);
+        if (session && (session.transient || session.workflowId)) void this.suspend(sessionId);
+      },
       isSessionRunning: (sessionId) => this.registry.get(sessionId)?.status === 'running',
       getSessionRootPid: (sessionId) => {
         const session = this.registry.get(sessionId);

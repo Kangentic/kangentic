@@ -806,3 +806,31 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
     expect(removeHooks).not.toHaveBeenCalled();
   });
 });
+
+describe('resumeSuspendedSessions: a held pause stays paused across a restart', () => {
+  // A column that starts agents, with auto-resume on: the one place a
+  // suspended record is resumed by itself. A held pause must not be.
+  beforeEach(() => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+  });
+
+  it.each(['user', 'auto'] as const)('registers a placeholder and resumes nothing for a %s pause', async (suspendedBy) => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: suspendedBy })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(prepareAgentSpawnMock).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('control: a system suspend from the last quit goes on to be resumed', async () => {
+    sessionRepoGetResumable.mockReturnValue([makeRecord({ suspended_by: 'system' })]);
+    const sessionManager = makeSessionManager();
+
+    await runResume(sessionManager);
+
+    expect(prepareAgentSpawnMock).toHaveBeenCalledTimes(1);
+  });
+});

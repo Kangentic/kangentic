@@ -463,7 +463,7 @@ describe('restartSessionForSettingsChange', () => {
     // never the column's raw base model ('sonnet'). Reverting the fold back to
     // `swimlanes.getById(...)` alone makes this 'sonnet' and fails the test.
     const passedSpawnOverrides = callArgs[7];
-    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined });
+    expect(passedSpawnOverrides).toEqual({ model: 'opus', effort: undefined, forceFresh: false });
 
     // Directly confirm the LANE object handed to resolveSpawnOverrides was
     // profile-folded, not the raw column lane.
@@ -472,6 +472,48 @@ describe('restartSessionForSettingsChange', () => {
       expect.objectContaining({ id: PROFILE_LANE_ID, model_override: 'opus', permission_mode: 'plan' }),
       expect.objectContaining({ id: PROJECT_ID }),
     );
+  });
+
+  // =========================================================================
+  // An always-spawn-new column never turns a settings restart into a new
+  // conversation. The restart suspends and resumes in place; the column's
+  // forceFresh applies to a task entering it, not to this.
+  // =========================================================================
+
+  it('resumes the same conversation in an always-spawn-new column', async () => {
+    const liveTask = makeTask(SESSION_ID);
+    const updatedTask = makeTask(null);
+    const taskRepo = {
+      getById: vi.fn()
+        .mockReturnValueOnce(liveTask)
+        .mockReturnValueOnce(liveTask)
+        .mockReturnValueOnce(updatedTask),
+      update: vi.fn(),
+    };
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: { getById: vi.fn(() => makeLane()) },
+      actions: {},
+      attachments: {},
+    });
+    mockResolveSpawnOverrides.mockReturnValueOnce({
+      model: undefined,
+      effort: undefined,
+      isolatedSwimlaneId: 'lane-executing',
+      forceFresh: true,
+    } as never);
+    const context = makeContext();
+
+    const result = await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
+
+    expect(result).toEqual({ ok: true });
+    const passedSpawnOverrides = (engine.resumeSuspendedSession.mock.calls[0] as unknown[])[7];
+    expect(passedSpawnOverrides).toEqual({
+      model: undefined,
+      effort: undefined,
+      isolatedSwimlaneId: 'lane-executing',
+      forceFresh: false,
+    });
   });
 
   // =========================================================================

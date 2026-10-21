@@ -85,7 +85,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     // First-ever-spawn detection for the preamble's override lock: no session
     // history in these tests, so autoSpawnTasks derives hasSessionRecord=false.
     getLatestForTask = vi.fn(() => undefined);
-    getUserPausedTaskIds = vi.fn(() => new Set<string>());
+    getHeldPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();
     // The resume pass confirms under the task lock that its record still exists
@@ -214,7 +214,7 @@ function makeSessionManager() {
     getShell: vi.fn(async () => '/bin/sh'),
     hasSessionForTask: vi.fn(() => false),
     findLiveSessionByTaskId: vi.fn(() => undefined),
-    getUserPausedTaskIds: vi.fn(() => new Set<string>()),
+    getHeldPausedTaskIds: vi.fn(() => new Set<string>()),
   };
 }
 

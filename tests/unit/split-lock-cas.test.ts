@@ -1063,6 +1063,29 @@ describe('SESSION_RESUME split-lock dedup', () => {
       expect(projectIdArgument).toBe('proj-2');
     }
   });
+
+  // An 'always_spawn_new' column forces a fresh conversation when a task ENTERS
+  // it. A Resume is not an entry: it brings back the conversation that was
+  // paused, so it must never forward the column's forceFresh. Forwarding it
+  // retired the paused conversation and started a blank one.
+  it('resumes the paused conversation in an always-spawn-new column instead of starting a fresh one', async () => {
+    const handler = capturedHandlers.get(IPC.SESSION_RESUME);
+    if (!handler) throw new Error('SESSION_RESUME handler not registered');
+
+    mockEnsureTaskWorktree.mockImplementation(async () => {});
+    mockResolveSpawnOverrides.mockReturnValueOnce({ isolatedSwimlaneId: 'lane-review', forceFresh: true });
+    const resumeSuspendedSession = vi.fn(async (..._args: unknown[]) => {
+      storedTask = { ...storedTask, session_id: 'sess-resumed' };
+    });
+    mockCreateTransitionEngine.mockReturnValue({ resumeSuspendedSession });
+
+    await handler(null, 'task-2');
+
+    expect(resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    // Argument 8 of engine.resumeSuspendedSession is the spawn overrides.
+    const spawnOverrides = (resumeSuspendedSession.mock.calls[0] as unknown[])[7];
+    expect(spawnOverrides).toEqual({ isolatedSwimlaneId: 'lane-review', forceFresh: false });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@ export interface AutoSpawnReconcilePlan {
 export function planAutoSpawnReconcile(
   changes: readonly StrategyChange[],
   dependencies: {
-    userPausedTaskIds: ReadonlySet<string>;
+    heldPausedTaskIds: ReadonlySet<string>;
     hasSessionForTask: (taskId: string) => boolean;
   },
 ): AutoSpawnReconcilePlan {
@@ -85,10 +85,11 @@ export function planAutoSpawnReconcile(
       // To Do and Done never get an agent, however the flag was written. See
       // NEVER_AUTO_SPAWN_ROLES: only the OFF direction is meaningful there.
       if (after.role !== null && NEVER_AUTO_SPAWN_ROLES.has(after.role)) continue;
-      // A task the user explicitly paused must NOT start just because a column
-      // was switched on. Only an explicit Resume clears that, which is why
+      // A held pause (the user's, or Kangentic's for low memory or idle) must
+      // NOT start just because a column was switched on. Only an explicit
+      // Resume clears that, which is why
       // spawnAgent carries the same guard and both startup passes skip these ids.
-      if (dependencies.userPausedTaskIds.has(task.id)) continue;
+      if (dependencies.heldPausedTaskIds.has(task.id)) continue;
       // Already has a session (running, queued, or a suspended placeholder):
       // nothing to start.
       if (dependencies.hasSessionForTask(task.id)) continue;
@@ -148,7 +149,7 @@ export function reconcileAutoSpawnChange(
 ): void {
   if (!projectId || changes.length === 0) return;
   // Cheap gate before any DB work: this runs on EVERY column and profile save,
-  // including a colour or name edit, while `getUserPausedTaskIds` is a
+  // including a colour or name edit, while `getHeldPausedTaskIds` is a
   // self-join over the whole sessions table.
   if (!changes.some(flipsAutoSpawn)) return;
 
@@ -168,7 +169,7 @@ export function reconcileAutoSpawnChange(
       .map((session) => session.taskId),
   );
   const plan = planAutoSpawnReconcile(changes, {
-    userPausedTaskIds: sessionRepo.getUserPausedTaskIds(),
+    heldPausedTaskIds: sessionRepo.getHeldPausedTaskIds(),
     hasSessionForTask: (taskId) => occupiedTaskIds.has(taskId),
   });
   if (plan.toSpawn.length === 0 && plan.toSuspend.length === 0) return;

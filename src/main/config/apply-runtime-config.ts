@@ -21,7 +21,8 @@ export function applyRuntimeConfig(
   const effective = configManager.getEffectiveConfig(projectPath || undefined);
   sessionManager.setMaxConcurrent(effective.agent.maxConcurrentSessions);
   sessionManager.setShell(effective.terminal.shell);
-  sessionManager.setIdleTimeout(effective.agent.idleTimeoutMinutes);
+  // The sweep reads 0 as off, so the switch reaches it as 0.
+  sessionManager.setIdleTimeout(effective.agent.idleTimeoutEnabled ? effective.agent.idleTimeoutMinutes : 0);
 
   // Hydrate the accumulator's known context windows from persisted metrics so
   // a parked/background card shows a correct percentage on the board without

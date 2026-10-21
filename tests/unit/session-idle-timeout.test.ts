@@ -1,22 +1,21 @@
 /**
- * Tests for the idle-timeout listener DB side-effect in registerSessionHandlers.
+ * Tests for the idle-timeout listener in registerSessionHandlers.
  *
- * The idle-timeout path was the root-cause of the divergence bug on this branch:
- * `session-telemetry.requestSuspend` flipped the SessionRegistry entry to
- * 'suspended', but the corresponding 'idle-timeout' listener in sessions.ts
- * never wrote the DB counterpart. That left `task.session_id` pointing at a
- * registry entry that was already suspended - SESSION_RESUME would then throw
- * "Task X already has an active session" instead of reconciling and proceeding.
- *
- * The fix adds `applySuspendDbWrites(context, projectId, taskId, 'system')`
- * inside a `withTaskLock(taskId, ...)` block in the 'idle-timeout' listener.
+ * A task's agent that sat idle past the timeout is paused through
+ * `pauseTaskSession`, the Pause button's own path, recorded as Kangentic's
+ * pause (`'auto'`). That pause is held: neither a restart nor a column move
+ * starts the task again until the user resumes it. The record is written
+ * BEFORE the PTY goes down. The sweep used to suspend the registry first and
+ * write the row later from this listener, so a quit in that gap left the
+ * record `running` and the next launch resumed the agent.
  * These tests verify:
  *
  *   #6 - When projectId is resolvable, the listener:
- *        - sends SESSION_IDLE_TIMEOUT to the renderer
- *        - calls commandInjector.cancel(taskId)
- *        - calls markRecordSuspended with 'system'
- *        - calls tasks.update({ id, session_id: null })
+ *        - marks the record suspended with 'auto', then suspends the PTY
+ *        - cancels the task's pending keystrokes
+ *        - clears task.session_id
+ *        - sends SESSION_IDLE_TIMEOUT to the renderer once the pause landed
+ *        - declines, writing nothing, when the agent went back to work
  *
  *   #7 - When projectId is missing (getSessionProjectId returns undefined):
  *        - renderer still receives SESSION_IDLE_TIMEOUT
@@ -169,14 +168,16 @@ function createMockContext() {
     },
     sessionManager: {
       listSessions: vi.fn(() => [] as Session[]),
-      getSession: vi.fn(() => null),
+      getSession: vi.fn((_sessionId?: string) => null as Session | null),
+      // Read by reconcileTaskSessionRef's heal-by-taskId fallback.
+      findLiveSessionByTaskId: vi.fn(() => undefined),
       getSessionTaskId: vi.fn(() => null),
       getSessionProjectId: vi.fn(() => null as string | null | undefined),
       killByTaskId: vi.fn(),
       removeByTaskId: vi.fn(),
       suspend: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
-      getActivityCache: vi.fn(() => ({})),
+      getActivityCache: vi.fn((): Record<string, string> => ({})),
       getActivityCacheForProject: vi.fn(() => ({})),
       getUsageCache: vi.fn(() => ({})),
       getUsageCacheForProject: vi.fn(() => ({})),
@@ -287,22 +288,25 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
 
     context = createMockContext();
     context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    // The task's live session, still idle when the pause takes the lock.
+    context.sessionManager.getSession.mockImplementation((sessionId?: string) => (
+      sessionId === 'sess-idle' ? { id: 'sess-idle', taskId: 'task-idle', status: 'running' } as Session : null
+    ));
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-idle': 'idle' });
     registerSessionHandlers(context as never);
   });
 
-  it('sends SESSION_IDLE_TIMEOUT to renderer, cancels command, marks record suspended, and clears session_id', async () => {
+  function fireIdleTimeout(): void {
     const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
     if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
-
-    // Fire the idle-timeout event. The handler schedules async DB work via
-    // withTaskLock (which enqueues via PQueue). We drain the queue by polling.
     idleTimeoutHandler('sess-idle', 'task-idle', 5);
+  }
 
-    // Wait for commandInjector.cancel to be called - this is the first
-    // observable side-effect inside the locked block, confirming the lock ran.
-    await drainUntil(() => context.terminalSubmitScheduler.cancel.mock.calls.length > 0);
+  it('records an auto pause, suspends the PTY, cancels keystrokes, clears session_id, then tells the renderer', async () => {
+    fireIdleTimeout();
+    // The renderer is told once the pause landed, the last step.
+    await drainUntil(() => context.mainWindow.webContents.send.mock.calls.length > 0);
 
-    // Renderer must be notified regardless of projectId presence.
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.SESSION_IDLE_TIMEOUT,
       'sess-idle',
@@ -310,19 +314,41 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
       5,
       'proj-1',
     );
-
-    // commandInjector.cancel is the first action inside the locked block.
     expect(context.terminalSubmitScheduler.cancel).toHaveBeenCalledWith('task-idle');
-
-    // markRecordSuspended must be called with 'system' as the suspendedBy source.
+    // Kangentic's own pause: held until the user resumes it.
     expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(
       expect.anything(), // SessionRepository instance
       'record-idle',
-      'system',
+      'auto',
     );
-
-    // tasks.update must clear session_id.
     expect(taskUpdate).toHaveBeenCalledWith({ id: 'task-idle', session_id: null });
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+  });
+
+  it('writes the paused record before it suspends the PTY, so a quit in between keeps it paused', async () => {
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+
+    const recordWrittenAt = vi.mocked(markRecordSuspended).mock.invocationCallOrder[0];
+    const suspendedAt = context.sessionManager.suspend.mock.invocationCallOrder[0];
+    expect(recordWrittenAt).toBeDefined();
+    expect(suspendedAt).toBeDefined();
+    expect(recordWrittenAt).toBeLessThan(suspendedAt);
+  });
+
+  it('declines, writing and stopping nothing, when the agent went back to work before the lock', async () => {
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-idle': 'thinking' });
+
+    fireIdleTimeout();
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT, expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+    );
   });
 });
 
@@ -431,12 +457,19 @@ describe('idle-timeout listener - a workflow\'s own agent session', () => {
   });
 
   it('still broadcasts and takes the task lock for a task\'s session (the control)', async () => {
-    context.sessionManager.getSession.mockReturnValue({ id: 'sess-task', taskId: 'task-1' } as never);
+    context.sessionManager.getSession.mockReturnValue({ id: 'sess-task', taskId: 'task-1', status: 'running' } as never);
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-task': 'idle' });
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => ({ id: 'task-1', session_id: 'sess-task' })), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
     const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
     if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
 
     idleTimeoutHandler('sess-task', 'task-1', 5);
-    await drainUntil(() => context.terminalSubmitScheduler.cancel.mock.calls.length > 0);
+    await drainUntil(() => context.mainWindow.webContents.send.mock.calls.length > 0);
 
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.SESSION_IDLE_TIMEOUT,

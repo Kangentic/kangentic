@@ -1324,7 +1324,14 @@ export interface Session {
 
 export type SessionRecordStatus = 'running' | 'queued' | 'suspended' | 'exited' | 'orphaned';
 
-export type SuspendedBy = 'user' | 'system';
+/**
+ * Who suspended a session. `'user'`: the Pause button or a phone pause.
+ * `'auto'`: Kangentic paused an agent that was waiting on the user, for low
+ * memory or the idle timeout. `'system'`: a quit, a move or a settings
+ * restart. `'user'` and `'auto'` hold the task paused until the user resumes
+ * it (`isHeldPause`, `src/shared/held-pause.ts`); `'system'` holds nothing.
+ */
+export type SuspendedBy = 'user' | 'system' | 'auto';
 
 export interface SessionRecord {
   id: string;
@@ -3980,7 +3987,15 @@ export interface AppConfig {
     permissionMode: PermissionMode;
     cliPaths: Record<string, string | null>; // keyed by agent name, null = auto-detect
     maxConcurrentSessions: number;
-    idleTimeoutMinutes: number; // 0 = disabled
+    /** Pause an agent that has waited on the user `idleTimeoutMinutes`. Global-only. */
+    idleTimeoutEnabled: boolean;
+    /** How long an agent waits on the user before the idle timer pauses it. Read only while `idleTimeoutEnabled`. */
+    idleTimeoutMinutes: number;
+    /**
+     * While memory runs low, pause the agent that has waited on the user
+     * longest, one a minute, until there is room again. Global-only.
+     */
+    pauseIdleAgentsOnLowMemory: boolean;
     autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click
     /** Global, agent-keyed remote-server identity (url + auth). Machine-scoped, mirrors cliPaths. */
     executionServers: Record<string, AgentExecutionServer>;
@@ -4709,7 +4724,9 @@ export const DEFAULT_CONFIG: AppConfig = {
     permissionMode: 'acceptEdits',
     cliPaths: {},
     maxConcurrentSessions: 8,
-    idleTimeoutMinutes: 0,
+    idleTimeoutEnabled: false,
+    idleTimeoutMinutes: 30,
+    pauseIdleAgentsOnLowMemory: true,
     autoResumeSessionsOnRestart: true,
     executionServers: {},
     execution: {},

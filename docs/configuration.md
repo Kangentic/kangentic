@@ -85,7 +85,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `windowLightDismiss`
 - `contextBar.*` (all context bar visibility toggles; Task tab)
 - `notifications.*` (all notification settings)
-- `agent.idleTimeoutMinutes`
+- `agent.pauseIdleAgentsOnLowMemory`, `agent.idleTimeoutEnabled`, `agent.idleTimeoutMinutes` (the Pausing agents card, in the Performance tab)
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`, `developer.stallProfiler`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `automation.agent`, `automation.model`, `automation.effort` (the Automation agent that answers Agent evaluations and names tasks and Command Terminals, in the Workflows tab; see [Workflows](#workflows-workflow-agent-and-automation-agent))
@@ -198,7 +198,9 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `agent.permissionMode` | PermissionMode | `'acceptEdits'` | Default permission mode for spawned agents |
 | `agent.cliPaths` | Record\<string, string \| null\> | `{}` | Per-agent CLI path overrides keyed by agent name. Empty = auto-detect all. Global-only. |
 | `agent.maxConcurrentSessions` | number | `8` | Max concurrent PTY sessions. Global-only. |
-| `agent.idleTimeoutMinutes` | number | `0` | Auto-suspend sessions after this many minutes idle. 0 = disabled. Global-only. |
+| `agent.pauseIdleAgentsOnLowMemory` | boolean | `true` | While memory runs low, pause the agent that has waited on you longest, one a minute, until there is room again. Windows reads commit headroom, Linux reads RAM plus swap, macOS reads the kernel's memory pressure level. The pause is held: the agent stays paused, across a restart too, until you resume it. Global-only. |
+| `agent.idleTimeoutEnabled` | boolean | `false` | Pause any agent that has waited on you `agent.idleTimeoutMinutes`. Held like the memory pause. Global-only. |
+| `agent.idleTimeoutMinutes` | number | `30` | How long an agent waits on you before the idle timer pauses it. Read only while `agent.idleTimeoutEnabled` is on. A config saved before the switch existed carried the switch here (0 = off); it is read once as the switch, with a saved 0 becoming off at 30 minutes. Global-only. |
 | `agent.autoResumeSessionsOnRestart` | boolean | `true` | When true, agent sessions that were running at last close auto-resume when Kangentic restarts. When false, sessions stay paused and require a manual Resume click on each task. Turn off if auto-resuming many agents at once overwhelms your machine. Global-only. |
 | `agent.executionServers` | Record\<string, AgentExecutionServer\> | `{}` | Global, agent-keyed remote-server identity: `{ url, auth }`. `auth` is `{kind:'none'}`, `{kind:'basic', username, password}`, or `{kind:'bearerEnv', envVarName}`. Machine-scoped like `agent.cliPaths` - names a server, not a project. Global-only. |
 | `agent.execution` | Record\<string, AgentProjectExecution\> | `{}` | Per-project, agent-keyed: `{ mode: 'local' \| 'remote', workingDirectory }`. An absent entry means local. `workingDirectory` is a path ON THE SERVER for this project's tasks. See [Remote Execution](#remote-execution). |

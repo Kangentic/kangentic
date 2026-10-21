@@ -175,6 +175,57 @@ describe('Config Manager -- mobileBridge relay resolution across the default mer
   });
 });
 
+describe('Config Manager -- idle timeout switch migration', () => {
+  // agent.idleTimeoutMinutes used to be the switch too: 0 was off. Nearly every
+  // install has the old value on disk, because save() writes the whole config,
+  // so changing the default alone would reach fresh installs only.
+
+  it('reads a saved timeout above 0 as on, keeps its minutes, and persists the switch', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutMinutes: 45 } }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
+    expect(config.agent.idleTimeoutMinutes).toBe(45);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent.idleTimeoutEnabled).toBe(true);
+    expect(raw.agent.idleTimeoutMinutes).toBe(45);
+  });
+
+  it('reads a saved 0 as off and resets the minutes to the default, so turning it on starts from 30', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutMinutes: 0 } }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(false);
+    expect(config.agent.idleTimeoutMinutes).toBe(30);
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent.idleTimeoutEnabled).toBe(false);
+    expect(raw.agent.idleTimeoutMinutes).toBe(30);
+  });
+
+  it('leaves a file already in the new shape alone, its saved switch winning', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { idleTimeoutEnabled: false, idleTimeoutMinutes: 45 } }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(false);
+    expect(config.agent.idleTimeoutMinutes).toBe(45);
+  });
+
+  it('gives a fresh install the defaults: the idle timer off at 30 minutes, the low-memory pause on', async () => {
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.agent.idleTimeoutEnabled).toBe(false);
+    expect(config.agent.idleTimeoutMinutes).toBe(30);
+    expect(config.agent.pauseIdleAgentsOnLowMemory).toBe(true);
+  });
+});
+
 describe('Config Manager -- claude.* to agent.* namespace migration', () => {
   it('migrates legacy claude.* to agent.* on load', async () => {
     fs.writeFileSync(configPath, JSON.stringify({
@@ -196,6 +247,8 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
     // A legacy file's queueOverflow names a removed setting and is not carried.
     expect(config.agent).not.toHaveProperty('queueOverflow');
     expect(config.agent.idleTimeoutMinutes).toBe(5);
+    // A saved timeout above 0 was on, so the switch that replaced it is on.
+    expect(config.agent.idleTimeoutEnabled).toBe(true);
 
     // Verify claude key is gone from persisted file
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));

@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
 const mockGetLatestForTask = vi.fn(() => undefined);
-const mockGetUserPausedTaskIds = vi.fn(() => new Set<string>());
+const mockGetHeldPausedTaskIds = vi.fn(() => new Set<string>());
 const mockSwimlaneList = vi.fn();
 
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => true) } }));
@@ -42,7 +42,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = (...args: unknown[]) => mockGetLatestForTask(...(args as []));
-    getUserPausedTaskIds = () => mockGetUserPausedTaskIds();
+    getHeldPausedTaskIds = () => mockGetHeldPausedTaskIds();
   },
 }));
 
@@ -110,7 +110,7 @@ describe('autoSpawnTasks: auto_spawn is resolved per task, not per lane', () => 
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetLatestForTask.mockReturnValue(undefined);
-    mockGetUserPausedTaskIds.mockReturnValue(new Set());
+    mockGetHeldPausedTaskIds.mockReturnValue(new Set());
   });
 
   it('spawns a profiled task in a column whose OWN auto_spawn is off', async () => {
