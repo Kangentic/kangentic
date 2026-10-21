@@ -199,10 +199,12 @@ export interface PushTaskPlacement {
  * turn: the idle settle timer is one-shot and lastActivityState already
  * holds 'idle' by the time presence clears, so nothing re-arms.
  *
- * The 2s reconnect grace reports 'connected' with the streams already
- * dropped (bridge-session.ts's connectionState getter). Suppressing there
- * is correct, not a leak of the same bug: the phone was demonstrably
- * present a moment ago and the socket is coming back.
+ * The 2s reconnect grace holds the session's last presence verdict
+ * (bridge-session.ts's connectionState getter). For a phone that was
+ * present it reports 'connected' with the streams already dropped.
+ * Suppressing there is correct, not a leak of the same bug: the phone was
+ * demonstrably present a moment ago and the socket is coming back. An
+ * absent phone's hold reports 'offline', so it never lands in this set.
  */
 export function collectConnectedDeviceIds(
   sessions: Iterable<[string, { connectionState: MobileDeviceConnectionState }]>,
