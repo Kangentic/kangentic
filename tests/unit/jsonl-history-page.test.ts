@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   parseClaudeTranscript,
   parseClaudeTranscriptWindow,
@@ -9,7 +9,7 @@ import {
   resetIncrementalParseStateForTests,
 } from '../../src/main/agent/adapters/claude/transcript-parser';
 import { setParseWindowBytesForTests } from '../../src/main/agent/shared/transcript-truncation';
-import { decodeJsonlCursor } from '../../src/main/agent/shared/jsonl-history-page';
+import { decodeJsonlCursor, PAGE_READ_BUDGET_MS } from '../../src/main/agent/shared/jsonl-history-page';
 import type { TranscriptEntry, TranscriptHistoryPage } from '../../src/shared/types';
 import type { TranscriptPageReadResult } from '../../src/main/agent/agent-adapter';
 import { claudeTranscriptLines } from './helpers/claude-transcript-fixture';
@@ -207,6 +207,25 @@ describe('readJsonlHistoryPage', () => {
     expect(await readClaudeTranscriptPage(filePath, {
       direction: 'before', cursor: `j:${size + 10}`, maxBytes: PAGE_BYTES,
     })).toEqual({ status: 'reset' });
+  });
+
+  it('gives up on a page smaller than every line once it runs past its time budget', async () => {
+    // A 1-byte page holds no whole line anywhere, so it skips one byte a window
+    // to the end of the file. On a 97 MB transcript that ran for minutes and got
+    // the worker killed; the budget answers instead.
+    writeTranscript({ seed: 9, turns: 18 });
+    let clock = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      clock += 1000;
+      return clock;
+    });
+    try {
+      const result = await readClaudeTranscriptPage(filePath, { direction: 'around', position: 0, maxBytes: 1 });
+      expect(result).toEqual({ status: 'unavailable', reason: 'record_too_large' });
+      expect(clock).toBeLessThanOrEqual(PAGE_READ_BUDGET_MS + 3000);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('answers file_missing for a file that is gone', async () => {

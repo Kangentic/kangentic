@@ -253,6 +253,23 @@ describe('readHistoryTimeline and locateHistoryTurn', () => {
     }
   });
 
+  it('checks a cached timeline with a probe-sized read, never a tiny one', async () => {
+    // A page skips every line longer than itself, so a 1-byte check walked the
+    // whole file a byte at a time; on a 97 MB transcript that held the worker's
+    // history queue until main killed the worker.
+    const { database } = fixture({ turns: 30 });
+    const adapter = agentRegistry.getBySessionType('claude_agent');
+    if (!adapter?.readTranscriptPage) throw new Error('no adapter');
+    const readPage = vi.spyOn(adapter, 'readTranscriptPage');
+    const first = await readHistoryTimeline(database, AGENT_SESSION_ID);
+    const cachedReadsFrom = readPage.mock.calls.length;
+    const second = await readHistoryTimeline(database, AGENT_SESSION_ID);
+    expect(second).toEqual(first);
+    // The second answer came from the cache: one check, not another 64 probes.
+    expect(readPage.mock.calls.length - cachedReadsFrom).toBe(1);
+    for (const [, , request] of readPage.mock.calls) expect(request.maxBytes).toBeGreaterThanOrEqual(1024);
+  });
+
   it('answers in_tail for a turn the tail holds and finds the page of an earlier one', async () => {
     const { database } = fixture({ turns: 30 });
     expect(await locateHistoryTurn(database, { sessionId: 'session-1', turnUuid: 'assistant-29' })).toEqual({ status: 'in_tail' });

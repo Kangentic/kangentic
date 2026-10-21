@@ -241,5 +241,8 @@ These hold today, whatever is built:
 - An archive read keeps the row that crosses the cap, so it can reach about 24 MiB of source, not 16.
 - The MCP structured transcript skips the file cache and the per-span clamp.
 - The worker queues no requests, and the viewer's 2.5 s poll has no in-flight guard. A call that
-  passes 15 s kills the worker.
+  passes 15 s kills the worker. As built, history reads share one queue whose every call answers
+  `busy` by 10 s, waiting or running, and a page read gives up after 4 s. A wait cap alone was not
+  enough: in `/preview` a timeline cache check read with a 1-byte page, skipped a 97 MB file one
+  byte at a time, and held the calls behind it until main killed the worker three times.
 - No UI test renders a `truncated` row, clicks Jump to latest, or checks anchoring on an insert.
