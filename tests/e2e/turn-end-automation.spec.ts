@@ -68,7 +68,6 @@ test.describe('Turn-end automations', () => {
           cliPath: resolveMockAgentPath('mock-claude-turnend'),
           permissionMode: 'default',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

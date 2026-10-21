@@ -167,7 +167,6 @@ function makeContext() {
           maxConcurrentSessions: 5,
           idleTimeoutMinutes: 30,
           permissionMode: 'default',
-          queueOverflow: 'queue',
           executionServers: {},
         },
         terminal: { shell: null },
@@ -650,7 +649,7 @@ describe('AGENT_PROBE_EXECUTION_SERVER IPC handler', () => {
       }),
     ];
     context.configManager.load.mockReturnValue({
-      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', executionServers: { opencode: server } },
       terminal: { shell: null },
       mcpServer: { enabled: false },
     });
@@ -676,7 +675,7 @@ describe('AGENT_PROBE_EXECUTION_SERVER IPC handler', () => {
       }),
     ];
     context.configManager.load.mockReturnValue({
-      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', executionServers: { opencode: server } },
       terminal: { shell: null },
       mcpServer: { enabled: false },
     });
@@ -701,7 +700,7 @@ describe('AGENT_PROBE_EXECUTION_SERVER IPC handler', () => {
       }),
     ];
     context.configManager.load.mockReturnValue({
-      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', queueOverflow: 'queue', executionServers: { opencode: server } },
+      agent: { cliPaths: {}, cliPath: null, maxConcurrentSessions: 5, idleTimeoutMinutes: 30, permissionMode: 'default', executionServers: { opencode: server } },
       terminal: { shell: null },
       mcpServer: { enabled: false },
     });

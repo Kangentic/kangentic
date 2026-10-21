@@ -53,7 +53,6 @@ test.describe('Codex Agent - Activity Detection', () => {
           cliPaths: { codex: mockAgentPath('codex') },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

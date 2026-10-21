@@ -74,7 +74,6 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
           },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

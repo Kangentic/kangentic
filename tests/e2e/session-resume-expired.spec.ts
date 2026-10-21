@@ -47,7 +47,7 @@ function writeTestConfig(dataDir: string): void {
   fs.writeFileSync(
     path.join(dataDir, 'config.json'),
     JSON.stringify({
-      claude: { cliPath: mockClaudePath(), permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue' },
+      claude: { cliPath: mockClaudePath(), permissionMode: 'default', maxConcurrentSessions: 5 },
       git: { worktreesEnabled: false },
     }),
   );

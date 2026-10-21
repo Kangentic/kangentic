@@ -186,7 +186,6 @@ export class ConfigManager {
         permissionMode: (legacy.permissionMode as PermissionMode) ?? this.config.agent.permissionMode,
         cliPaths: typeof cliPath === 'string' ? { claude: cliPath } : {},
         maxConcurrentSessions: (legacy.maxConcurrentSessions as number) ?? this.config.agent.maxConcurrentSessions,
-        queueOverflow: (legacy.queueOverflow as 'queue' | 'reject') ?? this.config.agent.queueOverflow,
         idleTimeoutMinutes: (legacy.idleTimeoutMinutes as number) ?? this.config.agent.idleTimeoutMinutes,
       };
       delete (this.config as unknown as Record<string, unknown>).claude;
@@ -224,6 +223,15 @@ export class ConfigManager {
     const parsedTerminal = parsed?.terminal as Record<string, unknown> | undefined;
     if (parsedTerminal && typeof parsedTerminal === 'object' && 'scrollbackLines' in parsedTerminal) {
       delete (this.config.terminal as unknown as Record<string, unknown>).scrollbackLines;
+      this.save(this.config);
+    }
+
+    // One-time migration: drop a stale agent.queueOverflow. Its Reject choice
+    // was never read, so a request at the cap always queued; the setting was
+    // removed rather than left as a switch that does nothing.
+    const parsedAgent = parsed?.agent as Record<string, unknown> | undefined;
+    if (parsedAgent && typeof parsedAgent === 'object' && 'queueOverflow' in parsedAgent) {
+      delete (this.config.agent as unknown as Record<string, unknown>).queueOverflow;
       this.save(this.config);
     }
 

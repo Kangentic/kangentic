@@ -59,7 +59,6 @@ function writeTestConfig(dataDir: string): void {
         cliPaths: { claude: mockAgentPath('claude') },
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: { worktreesEnabled: false },
     }),

@@ -11,9 +11,16 @@ import type { HostMemoryPressureEvent, HostMemorySample } from '../../src/shared
 
 const mocks = vi.hoisted(() => ({
   useToastStore: { getState: vi.fn() },
+  setLastSettingsTab: vi.fn(),
+  setSettingsOpen: vi.fn(),
 }));
 
 vi.mock('../../src/renderer/stores/toast-store', () => ({ useToastStore: mocks.useToastStore }));
+vi.mock('../../src/renderer/stores/config-store', () => ({
+  useConfigStore: {
+    getState: () => ({ setLastSettingsTab: mocks.setLastSettingsTab, setSettingsOpen: mocks.setSettingsOpen }),
+  },
+}));
 
 const { useToastStore } = mocks;
 
@@ -88,6 +95,37 @@ describe('useHostMemoryStore.receivePressureEvent', () => {
     );
     const message = addToastMock.mock.calls[0][0].message as string;
     expect(message).toContain('unknown');
+  });
+
+  it('names both levers and carries no per-agent figure', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    const message = addToastMock.mock.calls[0][0].message as string;
+    expect(message).toContain('page file');
+    expect(message).toContain('run fewer agents');
+    // The cost of one agent depends on the CLI, its version and the user's
+    // MCP servers, so the toast quotes only what was measured on this machine.
+    expect(message).not.toMatch(/each agent/i);
+  });
+
+  it('stamps the toast with the sample time so a toast left up reads its age', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    expect(addToastMock.mock.calls[0][0].since).toBe('2026-09-16T14:24:24.000Z');
+  });
+
+  it('offers an action that opens Settings on the Behavior tab, where Max concurrent sessions lives', () => {
+    mocks.setLastSettingsTab.mockClear();
+    mocks.setSettingsOpen.mockClear();
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    const action = addToastMock.mock.calls[0][0].action as { label: string; onClick: () => void };
+    expect(action.label).toBe('Behavior settings');
+
+    action.onClick();
+
+    expect(mocks.setLastSettingsTab).toHaveBeenCalledWith('behavior');
+    expect(mocks.setSettingsOpen).toHaveBeenCalledWith(true);
+    // The tab is chosen before the panel opens, so the panel's mount reads it.
+    expect(mocks.setLastSettingsTab.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.setSettingsOpen.mock.invocationCallOrder[0]);
   });
 
   it('stores the returned toast id so a later recovery can dismiss it', () => {

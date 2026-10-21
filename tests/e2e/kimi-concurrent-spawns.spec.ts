@@ -116,7 +116,6 @@ test.describe('Kimi Agent - Concurrent Spawns Same Work Dir', () => {
           cliPaths: { kimi: mockAgentPath('kimi') },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

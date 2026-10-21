@@ -63,7 +63,6 @@ test.describe('Agent model-name resolution on task card', () => {
           },
           permissionMode: 'acceptEdits',
           maxConcurrentSessions: 5,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: false },
       }),

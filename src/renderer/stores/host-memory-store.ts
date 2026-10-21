@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { HostMemoryPressureEvent } from '../../shared/types';
+import { useConfigStore } from './config-store';
 import { useToastStore } from './toast-store';
 
 /**
@@ -84,12 +85,27 @@ export const useHostMemoryStore = create<HostMemoryState>((set, get) => ({
     //
     // "Memory reservations", not "memory": the sample is Windows commit
     // headroom (RAM plus page file, charged for every reservation whether or
-    // not it is touched), so RAM can read half free while this fires, and the
-    // one lever a user has is the page file that sets the limit.
+    // not it is touched), so RAM can read half free while this fires. A user
+    // has two levers: the page file that sets the limit, and how many agents
+    // run at once. The action opens the tab holding the second; the
+    // page-file steps are in docs/user-guide.md. No per-agent figure here: it
+    // depends on the agent CLI, its version and the user's own MCP servers.
+    //
+    // `since` is the sample's time, so a toast left up reads its age instead
+    // of quoting a dip that may be long past.
     const toastId = useToastStore.getState().addToast({
-      message: `This computer is nearly out of memory reservations (${headroom} left) while ${agentClause} running. RAM can look free while this happens; a larger page file raises the limit.`,
+      message: `This computer is nearly out of memory reservations (${headroom} left) while ${agentClause} running. RAM can look free while this happens. Raise the page file's initial size or run fewer agents at once.`,
       variant: 'warning',
       duration: 0,
+      since: sample.ts,
+      action: {
+        label: 'Behavior settings',
+        onClick: () => {
+          const configStore = useConfigStore.getState();
+          configStore.setLastSettingsTab('behavior');
+          configStore.setSettingsOpen(true);
+        },
+      },
     });
 
     set({ lastEvent: event, pressureToastId: toastId });

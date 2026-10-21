@@ -45,8 +45,12 @@ const FAKE_SELECTION: EngineSelection = {
   language: 'en',
 };
 
-function fakeEnsureEngineRequest() {
-  return { engineKey: 'hybrid|streaming-zipformer-en|none|en|||', selection: FAKE_SELECTION, models: [], warmCap: 2 };
+const ENGLISH_ENGINE_KEY = 'hybrid|streaming-zipformer-en|none|en|||';
+/** A second engine, as a settings switch (another language) warms one. */
+const FRENCH_ENGINE_KEY = 'hybrid|nemotron-fr|parakeet-v3|fr|||';
+
+function fakeEnsureEngineRequest(engineKey = ENGLISH_ENGINE_KEY) {
+  return { engineKey, selection: FAKE_SELECTION, models: [], warmCap: 2 };
 }
 
 interface FakeChild extends EventEmitter {
@@ -79,8 +83,8 @@ function lastRequestId(child: FakeChild): number {
 
 /** Warm the client's worker: ensureWarm + the worker's result. Returns the
  *  child that served it. */
-async function warm(client: DictationClient): Promise<FakeChild> {
-  const promise = client.ensureWarm(fakeEnsureEngineRequest());
+async function warm(client: DictationClient, engineKey = ENGLISH_ENGINE_KEY): Promise<FakeChild> {
+  const promise = client.ensureWarm(fakeEnsureEngineRequest(engineKey));
   const child = lastChild();
   child.emit('message', { type: 'result', id: lastRequestId(child) });
   await promise;
@@ -468,7 +472,8 @@ describe('DictationClient', () => {
       client.on('recycled', recycled);
 
       const child = await warm(client);
-      // A second prewarm (a model change) is still prewarm-only.
+      // A second prewarm of the same engine (a remount, the same config sent
+      // again) is still the one-engine baseline.
       await warm(client);
 
       await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
@@ -697,24 +702,28 @@ describe('DictationClient', () => {
 
     // Settings switches grow a worker that never dictates: each language or
     // preset change pre-warms another engine, and a disposed one's arena stays
-    // reserved. Measured on Best, English to French and back left 2,083 MB.
+    // reserved. Measured on Best, English to French and back left 2,083 MB,
+    // and English to French alone 1,409 MB, under the ceiling.
     describe('a prewarm-only worker', () => {
-      async function prewarmTwiceWithCommit(commitBytes: number): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
+      async function prewarmTwiceWithCommit(
+        commitBytes: number,
+        secondEngineKey: string,
+      ): Promise<{ client: DictationClient; child: FakeChild; recycled: ReturnType<typeof vi.fn> }> {
         const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
         const client = new DictationClient(undefined, { readCommitBytes });
         const recycled = vi.fn();
         client.on('recycled', recycled);
         const child = await warm(client);
         child.pid = 4242;
-        // The switch: a second prewarm on the same worker, never a session.
-        await warm(client);
+        // A second prewarm on the same worker, never a session.
+        await warm(client, secondEngineKey);
         return { client, child, recycled };
       }
 
       it('is recycled at the short window once past the ceiling, and emits recycled so the service re-warms one engine', async () => {
         vi.useFakeTimers();
         try {
-          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES + 1);
+          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES + 1, FRENCH_ENGINE_KEY);
           await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
           expect(child.kill).not.toHaveBeenCalled();
           await vi.advanceTimersByTimeAsync(1);
@@ -728,13 +737,95 @@ describe('DictationClient', () => {
         }
       });
 
-      it('stays resident under the ceiling, however long it idles', async () => {
+      it('after a switch to a second engine, is recycled at the long window under the ceiling, and logs why', async () => {
+        // The warm cap of 2 keeps the switch back instant while the user is
+        // switching; nothing else would ever give the second engine back.
+        vi.useFakeTimers();
+        const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+        try {
+          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES - 1, FRENCH_ENGINE_KEY);
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS - 1);
+          expect(child.kill).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
+          expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining('engine-switch'));
+          child.emit('exit');
+          expect(client.crashed).toBe(false);
+
+          // The replacement warms the one engine in use and is the baseline again.
+          const replacement = await warm(client, FRENCH_ENGINE_KEY);
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
+          expect(replacement.kill).not.toHaveBeenCalled();
+          client.dispose();
+        } finally {
+          infoSpy.mockRestore();
+          vi.useRealTimers();
+        }
+      });
+
+      it('warming its one engine again stays resident under the ceiling, however long it idles', async () => {
         vi.useFakeTimers();
         try {
-          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES - 1);
+          const { client, child, recycled } = await prewarmTwiceWithCommit(WORKER_COMMIT_CEILING_BYTES - 1, ENGLISH_ENGINE_KEY);
           await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS * 3);
           expect(child.kill).not.toHaveBeenCalled();
           expect(recycled).not.toHaveBeenCalled();
+          client.dispose();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
+
+    // The ceiling used to be read only when a request settled. A worker can
+    // keep growing after that (a finalize that stopped waiting while the
+    // accurate model kept loading), so it is read once more at the short window.
+    describe('a worker that grows after its last request settles', () => {
+      it('one that served a session is recycled at the short window once it has passed the ceiling', async () => {
+        vi.useFakeTimers();
+        try {
+          let commitBytes = WORKER_COMMIT_CEILING_BYTES - 1;
+          const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+          const client = new DictationClient(undefined, { readCommitBytes });
+          const recycled = vi.fn();
+          client.on('recycled', recycled);
+          const child = await warm(client);
+          child.pid = 4242;
+          await serveSession(client);
+          await finishSession(client, child);
+
+          // Under at the settle; the late load lands afterwards.
+          commitBytes = WORKER_COMMIT_CEILING_BYTES + 1;
+          await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS - 1);
+          expect(child.kill).not.toHaveBeenCalled();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
+          client.dispose();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('a prewarm-only one is recycled at the short window too, once it has passed the ceiling', async () => {
+        vi.useFakeTimers();
+        try {
+          let commitBytes = WORKER_COMMIT_CEILING_BYTES - 1;
+          const readCommitBytes = vi.fn((pid: number) => (pid === 4242 ? commitBytes : null));
+          const client = new DictationClient(undefined, { readCommitBytes });
+          const recycled = vi.fn();
+          client.on('recycled', recycled);
+          const firstWarm = client.ensureWarm(fakeEnsureEngineRequest());
+          const child = lastChild();
+          child.pid = 4242;
+          child.emit('message', { type: 'result', id: lastRequestId(child) });
+          await firstWarm;
+
+          commitBytes = WORKER_COMMIT_CEILING_BYTES + 1;
+          await vi.advanceTimersByTimeAsync(HEAVY_IDLE_SHUTDOWN_MS);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          expect(recycled).toHaveBeenCalledTimes(1);
           client.dispose();
         } finally {
           vi.useRealTimers();

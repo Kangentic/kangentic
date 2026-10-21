@@ -3,8 +3,9 @@
  *
  * scripts/renderer-optimize-deps.json is the single list of renderer deps that
  * Vite pre-bundles at dev-server boot. It is consumed by BOTH vite.config.mts
- * and the inline worktree config in scripts/dev.js (which cannot load
- * vite.config.mts). Two invariants keep the dogfooded `npm start` app healthy:
+ * and the inline worktree config in scripts/worktree-vite-config.js (which
+ * cannot load vite.config.mts; scripts/dev.js and scripts/vite-prebundle.js both
+ * build from it). Two invariants keep the dogfooded `npm start` app healthy:
  *
  * 1. DEEP imports of pre-bundled packages must be pre-bundled too. A dep
  *    specifier Vite first meets after boot (reachable only behind a React.lazy
@@ -167,16 +168,32 @@ describe('worktree vite cache isolation', () => {
   // differently-resolved config clobbers, the running main server's dep cache.
   // Do not delete these assertions to silence a refactor; move the cacheDir
   // and update the patterns instead.
-  it('scripts/dev.js gives worktree servers a cacheDir outside node_modules', () => {
-    const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'dev.js'), 'utf-8');
+  it('scripts/worktree-vite-config.js gives worktree servers a cacheDir outside node_modules', () => {
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'worktree-vite-config.js'), 'utf-8');
     expect(
       /cacheDir:\s*viteCacheDir/.test(source),
-      'scripts/dev.js worktree createServer config must set cacheDir: viteCacheDir',
+      'the worktree Vite config must set cacheDir: viteCacheDir',
     ).toBe(true);
     expect(
       /['"]\.kangentic['"],\s*['"]vite-cache['"]/.test(source),
-      'scripts/dev.js must place the worktree vite cache at <worktree>/.kangentic/vite-cache',
+      'the worktree Vite config must place the cache at <worktree>/.kangentic/vite-cache',
     ).toBe(true);
+  });
+
+  it('the worktree dev server and its dependency pre-bundle build one config', () => {
+    // Vite keys its dependency cache on a hash of the resolved config. The
+    // pre-bundle (scripts/vite-prebundle.js) fills the cache in a child that
+    // exits, so the server starts warm instead of holding the bundle's memory;
+    // a config of its own would hash differently and the server would bundle
+    // again in-process.
+    const devSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'dev.js'), 'utf-8');
+    const prebundleSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'vite-prebundle.js'), 'utf-8');
+    expect(devSource).toMatch(/createServer\(await worktreeViteConfig\(projectDir, port\)\)/);
+    expect(devSource).toMatch(/worktreeViteCacheDir\(projectDir\)/);
+    expect(prebundleSource).toMatch(/await worktreeViteConfig\(projectDir, Number\(portText\)\)/);
+    // The pre-bundle runs before the server is created.
+    expect(devSource.indexOf('await runDependencyPrebundle()'))
+      .toBeLessThan(devSource.indexOf('createServer(await worktreeViteConfig('));
   });
 
   it('scripts/dev.js keeps the non-worktree branch on the default node_modules/.vite cache', () => {

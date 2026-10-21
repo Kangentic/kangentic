@@ -193,7 +193,8 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
     expect(config.agent.permissionMode).toBe('default');
     expect(config.agent.cliPaths).toEqual({ claude: '/usr/bin/claude' });
     expect(config.agent.maxConcurrentSessions).toBe(4);
-    expect(config.agent.queueOverflow).toBe('reject');
+    // A legacy file's queueOverflow names a removed setting and is not carried.
+    expect(config.agent).not.toHaveProperty('queueOverflow');
     expect(config.agent.idleTimeoutMinutes).toBe(5);
 
     // Verify claude key is gone from persisted file
@@ -229,7 +230,7 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
 
   it('does not re-migrate when agent key already exists', async () => {
     fs.writeFileSync(configPath, JSON.stringify({
-      agent: { permissionMode: 'default', cliPaths: { gemini: '/usr/bin/gemini' }, maxConcurrentSessions: 4, queueOverflow: 'queue', idleTimeoutMinutes: 0 },
+      agent: { permissionMode: 'default', cliPaths: { gemini: '/usr/bin/gemini' }, maxConcurrentSessions: 4, idleTimeoutMinutes: 0 },
     }));
 
     const cm = await createConfigManager();
@@ -629,6 +630,28 @@ describe('Config Manager -- terminal.scrollbackLines global migration', () => {
 
     expect(config.terminal).not.toHaveProperty('scrollbackLines');
     expect(config.terminal.cursorStyle).toBe('block');
+  });
+});
+
+describe('Config Manager -- agent.queueOverflow removal', () => {
+  // The Reject choice was never read, so a request at the cap always queued.
+  // The setting was removed, and load() strips the key a file written before
+  // the removal still carries.
+
+  it('strips queueOverflow from the loaded config and rewrites the file, keeping sibling agent.* keys', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      agent: { maxConcurrentSessions: 20, queueOverflow: 'reject' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.agent).not.toHaveProperty('queueOverflow');
+    expect(config.agent.maxConcurrentSessions).toBe(20);
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.agent).not.toHaveProperty('queueOverflow');
+    expect(raw.agent.maxConcurrentSessions).toBe(20);
   });
 });
 

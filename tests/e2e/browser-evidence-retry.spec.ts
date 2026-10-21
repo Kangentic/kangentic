@@ -81,7 +81,6 @@ async function setupVariant(variant: Variant): Promise<{
         cliPath: variantBinaryPath(variant),
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: { worktreesEnabled: false },
     }),

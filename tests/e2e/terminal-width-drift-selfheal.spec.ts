@@ -130,7 +130,6 @@ test.beforeAll(async () => {
         cliPath: resolveMockAgentPath('mock-claude'),
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: { worktreesEnabled: false },
     }),

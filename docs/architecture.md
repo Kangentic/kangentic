@@ -560,6 +560,10 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 | `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 
+The toast names the two levers a user has, a larger initial page file and a lower Max Concurrent
+Sessions, and its Behavior settings action opens that tab. Where commit goes per agent, and the
+page-file steps, are in [user-guide.md](user-guide.md#low-memory-warning-windows).
+
 ### GPU health (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -864,7 +868,7 @@ Stale-thinking detection is no longer a `SessionManager` constant. It now lives 
 
 `src/main/pty/session-queue.ts`
 
-Limits concurrent PTY sessions (default: 5, configurable via `config.agent.maxConcurrentSessions`).
+Limits concurrent PTY sessions (default: 8, configurable via `config.agent.maxConcurrentSessions`).
 
 When a session is requested and the limit is reached, it gets a `queued` status placeholder. When a running session exits or suspends, `notifySlotFreed()` promotes the next queued entry.
 

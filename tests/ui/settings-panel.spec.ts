@@ -110,7 +110,9 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Behavior' }).click();
     await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
-    await expect(page.getByText('When max sessions are reached', { exact: true })).toBeVisible();
+    // The Queue/Reject overflow choice was removed: Reject was never read, so a
+    // request past the cap always queued.
+    await expect(page.getByText('When max sessions are reached', { exact: true })).toHaveCount(0);
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
     await expect(page.locator('text=Auto-Resume Agents on Restart')).toBeVisible();
     // Idle Timeout moved here from the Agent tab: it is a flat, agent-agnostic

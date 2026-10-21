@@ -412,7 +412,7 @@ async function setup() {
       toasts: { onAgentIdle: false, onAgentCrash: false, onPlanComplete: false, durationSeconds: 4, maxCount: 5 },
       cooldownSeconds: 60,
     },
-    agent: { cliPaths: { claude: mockPath }, permissionMode: 'acceptEdits', maxConcurrentSessions: 8, queueOverflow: 'queue' },
+    agent: { cliPaths: { claude: mockPath }, permissionMode: 'acceptEdits', maxConcurrentSessions: 8 },
   }));
 
   // A throwaway repo with a local bare remote so the Done probe's fetch path runs.

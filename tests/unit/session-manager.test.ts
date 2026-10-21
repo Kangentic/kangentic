@@ -62,7 +62,7 @@ import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude
 import { traceTerminal } from '../../src/main/pty/terminal-trace';
 
 const claudeAdapter = new ClaudeAdapter();
-import { EventType } from '../../src/shared/types';
+import { DEFAULT_CONFIG, EventType } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 
 let tmpDir: string;
@@ -2096,6 +2096,12 @@ describe('Spawning count', () => {
   afterEach(async () => {
     manager.killAll();
     await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it('holds the config default as its cap before any config is applied', () => {
+    // The queue used to start at a hardcoded 5 while the config default was 8,
+    // so a spawn that ran before the first setMaxConcurrent saw the wrong cap.
+    expect(manager.getFreeAgentSlots()).toBe(DEFAULT_CONFIG.agent.maxConcurrentSessions);
   });
 
   it('5 concurrent spawn calls with maxConcurrent=3 - exactly 3 running + 2 queued', async () => {

@@ -65,7 +65,7 @@ function makeMinimalConfig(): AppConfig {
     diffViewMode: 'split',
     terminal: { shell: null, fontFamily: 'mono', fontSize: 14, showPreview: false, panelHeight: 250, cursorStyle: 'block' },
     sidebar: { width: 224 },
-    agent: { permissionMode: 'acceptEdits', cliPaths: {}, maxConcurrentSessions: 8, queueOverflow: 'queue', idleTimeoutMinutes: 0, autoResumeSessionsOnRestart: false },
+    agent: { permissionMode: 'acceptEdits', cliPaths: {}, maxConcurrentSessions: 8, idleTimeoutMinutes: 0, autoResumeSessionsOnRestart: false },
     git: { worktreesEnabled: true, autoCleanup: true, defaultBaseBranch: 'main', copyFiles: [], initScript: null, linkNodeModules: true },
     mcpServer: { enabled: true },
     contextBar: { showShell: true, showVersion: true, showCost: true, showTokens: true, showContextFraction: true, showProgressBar: true, showRateLimits: true },

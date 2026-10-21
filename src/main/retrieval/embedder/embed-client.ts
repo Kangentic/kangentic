@@ -378,9 +378,27 @@ export class EmbedClient implements Embedder {
     else this.armIdleShutdown();
   }
 
+  /** Arm the idle recycle: HEAVY_IDLE_SHUTDOWN_MS for a worker past the
+   *  commit ceiling, IDLE_SHUTDOWN_MS otherwise. Under the ceiling, it is read
+   *  once more at the short window: a worker can keep growing after its last
+   *  request settled (an init that outlived its timeout and kept loading), and
+   *  the settle-time reading would otherwise be the only one it gets. */
   private armIdleShutdown(): void {
     if (this.disposed || !this.child || this.warmHold || this.idleTimer || this.pending.size > 0) return;
-    const delayMs = this.overCommitCeiling() ? HEAVY_IDLE_SHUTDOWN_MS : IDLE_SHUTDOWN_MS;
+    if (this.overCommitCeiling()) {
+      this.scheduleShutdown(HEAVY_IDLE_SHUTDOWN_MS);
+      return;
+    }
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null;
+      if (!this.child || this.pending.size > 0) return;
+      if (this.overCommitCeiling()) this.killChild();
+      else this.scheduleShutdown(IDLE_SHUTDOWN_MS - HEAVY_IDLE_SHUTDOWN_MS);
+    }, HEAVY_IDLE_SHUTDOWN_MS);
+    this.idleTimer.unref();
+  }
+
+  private scheduleShutdown(delayMs: number): void {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (this.child && this.pending.size === 0) this.killChild();

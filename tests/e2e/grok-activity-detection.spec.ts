@@ -60,7 +60,6 @@ function writeAgentConfig(dataDir: string): void {
         cliPaths: { grok: mockAgentPath('grok') },
         permissionMode: 'acceptEdits',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: { worktreesEnabled: false },
     }),

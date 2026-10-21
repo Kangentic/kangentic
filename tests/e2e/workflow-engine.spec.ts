@@ -105,7 +105,6 @@ test.describe('Workflow engine', () => {
           cliPath: resolveMockAgentPath('mock-claude-workflow'),
           permissionMode: 'default',
           maxConcurrentSessions: 6,
-          queueOverflow: 'queue',
         },
         git: { worktreesEnabled: true },
         // The Automation agent judges each step; without one every column is

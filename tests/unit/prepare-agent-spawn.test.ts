@@ -160,7 +160,6 @@ function makeAppConfig(overrides: Partial<AppConfig> = {}): AppConfig {
       cliPaths: {},
       permissionMode: 'default',
       maxConcurrentSessions: 5,
-      queueOverflow: 'queue',
       autoResumeSessionsOnRestart: true,
       ...((overrides.agent ?? {}) as object),
     },
@@ -459,7 +458,7 @@ describe('prepareAgentSpawn - permission_mode resolution', () => {
     const taskWithPermissionOverride = makeTask({ permission_mode: 'plan' } as Partial<Task>);
     const laneWithDifferentMode = makeSwimlane({ permission_mode: 'acceptEdits' } as Partial<Swimlane>);
     const configWithDifferentDefault = makeAppConfig({
-      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, autoResumeSessionsOnRestart: true },
     });
 
     const result = await prepareAgentSpawn(makeSpawnInput({
@@ -482,7 +481,7 @@ describe('prepareAgentSpawn - permission_mode resolution', () => {
     const taskWithPermissionOverride = makeTask({ permission_mode: 'auto' } as Partial<Task>);
     const laneForcingPlan = makeSwimlane({ permission_mode: 'plan' } as Partial<Swimlane>);
     const configWithDifferentDefault = makeAppConfig({
-      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, autoResumeSessionsOnRestart: true },
     });
 
     const result = await prepareAgentSpawn(makeSpawnInput({
@@ -505,7 +504,7 @@ describe('prepareAgentSpawn - permission_mode resolution', () => {
     const taskWithPermissionOverride = makeTask({ permission_mode: 'auto' } as Partial<Task>);
     const laneWithNoOverride = makeSwimlane({ permission_mode: null } as Partial<Swimlane>);
     const configWithDifferentDefault = makeAppConfig({
-      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, autoResumeSessionsOnRestart: true },
     });
 
     const result = await prepareAgentSpawn(makeSpawnInput({
@@ -634,7 +633,6 @@ describe('prepareAgentSpawn - remote OpenCode execution wiring', () => {
         cliPaths: {},
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
         autoResumeSessionsOnRestart: true,
         executionServers: {
           opencode: { url: 'http://10.0.0.9:5100', auth: { kind: 'none' } },
@@ -721,7 +719,6 @@ describe('prepareAgentSpawn - Codex launch-option wiring', () => {
         cliPaths: {},
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
         autoResumeSessionsOnRestart: true,
         launchOptions: {
           codex: { disableApps: true },
@@ -757,7 +754,6 @@ describe('prepareAgentSpawn - Codex launch-option wiring', () => {
         cliPaths: {},
         permissionMode: 'default',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
         autoResumeSessionsOnRestart: true,
         launchOptions: {
           codex: { disableApps: true },

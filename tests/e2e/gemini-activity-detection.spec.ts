@@ -89,7 +89,6 @@ test.beforeAll(async () => {
         cliPaths: { gemini: mockAgentPath('gemini') },
         permissionMode: 'acceptEdits',
         maxConcurrentSessions: 5,
-        queueOverflow: 'queue',
       },
       git: { worktreesEnabled: false },
     }),

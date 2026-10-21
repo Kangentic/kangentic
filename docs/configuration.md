@@ -75,7 +75,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffWrapLines`, `diffUseInlineWhenNarrow`, `diffFileSort`, `diffFlatList`
 - `monitor` (the Agent Monitor's own toolbar controls, not a Settings-panel entry)
 - `restoreWindowPosition`
-- `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
+- `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.autoResumeSessionsOnRestart`
 - `agent.executionServers` (per-agent remote-server url + auth; the Agent tab's Server URL / Authentication fields, shown when the selected agent declares remote-execution support)
 - `agent.launchOptions` (per-agent boolean startup toggles; the Agent tab's Launch Options rows, shown when the selected agent declares launch-option capability)
 - `terminal.*` (shell, font size, font family, cursor style, panel height, show preview, colors - the whole namespace is global-only)
@@ -198,7 +198,6 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `agent.permissionMode` | PermissionMode | `'acceptEdits'` | Default permission mode for spawned agents |
 | `agent.cliPaths` | Record\<string, string \| null\> | `{}` | Per-agent CLI path overrides keyed by agent name. Empty = auto-detect all. Global-only. |
 | `agent.maxConcurrentSessions` | number | `8` | Max concurrent PTY sessions. Global-only. |
-| `agent.queueOverflow` | `'queue'` \| `'reject'` | `'queue'` | What to do when max sessions reached. Global-only. |
 | `agent.idleTimeoutMinutes` | number | `0` | Auto-suspend sessions after this many minutes idle. 0 = disabled. Global-only. |
 | `agent.autoResumeSessionsOnRestart` | boolean | `true` | When true, agent sessions that were running at last close auto-resume when Kangentic restarts. When false, sessions stay paused and require a manual Resume click on each task. Turn off if auto-resuming many agents at once overwhelms your machine. Global-only. |
 | `agent.executionServers` | Record\<string, AgentExecutionServer\> | `{}` | Global, agent-keyed remote-server identity: `{ url, auth }`. `auth` is `{kind:'none'}`, `{kind:'basic', username, password}`, or `{kind:'bearerEnv', envVarName}`. Machine-scoped like `agent.cliPaths` - names a server, not a project. Global-only. |

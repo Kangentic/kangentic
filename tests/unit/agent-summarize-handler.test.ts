@@ -141,7 +141,6 @@ function makeContext(overrides?: {
           maxConcurrentSessions: 5,
           idleTimeoutMinutes: 30,
           permissionMode: 'default',
-          queueOverflow: 'queue',
         },
         terminal: { shell: null },
         mcpServer: { enabled: false },

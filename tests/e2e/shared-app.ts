@@ -17,7 +17,7 @@
  * WHO CAN USE THIS:
  *   Specs that use the canonical default config:
  *     claude.cliPath = mock-claude, permissionMode='default',
- *     maxConcurrentSessions=5, queueOverflow='queue', git.worktreesEnabled=false
+ *     maxConcurrentSessions=5, git.worktreesEnabled=false
  *   And do NOT: relaunch Electron mid-spec, pass extraEnv, need a different
  *   startup config (different maxConcurrentSessions, different agent cliPaths
  *   shape, etc.).
@@ -59,7 +59,6 @@ function buildCanonicalConfig(): Record<string, unknown> {
       cliPath: mockAgentPath('claude'),
       permissionMode: 'default',
       maxConcurrentSessions: 5,
-      queueOverflow: 'queue',
     },
     git: { worktreesEnabled: false },
   };
