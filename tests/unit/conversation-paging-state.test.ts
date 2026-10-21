@@ -3,7 +3,6 @@ import {
   initialState,
   reconcileInputs,
   reconcileWindow,
-  resolveOpening,
 } from '../../src/renderer/components/conversation/use-conversation-paging';
 import { buildPagingWindow, type HeldBlock } from '../../src/renderer/components/conversation/conversation-paging';
 import type { ConversationExtent, TranscriptEntry } from '../../src/shared/types';
@@ -106,16 +105,5 @@ describe('reconcileWindow', () => {
     expect(next.anchorTs).toBe(Infinity);
     expect(next.locate).toEqual({ uuid: 'A-45', done: true });
     expect(reconcileWindow(next, { window, enabled: true, turnUuid: 'A-45', tail })).toBe(next);
-  });
-});
-
-describe('resolveOpening', () => {
-  it('opens a far jump at the first row at or past its logical position', () => {
-    const window = buildPagingWindow({
-      tail: tailFrom(40, 50), conversations: [EXTENT], blocks: [page(10, 20)], timelines: new Map(), anchorTs: BASE + 15 * MINUTE,
-    });
-    expect(resolveOpening({ kind: 'logical', logical: 1450 }, window)).toEqual({ kind: 'uuid', uuid: 'A-15' });
-    expect(resolveOpening({ kind: 'top' }, window)).toEqual({ kind: 'top' });
-    expect(resolveOpening(null, window)).toBeNull();
   });
 });

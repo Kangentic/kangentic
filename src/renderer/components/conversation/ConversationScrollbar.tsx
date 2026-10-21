@@ -21,10 +21,12 @@
  * transcript, not the rows loaded: the container still scrolls natively, and
  * its offsets map to and from the transcript's logical positions. A drag
  * inside the loaded rows scrolls them; a drag past them shows placeholder rows
- * and the target's date, and loads the page there on release.
+ * and the target's date, and loads the page there once the pointer rests or
+ * lets go. The page lands with the view still mounted, so the rows appear
+ * under a pointer that is still held and the drag carries on over them.
  */
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ArrowDown, Hash } from 'lucide-react';
 import { formatMonthDayTime, formatTime } from '../../lib/datetime';
 import { computeThumbGeometry, thumbPositionToOffset, isScrolledToBottom, FAR_FROM_BOTTOM_PX, type ScrollGeometry } from './scrollbar-math';
@@ -48,9 +50,14 @@ export interface LogicalScroll {
   offsetAt: (logical: number) => number | null;
   /** The time at a logical position, or null where there are no timestamps. */
   timeAt: (logical: number) => number | null;
-  /** A drag released past the loaded rows: load the page there. */
-  onFarRelease: (logical: number) => void;
+  /** A drag resting or released past the loaded rows: load the page there. Null drops the read. */
+  onFarSeek: (logical: number | null) => void;
+  /** That page is on its way. */
+  seeking: boolean;
 }
+
+/** How long a far drag rests before the page under it is read. */
+const FAR_REST_MS = 120;
 
 interface ConversationScrollbarProps {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -105,10 +112,32 @@ export function ConversationScrollbar({
   // it is past the loaded rows (a far drag).
   const [dragLogical, setDragLogical] = useState<LogicalDrag | null>(null);
   const dragLogicalRef = useRef<LogicalDrag | null>(null);
+  // A far drag let go before its page landed: its placeholders hold until it does.
+  const [heldFar, setHeldFar] = useState<LogicalDrag | null>(null);
   const dragStateRef = useRef<{ pointerId: number; startClientY: number; startThumbTop: number; viewportLogical: number } | null>(null);
   const scrollReadRafRef = useRef<number | null>(null);
   const dragApplyRafRef = useRef<number | null>(null);
   const pendingDragOffsetRef = useRef<number | null>(null);
+  const restTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The far position last asked for, so a rest and a release ask once.
+  const askedFarRef = useRef<number | null>(null);
+  const logicalRef = useRef<LogicalScroll | null>(logical);
+  useLayoutEffect(() => {
+    logicalRef.current = logical;
+  });
+
+  const clearRestTimer = useCallback(() => {
+    if (restTimerRef.current !== null) {
+      clearTimeout(restTimerRef.current);
+      restTimerRef.current = null;
+    }
+  }, []);
+
+  const askForFar = useCallback((target: number | null) => {
+    if (askedFarRef.current === target) return;
+    askedFarRef.current = target;
+    logicalRef.current?.onFarSeek(target);
+  }, []);
 
   const readGeometry = useCallback(() => {
     const container = containerRef.current;
@@ -146,8 +175,9 @@ export function ConversationScrollbar({
   const viewportLogical = logical
     ? Math.max(1, logical.atOffset(geometry.scrollTop + geometry.clientHeight) - logicalTop)
     : 0;
-  // A far drag scrolls nothing, so its thumb follows the pointer's target.
-  const farDrag = logical && dragLogical?.far ? dragLogical : null;
+  // A far drag scrolls nothing, so its thumb follows the pointer's target, and
+  // stays there after a release until the page lands.
+  const farDrag = logical ? (dragLogical?.far ? dragLogical : heldFar) : null;
   const { thumbTop, thumbSize } = logical
     ? computeThumbGeometry({
       scrollOffset: farDrag ? farDrag.logical : logicalTop,
@@ -173,9 +203,21 @@ export function ConversationScrollbar({
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragStateRef.current = { pointerId: event.pointerId, startClientY: event.clientY, startThumbTop: thumbTop, viewportLogical };
+    // A new drag starts from where the thumb is drawn, a held far target included.
+    const held = farDrag;
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startClientY: event.clientY,
+      startThumbTop: thumbTop,
+      viewportLogical: held ? held.viewportLogical : viewportLogical,
+    };
+    if (held) {
+      dragLogicalRef.current = held;
+      setDragLogical(held);
+      setHeldFar(null);
+    }
     setIsDragging(true);
-  }, [thumbTop, viewportLogical]);
+  }, [farDrag, thumbTop, viewportLogical]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const dragState = dragStateRef.current;
@@ -193,8 +235,20 @@ export function ConversationScrollbar({
         railSize,
       });
       offset = logical.offsetAt(target);
-      dragLogicalRef.current = { logical: target, far: offset === null, viewportLogical: dragState.viewportLogical };
+      const far = offset === null;
+      dragLogicalRef.current = { logical: target, far, viewportLogical: dragState.viewportLogical };
       setDragLogical(dragLogicalRef.current);
+      clearRestTimer();
+      if (far) {
+        // Past the loaded rows: once the pointer rests there, read the page under it.
+        restTimerRef.current = setTimeout(() => {
+          restTimerRef.current = null;
+          askForFar(target);
+        }, FAR_REST_MS);
+      } else if (askedFarRef.current !== null) {
+        // Back over loaded rows: the page asked for is no longer wanted.
+        askForFar(null);
+      }
     } else {
       offset = thumbPositionToOffset({
         thumbTop: dragState.startThumbTop + deltaY,
@@ -208,29 +262,74 @@ export function ConversationScrollbar({
     if (offset !== null && dragApplyRafRef.current === null) {
       dragApplyRafRef.current = requestAnimationFrame(flushDragOffset);
     }
-  }, [logical, thumbSize, geometry.scrollHeight, railSize, flushDragOffset]);
+  }, [logical, thumbSize, geometry.scrollHeight, railSize, flushDragOffset, clearRestTimer, askForFar]);
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (dragStateRef.current?.pointerId !== event.pointerId) return;
     dragStateRef.current = null;
     setIsDragging(false);
-    // Released past the loaded rows: load the page there.
+    clearRestTimer();
     const released = dragLogicalRef.current;
     dragLogicalRef.current = null;
     setDragLogical(null);
-    if (released?.far && logical) logical.onFarRelease(released.logical);
+    if (released?.far && logical) {
+      // Let go past the loaded rows: read the page there, if the rest has not
+      // already, and hold the placeholders until it lands.
+      askForFar(released.logical);
+      setHeldFar(released);
+    }
     if (dragApplyRafRef.current !== null) {
       cancelAnimationFrame(dragApplyRafRef.current);
       flushDragOffset();
     }
-  }, [logical, flushDragOffset]);
+  }, [logical, flushDragOffset, clearRestTimer, askForFar]);
+
+  // A far target's page landed (the window now holds the target): scroll to it,
+  // and take the placeholders down a frame later, once the rows there have
+  // rendered. A read that ended without it lets a held release go, and lets a
+  // drag that is still out there ask again.
+  useEffect(() => {
+    const pending = dragLogicalRef.current?.far ? dragLogicalRef.current : heldFar;
+    if (!logical || !pending) return undefined;
+    const offset = logical.offsetAt(pending.logical);
+    let frame: number | null = null;
+    if (offset === null) {
+      if (logical.seeking) return undefined;
+      askedFarRef.current = null;
+      if (dragStateRef.current) return undefined;
+      frame = requestAnimationFrame(() => setHeldFar(null));
+      return () => {
+        if (frame !== null) cancelAnimationFrame(frame);
+      };
+    }
+    const container = containerRef.current;
+    if (container) container.scrollTop = offset;
+    askedFarRef.current = null;
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (dragStateRef.current) {
+          if (dragLogicalRef.current?.far && dragLogicalRef.current.logical === pending.logical) {
+            dragLogicalRef.current = { ...pending, far: false };
+            setDragLogical(dragLogicalRef.current);
+          }
+        } else {
+          setHeldFar(null);
+        }
+      });
+    });
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+    };
+  }, [logical, heldFar, containerRef]);
 
   useEffect(() => {
     return () => {
       if (scrollReadRafRef.current !== null) cancelAnimationFrame(scrollReadRafRef.current);
       if (dragApplyRafRef.current !== null) cancelAnimationFrame(dragApplyRafRef.current);
+      clearRestTimer();
     };
-  }, []);
+  }, [clearRestTimer]);
 
   const distanceFromBottom = geometry.scrollHeight - (geometry.scrollTop + geometry.clientHeight);
   const isAtBottom = isScrolledToBottom(geometry);
@@ -262,8 +361,7 @@ export function ConversationScrollbar({
   return (
     <>
       {farDrag && (
-        // Past the loaded rows: placeholder rows stand in until the release
-        // loads the page there.
+        // Past the loaded rows: placeholder rows stand in until the page there lands.
         <ConversationSkeleton labelTs={null} className="absolute top-0 bottom-0 left-0" style={{ right: RAIL_WIDTH_PX }} />
       )}
       {showRail && (

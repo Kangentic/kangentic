@@ -39,6 +39,8 @@ interface PageCall {
 
 const BASE = Date.UTC(2026, 9, 1, 9, 0, 0);
 const MINUTE = 60_000;
+/** The first turn the tail holds; every turn before it is in a page. */
+const TAIL_FROM_TURN = 150;
 
 /** Executing from turn 5 and again from turn 160, Code Review from turn 20 in between. */
 function routeColumn(swimlaneId: string, name: string, visitTurns: number[]) {
@@ -145,10 +147,10 @@ function preConfig(): string {
   `;
 }
 
-async function launch(): Promise<{ browser: Browser; page: Page }> {
+async function launch(viewport = { width: 1920, height: 1080 }): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig());
@@ -353,7 +355,7 @@ test.describe('Conversation Viewer - history paging', () => {
     }
   });
 
-  test('a far scrollbar drag shows placeholder rows and the date, then loads the page there', async () => {
+  test('a far scrollbar drag that rests loads the page there under the held pointer, with the view still mounted', async () => {
     const { browser, page } = await launch();
     try {
       await openConversation(page, PAGED_SESSION_ID);
@@ -362,15 +364,17 @@ test.describe('Conversation Viewer - history paging', () => {
       // The thumb covers the whole transcript: the tail is a quarter of it.
       const rail = page.getByTestId('conversation-scrollbar-rail');
       await expect(rail).toBeVisible();
-      const thumb = page.getByTestId('conversation-scrollbar-thumb');
-      const thumbBox = await thumb.boundingBox();
+      const thumbBox = await page.getByTestId('conversation-scrollbar-thumb').boundingBox();
       const railBox = await rail.boundingBox();
       expect(thumbBox && railBox).toBeTruthy();
       expect(thumbBox!.y - railBox!.y).toBeGreaterThan(railBox!.height * 0.5);
+      // Marks the scroll container, so a remount (a new element) shows.
+      await page.getByTestId('conversation-scroll-container').evaluate((element) => {
+        (element as HTMLElement & { __pagingMark?: boolean }).__pagingMark = true;
+      });
 
       const startX = thumbBox!.x + thumbBox!.width / 2;
-      const startY = thumbBox!.y + thumbBox!.height / 2;
-      await page.mouse.move(startX, startY);
+      await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
       await page.mouse.down();
       // One move to a quarter of the way down the rail: turn 50 or so, far
       // from the tail. (A slow drag through these small pages keeps the
@@ -378,13 +382,85 @@ test.describe('Conversation Viewer - history paging', () => {
       await page.mouse.move(startX, railBox!.y + railBox!.height * 0.25);
       await expect(page.getByTestId('conversation-skeleton')).toBeVisible();
       await expect(page.getByTestId('conversation-scrollbar-bubble')).toBeVisible();
-      await page.mouse.up();
 
+      // The pointer rests and stays down: the page is read and its rows show.
       await expect.poll(async () => (await pageCalls(page)).filter((call) => call.direction === 'around').length).toBe(1);
-      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
       const around = (await pageCalls(page)).find((call) => call.direction === 'around');
       expect(around!.position).toBeGreaterThan(2000);
       expect(around!.position).toBeLessThan(10000);
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+      const shownTurns = await page.locator('[data-turn-uuid^="paged-turn-"]').evaluateAll((rows) => rows
+        .map((row) => Number(row.getAttribute('data-turn-uuid')!.slice('paged-turn-'.length))));
+      expect(shownTurns.length).toBeGreaterThan(0);
+      expect(Math.min(...shownTurns)).toBeLessThan(TAIL_FROM_TURN);
+      expect(await page.getByTestId('conversation-scroll-container').evaluate((element) =>
+        (element as HTMLElement & { __pagingMark?: boolean }).__pagingMark === true)).toBe(true);
+
+      await page.mouse.up();
+      expect((await pageCalls(page)).filter((call) => call.direction === 'around')).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a far drag let go before its page lands holds the placeholders until it does', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await takeOver(page);
+      await holdPages(page);
+      const rail = page.getByTestId('conversation-scrollbar-rail');
+      const thumbBox = await page.getByTestId('conversation-scrollbar-thumb').boundingBox();
+      const railBox = await rail.boundingBox();
+      expect(thumbBox && railBox).toBeTruthy();
+      const startX = thumbBox!.x + thumbBox!.width / 2;
+      await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(startX, railBox!.y + railBox!.height * 0.25);
+      await page.mouse.up();
+
+      // The page is still on its way: the placeholders stay up, not the old rows.
+      await expect.poll(async () => (await pageCalls(page)).filter((call) => call.direction === 'around').length).toBe(1);
+      await expect(page.getByTestId('conversation-skeleton')).toBeVisible();
+      await page.evaluate(() => (window as unknown as { __releasePage?: () => void }).__releasePage?.());
+      await expect(page.getByTestId('conversation-skeleton')).toHaveCount(0);
+      const shownTurns = await page.locator('[data-turn-uuid^="paged-turn-"]').evaluateAll((rows) => rows
+        .map((row) => Number(row.getAttribute('data-turn-uuid')!.slice('paged-turn-'.length))));
+      expect(Math.min(...shownTurns)).toBeLessThan(TAIL_FROM_TURN);
+      expect((await pageCalls(page)).filter((call) => call.direction === 'around')).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the placeholders under a far drag fill a tall window to its bottom', async () => {
+    const { browser, page } = await launch({ width: 1920, height: 2160 });
+    try {
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await takeOver(page);
+      await holdPages(page);
+      const rail = page.getByTestId('conversation-scrollbar-rail');
+      const thumbBox = await page.getByTestId('conversation-scrollbar-thumb').boundingBox();
+      const railBox = await rail.boundingBox();
+      expect(thumbBox && railBox).toBeTruthy();
+      const startX = thumbBox!.x + thumbBox!.width / 2;
+      await page.mouse.move(startX, thumbBox!.y + thumbBox!.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(startX, railBox!.y + railBox!.height * 0.25);
+      const skeleton = page.getByTestId('conversation-skeleton');
+      await expect(skeleton).toBeVisible();
+      const fill = await skeleton.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const last = element.lastElementChild!.getBoundingClientRect();
+        return { height: box.height, gapBelow: box.bottom - last.bottom };
+      });
+      // Taller than the fixed set of seven boxes the skeleton used to draw, so
+      // the check below is not met by a short window.
+      expect(fill.height).toBeGreaterThan(900);
+      expect(fill.gapBelow).toBeLessThanOrEqual(0);
+      await page.mouse.up();
     } finally {
       await browser.close();
     }
