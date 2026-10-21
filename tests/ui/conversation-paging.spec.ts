@@ -309,6 +309,33 @@ test.describe('Conversation Viewer - history paging', () => {
     }
   });
 
+  test('a column tab whose timeline the worker could not answer yet asks again soon and still opens at its stay', async () => {
+    const { browser, page } = await launch();
+    try {
+      // The first timeline call finds the worker restarting; the next one answers.
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __mockTranscriptsTimelineOverride: (input: unknown) => unknown;
+          __timelineCalls?: number;
+        };
+        const answer = host.__mockTranscriptsTimelineOverride;
+        host.__timelineCalls = 0;
+        host.__mockTranscriptsTimelineOverride = (input) => {
+          host.__timelineCalls = (host.__timelineCalls ?? 0) + 1;
+          return host.__timelineCalls === 1 ? { status: 'unavailable', reason: 'worker_unavailable' } : answer(input);
+        };
+      });
+      await openConversation(page, PAGED_SESSION_ID, { swimlaneId: 'lane-paging-executing' });
+      await expect(page.getByText('PAGED_TURN_5 ', { exact: false })).toBeVisible();
+      expect(await page.evaluate(() => (window as unknown as { __timelineCalls?: number }).__timelineCalls)).toBe(2);
+      const calls = await pageCalls(page);
+      expect(calls).toHaveLength(1);
+      expect(calls[0].position).toBeLessThan(1500);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('says when a page failed, and Retry loads it', async () => {
     const { browser, page } = await launch();
     try {
