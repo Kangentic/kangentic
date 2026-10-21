@@ -834,7 +834,7 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('card container has animate-pulse-subtle (idle pulse) when activity cache is empty', async () => {
+    test('an idle card carries no pulse when activity cache is empty', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, noActivityCache: true }),
       );
@@ -845,9 +845,11 @@ test.describe('Task Activity Indicators', () => {
         const card = page.locator(`[data-task-id="${TASK_ID}"]`);
         await expect(card).toBeVisible();
 
+        // The idle mark alone says the agent is waiting. The radiating ring
+        // the card used to wear drew a large halo on wide cards and was removed.
         const classAttr = await card.getAttribute('class');
         expect(classAttr).toBeTruthy();
-        expect(classAttr).toContain('animate-pulse-subtle');
+        expect(classAttr).not.toContain('animate-pulse-subtle');
       } finally {
         await browser.close();
       }
@@ -1323,7 +1325,7 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('permission state card has animate-pulse-subtle (idle pulse, not green thinking pulse)', async () => {
+    test('permission state card carries no pulse', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'permission', withUsage: true }),
       );
@@ -1334,10 +1336,11 @@ test.describe('Task Activity Indicators', () => {
         const card = page.locator(`[data-task-id="${TASK_ID}"]`);
         await expect(card).toBeVisible();
 
-        // isIdle=true sets animate-pulse-subtle (same as idle, NOT the thinking green glow)
+        // Permission reads as idle (the amber mark above), and an idle card
+        // carries no pulse.
         const classAttr = await card.getAttribute('class');
         expect(classAttr).toBeTruthy();
-        expect(classAttr).toContain('animate-pulse-subtle');
+        expect(classAttr).not.toContain('animate-pulse-subtle');
       } finally {
         await browser.close();
       }
