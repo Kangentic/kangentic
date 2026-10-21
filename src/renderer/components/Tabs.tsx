@@ -8,6 +8,8 @@ export interface TabItem<TabId extends string> {
   /** Drawn before the label. Under `fit="icons-then-scroll"` it is also what an
    *  unselected tab shrinks to when the names do not all fit. */
   icon?: ReactNode;
+  /** Drawn after the label, and dropped with it when the tab shrinks to its icon. */
+  badge?: ReactNode;
 }
 
 /** The id pair one tab and its panel share, so `aria-controls` and `aria-labelledby` agree. */
@@ -64,8 +66,9 @@ export function Tabs<TabId extends string>({
   const [fitState, setFitState] = useState<FitState>({ tabsKey: '', iconsOnly: false });
 
   // A changed tab set reads as "names" until it is measured, so a column added
-  // while the window is open gets its name back without a reset effect.
-  const tabsKey = tabs.map((tab) => `${tab.id}\u0000${tab.label}`).join('\u0001');
+  // while the window is open gets its name back without a reset effect. A badge
+  // counts too: one that arrives later widens the names the row has to fit.
+  const tabsKey = tabs.map((tab) => `${tab.id}\u0000${tab.label}\u0000${tab.badge ? 1 : 0}`).join('\u0001');
   const iconsOnly = fit !== undefined && fitState.tabsKey === tabsKey && fitState.iconsOnly;
 
   // `selectedId` re-arms the observer, whose first callback re-measures: the
@@ -157,6 +160,7 @@ export function Tabs<TabId extends string>({
               >
                 {tab.icon}
                 {!iconAlone && tab.label}
+                {!iconAlone && tab.badge}
               </button>
             </Tooltip>
           );

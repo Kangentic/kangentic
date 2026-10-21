@@ -1,4 +1,4 @@
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
@@ -47,6 +47,8 @@ export interface OverviewValue {
   tip?: string;
   /** A newer version of the value is known, e.g. "Sonnet 5.5" for a column pinned to Sonnet 5. */
   newer?: string;
+  /** Drawn before the label in a chip, e.g. the Split icon that leads "Isolated". */
+  icon?: ReactNode;
 }
 
 /** One boolean cell, rendered as the read-only control that sets it. */
@@ -109,8 +111,9 @@ function OverviewCell({ value }: { value: OverviewValue }) {
       <Tooltip label={value.tip ?? value.label}>
         <span
           data-state="changed"
-          className="inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
+          className={`inline-flex h-[22px] max-w-full min-w-0 items-center whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg${value.icon ? ' gap-1' : ''}`}
         >
+          {value.icon}
           <span className="truncate">{value.label}</span>
           <NewerMark newer={value.newer} />
         </span>

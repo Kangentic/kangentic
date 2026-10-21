@@ -5,6 +5,7 @@ import { ColumnGlyph } from '../../../../utils/swimlane-icons';
 import { prefersDarkText, readableTextOn } from '../../../../utils/readable-text';
 import { ToolBreakdownPopover } from '../../../terminal/ToolBreakdownPopover';
 import { Tooltip } from '../../../Tooltip';
+import { IsolatedIcon } from '../../../IsolatedBadge';
 import type { PerToolStat, TaskReportColumn } from '../../../../../shared/types';
 
 /** One card on a completed task's tab: lifted one step above the window, never recessed. */
@@ -53,12 +54,15 @@ export function LinkButton({ children, onClick, testId }: { children: ReactNode;
  * A run's conversation in the Runs table: its short id in a muted pill, the
  * same on every run of one conversation, so two rows with one pill read as one
  * conversation. A click copies the full id, and the check shows only once the
- * id is on the clipboard (a write the window is refused leaves the id).
+ * id is on the clipboard (a write the window is refused leaves the id). The
+ * Split icon leads the id of an isolated column's own conversation. It is
+ * decorative, since a tip of its own would open beside the pill's, so the
+ * pill's tip names it instead.
  */
-export function SessionPill({ conversationId }: { conversationId: string }) {
+export function SessionPill({ conversationId, isolated = false }: { conversationId: string; isolated?: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
-    <Tooltip label="Copy conversation ID" detail={conversationId}>
+    <Tooltip label={isolated ? 'Copy isolated conversation ID' : 'Copy conversation ID'} detail={conversationId}>
       <button
         type="button"
         onClick={() => {
@@ -74,6 +78,7 @@ export function SessionPill({ conversationId }: { conversationId: string }) {
         data-testid="completed-copy-conversation-id"
       >
         {copied && <Check size={11} className="text-green-400" />}
+        {isolated && <IsolatedIcon size={11} />}
         {conversationId.slice(0, 8)}
       </button>
     </Tooltip>

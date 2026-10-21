@@ -550,6 +550,10 @@ test.describe('BoardManagerDialog extended', () => {
     await expect(dialog.getByRole('button', { name: 'About Session' })).toHaveAccessibleDescription(/unless you give this one its own/);
     await expect(main).toHaveAccessibleDescription("Share the task's conversation with the other columns.");
     await expect(isolated).toHaveAccessibleDescription('Start a clean conversation on every entry.');
+    // Isolated leads with the Split icon that marks an isolated session everywhere; the word names it.
+    await expect(isolated.getByTestId('isolated-icon')).toHaveCount(1);
+    await expect(main.getByTestId('isolated-icon')).toHaveCount(0);
+    await expect(isolated).toHaveAccessibleName('Isolated');
 
     await isolated.click();
     await expect(isolated).toHaveAttribute('aria-checked', 'true');
@@ -704,6 +708,41 @@ test.describe('BoardManagerDialog extended', () => {
     expect(widths.Start).toBeGreaterThan(0);
     expect(widths.Permissions).toBeGreaterThan(widths.Start * 1.5);
     expect(widths.Agent).toBeGreaterThan(widths.Start * 1.5);
+  });
+
+  test('overview Session chip leads Isolated with the Split icon, and Main has none', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    await dialog.locator('[data-testid="column-session-target-isolated"]').click();
+
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+    const sessionCell = (name: string) =>
+      dialog.locator('[data-testid="board-manager-overview-row"]').filter({ hasText: name }).locator('td').nth(7);
+    // Column order: name, Start, Agent, Model, Effort, Permissions, Handoff, Session.
+    const isolatedChip = sessionCell('Code Review').locator('[data-state="changed"]');
+    await expect(isolatedChip).toHaveText('Isolated');
+    await expect(isolatedChip.getByTestId('isolated-icon')).toHaveCount(1);
+    await expect(sessionCell('Executing')).toHaveText('Main');
+    await expect(sessionCell('Executing').getByTestId('isolated-icon')).toHaveCount(0);
+    // The draft is discarded by afterEach, so Code Review stays on the main session.
+  });
+
+  test('the column rail marks a column set to Isolated with the named Split icon, and a Main column with none', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    // Scoped to the rail row: the Session control in the form has an icon of its own.
+    const railIcons = (columnName: string) =>
+      dialog.locator(`[data-testid="board-manager-tab"][data-tab-name="${columnName}"]`).getByTestId('isolated-icon');
+    await expect(railIcons('Code Review')).toHaveCount(0);
+
+    await dialog.locator('[data-testid="column-session-target-isolated"]').click();
+
+    // The rail reads the draft, so the mark is there before anything is saved.
+    await expect(railIcons('Code Review')).toHaveCount(1);
+    // Standing after the name with no word beside it, the icon has to name itself.
+    await expect(railIcons('Code Review')).toHaveAccessibleName('Isolated session');
+    await expect(railIcons('Executing')).toHaveCount(0);
+    // The draft is discarded by afterEach, so Code Review stays on the main session.
   });
 
   // A cell prints what the column's own form prints. The form labels a model the way its agent's

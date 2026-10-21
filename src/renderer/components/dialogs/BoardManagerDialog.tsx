@@ -6,6 +6,7 @@ import {
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
 import { Tooltip } from '../Tooltip';
+import { IsolatedIcon } from '../IsolatedBadge';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -132,7 +133,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
  */
 const SESSION_TARGET_OPTIONS: readonly SegmentedControlOption<SessionTarget>[] = [
   { value: 'main', label: 'Main', tip: 'Share the task\'s conversation with the other columns.', testId: 'column-session-target-main' },
-  { value: 'isolated', label: 'Isolated', tip: 'Start a clean conversation on every entry.', testId: 'column-session-target-isolated' },
+  { value: 'isolated', label: 'Isolated', icon: <IsolatedIcon size={12} />, tip: 'Start a clean conversation on every entry.', testId: 'column-session-target-isolated' },
 ];
 
 const SESSION_TARGET_INFO = 'Columns share the task\'s main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.';
@@ -1152,10 +1153,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         handoff: agentApplies
           ? { on: laneDraft.handoff_context, applicable: true, ariaLabel: 'Hand off context when the agent changes' }
           : { on: false, applicable: false, reason: agentReason, ariaLabel: 'Hand off context when the agent changes' },
-        session: value(
-          laneDraft.session_target === 'isolated' ? 'Isolated' : 'Main',
-          laneDraft.session_target === 'isolated',
-        ),
+        session: laneDraft.session_target === 'isolated'
+          ? { ...value('Isolated', true), icon: <IsolatedIcon size={14} /> }
+          : value('Main', false),
         // The counts are what will RUN: a switched-off or blocked row is not
         // counted and not named. This view answers "what happens when a task
         // moves", and an off row is visible and fixable one click away.

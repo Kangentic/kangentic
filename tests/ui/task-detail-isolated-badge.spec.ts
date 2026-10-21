@@ -156,6 +156,8 @@ test.describe('Task Detail: isolated session badge', () => {
       const badge = page.locator('[data-testid="task-detail-isolated-badge"]');
       await expect(badge).toBeVisible({ timeout: 5000 });
       await expect(badge).toContainText('Isolated');
+      // The Split icon leads the word, as it marks an isolated session everywhere else.
+      await expect(badge.getByTestId('isolated-icon')).toBeVisible();
     } finally {
       await browser.close();
     }

@@ -39,7 +39,14 @@ const ROUTE = [
   routeColumn('lane-merge', 'Merge', '#f97316', [50]),
 ];
 
-function preConfig(route: object[]): string {
+/**
+ * Each of `isolatedSwimlaneIds` adds a session to the conversation, the one an
+ * isolated column ran, the way the stitched transcript lists it.
+ */
+function preConfig(route: object[], isolatedSwimlaneIds: string[]): string {
+  const isolatedSession = isolatedSwimlaneIds
+    .map((isolatedSwimlaneId, index) => `, { sessionId: '${SESSION_ID}-isolated-${index}', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: '${isolatedSwimlaneId}', status: 'exited' }`)
+    .join('');
   return `
     window.__mockTaskRoutes = { '${TASK_ID}': ${JSON.stringify(route)} };
     window.__mockPreConfigure(function (state) {
@@ -69,7 +76,7 @@ function preConfig(route: object[]): string {
           { kind: 'assistant', uuid: 'turn-exec-two', ts: at(31), model: 'claude-opus-5-5', blocks: [{ type: 'text', text: 'EXEC_TWO' }] },
         ],
         degraded: false,
-        sessions: [{ sessionId: '${SESSION_ID}', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+        sessions: [{ sessionId: '${SESSION_ID}', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }${isolatedSession}],
       };
       var seeds = {};
       seeds['${SESSION_ID}'] = transcript;
@@ -80,13 +87,16 @@ function preConfig(route: object[]): string {
   `;
 }
 
-async function launch(route: object[] = ROUTE, options: { viewport?: { width: number; height: number }; permissions?: string[] } = {}): Promise<{ browser: Browser; page: Page }> {
+async function launch(
+  route: object[] = ROUTE,
+  options: { viewport?: { width: number; height: number }; permissions?: string[]; isolatedSwimlaneIds?: string[] } = {},
+): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: options.viewport ?? { width: 1920, height: 1080 }, permissions: options.permissions });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig(route));
+  await page.addInitScript(preConfig(route, options.isolatedSwimlaneIds ?? []));
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -145,6 +155,41 @@ async function countViewerOpens(page: Page): Promise<void> {
 
 const viewerOpens = (page: Page): Promise<number> =>
   page.evaluate(() => (window as unknown as { __viewerOpens: number }).__viewerOpens);
+
+/**
+ * The width the row's tabs take, All included, in layout pixels (`offset*`), the
+ * unit the tab row itself compares. A bounding box would be wrong: the window
+ * frame is scaled while it animates in, which shrinks a box but not these widths.
+ */
+const tabsSpan = (page: Page): Promise<number> => page.evaluate(() => {
+  const tabs = [...document.querySelectorAll<HTMLElement>('[data-testid="conversation-route-tabs"] [role="tab"]')];
+  const first = tabs[0];
+  const last = tabs[tabs.length - 1];
+  return last.offsetLeft + last.offsetWidth - first.offsetLeft;
+});
+
+/**
+ * Hands the page a way to set the tablist's own width through its row, so the
+ * widths a test picks do not depend on how wide the window is. The row is first
+ * given room (3000px) and the list's padding is read from layout pixels there.
+ */
+async function installListWidthSetter(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const scope = window as unknown as { __setListWidth: (width: number) => number };
+    const row = document.querySelector<HTMLElement>('[data-testid="conversation-route-tabs"]')!;
+    const tablist = row.querySelector<HTMLElement>('[role="tablist"]')!;
+    row.style.width = '3000px';
+    const padding = row.offsetWidth - tablist.clientWidth;
+    scope.__setListWidth = (width) => {
+      row.style.width = `${width + padding}px`;
+      return tablist.clientWidth;
+    };
+  });
+}
+
+/** Sets the tablist's width and returns the width it ended up with. */
+const setListWidth = (page: Page, width: number): Promise<number> =>
+  page.evaluate((target) => (window as unknown as { __setListWidth: (value: number) => number }).__setListWidth(target), width);
 
 test.describe('Conversation window Route tabs', () => {
   test('a Route of two or more columns shows All and then each column, in route order', async () => {
@@ -396,6 +441,131 @@ test.describe('Conversation window Route tabs', () => {
     }
   });
 
+  test('a column an isolated session ran in ends in the Split icon on its tab and its divider in All', async () => {
+    const { browser, page } = await launch(ROUTE, { isolatedSwimlaneIds: ['lane-review'] });
+    try {
+      await openConversation(page);
+      const reviewIcon = tab(page, 'lane-review').getByTestId('isolated-icon');
+      await expect(reviewIcon).toHaveCount(1);
+      await expect(reviewIcon).toHaveAccessibleName('Isolated session');
+      for (const id of ['all', 'lane-executing', 'lane-merge']) {
+        await expect(tab(page, id).getByTestId('isolated-icon')).toHaveCount(0);
+      }
+      // The icon adds no text, so the tab and the divider still read as the name.
+      await expect(tabRow(page).getByRole('tab')).toHaveText(['All', 'Executing', 'Code Review', 'Merge']);
+      await expect(dividers(page)).toHaveText(['Executing', 'Code Review', 'Executing']);
+      await expect(dividers(page).nth(1).getByTestId('isolated-icon')).toHaveCount(1);
+      await expect(dividers(page).nth(0).getByTestId('isolated-icon')).toHaveCount(0);
+      await expect(dividers(page).nth(2).getByTestId('isolated-icon')).toHaveCount(0);
+
+      // A column tab's dividers are dates under a tab that already carries the icon.
+      await tab(page, 'lane-review').click();
+      await expect(dividers(page)).toHaveCount(1);
+      await expect(dividers(page).getByTestId('isolated-icon')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Split icon goes with the name when a tab shrinks to its icon', async () => {
+    const names = ['Planning', 'Design Review', 'Executing', 'Code Review', 'Security Review', 'Testing', 'Staging Deploy', 'Merge Train'];
+    const wideRoute = names.map((name, index) => routeColumn(`lane-wide-${index}`, name, '#3b82f6', [index * 5]));
+    const { browser, page } = await launch(wideRoute, { viewport: { width: 1280, height: 800 }, isolatedSwimlaneIds: ['lane-wide-3'] });
+    try {
+      await openConversation(page, { swimlaneId: 'lane-wide-0' });
+      await expect(tabRow(page).getByRole('tablist')).toHaveAttribute('data-fit-icons-only', 'true');
+      await expect(tab(page, 'lane-wide-3')).toHaveText('');
+      await expect(tab(page, 'lane-wide-3').getByTestId('isolated-icon')).toHaveCount(0);
+      // Selected, the tab keeps its name, and the icon comes back with it.
+      await openConversation(page, { swimlaneId: 'lane-wide-3' });
+      await expect(tab(page, 'lane-wide-3')).toHaveText('Code Review');
+      await expect(tab(page, 'lane-wide-3').getByTestId('isolated-icon')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Split icons that arrive after the row was measured to fit widen the names, so the row re-measures and falls back to icons', async () => {
+    // The window shows no tab row until its first transcript is in, and the row
+    // needs that transcript's task, so on an open the icons and the names are
+    // measured together. The real late path is a live poll: a running task moves
+    // into isolated columns, and the next revision lists the sessions they run
+    // along with their first turn (main bumps a revision only when turns change).
+    // That poll runs every 2.5 s, which comes on top of a launch, so the 15 s
+    // default leaves a loaded worker too little headroom to fail on an assertion.
+    test.setTimeout(30_000);
+    const names = ['Planning', 'Design Review', 'Executing', 'Code Review', 'Security Review', 'Testing', 'Staging Deploy', 'Merge Train'];
+    const wideRoute = names.map((name, index) => routeColumn(`lane-wide-${index}`, name, '#3b82f6', [index * 5]));
+    // Four columns end up isolated, so the icons add a wide margin to the names.
+    const isolatedLanes = ['lane-wide-1', 'lane-wide-3', 'lane-wide-5', 'lane-wide-6'];
+    const { browser, page } = await launch(wideRoute, { viewport: { width: 1280, height: 800 }, isolatedSwimlaneIds: isolatedLanes });
+    try {
+      await page.evaluate(async ({ sessionId }) => {
+        interface SeededTranscript {
+          sessions: Array<{ isolatedSwimlaneId: string | null }>;
+          entries: Array<{ ts: number }>;
+          [field: string]: unknown;
+        }
+        const scope = window as unknown as {
+          __isolatedArrived: boolean;
+          __mockTranscriptsGetOverride: (input: { sessionId: string }) => unknown;
+          electronAPI: { transcripts: { get: (input: { sessionId: string; projectId: string | null }) => Promise<SeededTranscript> } };
+        };
+        // The seeded transcript lists the isolated sessions. The later revision is
+        // that transcript plus the first isolated turn; the earlier one lacks both.
+        const seeded = await scope.electronAPI.transcripts.get({ sessionId, projectId: null });
+        const early = {
+          ...seeded,
+          sessionStatus: 'running',
+          revision: 1,
+          sessions: seeded.sessions.filter((session) => session.isolatedSwimlaneId === null),
+        };
+        const lastTurn = seeded.entries[seeded.entries.length - 1];
+        const isolatedTurn = { kind: 'assistant', uuid: 'turn-isolated-late', ts: lastTurn.ts + 1000, model: 'claude-opus-5-5', blocks: [{ type: 'text', text: 'ISOLATED_LATE' }] };
+        const late = { ...seeded, sessionStatus: 'running', revision: 2, entries: [...seeded.entries, isolatedTurn] };
+        scope.__isolatedArrived = false;
+        scope.__mockTranscriptsGetOverride = (input) => {
+          if (input.sessionId !== sessionId) return undefined;
+          return scope.__isolatedArrived ? late : early;
+        };
+      }, { sessionId: SESSION_ID });
+
+      await openConversation(page, { swimlaneId: 'lane-wide-3' });
+      const list = tabRow(page).getByRole('tablist');
+      const selectedIcon = tab(page, 'lane-wide-3').getByTestId('isolated-icon');
+      await expect(tab(page, 'lane-wide-3')).toHaveAttribute('aria-selected', 'true');
+      await expect(selectedIcon).toHaveCount(0);
+
+      // Give the row room, take the width the names alone need, then narrow it
+      // to just past that: the names fit, with little to spare. Measured here
+      // rather than hardcoded, since font metrics differ between machines.
+      await installListWidthSetter(page);
+      await expect(list).toHaveAttribute('data-fit-icons-only', 'false');
+      const namesWidth = await tabsSpan(page);
+      const narrowedWidth = await setListWidth(page, namesWidth + 4);
+      expect(narrowedWidth).toBeGreaterThanOrEqual(namesWidth);
+      await settleFrames(page, 6);
+      await expect(list).toHaveAttribute('data-fit-icons-only', 'false');
+
+      // The next poll finds the isolated sessions. The row's own box does not
+      // change from here on, so only a changed tab set can make it re-measure.
+      await page.evaluate(() => { (window as unknown as { __isolatedArrived: boolean }).__isolatedArrived = true; });
+      // The selected tab keeps its name and its icon in either fit, so the icon
+      // showing means the poll landed, and a fit that never changed is the row's fault.
+      await expect(selectedIcon).toHaveCount(1, { timeout: 8000 });
+      await expect(list).toHaveAttribute('data-fit-icons-only', 'true');
+      await expect(tab(page, 'lane-wide-6')).toHaveText('');
+
+      // The width really sat between the two: given room, the names now carry
+      // their icons and need well over what the row had.
+      await setListWidth(page, 3000);
+      await expect(list).toHaveAttribute('data-fit-icons-only', 'false');
+      expect(await tabsSpan(page)).toBeGreaterThan(narrowedWidth + 40);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a first route read that fails shows the whole conversation with no tab row', async () => {
     const { browser, page } = await launch();
     try {
@@ -575,30 +745,9 @@ test.describe('Conversation window Route tabs', () => {
       // The page sets the tablist's own width through its row, so the widths
       // below do not depend on the window's. `setListWidth` returns the width
       // the list ended up with.
-      await page.evaluate(() => {
-        const scope = window as unknown as { __setListWidth: (width: number) => number };
-        const row = document.querySelector<HTMLElement>('[data-testid="conversation-route-tabs"]')!;
-        const tablist = row.querySelector<HTMLElement>('[role="tablist"]')!;
-        // Measured once the row has room, where the list is as wide as the row less its own padding.
-        row.style.width = '3000px';
-        const padding = row.getBoundingClientRect().width - tablist.getBoundingClientRect().width;
-        scope.__setListWidth = (width) => {
-          row.style.width = `${width + padding}px`;
-          return tablist.clientWidth;
-        };
-      });
+      await installListWidthSetter(page);
       await expect(list).toHaveAttribute('data-fit-icons-only', 'false');
-      // The width the row's tabs take, All included, in layout pixels (`offset*`),
-      // the unit the row itself compares. A bounding box would be wrong here: the
-      // window frame is scaled while it animates in, which shrinks a box but not
-      // these widths.
-      const tabsSpan = () => page.evaluate(() => {
-        const tabs = [...document.querySelectorAll<HTMLElement>('[data-testid="conversation-route-tabs"] [role="tab"]')];
-        const first = tabs[0];
-        const last = tabs[tabs.length - 1];
-        return last.offsetLeft + last.offsetWidth - first.offsetLeft;
-      });
-      const namesWidth = await tabsSpan();
+      const namesWidth = await tabsSpan(page);
 
       // Every value the row reports from here on is recorded. A row that went
       // back to names as soon as the icons fit would overflow, fall back to
@@ -615,17 +764,17 @@ test.describe('Conversation window Route tabs', () => {
       const fitValues = () => page.evaluate(() => (window as unknown as { __fitValues: string[] }).__fitValues);
 
       // Narrower than the names: the row falls back to icons, once.
-      await page.evaluate((width) => (window as unknown as { __setListWidth: (value: number) => number }).__setListWidth(width), namesWidth - 40);
+      await setListWidth(page, namesWidth - 40);
       await expect(list).toHaveAttribute('data-fit-icons-only', 'true');
       await settleFrames(page, 6);
       expect(await fitValues()).toEqual(['false', 'true']);
-      const iconsWidth = await tabsSpan();
+      const iconsWidth = await tabsSpan(page);
       // The next step means something only when the icons are well short of the names.
       expect(namesWidth - iconsWidth).toBeGreaterThan(80);
 
       // Between the two: wide enough for the icons, not for the names. The row stays as it is.
       const between = Math.round((namesWidth + iconsWidth) / 2);
-      const listWidth = await page.evaluate((width) => (window as unknown as { __setListWidth: (value: number) => number }).__setListWidth(width), between);
+      const listWidth = await setListWidth(page, between);
       expect(listWidth).toBeGreaterThan(iconsWidth + 20);
       expect(listWidth).toBeLessThan(namesWidth - 20);
       await settleFrames(page, 6);
@@ -634,7 +783,7 @@ test.describe('Conversation window Route tabs', () => {
 
       // Room for every name again: the names come back. A few pixels over the
       // names' width absorbs the rounding between this measure and the row's own.
-      await page.evaluate((width) => (window as unknown as { __setListWidth: (value: number) => number }).__setListWidth(width), namesWidth + 4);
+      await setListWidth(page, namesWidth + 4);
       await expect(list).toHaveAttribute('data-fit-icons-only', 'false');
     } finally {
       await browser.close();
