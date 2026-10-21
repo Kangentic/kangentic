@@ -10,7 +10,7 @@ import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../tr
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
-import { WorktreeManager } from '../../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval } from '../../git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -205,6 +205,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     for (const task of allTasks) {
       if (task.worktree_path && fs.existsSync(task.worktree_path)) {
         try {
+          // Outside the queue: waits for a creation still setting the path up,
+          // which the removal inside the queue would refuse.
+          await prepareWorktreeForRemoval(task.worktree_path, 'thorough');
           await worktreeManager.withLock(
             () => worktreeManager.removeWorktree(task.worktree_path!),
             { label: 'project-delete-worktree' },
