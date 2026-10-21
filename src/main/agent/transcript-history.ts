@@ -226,8 +226,11 @@ export async function readHistoryTimeline(db: Database.Database, conversationId:
 
   const cached = timelineByConversation.get(conversation.conversationId);
   if (cached && totalPosition >= cached.totalPosition && totalPosition < cached.totalPosition * 1.25) {
+    // A probe-sized read, never a tiny one: a page skips any line longer than
+    // itself, so a 1-byte check walked the whole file a byte at a time and held
+    // the worker's history queue until main killed the worker.
     const check = await adapter.readTranscriptPage(agentSessionId, conversation.cwd, {
-      direction: 'around', position: 0, maxBytes: 1, sourceToken: cached.sourceToken,
+      direction: 'around', position: 0, maxBytes: timelineProbeBytes(totalPosition), sourceToken: cached.sourceToken,
     });
     if (check.status !== 'reset') {
       touchBounded(timelineByConversation, conversation.conversationId, cached, timelineCacheOptions);

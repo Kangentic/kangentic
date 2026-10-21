@@ -17,9 +17,10 @@
  *   the tail's start, so it never reaches a half-written last line.
  * - `around(X)` reads forward from `X - max / 2`; both edges land on lines.
  *
- * A line longer than one page is skipped without parsing, within a read budget;
- * a stretch whose lines yield no entries is walked through, a few windows at
- * most. Agents whose entry uuids number lines carry a line count in the cursor,
+ * A line longer than one page is skipped without parsing, within a read budget
+ * of bytes and of time; a stretch whose lines yield no entries is walked
+ * through, a few windows at most. The time budget is what bounds a page smaller
+ * than every line, which skips one window at a time to the end of the file. Agents whose entry uuids number lines carry a line count in the cursor,
  * so a page mints the same uuids as the tail parse.
  *
  * Retains nothing between calls: a page is read, parsed and returned.
@@ -93,6 +94,9 @@ const SOURCE_TOKEN_BYTES = 4096;
 /** Bytes a page may skip through without parsing (lines longer than a page). */
 const SKIP_BUDGET_BYTES = 256 * 1024 * 1024;
 
+/** How long one page read may take, well inside the history queue's deadline. */
+export const PAGE_READ_BUDGET_MS = 4_000;
+
 /** Windows whose lines yield no entries a page walks through before answering. */
 const MAX_EMPTY_WINDOWS = 4;
 
@@ -148,24 +152,25 @@ export async function readJsonlHistoryPage(options: JsonlHistoryPageOptions): Pr
 
   const maxBytes = Math.max(1, Math.floor(request.maxBytes));
   const until = Math.min(size, Math.max(0, request.untilPosition ?? size));
+  const deadline = Date.now() + PAGE_READ_BUDGET_MS;
   try {
     if (request.direction === 'before') {
       const cursor = decodeJsonlCursor(request.cursor);
       if (!cursor || cursor.byte > size) return { status: 'reset' };
-      return await readBefore({ filePath, size, until, maxBytes, cursor, countLines, parseLines, sourceToken });
+      return await readBefore({ filePath, size, until, maxBytes, deadline, cursor, countLines, parseLines, sourceToken });
     }
     if (request.direction === 'after') {
       const cursor = decodeJsonlCursor(request.cursor);
       if (!cursor || cursor.byte > size) return { status: 'reset' };
       return await readForward({
-        filePath, size, until, maxBytes, countLines, parseLines, sourceToken,
+        filePath, size, until, maxBytes, deadline, countLines, parseLines, sourceToken,
         cursor, readFrom: cursor.byte > 0 ? cursor.byte - 1 : 0, checkAlignment: true,
       });
     }
     const target = Math.min(Math.max(0, request.position ?? 0), until);
     const readFrom = Math.min(Math.max(0, target - Math.floor(maxBytes / 2)), Math.max(0, until - maxBytes));
     return await readForward({
-      filePath, size, until, maxBytes, countLines, parseLines, sourceToken,
+      filePath, size, until, maxBytes, deadline, countLines, parseLines, sourceToken,
       cursor: null, readFrom, checkAlignment: false,
     });
   } catch {
@@ -178,6 +183,8 @@ interface ReadContext {
   size: number;
   until: number;
   maxBytes: number;
+  /** When the read gives up as over budget (`Date.now()` time). */
+  deadline: number;
   countLines: boolean;
   parseLines: (lines: JsonlLine[]) => TranscriptEntry[];
   sourceToken: string;
@@ -189,7 +196,7 @@ function windowFailed(window: JsonlWindow): boolean {
 }
 
 async function readBefore(context: ReadContext & { cursor: JsonlCursor }): Promise<TranscriptPageReadResult> {
-  const { filePath, size, until, maxBytes, countLines, parseLines, sourceToken, cursor } = context;
+  const { filePath, size, until, maxBytes, deadline, countLines, parseLines, sourceToken, cursor } = context;
   const collected: CollectedWindow[] = [];
   let end = cursor.byte;
   let skipped = false;
@@ -198,6 +205,7 @@ async function readBefore(context: ReadContext & { cursor: JsonlCursor }): Promi
   let firstWindow = true;
 
   while (end > 0) {
+    if (Date.now() > deadline) return { status: 'unavailable', reason: 'record_too_large' };
     const start = Math.max(0, end - maxBytes);
     const window = await readJsonlWindow(filePath, { startByte: start, maxBytes: end - start });
     if (windowFailed(window)) return { status: 'unavailable', reason: 'read_failed' };
@@ -256,7 +264,7 @@ async function readForward(context: ReadContext & {
   readFrom: number;
   checkAlignment: boolean;
 }): Promise<TranscriptPageReadResult> {
-  const { filePath, size, until, maxBytes, countLines, parseLines, sourceToken, cursor, checkAlignment } = context;
+  const { filePath, size, until, maxBytes, deadline, countLines, parseLines, sourceToken, cursor, checkAlignment } = context;
   const collected: CollectedWindow[] = [];
   let readFrom = context.readFrom;
   let startPosition: number | null = cursor ? cursor.byte : null;
@@ -267,6 +275,7 @@ async function readForward(context: ReadContext & {
   let firstWindow = true;
 
   while (end < until) {
+    if (Date.now() > deadline) return { status: 'unavailable', reason: 'record_too_large' };
     const window = await readJsonlWindow(filePath, { startByte: readFrom, maxBytes: Math.min(maxBytes, until - readFrom) });
     if (windowFailed(window)) return { status: 'unavailable', reason: 'read_failed' };
     const holdsNoLine = window.endByte === window.startByte;

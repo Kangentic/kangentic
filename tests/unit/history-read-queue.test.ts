@@ -3,10 +3,12 @@ import { createHistoryReadQueue } from '../../src/main/retrieval/worker/history-
 
 /**
  * The worker's queue for Conversation viewer history reads: one read at a
- * time, `busy` past the depth or wait cap so no read can run into main's call
- * timer (which kills the worker), and a newer request from the same window
- * superseding its queued older one.
+ * time, `busy` past the depth or wait cap or the whole-call deadline so no read
+ * can run into main's call timer (which kills the worker), and a newer request
+ * from the same window superseding its queued older one.
  */
+
+const NO_DEADLINE = { maxTotalMs: 60_000 };
 
 function deferred<Value>(): { promise: Promise<Value>; resolve: (value: Value) => void } {
   let resolve!: (value: Value) => void;
@@ -16,7 +18,7 @@ function deferred<Value>(): { promise: Promise<Value>; resolve: (value: Value) =
 
 describe('createHistoryReadQueue', () => {
   it('runs one read at a time', async () => {
-    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 60_000 });
+    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 60_000, ...NO_DEADLINE });
     let running = 0;
     let mostAtOnce = 0;
     const job = async () => {
@@ -36,7 +38,7 @@ describe('createHistoryReadQueue', () => {
   });
 
   it('lets a newer request from the same window supersede its queued older one', async () => {
-    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 60_000 });
+    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 60_000, ...NO_DEADLINE });
     const blocker = deferred<string>();
     const first = queue.run('other-window', () => blocker.promise);
     const older = queue.run('window-1', async () => 'older');
@@ -48,7 +50,7 @@ describe('createHistoryReadQueue', () => {
   });
 
   it('answers busy past the depth cap without queuing the read', async () => {
-    const queue = createHistoryReadQueue({ maxDepth: 2, maxWaitMs: 60_000 });
+    const queue = createHistoryReadQueue({ maxDepth: 2, maxWaitMs: 60_000, ...NO_DEADLINE });
     const blocker = deferred<string>();
     let ranExtra = false;
     const held = [queue.run('a', () => blocker.promise), queue.run('b', async () => 'b')];
@@ -61,7 +63,7 @@ describe('createHistoryReadQueue', () => {
 
   it('answers busy, unread, for a request that waited past the wait cap', async () => {
     let clock = 0;
-    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 5_000, now: () => clock });
+    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 5_000, ...NO_DEADLINE, now: () => clock });
     const blocker = deferred<string>();
     let ranLate = false;
     const first = queue.run('a', () => blocker.promise);
@@ -71,5 +73,21 @@ describe('createHistoryReadQueue', () => {
     await first;
     expect(await late).toEqual({ ran: false, reason: 'busy' });
     expect(ranLate).toBe(false);
+  });
+
+  it('answers busy at the deadline for a read that runs long, and for the reads behind it', async () => {
+    const queue = createHistoryReadQueue({ maxDepth: 8, maxWaitMs: 60_000, maxTotalMs: 30 });
+    const blocker = deferred<string>();
+    let ranBehind = false;
+    const longRead = queue.run('a', () => blocker.promise);
+    const behind = queue.run('b', async () => { ranBehind = true; return 'b'; });
+    // Neither waits on the long read: each answers when its own deadline passes.
+    expect(await longRead).toEqual({ ran: false, reason: 'busy' });
+    expect(await behind).toEqual({ ran: false, reason: 'busy' });
+    // Once the long read ends, a read already answered never runs.
+    blocker.resolve('a');
+    const after = await queue.run('c', async () => 'c');
+    expect(after).toEqual({ ran: true, value: 'c' });
+    expect(ranBehind).toBe(false);
   });
 });
