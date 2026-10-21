@@ -28,7 +28,7 @@ const mockTaskList = vi.fn();
 const mockTaskUpdate = vi.fn();
 const mockSetWorktreeSkipReason = vi.fn();
 const mockGetLatestForTask = vi.fn();
-const mockGetUserPausedTaskIds = vi.fn(() => new Set<string>());
+const mockGetHeldPausedTaskIds = vi.fn(() => new Set<string>());
 const mockSwimlaneList = vi.fn();
 const mockReadLocalBranchSha = vi.fn(async (): Promise<string | null> => null);
 
@@ -63,7 +63,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = (...args: unknown[]) => mockGetLatestForTask(...args);
-    getUserPausedTaskIds = (...args: unknown[]) => mockGetUserPausedTaskIds(...args);
+    getHeldPausedTaskIds = (...args: unknown[]) => mockGetHeldPausedTaskIds(...args);
   },
 }));
 
@@ -133,7 +133,7 @@ describe('autoSpawnTasks first-spawn lock wiring', () => {
     mockTaskList.mockReturnValue([
       { id: TASK_ID, swimlane_id: LANE_ID, worktree_path: null, branch_name: null },
     ]);
-    mockGetUserPausedTaskIds.mockReturnValue(new Set());
+    mockGetHeldPausedTaskIds.mockReturnValue(new Set());
   });
 
   it('passes hasSessionRecord: false and the live task repository for a never-spawned task', async () => {
@@ -184,7 +184,7 @@ describe('autoSpawnTasks: stale worktree_path fallback', () => {
     mockSwimlaneList.mockReturnValue([
       { id: LANE_ID, auto_spawn: true, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
     ]);
-    mockGetUserPausedTaskIds.mockReturnValue(new Set());
+    mockGetHeldPausedTaskIds.mockReturnValue(new Set());
     mockGetLatestForTask.mockReturnValue(undefined);
     // Only the stale worktree path is missing; the project path (the
     // fallback cwd) still exists, so the spawn proceeds to prepareAgentSpawn

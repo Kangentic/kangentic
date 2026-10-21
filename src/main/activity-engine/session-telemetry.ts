@@ -81,6 +81,12 @@ interface SessionTelemetryCallbacks {
   onBranchPushed?(sessionId: string, branch: string): void;
   /** Called when the agent reports its own session_id (from status.json). */
   onAgentSessionId?(sessionId: string, agentReportedId: string): void;
+  /**
+   * The idle sweep asks for a session it timed out to be suspended, just
+   * before `onIdleTimeout`. The session manager suspends only the sessions
+   * with no task record here; a task's agent is paused by the idle-timeout
+   * listener, which records the pause first.
+   */
   requestSuspend(sessionId: string): void;
   isSessionRunning(sessionId: string): boolean;
   /**

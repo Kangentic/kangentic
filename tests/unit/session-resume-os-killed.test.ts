@@ -102,7 +102,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
       sessionType: string,
       isolatedSwimlaneId: string | null,
     ) => latestForTaskByTypeAndIsolation(taskId, sessionType, isolatedSwimlaneId);
-    getUserPausedTaskIds = () => new Set<string>();
+    getHeldPausedTaskIds = () => new Set<string>();
     insert = (...args: unknown[]) => sessionRepoInsert(...args);
     updateAppliedSettings = vi.fn();
     // The resume pass confirms under the task lock that its record still exists.

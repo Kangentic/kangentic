@@ -7,6 +7,7 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 import { safeWriteJson } from '../safe-write';
 import { reportSyncWriteFailure } from './write-failure-notice';
 import { migrateLegacyGitKeys } from './legacy-git-keys';
+import { migrateLegacyIdleTimeout } from './legacy-idle-timeout';
 import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
 
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
@@ -189,6 +190,20 @@ export class ConfigManager {
         idleTimeoutMinutes: (legacy.idleTimeoutMinutes as number) ?? this.config.agent.idleTimeoutMinutes,
       };
       delete (this.config as unknown as Record<string, unknown>).claude;
+      this.save(this.config);
+    }
+
+    // One-time migration: the idle timeout's 0-means-off minutes became a
+    // switch plus minutes (see legacy-idle-timeout.ts). A file still in the
+    // claude.* shape carried the minutes there. The merged copy already holds
+    // the new keys' defaults, so the parsed file decides what was saved.
+    const explicitIdleAgent = (parsed?.agent ?? parsed?.claude) as Record<string, unknown> | undefined;
+    if (explicitIdleAgent && typeof explicitIdleAgent === 'object'
+      && migrateLegacyIdleTimeout(
+        this.config.agent as unknown as Record<string, unknown>,
+        explicitIdleAgent,
+        DEFAULT_CONFIG.agent.idleTimeoutMinutes,
+      )) {
       this.save(this.config);
     }
 

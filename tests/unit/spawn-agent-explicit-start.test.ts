@@ -151,6 +151,11 @@ async function runSpawn(
 }
 
 const USER_PAUSED_RECORD = { id: 'rec-1', status: 'suspended', suspended_by: 'user', agent_session_id: 'agent-1' };
+// Kangentic paused the agent while it waited on the user (low memory, the
+// idle timeout). Held exactly like the user's own pause.
+const AUTO_PAUSED_RECORD = { id: 'rec-1', status: 'suspended', suspended_by: 'auto', agent_session_id: 'agent-1' };
+// A quit, a move or a settings restart. Holds nothing: the next move resumes it.
+const SYSTEM_SUSPENDED_RECORD = { id: 'rec-1', status: 'suspended', suspended_by: 'system', agent_session_id: 'agent-1' };
 
 describe('spawnAgent explicitStart: the auto_spawn default', () => {
   beforeEach(() => {
@@ -202,6 +207,36 @@ describe('spawnAgent explicitStart: the manually-paused guard', () => {
     await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { explicitStart: true });
 
     // Red before the option existed: the pause guard returned first.
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a task Kangentic paused without the flag, as it does a user pause', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps);
+
+    expect(deps.engine.executeTransition).not.toHaveBeenCalled();
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+  });
+
+  it('resumes a task Kangentic paused with the flag', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: AUTO_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { explicitStart: true });
+
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a system-suspended task without the flag, since that suspend holds nothing', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: SYSTEM_SUSPENDED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps);
+
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
   });

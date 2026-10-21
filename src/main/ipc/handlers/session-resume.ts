@@ -216,7 +216,10 @@ export function resumeTaskSession(
                 resolvedProjectId, resolvedProjectPath,
               );
               const project = context.projectRepo.getById(resolvedProjectId);
-              const overrides = resolveSpawnOverrides(current, currentLane, project);
+              // A Resume brings back the conversation that was paused. An
+              // 'always_spawn_new' column forces a fresh one on ENTRY only;
+              // forwarding that here retired the paused conversation.
+              const overrides = { ...resolveSpawnOverrides(current, currentLane, project), forceFresh: false };
               await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
 
               const updated = tasks.getById(taskId);

@@ -41,7 +41,7 @@ describe('applyRuntimeConfig', () => {
   it('pushes every cached runtime setting into SessionManager', () => {
     const sessionManager = makeSessionManager();
     const configManager = makeConfigManager({
-      agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 42 },
+      agent: { maxConcurrentSessions: 5, idleTimeoutEnabled: true, idleTimeoutMinutes: 42 },
       terminal: { shell: '/usr/bin/fish' },
     } as Partial<AppConfig>);
 
@@ -51,6 +51,20 @@ describe('applyRuntimeConfig', () => {
     expect(sessionManager.setMaxConcurrent).toHaveBeenCalledWith(5);
     expect(sessionManager.setShell).toHaveBeenCalledWith('/usr/bin/fish');
     expect(sessionManager.setIdleTimeout).toHaveBeenCalledWith(42);
+  });
+
+  it('turns the idle sweep off while the idle switch is off, whatever the minutes say', () => {
+    // The minutes stay set (30 by default) so turning the switch on starts
+    // from a usable value; the sweep reads 0 as off.
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager({
+      agent: { maxConcurrentSessions: 5, idleTimeoutEnabled: false, idleTimeoutMinutes: 30 },
+      terminal: { shell: null },
+    } as Partial<AppConfig>);
+
+    applyRuntimeConfig(sessionManager, configManager, null);
+
+    expect(sessionManager.setIdleTimeout).toHaveBeenCalledWith(0);
   });
 
   it('falls back to global effective config when projectPath is null', () => {

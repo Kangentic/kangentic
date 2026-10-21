@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy } from '../../../shared/types';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../../shared/tool-call-totals';
+import { HELD_PAUSE_SOURCES } from '../../../shared/held-pause';
 import { writeTransaction } from '../transaction';
 
 /**
@@ -449,16 +450,21 @@ export class SessionRepository {
     ).get(sessionId, sessionId) as SessionRecord | undefined;
   }
 
-  /** Get task IDs whose latest session was user-paused (for reconciliation). */
-  getUserPausedTaskIds(): Set<string> {
+  /**
+   * Get task IDs whose latest session is a held pause: paused by the user or
+   * by Kangentic, and waiting for the user to resume it (`isHeldPause`). For
+   * the auto-spawn paths, which must not start such a task by themselves.
+   */
+  getHeldPausedTaskIds(): Set<string> {
+    const placeholders = HELD_PAUSE_SOURCES.map(() => '?').join(', ');
     const rows = this.db.prepare(`
       SELECT s.task_id FROM sessions s
       INNER JOIN (
         SELECT task_id, MAX(started_at) as max_started_at
         FROM sessions GROUP BY task_id
       ) latest ON s.task_id = latest.task_id AND s.started_at = latest.max_started_at
-      WHERE s.status = 'suspended' AND s.suspended_by = 'user'
-    `).all() as Array<{ task_id: string }>;
+      WHERE s.status = 'suspended' AND s.suspended_by IN (${placeholders})
+    `).all(...HELD_PAUSE_SOURCES) as Array<{ task_id: string }>;
     return new Set(rows.map(r => r.task_id));
   }
 

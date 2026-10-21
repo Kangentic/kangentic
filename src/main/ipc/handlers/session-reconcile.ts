@@ -173,7 +173,9 @@ export async function restartSessionForSettingsChange(
           undefined, // signal
           undefined, // targetAgent - resolved internally from the task/session
           undefined, // handoffPromptPrefix
-          resolveSpawnOverrides(updatedTask, updatedLane, project),
+          // An in-place restart keeps its conversation. An 'always_spawn_new'
+          // column's forceFresh is for a task entering it, not for this.
+          { ...resolveSpawnOverrides(updatedTask, updatedLane, project), forceFresh: false },
         );
         // This restart resumes IDLE by contract (no prompt, no auto_command), but
         // `--resume` still runs the CLI's resume-picker context reload: a turn

@@ -140,8 +140,9 @@ export async function autoSpawnTasks(
   const resolvedShell = await sessionManager.getShell();
   const config = configManager.getEffectiveConfig(projectPath);
 
-  // Batch-fetch user-paused task IDs to skip during reconciliation
-  const userPausedTaskIds = sessionRepo.getUserPausedTaskIds();
+  // Batch-fetch held-paused task IDs (paused by the user or by Kangentic) to
+  // skip during reconciliation
+  const heldPausedTaskIds = sessionRepo.getHeldPausedTaskIds();
 
   // --- Preparation pass: collect spawn inputs ---
   // `isolatedSwimlaneId` tags each fresh session (null for normal columns, the
@@ -160,12 +161,12 @@ export async function autoSpawnTasks(
     // the placeholder and clobber the resumable record's agent_session_id.
     if (hasSession(task.id)) continue;
 
-    // Safety net: register a placeholder for user-paused records that
+    // Safety net: register a placeholder for held-paused records that
     // somehow weren't registered by resumeSuspendedSessions (e.g. the
     // record was created after that pass, or cwd existence check failed).
     // Without this the task would auto-spawn a fresh agent and lose the
     // --resume transcript.
-    if (userPausedTaskIds.has(task.id)) {
+    if (heldPausedTaskIds.has(task.id)) {
       const cwd = task.worktree_path || projectPath;
       sessionManager.registerSuspendedPlaceholder({ taskId: task.id, projectId, cwd });
       continue;

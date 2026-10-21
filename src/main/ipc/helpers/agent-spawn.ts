@@ -20,6 +20,7 @@ import { showDesktopNotification } from '../handlers/system';
 import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { isHeldPause } from '../../../shared/held-pause';
 import { runSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
@@ -304,17 +305,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // agent there would be invisible.
   if (!laneMaySpawn(toLane)) return;
 
-  // Guard: if the user manually paused this task, don't auto-resume. Only an
-  // explicit user gesture restarts it: the desktop's Resume button
-  // (SESSION_RESUME) or a caller passing `explicitStart` (the phone's
-  // start-session verb).
+  // Guard: if the task is held paused (the user paused it, or Kangentic did
+  // while it waited on the user), don't auto-resume. Only an explicit user
+  // gesture restarts it: the desktop's Resume button (SESSION_RESUME) or a
+  // caller passing `explicitStart` (the phone's start-session verb).
   const latestSession = sessionRepo.getLatestForTask(task.id);
-  if (
-    latestSession?.status === 'suspended'
-    && latestSession.suspended_by === 'user'
-    && !options.explicitStart
-  ) {
-    console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (manually paused by user)`);
+  if (isHeldPause(latestSession) && !options.explicitStart) {
+    console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (paused until the user resumes it)`);
     return;
   }
 

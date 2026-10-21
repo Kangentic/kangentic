@@ -99,7 +99,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
     getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
     getLatestForTask = vi.fn(() => undefined);
-    getUserPausedTaskIds = vi.fn(() => new Set<string>());
+    getHeldPausedTaskIds = vi.fn(() => new Set<string>());
     insert = (...args: unknown[]) => sessionRepoInsertMock(...args);
     updateAppliedSettings = vi.fn();
     // The resume pass confirms under the task lock that its record still exists

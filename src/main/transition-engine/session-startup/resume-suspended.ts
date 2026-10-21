@@ -12,6 +12,7 @@ import { createExpiredRecapSources } from '../expired-recap-sources';
 import { markRecapSession } from '../../automations/turn-end/recap-turns';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { RESUME_HIDDEN_ROLES } from '../../../shared/session-resume-eligibility';
+import { isHeldPause } from '../../../shared/held-pause';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isResumeEligible } from '../spawn-intent';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -354,12 +355,13 @@ export async function resumeSuspendedSessions(
       continue;
     }
 
-    // User explicitly paused (clicked Pause). Even when auto-resume-on-restart
-    // is enabled, respect the pause. Register a placeholder so the renderer
-    // shows "Paused" state. Clear task.session_id defensively - it should
-    // already be null from SESSION_SUSPEND, but crash-recovery paths may
+    // A held pause: the user clicked Pause, or Kangentic paused an agent that
+    // was waiting on the user (low memory, idle timeout). Even when
+    // auto-resume-on-restart is enabled, respect it. Register a placeholder so
+    // the renderer shows "Paused" state. Clear task.session_id defensively -
+    // it should already be null from the pause, but crash-recovery paths may
     // have left it set.
-    if (record.status === 'suspended' && record.suspended_by === 'user') {
+    if (isHeldPause(record)) {
       sessionManager.registerSuspendedPlaceholder({
         taskId: record.task_id,
         projectId,

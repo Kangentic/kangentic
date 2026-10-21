@@ -102,7 +102,7 @@ function fullyDeviatedConfig(): AppConfig {
       ...DEFAULT_CONFIG.agent,
       maxConcurrentSessions: 2,
       autoResumeSessionsOnRestart: false,
-      idleTimeoutMinutes: 30,
+      idleTimeoutMinutes: 45,
     },
     knowledgeGraph: {
       indexingEnabled: false,
@@ -216,7 +216,7 @@ describe('buildSettingsSnapshot', () => {
       'knowledgeGraph.acceleration': 'cpu',
       'agent.maxConcurrentSessions': '1-3',
       'agent.autoResumeSessionsOnRestart': 'false',
-      'agent.idleTimeoutMinutes': '16-60',
+      'agent.idleTimeoutMinutes': '31-60',
       'browserAutomation.enabled': 'false',
       'browserAutomation.allowEval': 'true',
       'browserAutomation.localhostOnly': 'true',
@@ -345,8 +345,12 @@ describe('buckets', () => {
     expect(bucketIdleTimeoutMinutes(0)).toBe('0');
     expect(bucketIdleTimeoutMinutes(1)).toBe('1-15');
     expect(bucketIdleTimeoutMinutes(15)).toBe('1-15');
-    expect(bucketIdleTimeoutMinutes(16)).toBe('16-60');
-    expect(bucketIdleTimeoutMinutes(60)).toBe('16-60');
+    expect(bucketIdleTimeoutMinutes(16)).toBe('16-29');
+    expect(bucketIdleTimeoutMinutes(29)).toBe('16-29');
+    // The default has its own label, so no range reads as if it were sent.
+    expect(bucketIdleTimeoutMinutes(30)).toBe('30');
+    expect(bucketIdleTimeoutMinutes(31)).toBe('31-60');
+    expect(bucketIdleTimeoutMinutes(60)).toBe('31-60');
     expect(bucketIdleTimeoutMinutes(61)).toBe('61+');
   });
 

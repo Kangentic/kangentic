@@ -18,11 +18,12 @@ import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
 import { parseModelId } from '../../../shared/model-id';
+import { requiresUserInteraction } from '../../../shared/activity-state';
 import { captureSessionMetrics, readTranscriptToolResultTokens, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
-import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
+import { reconcileTaskSessionRef } from './session-reconcile';
 import { persistPtyGrid } from './session-grid-persistence';
 import { forgetTranscriptPath, persistTranscriptPath } from './session-transcript-path';
 import { abortInFlightResume } from './session-resume-controllers';
@@ -552,32 +553,52 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
+    const session = context.sessionManager.getSession(sessionId);
     // A workflow's own agent is no task: there is no task row to write and no
     // card to toast for. Its pane shows it paused, and its own lifecycle
     // (`registerWorkflowAgentLifecycle`) records what it spent.
-    if (context.sessionManager.getSession(sessionId)?.workflowId) return;
+    if (session?.workflowId) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    if (!context.mainWindow.isDestroyed()) {
-      broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
+    const announce = (): void => {
+      if (!context.mainWindow.isDestroyed()) {
+        broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
+      }
+    };
+    // A Command Terminal has no task record to write: the sweep suspended it
+    // already (SessionManager's `requestSuspend`). A task session with no
+    // project cannot be recorded either, so it is suspended as it always was.
+    if (session?.transient || !projectId) {
+      if (!session?.transient) void context.sessionManager.suspend(sessionId);
+      announce();
+      return;
     }
-    if (!projectId) return;
 
-    // session-manager.suspend() (called by session-telemetry.requestSuspend) already
-    // flipped the registry status synchronously. Mirror those writes into the DB
-    // so task.session_id and the session record agree with the registry.
-    // Without this, SESSION_RESUME's reconciliation has to recover from the
-    // divergence on the next user click - cleaner to fix it here at the source.
-    void withTaskLock(taskId, async () => {
-      try {
+    // A task's agent is paused the way the Pause button pauses it, recorded
+    // as Kangentic's own (`'auto'`), which holds it paused until the user
+    // resumes it. The record is written before the PTY goes down: the sweep
+    // used to suspend the registry first and write the row later, so a quit
+    // in between left the record `running` for the next launch to resume.
+    void pauseTaskSession(context, taskId, {
+      projectId,
+      suspendedBy: 'auto',
+      // The agent may have started working, or been moved or resumed onto a
+      // new session, while this waited for the task lock.
+      stillEligible: (liveSession) => liveSession.id === sessionId
+        && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId]),
+      onAccepted: () => {
         context.terminalSubmitScheduler.cancel(taskId);
         // A pasted message is not the scheduler's, so it is stopped on its
         // own, as quietly as the keystrokes above.
         supersedeMessageDeliveries(taskId);
-        applySuspendDbWrites(context, projectId, taskId, 'system');
-      } catch (error) {
-        console.error('[idle-timeout] DB sync failed:', error);
-      }
-    });
+      },
+    }).then(
+      (outcome) => {
+        if (outcome === 'paused') announce();
+      },
+      (error: unknown) => {
+        console.error('[idle-timeout] pause failed:', error);
+      },
+    );
   });
 
   // Stale session ID recovery: when a resuming session reports a different
