@@ -560,9 +560,10 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 | `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 
-The toast names the two levers a user has, a larger initial page file and a lower Max Concurrent
-Sessions, and its Behavior settings action opens that tab. Where commit goes per agent, and the
-page-file steps, are in [user-guide.md](user-guide.md#low-memory-warning-windows).
+The toast names the two levers a user has, a larger initial page file and running fewer agents at
+once, and its Behavior settings action opens that tab, where Max Concurrent Sessions is set. Where
+commit goes per agent, and the page-file steps, are in
+[user-guide.md](user-guide.md#low-memory-warning-windows).
 
 ### GPU health (2 channels)
 | Channel | Pattern | Purpose |
