@@ -6,15 +6,16 @@ whole-file reads at once on main. The read now runs in the `kangentic-retrieval`
 oversized read kills the worker instead. Every transcript read fails until the worker restarts, and
 after three crashes it stays off.
 
-**Verdict: yes, and C is built for every agent with a transcript. The checks under "Not measured"
-are still open.** Seven options
+**Verdict: yes, and C is built for every agent whose transcript Kangentic reads. The checks under
+"Not measured" are still open.** Seven options
 follow, A to G. The recommended one, C, is a separate bounded page call that loads earlier history
 while the user scrolls up. One 8 MiB page costs the worker about half of today's tail read. This
 records the options, the measurements behind them and the recommended design. C was then built,
-with the decisions below the options (a whole-transcript scrollbar, jumps, column tabs and every
-agent with a transcript); `docs/architecture.md` (Transcript) and `docs/agent-integration.md`
-(`readTranscriptPage`) describe what shipped. The rows marked pending stay pending until they are
-read in the running app.
+together with the scrollbar half of D (a whole-transcript scrollbar, a far drag that loads the page
+under it, jumps to the start and to a search hit, and column tabs that cover their column's whole
+history), for every agent whose transcript Kangentic reads; `docs/architecture.md` (Transcript) and
+`docs/agent-integration.md` (`readTranscriptPage`) describe what shipped. The rows marked pending
+stay pending until they are read in the running app.
 
 The safety bar was fixed before measuring. A design passes only if all four hold:
 
@@ -57,7 +58,8 @@ bound as B.
 - **G. Open the raw file.** It shows JSONL, not a conversation.
 
 The plan was for Claude to go first, as the only agent with a windowed read and an archive, and for
-other agents to follow per the costs under Q3. As built, every agent pages (Stage 2 below).
+other agents to follow per the costs under Q3. As built, every agent whose transcript Kangentic
+reads pages (Stage 2 below).
 
 ## Measurements
 
@@ -178,16 +180,21 @@ them. They are still open:
   needs it: the next page must end exactly where this one's first whole line starts, or the line
   straddling the seam is lost.
 - **Give the notice a cursor.** The `truncated` system entry carries the agent session id and the
-  byte its surviving entries start at, and its uuid includes the session id. Today's uuid,
-  `kangentic-truncated:<omittedBytes>`, can collide between two sessions in one stitch.
+  byte its surviving entries start at, and its uuid includes the session id. The old uuid,
+  `kangentic-truncated:<omittedBytes>`, could collide between two sessions in one stitch; it is now
+  `kangentic-truncated:<conversationId>:<omittedBytes>`, and the entry carries `earlierHistory`.
 - **Add one worker method, `transcript.page`.** It takes `{ projectId, sessionId, beforeByte }` and
   returns the clamped entries of the 8 MiB before `beforeByte` plus the next cursor. It reads the
   live file first and the archive rows when the file is gone, the order `resolveSessionTranscript`
   already uses. It runs on its own concurrency-1 queue in the worker and writes no shared cache.
-  Then it is wired as one IPC endpoint through the 7 layers, with a web demo mock.
+  Then it is wired as one IPC endpoint through the 7 layers, with a web demo mock. As built, the
+  request is a `TranscriptPageRequest` (conversation id, direction, cursor, position, until
+  position, source token, request key), and there are three endpoints, `transcript:page`,
+  `transcript:locate` and `transcript:timeline`, which share one history queue.
 - **Keep pages apart from the polled tail.** `ConversationWindow` holds the pages per session next to
-  the polled response. A pure merge inserts each session's pages at its gap row and dedupes by uuid,
-  the tail winning. The index-based delta of `transcript.task` never sees a page, so the poll
+  the polled response. A pure merge inserts each session's pages at its gap row and dedupes by
+  `transcriptEntryKey`, the tail winning. That key is the uuid, plus the tool use id for a tool
+  result, because a reply and its tool results can share a uuid and a uuid-only key dropped them. The index-based delta of `transcript.task` never sees a page, so the poll
   protocol is unchanged. Holding pages in the window, not in `ConversationView`, also keeps them
   across the remount a Route tab switch causes.
 - **Trigger and anchor.** A gap row entering the overscan requests the next page, one request in
@@ -212,7 +219,9 @@ them. They are still open:
 Fix the three locators, then add `parseTranscriptWindow` to Qwen and Droid. Codex, Kimi and Grok
 need a line count carried in the cursor. OpenCode needs a row cursor outside the byte contract.
 
-As built, every adapter got `readTranscriptPage` over its own tail's line parser instead: no
+As built, every adapter that parses a transcript got `readTranscriptPage` over its own tail's line
+parser instead (the agents Kangentic reads no transcript for, such as Aider, Cursor, Copilot, Goose,
+Ollama and Warp, have none): no
 `parseTranscriptWindow` and no locator change was needed, since a page reads the file the adapter's
 own parse reads. Qwen, Droid, Codex, Kimi and Grok carry a line count in the cursor. OpenCode's
 cursor names a message, and its unit is the characters of stored data. A legacy single-document
@@ -232,6 +241,13 @@ next reply, which lost them at every page edge and at the tail's start.
 A palette hit in an unloaded part carries its agent session id and `ts`. Bisecting the file by record
 timestamp finds its page in about `log2(size / 64 KB)` small reads. That page loads as a detached
 span with a gap row above and below.
+
+As built (`transcript:locate`), the worker looks the hit up through its chunk's conversation and
+time, narrows by the conversation's timeline (64 probes of at most 64 KiB), reads the page there and
+one each side, and falls back to walking back from the tail, all within one 6 s deadline. The thumb
+and the far drag use the same timeline: dragging past the loaded rows shows the date under the
+thumb, and the page there is read once the pointer rests 120 ms (an agent with no timestamps, such
+as Grok, shows no date).
 
 ## Existing exposures
 
