@@ -104,6 +104,16 @@ export interface TaskDetailHostValue {
    * host one question keeps the window from enumerating every host's chrome.
    */
   shortcutsSuppressed: boolean;
+
+  /**
+   * Whether a "View conversation" here can show the user a conversation. The
+   * viewer opens through the board's signal onto the board's window layer, for
+   * the open board's project. The board host can; the monitor's cannot, since
+   * the board layer sits under the monitor overlay (and a pop-out monitor has
+   * none) and the window would read the open board's project, not the task's.
+   * So every opener in the task detail hides there rather than doing nothing.
+   */
+  canOpenConversation: boolean;
 }
 
 const TaskDetailHostContext = createContext<TaskDetailHostValue | null>(null);
