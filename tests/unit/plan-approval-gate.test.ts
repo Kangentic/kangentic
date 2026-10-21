@@ -368,6 +368,16 @@ describe('plan approval gate', () => {
       expect(harness.activities).not.toContain('permission');
     });
 
+    it('drops an idle still waiting for its marker when that tool\'s call is interrupted, and leaves another tool\'s wait alone', () => {
+      ingest(toolStart('toolu_a'), otherToolStart, toolIdle, otherToolIdle);
+      ingest({ ts: 12, type: EventType.Interrupted, tool: TOOL, toolId: 'toolu_a' });
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      // The interrupted tool's idle is gone; an interrupt that names a tool is
+      // not a turn boundary, so the other tool's idle is still released late.
+      expect(permissionIdles(TOOL)).toHaveLength(0);
+      expect(permissionIdles(OTHER_TOOL)).toHaveLength(1);
+    });
+
     it('passes a permission idle that names no tool at once', () => {
       ingest({ ts: 11, type: EventType.Idle, detail: IdleReason.Permission });
       expect(harness.activities.at(-1)).toBe('permission');
