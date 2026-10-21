@@ -13,7 +13,7 @@ import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
-import { WorktreeManager } from '../git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval } from '../git/worktree-manager';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import {
   propagateBoardProfileChange,
@@ -207,6 +207,10 @@ export function buildCommandContextForProject(
         await reapTaskLeftovers(ipcContext, projectPath, [{ id: task.id, worktree_path: worktreePath, title: task.title }]);
         // Best-effort worktree + branch cleanup
         if (!worktreePath) return;
+        // Outside the queue, as the UI delete does (`deleteTaskWorktree`): it
+        // waits for a creation still setting this path up, which a removal
+        // inside the queue would refuse, leaving the worktree and branch behind.
+        await prepareWorktreeForRemoval(worktreePath, 'thorough');
         const worktreeManager = new WorktreeManager(projectPath);
         await worktreeManager.withLock(async () => {
           const removed = await worktreeManager.removeWorktree(worktreePath);

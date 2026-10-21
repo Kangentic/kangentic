@@ -648,4 +648,34 @@ describe('PROJECT_DELETE reaps every task, archived ones included', () => {
     const reapRegion = body.slice(exitsAwaited, worktreeRemoval);
     expect(reapRegion).toContain('await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks])');
   });
+
+  // A new worktree's setup script runs after the per-project git queue, and a
+  // removal INSIDE the queue refuses a path a creation still holds. So the
+  // delete waits for that creation first, outside the queue, and only then
+  // takes the queue to detach the worktree. Dropping the call leaves the
+  // worktree behind for a creation still running; dropping the await, or
+  // moving the call inside `withLock`, brings the refusal back.
+  it('waits for a creation still setting a worktree up after the reap, outside the git queue, before it detaches that worktree', () => {
+    const projectsSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/projects.ts'), 'utf8');
+    const bodyStart = projectsSource.indexOf('export async function cleanupProject(');
+    expect(bodyStart).toBeGreaterThan(-1);
+    const fromBody = projectsSource.slice(bodyStart);
+    // Bound the scan to cleanupProject itself: the next top-level export ends it.
+    const nextExport = fromBody.indexOf('\nexport ', 1);
+    const body = nextExport === -1 ? fromBody : fromBody.slice(0, nextExport);
+
+    const reap = body.indexOf('await reapTaskLeftovers(');
+    const creationWait = body.indexOf("await prepareWorktreeForRemoval(task.worktree_path, 'thorough')");
+    const queuedRemoval = body.indexOf('worktreeManager.withLock(');
+    const worktreeRemoval = body.indexOf('worktreeManager.removeWorktree(');
+    expect(reap).toBeGreaterThan(-1);
+    expect(creationWait).toBeGreaterThan(-1);
+    expect(queuedRemoval).toBeGreaterThan(-1);
+    expect(worktreeRemoval).toBeGreaterThan(-1);
+
+    expect(creationWait).toBeGreaterThan(reap);
+    // Outside the queue: the wait comes before the lock is taken, not inside it.
+    expect(queuedRemoval).toBeGreaterThan(creationWait);
+    expect(worktreeRemoval).toBeGreaterThan(queuedRemoval);
+  });
 });

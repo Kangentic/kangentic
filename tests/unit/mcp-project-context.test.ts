@@ -28,6 +28,7 @@ vi.mock('../../src/main/ipc/handlers/task-move', () => ({
 }));
 
 vi.mock('../../src/main/git/worktree-manager', () => ({
+  prepareWorktreeForRemoval: vi.fn(() => Promise.resolve()),
   WorktreeManager: vi.fn().mockImplementation(() => ({
     withLock: vi.fn(() => Promise.resolve()),
     removeWorktree: vi.fn(() => Promise.resolve(false)),
@@ -107,7 +108,7 @@ import {
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
 import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
-import { WorktreeManager } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
 
@@ -1190,6 +1191,133 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       // The title travels with it, for the leftover-process toast.
       expect(reapTaskLeftovers).toHaveBeenCalledWith(ipcContext, PROJECT_PATH, [{ id: 'task-3', worktree_path: null, title: 'Task Three' }]);
     });
+    expect(WorktreeManager).not.toHaveBeenCalled();
+  });
+
+  // Pins the `await prepareWorktreeForRemoval(worktreePath, 'thorough')` in
+  // onTaskDeleted. A new worktree's setup script runs after the git queue, and
+  // a removal inside the queue refuses a path a creation still holds, so the
+  // delete would leave the worktree and its branch behind. The wait therefore
+  // sits OUTSIDE the queue: after the reap, before the worktree lock. Dropping
+  // the call leaves the timeline without it; dropping the await takes the lock
+  // while the creation is still pending.
+  it('waits, outside the git queue, for a creation still setting the worktree up, after the reap and before the lock', async () => {
+    const timeline: string[] = [];
+    const creationSettled = createDeferred();
+    const worktreePath = '/projects/example/.kangentic/worktrees/task-1';
+
+    const withLockMock = vi.fn(async (fn: () => Promise<void>) => {
+      timeline.push('withLock:enter');
+      await fn();
+      timeline.push('withLock:exit');
+    });
+    const removeWorktreeMock = vi.fn(async () => {
+      timeline.push('removeWorktree');
+      return false;
+    });
+    // A plain function expression for the same reason as above: `new` on an
+    // arrow function throws.
+    vi.mocked(WorktreeManager).mockImplementationOnce(function mockWorktreeManager() {
+      return {
+        withLock: withLockMock,
+        removeWorktree: removeWorktreeMock,
+        pruneWorktrees: vi.fn(async () => {}),
+        removeBranch: vi.fn(async () => {}),
+      };
+    } as unknown as typeof WorktreeManager);
+    vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
+      timeline.push('reapTaskLeftovers');
+    });
+    vi.mocked(prepareWorktreeForRemoval).mockImplementationOnce(async () => {
+      timeline.push('prepareWorktreeForRemoval');
+      await creationSettled.promise;
+    });
+
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    context.onTaskDeleted({
+      id: 'task-1',
+      title: 'Task One',
+      session_id: null,
+      worktree_path: worktreePath,
+      branch_name: null,
+    } as never);
+
+    try {
+      await vi.waitFor(() => {
+        expect(timeline).toContain('prepareWorktreeForRemoval');
+      });
+      // A whole macrotask, not a few microtask ticks: the reverted code (no
+      // await) reaches the lock and the removal through several awaited steps.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(timeline).toEqual(['reapTaskLeftovers', 'prepareWorktreeForRemoval']);
+      expect(withLockMock).not.toHaveBeenCalled();
+      expect(removeWorktreeMock).not.toHaveBeenCalled();
+    } finally {
+      creationSettled.resolve();
+    }
+
+    await vi.waitFor(() => {
+      expect(timeline).toContain('withLock:exit');
+    });
+    expect(prepareWorktreeForRemoval).toHaveBeenCalledTimes(1);
+    expect(prepareWorktreeForRemoval).toHaveBeenCalledWith(worktreePath, 'thorough');
+    expect(timeline).toEqual([
+      'reapTaskLeftovers',
+      'prepareWorktreeForRemoval',
+      'withLock:enter',
+      'removeWorktree',
+      'withLock:exit',
+    ]);
+  });
+
+  it('does not wait on a creation for a deleted task that has no worktree', async () => {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged: vi.fn() },
+      configManager: { getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+      sessionManager: {
+        kill: vi.fn(),
+        awaitExit: vi.fn(() => Promise.resolve()),
+        remove: vi.fn(),
+        removeByTaskId: vi.fn(() => Promise.resolve()),
+      },
+    } as unknown as IpcContext;
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    context.onTaskDeleted({
+      id: 'task-4',
+      title: 'Task Four',
+      session_id: null,
+      worktree_path: null,
+      branch_name: null,
+    } as never);
+
+    await vi.waitFor(() => {
+      expect(reapTaskLeftovers).toHaveBeenCalledTimes(1);
+    });
+    // A whole macrotask: the waitFor above can return while the teardown is
+    // still parked on the reap's await, before it reaches the worktree guard,
+    // so without this turn the negative below would hold for the wrong reason.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(prepareWorktreeForRemoval).not.toHaveBeenCalled();
     expect(WorktreeManager).not.toHaveBeenCalled();
   });
 });

@@ -94,7 +94,7 @@ describe('spawn-progress queryable map', () => {
 
   it('createProgressCallback resolves the init-script phase to its user-facing label', () => {
     // Regression guard for the new PHASE_LABELS entry added with the
-    // Post-Worktree Script feature. createWorktree calls onProgress('init-script')
+    // Post-Worktree Script feature. setUpWorktree calls onProgress('init-script')
     // while runInitScript runs; the renderer displays the resolved label so the
     // card shows "Running setup script..." during a long npm install.
     const { window } = makeWindow();
