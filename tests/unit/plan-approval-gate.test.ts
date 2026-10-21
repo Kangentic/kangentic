@@ -8,6 +8,7 @@
  * permission idle 24 to 31 ms BEFORE the approver's marker, then the plan
  * exit's PostToolUse 130 to 170 ms after the marker. The marker-first order
  * was not observed but the two hooks run in parallel, so it is pinned too.
+ * The same holds for a tool the hook approves (task #870), pinned below.
  *
  * `onActivityChange` is what the desktop notifier, the phone's push notifier
  * and the card all read, so "never enters permission" here is "no amber, no
@@ -17,7 +18,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
-import { PLAN_APPROVAL_HOLD_MS } from '../../src/main/activity-engine/plan-approval-gate';
+import {
+  PLAN_APPROVAL_HOLD_MS,
+  TOOL_APPROVAL_HOLD_MS,
+  TOOL_APPROVAL_MARKER_WINDOW_MS,
+  TOOL_APPROVAL_WAIT_MS,
+} from '../../src/main/activity-engine/plan-approval-gate';
+import { mayApproveClaudePlanTool } from '../../src/main/agent/adapters/claude/plan-tool-approval';
 import { AgentTool, EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
@@ -47,6 +54,8 @@ function makeHarness(): Harness {
     isSessionRunning: () => true,
     onTurnStarted: (_sessionId, _turnStartedAt, cause) => turnStarts.push(cause),
     approvesPlanAutomatically: () => approves,
+    // The Claude adapter's own answer, as SessionManager reads it off the session.
+    mayApprovePlanTool: (_sessionId, toolName) => mayApproveClaudePlanTool(toolName),
   }, {
     disableBgShellWatcher: true,
     activityEngineOptions: { idleStabilityWindowMs: 0, staleThinkingTimeoutMs: 600_000 },
@@ -142,6 +151,234 @@ describe('plan approval gate', () => {
     harness.telemetry.removeSession(SESSION);
     vi.advanceTimersByTime(PLAN_APPROVAL_HOLD_MS * 2);
     expect(harness.activities).not.toContain('permission');
+  });
+
+  describe('a tool the plan approval hook answers (task #870)', () => {
+    // A third-party MCP tool with no read-only annotation: plan mode prompts
+    // for it, and the hook answers when an allow rule names it. On Claude Code
+    // 2.1.306 the approving hook started 5 to 114 ms after the catch-all one.
+    const TOOL = 'mcp__docs__search';
+    const toolStart = (toolId: string, subagentId?: string): SessionEvent =>
+      ({ ts: 10, type: EventType.ToolStart, tool: TOOL, toolId, ...(subagentId ? { subagentId } : {}) });
+    const toolEnd = (toolId: string, subagentId?: string): SessionEvent =>
+      ({ ts: 12, type: EventType.ToolEnd, tool: TOOL, toolId, ...(subagentId ? { subagentId } : {}) });
+    const toolIdle: SessionEvent = { ts: 11, type: EventType.Idle, detail: IdleReason.Permission, tool: TOOL };
+    const toolMarker: SessionEvent = { ts: 11, type: EventType.ToolApprovalSent, tool: TOOL };
+
+    it('drops the idle that arrives before the marker, once the tool ends', () => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      ingest(toolEnd('toolu_a'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+      expect(harness.events.some((event) => event.type === EventType.Idle && event.detail === IdleReason.Permission)).toBe(false);
+    });
+
+    it('drops the idle that arrives after the marker', () => {
+      ingest(toolStart('toolu_a'), toolMarker, toolIdle);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      ingest(toolEnd('toolu_a'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('drops an answered idle when the call fails, as the failure hook reports it', () => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker,
+        { ts: 12, type: EventType.ToolEnd, tool: TOOL, toolId: 'toolu_a', detail: 'MCP error -32603: upstream timeout' });
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('drops an answered idle when the call is interrupted', () => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker, { ts: 12, type: EventType.Interrupted, tool: TOOL, toolId: 'toolu_a' });
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('lets the idle through after the wait when no marker comes, so a prompt the hook left alone shows', () => {
+      ingest(toolStart('toolu_a'), toolIdle);
+      expect(harness.activities).not.toContain('permission');
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('lets an answered idle through within a minute when the tool never ends, as a prompt the CLI kept open', () => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker);
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS - 1);
+      expect(harness.activities).not.toContain('permission');
+      vi.advanceTimersByTime(2);
+      expect(harness.activities.at(-1)).toBe('permission');
+      expect(TOOL_APPROVAL_HOLD_MS).toBeLessThan(60_000);
+    });
+
+    it('pairs two waits on the same tool in order, a subagent\'s beside its parent\'s', () => {
+      ingest(toolStart('toolu_main'), toolStart('toolu_sub', 'agent-1'), toolIdle, toolIdle, toolMarker, toolMarker);
+      ingest(toolEnd('toolu_main'), toolEnd('toolu_sub', 'agent-1'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('lets the second of two waits through when only the first is answered', () => {
+      ingest(toolStart('toolu_main'), toolStart('toolu_sub', 'agent-1'), toolIdle, toolIdle, toolMarker);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('spends a marker that came before its idle only within its window', () => {
+      ingest(toolStart('toolu_a'), toolMarker);
+      vi.advanceTimersByTime(TOOL_APPROVAL_MARKER_WINDOW_MS + 1);
+      ingest(toolIdle);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('holds nothing for a session whose decision leaves plans to the user', () => {
+      harness.setApproves(false);
+      ingest(toolStart('toolu_a'), toolIdle);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('holds nothing for a tool the agent\'s hook never answers', () => {
+      ingest(
+        { ts: 10, type: EventType.ToolStart, tool: 'mcp__kangentic__kangentic_move_task', toolId: 'toolu_k' },
+        { ts: 11, type: EventType.Idle, detail: IdleReason.Permission, tool: 'mcp__kangentic__kangentic_move_task' },
+      );
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('drops a held tool idle with the agent\'s end, and holds nothing after it', () => {
+      ingest(toolStart('toolu_a'), toolIdle);
+      harness.telemetry.emitSessionEnd(SESSION);
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    // Every permission idle that reached the rest of the pipeline. A held idle
+    // is never in the log until it is released, so a late release shows here
+    // even where the engine ignores it (an idle session, a removed one).
+    const permissionIdles = (tool?: string): SessionEvent[] => harness.events.filter((event) =>
+      event.type === EventType.Idle && event.detail === IdleReason.Permission && (tool === undefined || event.tool === tool));
+
+    const OTHER_TOOL = 'mcp__docs__other';
+    const otherToolStart: SessionEvent = { ts: 10, type: EventType.ToolStart, tool: OTHER_TOOL, toolId: 'toolu_other' };
+    const otherToolIdle: SessionEvent = { ts: 11, type: EventType.Idle, detail: IdleReason.Permission, tool: OTHER_TOOL };
+
+    const turnBoundaries: Array<[string, SessionEvent]> = [
+      ['a Stop idle', { ts: 20, type: EventType.Idle }],
+      ['a prompt', { ts: 20, type: EventType.Prompt }],
+      ['a failed turn', { ts: 20, type: EventType.TurnFailed }],
+      ['an interrupt that names no tool', { ts: 20, type: EventType.Interrupted }],
+    ];
+
+    it.each(turnBoundaries)('%s drops an idle the hook already answered', (_boundaryName, boundary) => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker, boundary);
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it.each(turnBoundaries)('%s drops an idle still waiting for its marker', (_boundaryName, boundary) => {
+      ingest(toolStart('toolu_a'), toolIdle, boundary);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('drops a marker that came before its idle when the turn ends, so it cannot approve the next turn\'s idle', () => {
+      ingest(toolStart('toolu_a'), toolMarker, { ts: 20, type: EventType.Idle });
+      ingest({ ts: 21, type: EventType.Prompt }, toolStart('toolu_b'), toolIdle);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      expect(permissionIdles(TOOL)).toHaveLength(1);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    // Read lazily: `harness` is a fresh one per test.
+    const sessionClears: Array<[string, () => void]> = [
+      ['removing the session', () => harness.telemetry.removeSession(SESSION)],
+      ['clearing its tracking', () => harness.telemetry.clearSessionTracking(SESSION)],
+    ];
+
+    it.each(sessionClears)('releases an idle still waiting for its marker nowhere after %s', (_clearName, clearSession) => {
+      ingest(toolStart('toolu_a'), toolIdle);
+      clearSession();
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it.each(sessionClears)('releases an answered idle nowhere after %s', (_clearName, clearSession) => {
+      ingest(toolStart('toolu_a'), toolIdle, toolMarker);
+      clearSession();
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('holds an idle on a fresh marker even where the decision no longer approves plans', () => {
+      ingest(toolStart('toolu_a'), toolMarker);
+      harness.setApproves(false);
+      ingest(toolIdle);
+      // Past the marker wait: the idle waits for the ToolEnd, not for a marker.
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      ingest(toolEnd('toolu_a'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    // Also pinned by 'holds nothing for a session whose decision leaves plans
+    // to the user' above, here as the other half of the marker case.
+    it('passes the idle at once where the decision does not approve plans and no marker came', () => {
+      harness.setApproves(false);
+      ingest(toolStart('toolu_a'), toolIdle);
+      expect(permissionIdles(TOOL)).toHaveLength(1);
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('answers an idle of a tool with its own marker only, and keeps another tool\'s marker for its idle', () => {
+      ingest(toolStart('toolu_a'), otherToolStart, toolMarker, otherToolIdle);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      // The other tool's idle found no marker of its own: released after the wait.
+      expect(permissionIdles(OTHER_TOOL)).toHaveLength(1);
+      // The first tool's marker is still fresh, so its idle is held, not released.
+      ingest(toolIdle);
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      expect(permissionIdles(TOOL)).toHaveLength(0);
+      ingest(toolEnd('toolu_a'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles(TOOL)).toHaveLength(0);
+    });
+
+    it('pairs two markers that came first with two idles of the same tool', () => {
+      ingest(toolStart('toolu_main'), toolStart('toolu_sub', 'agent-1'), toolMarker, toolMarker, toolIdle, toolIdle);
+      // Past the marker wait: neither idle waits for a marker any more.
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      ingest(toolEnd('toolu_main'), toolEnd('toolu_sub', 'agent-1'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_HOLD_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('drops an idle whose prompt the user answered within the wait, with no marker', () => {
+      ingest(toolStart('toolu_a'), toolIdle, toolEnd('toolu_a'));
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS * 2);
+      expect(permissionIdles()).toHaveLength(0);
+      expect(harness.activities).not.toContain('permission');
+    });
+
+    it('passes a permission idle that names no tool at once', () => {
+      ingest({ ts: 11, type: EventType.Idle, detail: IdleReason.Permission });
+      expect(harness.activities.at(-1)).toBe('permission');
+    });
+
+    it('does not take a permission idle that names no tool for the end of a turn', () => {
+      ingest(toolStart('toolu_a'), toolIdle, { ts: 12, type: EventType.Idle, detail: IdleReason.Permission });
+      vi.advanceTimersByTime(TOOL_APPROVAL_WAIT_MS + 1);
+      // The held idle is still held through it and is released after its wait.
+      expect(permissionIdles(TOOL)).toHaveLength(1);
+    });
   });
 
   // A real auto-approved plan, captured from a Claude Code 2.1.303 session in a

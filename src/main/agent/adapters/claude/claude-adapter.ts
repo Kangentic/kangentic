@@ -24,6 +24,7 @@ import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
+import { mayApproveClaudePlanTool } from './plan-tool-approval';
 import { runCliPrintSummarize, buildSummarizePrompt, SUMMARIZE_JSON_OUTPUT_BUDGET } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -312,7 +313,8 @@ export class ClaudeAdapter implements AgentAdapter {
   // A PermissionRequest hook matched to ExitPlanMode answers the plan prompt
   // alone (hook-manager.ts, CLAUDE_PLAN_APPROVAL_SPEC), and PostToolUse fires
   // for ExitPlanMode only once a plan is approved. Probed on 2.1.302: the
-  // approver never ran for AskUserQuestion, whose dialog still showed.
+  // approver never ran for AskUserQuestion, whose dialog still showed. A second
+  // entry matched to MCP tools answers an allowed one (plan-tool-approval.ts).
   readonly supportsPlanAutoApproval = true;
   // Background shells (task #857): PreToolUse/PostToolUse remaps in
   // hook-manager.ts report a Bash or PowerShell `run_in_background` launch,
@@ -516,6 +518,15 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   consoleCloseIsGraceful(platform: NodeJS.Platform): boolean {
     return platform === 'win32' || platform === 'linux';
+  }
+
+  /**
+   * Any MCP tool but Kangentic's own: the most a session's allow rules can hand
+   * the plan tool approval hook (plan-tool-approval.ts). Which of them the hook
+   * answers is the session's own rules, decided in the hook.
+   */
+  mayApprovePlanTool(toolName: string): boolean {
+    return mayApproveClaudePlanTool(toolName);
   }
 
   detectFirstOutput(data: string): boolean {

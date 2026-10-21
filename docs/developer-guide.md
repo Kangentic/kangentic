@@ -43,7 +43,7 @@ src/
       trust-manager.ts     # Pre-populates ~/.claude.json trust entries for worktrees
       status-bridge.js     # Hook script: writes usage data to status.json
       event-bridge.js      # Hook script: appends tool events to events.jsonl
-      plan-approval-bridge.js # Hook script: approves a plan when the session's plan-approval.json says to
+      plan-approval-bridge.js # Hook script: approves a plan, and an allowed MCP tool plan mode asks about, when the session's plan-approval.json says to
       background-shell-hint-bridge.js # Hook script: tells the agent a background command keeps its task working
     config/
       config-manager.ts    # Three-tier config: global -> project overrides -> effective

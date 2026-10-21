@@ -486,11 +486,12 @@ export interface AgentAdapter {
   /**
    * True when every command this adapter builds registers Kangentic's plan
    * approval hook (`plan-approval-bridge.js`, through `buildPlanApprovalCommand`
-   * in `shared/plan-approval-hook.ts`) on the CLI's plan approval prompt, and on
-   * nothing else. The hook reads the session's decision file, so a plan column
-   * set to Automatic approves its plans; a question the agent asks the user
-   * always waits. Absent: the Column Manager disables Automatic for this agent
-   * and its plans always wait for the user.
+   * in `shared/plan-approval-hook.ts`) on the CLI's plan approval prompt. The
+   * hook reads the session's decision file, so a plan column set to Automatic
+   * approves its plans; a question the agent asks the user always waits. The
+   * adapter may also register it on prompts for tools the project allows (see
+   * `mayApprovePlanTool`), never on any other prompt. Absent: the Column Manager
+   * disables Automatic for this agent and its plans always wait for the user.
    *
    * Declare it only when the CLI's hook can answer the plan prompt alone, with
    * the plan exit's own completion (`AgentTool.ExitPlanMode` on a ToolEnd)
@@ -650,6 +651,21 @@ export interface AgentAdapter {
    * Default (if not implemented): false.
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
+
+  /**
+   * Optional: whether this adapter's plan tool approval hook may answer a
+   * permission prompt for `toolName` (task #870). An adapter declares it when
+   * its CLI's plan mode asks about tools the project allows, and its builder
+   * registers the plan approval bridge with a `PlanToolApprovalHookSpec` that
+   * answers them while the plan is approved automatically. The activity gate
+   * holds such a prompt's permission idle briefly for the hook's marker, so an
+   * approved call never reads as "needs you". Every other prompt, a question
+   * the agent asks included, passes at once. Only the hook decides; this only
+   * names the candidates, so it may be broader than any one session's rules.
+   *
+   * Default (if not implemented): false.
+   */
+  mayApprovePlanTool?(toolName: string): boolean;
 
   /**
    * Optional: this agent reports the background commands it starts (task #859).

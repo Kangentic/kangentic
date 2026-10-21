@@ -58,6 +58,34 @@ export interface PlanApprovalHookSpec {
 }
 
 /**
+ * The same bridge, registered on a second prompt: a tool the project allows,
+ * which the CLI's plan mode asks about anyway (an MCP tool with no read-only
+ * annotation, for Claude). The bridge answers it only while the decision file
+ * approves the plan, so it covers exactly the sessions nobody watches.
+ *
+ * The bridge tells the two specs apart by `tools`/`prefixes`, which only this
+ * one carries.
+ */
+export interface PlanToolApprovalHookSpec {
+  /** The stdin field naming the tool the prompt is for. */
+  toolField: string;
+  /** The stdin field holding the session's permission mode. */
+  modeField: string;
+  /** The modes the bridge answers in, in the CLI's own words. Any other mode is left alone. */
+  modes: string[];
+  /** Tools answered by exact name. */
+  tools: string[];
+  /** Tools answered when their name starts with one of these. */
+  prefixes: string[];
+  /** Tools never answered, by exact name, whatever `tools` and `prefixes` say. */
+  excludedTools: string[];
+  /** Tools never answered when their name starts with one of these. */
+  excludedPrefixes: string[];
+  /** What the hook prints to approve. No placeholders: the tool's input is not echoed. */
+  reply: PlanApprovalReplyValue;
+}
+
+/**
  * Build the hook command: `node "<bridge>" "<decision>" "<events>" <base64 spec>`,
  * each path quoted for the adapter's declared `windowsShell`.
  */
@@ -66,7 +94,7 @@ export function buildPlanApprovalCommand(
   bridgePath: string,
   decisionPath: string,
   eventsPath: string,
-  spec: PlanApprovalHookSpec,
+  spec: PlanApprovalHookSpec | PlanToolApprovalHookSpec,
 ): string {
   // Base64 keeps the spec one shell token whatever it holds, as the event
   // bridge's directives do (directive-builders.ts).

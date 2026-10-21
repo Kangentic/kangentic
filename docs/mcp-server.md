@@ -142,8 +142,10 @@ in `src/main/agent/mcp-http/annotations.ts`: read-only tools carry
 (`create` / `update` / `delete` / `move` / `promote` / `link`) and the `kangentic_browser_*` tools
 that change the loaded page (navigate, click, type, keypress, drag, eval). This is load-bearing for
 plan mode: Claude Code auto-approves read-only-annotated tools without a permission prompt while
-planning, so the plan-mode auto-approval surface is exactly the read-only set. Mutating tools still
-prompt in plan mode by design (allow rules do not punch through the plan-mode gate). The
+planning, so the plan-mode auto-approval surface for Kangentic's own tools is exactly the read-only
+set. Its mutating tools still prompt in plan mode by design (allow rules do not punch through the
+plan-mode gate, and the plan tool approval hook, which answers other servers' allowed tools under
+automatic plan approval, never covers `mcp__kangentic__*`). The
 `tests/unit/mcp-tool-list-parity.test.ts` guard fails the build if a tool is registered without one
 of the two shared annotation constants, and separately checks the board/backlog verb prefixes and
 the browser capability tiers are annotated mutating.
@@ -2293,7 +2295,7 @@ To point an external MCP client (a manually-run remote OpenCode server's own `op
 Claude Code sessions Kangentic spawns never see a permission prompt for Kangentic's own tools, and Grok Build's do not either (`--allow "MCPTool(kangentic__*)"`). Every other agent applies its own approval rules to Kangentic's tools as to any MCP server, so it may ask before a call in its terminal. For Claude, three layers cover the axes (which mode, which project):
 
 1. **Auto-allow injection (all projects, default / acceptEdits mode).** Whenever the MCP server is attached, `CommandBuilder.createMergedSettings()` appends `mcp__kangentic` to `permissions.allow` in the per-session merged `settings.json` (`.kangentic/sessions/<sessionId>/settings.json`). This is gated on the same condition as the session `mcp.json` write and is append-if-absent, so a committed project rule or a Claude "always allow" grant is not duplicated. It lives only in the regenerated per-session settings, never written back to the user's own settings files, and an explicit user `deny` of `mcp__kangentic` still wins (deny outranks allow). So the no-prompt behavior holds for every project, not just ones that committed a rule.
-2. **Read-only annotations (all projects, plan mode).** Allow rules do not punch through plan mode. Plan-mode auto-approval comes from the tools' `readOnlyHint` annotations (see the Tool annotations note under Available Tools): read-only tools run without a prompt while planning; mutating tools still prompt, by design.
+2. **Read-only annotations (all projects, plan mode).** Allow rules do not punch through plan mode. Plan-mode auto-approval comes from the tools' `readOnlyHint` annotations (see the Tool annotations note under Available Tools): read-only tools run without a prompt while planning; mutating tools still prompt, by design. While a plan is approved automatically, the plan approval hook answers a planning prompt for ANOTHER server's tool the allow rules in the project's or the user's Claude settings name, so an unattended Planning session does not stall on it ([agent-integration.md](agent-integration.md#plan-approval-bridgejs)). It always leaves Kangentic's own tools out, so this layer is unchanged.
 3. **Auto-mode classifier allow rule (all projects, auto mode).** `--permission-mode auto` runs its OWN natural-language classifier that does not honor `permissions.allow`, so the same `createMergedSettings()` also appends a plain-language rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) to `autoMode.allow`, seeding the array with `$defaults` when absent so the classifier's built-in rules are preserved. Without it a headless, board-driven auto-mode session (e.g. a Code Review column) could soft-deny Kangentic's own board/session tools even though they are allowed by default. Append-if-absent, per-session only, and the built-in `$defaults` stay in effect.
 
 The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans running `claude` outside Kangentic; inside Kangentic the injection makes it redundant but harmless (deduped).
@@ -2311,7 +2313,7 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_delete_column`, `kangentic_remove_task_attachment`, `kangentic_move_task`, and `kangentic_move_task_to_project` mutate the board. Agents must invoke them by name; there is no implicit fallback.
 - **Column deletion never touches a task** - `kangentic_delete_column` refuses a column that still holds tasks, and refuses a role column (To Do / Done). Emptying a column is the caller's explicit, separate step; there is no `force` or bulk-move escape hatch.
 - **Cross-project relocation is scoped to To Do** - `kangentic_move_task_to_project` refuses to relocate a task outside the To Do column, since only a To Do task is guaranteed to have no live session or worktree that would be stranded in the source project's repo.
-- **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.
+- **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface for Kangentic's own tools is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode, and even under automatic plan approval: the plan tool approval hook excludes `mcp__kangentic__*`.
 
 ## Build
 

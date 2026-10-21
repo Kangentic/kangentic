@@ -123,6 +123,13 @@ interface SessionTelemetryCallbacks {
    */
   approvesPlanAutomatically?(sessionId: string): boolean;
   /**
+   * Whether the session's agent's plan tool approval hook may answer a prompt
+   * for this tool (`AgentParser.mayApprovePlanTool`), so the gate holds that
+   * tool's permission idle for the hook's marker. Asked only while
+   * `approvesPlanAutomatically` holds. Optional, and false when unwired.
+   */
+  mayApprovePlanTool?(sessionId: string, toolName: string): boolean;
+  /**
    * May the bg-shell watcher's agent-absence sweep judge this session? See
    * `SessionManager.isAgentAbsenceCandidate` for the arms. Optional, and it
    * defaults to FALSE below: unwired, the sweep never fires at all.
@@ -259,6 +266,7 @@ export class SessionTelemetry {
     this.callbacks = callbacks;
     this.planApprovalGate = new PlanApprovalGate({
       approvesPlans: (sessionId) => callbacks.approvesPlanAutomatically?.(sessionId) ?? false,
+      mayApproveTool: (sessionId, toolName) => callbacks.mayApprovePlanTool?.(sessionId, toolName) ?? false,
       // A held idle the approver never answered: it reaches the pipeline late,
       // and the session shows as waiting on the user, as it is.
       release: (sessionId, event) => this.processAdmittedEvents(sessionId, [event]),
