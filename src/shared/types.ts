@@ -4893,6 +4893,15 @@ export interface HostMemorySample {
   /** Linux MemAvailable: the kernel's estimate of memory available without
    *  swapping, the honest pressure figure there. Null on every other platform. */
   physicalAvailableBytes: number | null;
+  /** Linux swap total and free. The low-memory pause reads RAM plus swap there
+   *  (`memoryHeadroom` in host-memory.ts). Null on every other platform, and
+   *  absent from samples recorded before these fields existed. */
+  swapTotalBytes?: number | null;
+  swapFreeBytes?: number | null;
+  /** macOS kernel memory pressure level (`kern.memorystatus_vm_pressure_level`):
+   *  1 normal, 2 warn, 4 critical. Read off the main thread and reported a tick
+   *  late. Null when unknown and on every other platform. */
+  memoryPressureLevel?: number | null;
 }
 
 /** Pushed when host commit headroom crosses below the warning threshold (an
@@ -4919,6 +4928,24 @@ export interface HostMemoryPressureEvent {
  *  Fires once per recovery, never on a healthy tick with no prior warning. */
 export interface HostMemoryRecoveryEvent {
   sample: HostMemorySample;
+}
+
+/**
+ * Pushed each time low memory paused an agent that was waiting on the user
+ * (`src/main/diagnostics/idle-agent-pause.ts`). One push per agent, so the
+ * renderer's toast counts them and its Review list names them. Every
+ * platform, unlike the pressure warning.
+ */
+export interface HostMemoryAgentPausedEvent {
+  /** When the pause landed, UTC ISO 8601. */
+  pausedAt: string;
+  taskId: string;
+  projectId: string;
+  /** Null when the task could not be read (its project closed meanwhile). */
+  taskTitle: string | null;
+  projectName: string | null;
+  /** How long the agent had waited on the user when it was paused. */
+  waitedMs: number;
 }
 
 // === Backlog ===
@@ -7154,6 +7181,12 @@ export interface ElectronAPI {
      */
     seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
     /**
+     * Read every host memory sample as low memory (or stop), so the
+     * low-memory pause can be watched without exhausting the machine. Turning
+     * it on also evaluates the last sample at once instead of waiting a tick.
+     */
+    simulateLowMemory: (on: boolean) => Promise<void>;
+    /**
      * Seed a cluster-structured synthetic conversation corpus, the fallback
      * for a machine with no real index to mirror. Vectors are written
      * directly rather than inferred, all but the newest `embeddingBacklog`
@@ -7843,6 +7876,8 @@ export interface ElectronAPI {
   hostMemory: {
     onPressure: (callback: (event: HostMemoryPressureEvent) => void) => () => void;
     onRecovery: (callback: (event: HostMemoryRecoveryEvent) => void) => () => void;
+    /** Low memory paused an agent that was waiting on the user. One push per agent. */
+    onAgentPaused: (callback: (event: HostMemoryAgentPausedEvent) => void) => () => void;
   };
 
   // Graphics state for THIS launch (Sentry DESKTOP-18/DESKTOP-W).

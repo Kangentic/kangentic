@@ -85,6 +85,11 @@ declare global {
     /** Fires the host-memory-recovery push to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
     __mockFireHostMemoryRecovery?: (event: import('../../src/shared/types').HostMemoryRecoveryEvent) => void;
 
+    /** Subscribers registered via `hostMemory.onAgentPaused`; fired by `__mockFireHostMemoryAgentPaused`. Installed eagerly at mock-bootstrap time. */
+    __mockHostMemoryAgentPausedListeners?: Array<(event: import('../../src/shared/types').HostMemoryAgentPausedEvent) => void>;
+    /** Fires the low-memory agent-paused push (one agent per call) to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
+    __mockFireHostMemoryAgentPaused?: (event: import('../../src/shared/types').HostMemoryAgentPausedEvent) => void;
+
     /** Pushes `config:writeFailed`, which App.tsx toasts verbatim at variant 'error', duration 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
     __mockFireConfigWriteFailed?: (message: string) => void;
 

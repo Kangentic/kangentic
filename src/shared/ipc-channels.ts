@@ -26,6 +26,7 @@ export const IPC = {
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
   DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
   DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
+  DEV_SIMULATE_LOW_MEMORY: 'dev:simulateLowMemory',
   DEV_SEED_KNOWLEDGE_GRAPH: 'dev:seedKnowledgeGraph',
   DEV_SEED_KNOWLEDGE_GRAPH_REAL: 'dev:seedKnowledgeGraphReal',
   DEV_SEED_KNOWLEDGE_GRAPH_DEMO: 'dev:seedKnowledgeGraphDemo',
@@ -588,6 +589,10 @@ export const IPC = {
   // Host memory pressure (Sentry DESKTOP-16; see src/main/diagnostics/host-memory.ts)
   HOST_MEMORY_PRESSURE: 'hostMemory:pressure',
   HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
+  // Low memory paused an agent that was waiting on the user, one push per
+  // agent (src/main/diagnostics/idle-agent-pause.ts). Every platform, unlike
+  // the two above, which carry the Windows-only warning.
+  HOST_MEMORY_AGENT_PAUSED: 'hostMemory:agentPaused',
 
   // How this launch is rendering, and whether the user still needs telling
   // (Sentry DESKTOP-18/DESKTOP-W; src/main/diagnostics/gpu-health.ts)

@@ -26,16 +26,34 @@
  * the kernel's MemAvailable, its estimate of what can be allocated without
  * swapping. `free` there is MemFree, which excludes page cache and other
  * reclaimable memory and so reads near zero on a perfectly healthy machine,
- * which made the recorded figure useless for judging a Linux crash. It is a
- * reading only: no Linux pressure warning is raised from it, because no
- * threshold has been measured there.
+ * which made the recorded figure useless for judging a Linux crash. No Linux
+ * pressure WARNING is raised from it, because no threshold has been measured
+ * there; the warning toast stays Windows-only.
+ *
+ * The low-memory pause (idle-agent-pause.ts) reads every platform, each by its
+ * own signal (`memoryHeadroom`):
+ *   - Windows: commit headroom, the same figure the warning reads.
+ *   - Linux: RAM plus swap, `available + swapFree` against `total + swapTotal`,
+ *     through the same threshold and recovery line. MemAvailable alone reads
+ *     low on a healthy machine that keeps cold pages in swap.
+ *   - macOS: the kernel's own verdict, `kern.memorystatus_vm_pressure_level`
+ *     (1 normal, 2 warn, 4 critical). No byte figure there is trustworthy:
+ *     compressed memory and swap grow on demand. The level is read through
+ *     `sysctl` off the main thread after each tick and reported on the next,
+ *     so it is one tick late; a reading older than two ticks counts as unknown.
  */
 
 import type { HostMemorySample } from '../../shared/types';
+import { execFileAsync } from '../utility-process/off-main-exec';
 
 export type { HostMemorySample };
 
 const BYTES_PER_KB = 1024;
+
+export interface SampleHostMemoryOptions {
+  /** The cached macOS pressure level (see `createPressureLevelReader`). */
+  memoryPressureLevel?: number | null;
+}
 
 /** Only Windows' swapTotal/swapFree have been verified to mean commit
  *  limit/remaining (see the module header). Treat every other platform as
@@ -44,9 +62,10 @@ function hasVerifiedCommitReading(platform: NodeJS.Platform): boolean {
   return platform === 'win32';
 }
 
-export function sampleHostMemory(): HostMemorySample {
+export function sampleHostMemory(options: SampleHostMemoryOptions = {}): HostMemorySample {
   const info = process.getSystemMemoryInfo();
   const commitReading = hasVerifiedCommitReading(process.platform);
+  const isLinux = process.platform === 'linux';
   return {
     ts: new Date().toISOString(),
     platform: process.platform,
@@ -54,8 +73,10 @@ export function sampleHostMemory(): HostMemorySample {
     commitRemainingBytes: commitReading && info.swapFree != null ? info.swapFree * BYTES_PER_KB : null,
     physicalTotalBytes: info.total * BYTES_PER_KB,
     physicalFreeBytes: info.free * BYTES_PER_KB,
-    physicalAvailableBytes:
-      process.platform === 'linux' && typeof info.available === 'number' ? info.available * BYTES_PER_KB : null,
+    physicalAvailableBytes: isLinux && typeof info.available === 'number' ? info.available * BYTES_PER_KB : null,
+    swapTotalBytes: isLinux && info.swapTotal != null ? info.swapTotal * BYTES_PER_KB : null,
+    swapFreeBytes: isLinux && info.swapFree != null ? info.swapFree * BYTES_PER_KB : null,
+    memoryPressureLevel: process.platform === 'darwin' ? options.memoryPressureLevel ?? null : null,
   };
 }
 
@@ -89,6 +110,119 @@ const MIN_WARNING_INTERVAL_MS = 30 * 60_000;
  *  a hand-copied one that would silently keep passing if a constant changed. */
 export function pressureThreshold(commitLimitBytes: number): number {
   return Math.min(ABSOLUTE_THRESHOLD_BYTES, commitLimitBytes * RELATIVE_THRESHOLD_FRACTION);
+}
+
+/** The headroom past which a low-memory latch clears (the hysteresis line). */
+export function recoveryLine(limitBytes: number): number {
+  return pressureThreshold(limitBytes) * HYSTERESIS_MULTIPLIER;
+}
+
+/**
+ * How much room the machine has, in the form its platform can measure. Bytes
+ * on Windows (commit) and Linux (RAM plus swap), judged against
+ * `pressureThreshold` and `recoveryLine`; a kernel verdict on macOS.
+ */
+export type MemoryHeadroom =
+  | { kind: 'bytes'; remainingBytes: number; limitBytes: number }
+  | { kind: 'level'; low: boolean };
+
+/** macOS pressure levels that count as low memory: warn (2) and critical (4). */
+const MAC_LOW_PRESSURE_LEVELS: ReadonlySet<number> = new Set([2, 4]);
+const MAC_NORMAL_PRESSURE_LEVEL = 1;
+
+/**
+ * The sample's headroom, or null when this platform's reading is missing or
+ * unrecognized. Pure: the low-memory pause and its tests read it.
+ */
+export function memoryHeadroom(sample: HostMemorySample): MemoryHeadroom | null {
+  if (sample.platform === 'win32') {
+    const { commitLimitBytes, commitRemainingBytes } = sample;
+    if (commitLimitBytes === null || commitRemainingBytes === null || commitLimitBytes <= 0) return null;
+    return { kind: 'bytes', remainingBytes: commitRemainingBytes, limitBytes: commitLimitBytes };
+  }
+  if (sample.platform === 'linux') {
+    const available = sample.physicalAvailableBytes;
+    if (available === null || sample.physicalTotalBytes <= 0) return null;
+    const swapTotal = sample.swapTotalBytes ?? 0;
+    const swapFree = sample.swapFreeBytes ?? 0;
+    return {
+      kind: 'bytes',
+      remainingBytes: available + swapFree,
+      limitBytes: sample.physicalTotalBytes + swapTotal,
+    };
+  }
+  if (sample.platform === 'darwin') {
+    const level = sample.memoryPressureLevel ?? null;
+    if (level === null) return null;
+    if (MAC_LOW_PRESSURE_LEVELS.has(level)) return { kind: 'level', low: true };
+    if (level === MAC_NORMAL_PRESSURE_LEVEL) return { kind: 'level', low: false };
+    return null;
+  }
+  return null;
+}
+
+/** `sysctl -n` prints the level and a newline. Anything else is unknown. */
+export function parseMacPressureLevel(stdout: string): number | null {
+  const trimmed = stdout.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  return Number(trimmed);
+}
+
+/** Reads the macOS level once, off the main thread. Null on any failure. */
+async function readMacPressureLevel(): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync('/usr/sbin/sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeout: 2000 });
+    return parseMacPressureLevel(stdout);
+  } catch {
+    return null;
+  }
+}
+
+export interface PressureLevelReader {
+  /** The cached level, or null when there is none or it is older than `maxAgeMs`. */
+  current(now: number, maxAgeMs: number): number | null;
+  /** Start one read unless one is already running. Its result is cached for the next `current`. */
+  refresh(): void;
+  /** Stops a read still running from writing the cache. */
+  dispose(): void;
+}
+
+/**
+ * The cache behind the macOS level. The sampler's tick is synchronous, and a
+ * `sysctl` run is not, so each tick reads what the previous tick's run cached
+ * and starts the next run. `read` and `clock` are injectable for tests.
+ */
+export function createPressureLevelReader(
+  read: () => Promise<number | null> = readMacPressureLevel,
+  clock: () => number = Date.now,
+): PressureLevelReader {
+  let cached: { level: number; readAt: number } | null = null;
+  let reading = false;
+  let disposed = false;
+  return {
+    current(now, maxAgeMs) {
+      if (!cached || now - cached.readAt > maxAgeMs) return null;
+      return cached.level;
+    },
+    refresh() {
+      if (reading || disposed) return;
+      reading = true;
+      void read()
+        .then((level) => {
+          if (disposed) return;
+          cached = level === null ? null : { level, readAt: clock() };
+        })
+        .catch(() => {
+          if (!disposed) cached = null;
+        })
+        .finally(() => {
+          reading = false;
+        });
+    },
+    dispose() {
+      disposed = true;
+    },
+  };
 }
 
 export interface HostMemoryPressureState {
@@ -184,12 +318,16 @@ const DEFAULT_INTERVAL_MS = 60_000;
  */
 export function startHostMemorySampler(options: HostMemorySamplerOptions): () => void {
   const state = createHostMemoryPressureState();
+  const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const pressureLevel = process.platform === 'darwin' ? createPressureLevelReader() : null;
   const tick = (): void => {
     // A diagnostics sampler must never be the thing that crashes the app it
     // is trying to protect - an uncaught throw here would surface every 60s
     // via the global uncaughtException handler for the life of the process.
     try {
-      const sample = sampleHostMemory();
+      const sample = sampleHostMemory({
+        memoryPressureLevel: pressureLevel?.current(Date.now(), intervalMs * 2) ?? null,
+      });
       lastSample = sample;
       options.onSample?.(sample);
       const decision = evaluateHostMemoryPressure(sample, state, Date.now());
@@ -201,8 +339,14 @@ export function startHostMemorySampler(options: HostMemorySamplerOptions): () =>
     } catch (error) {
       console.error('[host-memory] Sampling tick failed:', error);
     }
+    pressureLevel?.refresh();
   };
-  const interval = setInterval(tick, options.intervalMs ?? DEFAULT_INTERVAL_MS);
+  const interval = setInterval(tick, intervalMs);
   interval.unref();
-  return () => clearInterval(interval);
+  // The first macOS level is ready for the first tick rather than the second.
+  pressureLevel?.refresh();
+  return () => {
+    clearInterval(interval);
+    pressureLevel?.dispose();
+  };
 }
