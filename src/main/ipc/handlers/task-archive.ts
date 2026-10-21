@@ -19,6 +19,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { SwimlaneRole, Task, TaskUnarchiveInput } from '../../../shared/types';
+import { restoredLaneOrder } from '../../../shared/restore-lane-order';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -105,18 +106,12 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
       // A card dragged out of Done lands where the lane's cards parted for it
       // (`position`, an index into the lane's order). Any other restore, or an
-      // index that is not inside the lane, keeps the end.
-      const requestedPosition = input.position;
-      if (
-        typeof requestedPosition === 'number'
-        && Number.isInteger(requestedPosition)
-        && requestedPosition >= 0
-        && requestedPosition < position
-      ) {
-        const orderedTaskIds = laneTasks.map((laneTask) => laneTask.id);
-        orderedTaskIds.splice(requestedPosition, 0, input.id);
-        tasks.reorderWithinSwimlane(input.targetSwimlaneId, orderedTaskIds);
-      }
+      // index that is not inside the lane, goes last. The lane's order is
+      // written back densely either way, so "last" holds on a gapped lane too.
+      tasks.reorderWithinSwimlane(
+        input.targetSwimlaneId,
+        restoredLaneOrder(laneTasks.map((laneTask) => laneTask.id), input.id, input.position),
+      );
 
       // Folded through the unarchived task's Board Profile, so it comes back
       // on the same rung it was archived from.
@@ -242,6 +237,11 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           const laneTasks = tasks.list(targetSwimlaneId);
           const position = laneTasks.length;
           const task = tasks.unarchive(id, targetSwimlaneId, position);
+          // Last in the lane, written back densely so a gapped lane puts it last too.
+          tasks.reorderWithinSwimlane(
+            targetSwimlaneId,
+            restoredLaneOrder(laneTasks.map((laneTask) => laneTask.id), id, undefined),
+          );
 
           // Per-task fold: a bulk unarchive can carry tasks on different profiles
           // into the same column, so the auto-spawn gate is resolved per task

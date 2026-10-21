@@ -345,7 +345,7 @@ describe('moveTask - optimistic positions', () => {
   function laneOrder(tasks: Task[], laneId: string): string[] {
     return tasks
       .filter((task) => task.swimlane_id === laneId)
-      .sort((a, b) => a.position - b.position)
+      .sort((firstTask, secondTask) => firstTask.position - secondTask.position)
       .map((task) => task.id);
   }
 

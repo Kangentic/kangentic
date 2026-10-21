@@ -1948,16 +1948,24 @@
           return t.id === input.id;
         });
         if (idx < 0) throw new Error('Archived task not found: ' + input.id);
-        // Mirrors TASK_UNARCHIVE: a position inside the lane places the restored
-        // task there and moves the lane's later tasks down one. Without one the
-        // mock keeps its long-standing position 0, which existing specs rely on.
+        // Mirrors TASK_UNARCHIVE and restoredLaneOrder (src/shared/restore-lane-order.ts):
+        // a whole-number index inside the lane, the end slot included, places
+        // the restored task there and writes the lane's order back as dense
+        // positions. Without one the mock keeps its long-standing position 0,
+        // which existing specs and the web demo rely on. Main puts it last there.
         var restorePosition = 0;
-        var laneCount = tasks.filter(function (t) { return t.swimlane_id === input.targetSwimlaneId; }).length;
-        if (typeof input.position === 'number' && input.position >= 0 && input.position < laneCount) {
+        var laneTaskIds = tasks
+          .filter(function (laneTask) { return laneTask.swimlane_id === input.targetSwimlaneId && laneTask.id !== input.id; })
+          .sort(function (firstTask, secondTask) { return firstTask.position - secondTask.position; })
+          .map(function (laneTask) { return laneTask.id; });
+        if (typeof input.position === 'number' && Number.isInteger(input.position)
+          && input.position >= 0 && input.position <= laneTaskIds.length) {
           restorePosition = input.position;
-          tasks.forEach(function (t, taskIndex) {
-            if (t.swimlane_id === input.targetSwimlaneId && t.position >= restorePosition) {
-              tasks[taskIndex] = Object.assign({}, t, { position: t.position + 1 });
+          laneTaskIds.splice(restorePosition, 0, input.id);
+          tasks.forEach(function (laneTask, taskIndex) {
+            var densePosition = laneTaskIds.indexOf(laneTask.id);
+            if (densePosition >= 0 && laneTask.position !== densePosition) {
+              tasks[taskIndex] = Object.assign({}, laneTask, { position: densePosition });
             }
           });
         }

@@ -214,7 +214,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           trailing={onDelete && (
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+              onClick={(clickEvent) => { clickEvent.stopPropagation(); onDelete(task.id); }}
               className="p-2 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 opacity-0 group-hover/card:opacity-100 transition-all flex-shrink-0"
             >
               <Trash2 size={14} />
