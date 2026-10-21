@@ -418,10 +418,6 @@ describe('OllamaAdapter', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });
 
-    it('clearSettingsCache does not throw', () => {
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
-    });
-
     it('locateSessionHistoryFile returns null', async () => {
       const result = await adapter.locateSessionHistoryFile('session-1', '/some/dir');
       expect(result).toBeNull();

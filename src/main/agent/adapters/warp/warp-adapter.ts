@@ -156,9 +156,6 @@ export class WarpAdapter implements AgentAdapter {
     return null;
   }
 
-  // Warp has no merged settings - no-op
-  clearSettingsCache(): void {}
-
   getExitSequence(): string[] {
     // Warp has no session resume mechanism. Ctrl+C exits cleanly.
     return ['\x03'];

@@ -954,9 +954,9 @@ See [Permission Mode Resolution](configuration.md#permission-mode-resolution-pri
 
 For each session, a merged settings file is created at `.kangentic/sessions/<sessionId>/settings.json`:
 
-1. Read `.claude/settings.json` (committed project settings)
-2. Read `.claude/settings.local.json` (gitignored local settings)
-3. Deep-merge hooks from both
+1. Read `.claude/settings.json` (committed project settings), fresh on every spawn
+2. Read `.claude/settings.local.json` (gitignored local settings), fresh on every spawn
+3. Merge them: hooks concatenated per event, list keys (top level and under `permissions`) combined and deduplicated, every other key from the local file
 4. Inject Kangentic bridge commands into hook points
 5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
 6. Write merged file, pass to CLI via `--settings`

@@ -13,6 +13,7 @@ import {
   QWEN_BRIDGE_COPY_NAME,
   QWEN_HINT_BRIDGE_COPY_NAME,
   QWEN_HOOK_SHELL,
+  stripKangenticEntries,
 } from './hook-manager';
 import type { QwenHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
@@ -85,37 +86,7 @@ function kangenticServerEntry(url: string, token: string): { httpUrl: string; he
   return { httpUrl: url, headers: { 'X-Kangentic-Token': token } };
 }
 
-/**
- * The user's own servers: `mcpServers` with any `kangentic` entry removed. An
- * older Kangentic wrote that entry into `.qwen/settings.json`, and a crash
- * before `removeHooks` leaves it in the baseline with a dead token. Returns the
- * object unchanged when it has no such entry, and undefined when removing it
- * leaves nothing.
- */
-function withoutKangenticEntry(servers: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!servers || !Object.prototype.hasOwnProperty.call(servers, 'kangentic')) return servers;
-  const userServers = { ...servers };
-  delete userServers.kangentic;
-  return Object.keys(userServers).length > 0 ? userServers : undefined;
-}
-
 export class QwenCommandBuilder {
-  /**
-   * Cache of merged base settings keyed by project root path.
-   *
-   * Cached intentionally so that re-spawns do not re-ingest the
-   * Kangentic-injected `hooks` and `mcpServers.kangentic` entries we
-   * wrote on the prior spawn. Each spawn re-merges fresh entries on top
-   * of the original user baseline. Call `clearSettingsCache()` if the
-   * user edits `.qwen/settings.json` between spawns.
-   */
-  private projectSettingsCache = new Map<string, QwenSettings>();
-
-  /** Clear the cached project settings. */
-  clearSettingsCache(): void {
-    this.projectSettingsCache.clear();
-  }
-
   buildQwenCommand(options: QwenCommandOptions): string {
     const { shell } = options;
     const parts = [quoteArg(options.qwenPath, shell)];
@@ -198,22 +169,28 @@ export class QwenCommandBuilder {
     return interpolateTemplate(template, variables);
   }
 
-  /** Read and merge project settings, with per-projectRoot caching. */
+  /**
+   * The project's `.qwen/settings.json` with Kangentic's own hooks and
+   * `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), read from
+   * disk on every spawn so an edit or a pull reaches the next session with no
+   * restart. In the main repo (`cwd` is the project root) this is the file the
+   * previous spawn wrote, and the strip keeps that spawn's entries, and an
+   * entry a crash left behind with a dead token, out of the user's baseline.
+   * Each spawn then merges fresh entries on top.
+   */
   private readBaseSettings(projectRoot: string): QwenSettings {
-    const cached = this.projectSettingsCache.get(projectRoot);
-    if (cached) return structuredClone(cached);
-
     let baseSettings: QwenSettings = {};
     const projectSettingsPath = path.join(projectRoot, '.qwen', 'settings.json');
     try {
-      const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
-      baseSettings = JSON.parse(raw);
+      const parsed = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf-8'));
+      // Only a plain object can be spread into the merged settings.
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) baseSettings = parsed;
     } catch {
       // No existing settings - start fresh
     }
 
-    this.projectSettingsCache.set(projectRoot, baseSettings);
-    return structuredClone(baseSettings);
+    stripKangenticEntries(baseSettings);
+    return baseSettings;
   }
 
   /**
@@ -303,9 +280,10 @@ export class QwenCommandBuilder {
    * project-shared file. Concurrent sessions in the same cwd are
    * serialized by QwenAdapter's per-session holds: each spawn holds the
    * file under its own session id, and removeHooks() only strips it when
-   * the folder's last session releases. The isKangenticHook() guard prevents
-   * affecting user-defined hooks. On crash / force-quit, stripping on
-   * the next spawn (buildHooks) cleans up.
+   * the folder's last session releases. The `isKangenticHookCommand()` guard
+   * keeps user-defined hooks out of every strip. On crash or force-quit, the
+   * next spawn's read strips the stale entries (`stripKangenticEntries`) and
+   * `buildHooks` filters them again.
    *
    * MCP server entry: a current Qwen gets Kangentic's server through
    * `--mcp-config` (see `mcpDelivery`), so this file carries no `kangentic`
@@ -352,7 +330,7 @@ export class QwenCommandBuilder {
       merged.hooks = buildHooks(eventBridge, eventsToken, baseSettings.hooks || {}, { backgroundShellHintCommand });
     }
 
-    const userMcpServers = withoutKangenticEntry(baseSettings.mcpServers);
+    const userMcpServers = baseSettings.mcpServers;
     if (mcpDelivery === 'settings' && options.mcpServerUrl && options.mcpServerToken) {
       merged.mcpServers = {
         ...(userMcpServers ?? {}),

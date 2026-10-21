@@ -223,10 +223,6 @@ export class KimiAdapter implements AgentAdapter {
     return false;
   }
 
-  clearSettingsCache(): void {
-    // No cached merged settings.
-  }
-
   getExitSequence(): string[] {
     // Ctrl+C interrupts; "/exit" triggers the conventional Kimi TUI
     // graceful shutdown that flushes context.jsonl and closes the

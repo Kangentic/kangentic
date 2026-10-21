@@ -1,15 +1,57 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { escapePercentForCmd, isBareShellToken, POWERSHELL_CURLY_DOUBLE_QUOTE_CHARACTERS } from '../../../shared/shell-quote';
+import { toForwardSlash } from '../../../shared/paths';
+import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
+import { resolveBridgeScript } from './bridge-utils';
+
+/** The bridges this running app ships, as `ownBridgePaths` resolved them. */
+let shippedBridgePaths: readonly string[] | null = null;
+
+/**
+ * Where this running app ships each bridge, forward-slashed as hook commands
+ * name them. Resolved on first use and kept, since the install does not move
+ * while the app runs.
+ */
+function ownBridgePaths(): readonly string[] {
+  shippedBridgePaths ??= [
+    resolveBridgeScript('event-bridge'),
+    resolveBridgeScript('plan-approval-bridge'),
+    resolveBridgeScript('background-shell-hint-bridge'),
+  ].map((bridgePath) => toForwardSlash(bridgePath));
+  return shippedBridgePaths;
+}
+
+/**
+ * True when a hint bridge command's spec, its last argument (base64 JSON),
+ * names Kangentic's MCP tool. Every spec Kangentic writes carries the hint
+ * text, which names it; a user's own hint-like hook does not.
+ */
+function carriesKangenticHintSpec(command: string): boolean {
+  const lastArgument = command.trim().split(/\s+/).pop() ?? '';
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(lastArgument)) return false;
+  return Buffer.from(lastArgument, 'base64').toString('utf8').includes(MARK_BACKGROUND_SERVICE_TOOL);
+}
 
 /**
  * Identify a hook command string as Kangentic-injected.
  *
  * Matches the current bridges (`event-bridge`, `plan-approval-bridge`,
  * `background-shell-hint-bridge`) and the legacy `activity-bridge` (removed
- * 2026-03-01) AND requires `.kangentic` in the path, so user-defined hooks that
- * happen to mention our script names without pointing at our worktree are not
- * swept up.
+ * 2026-03-01) AND requires the command to be Kangentic's by one of:
+ * - `.kangentic` or `/kangentic/` in a path (a session directory, a workspace
+ *   bridge copy, a source checkout, a Windows install);
+ * - the events path named through Kangentic's own variable
+ *   (`EVENTS_PATH_FROM_ENVIRONMENT`), or a hint spec that names Kangentic's
+ *   MCP tool. Neither depends on where the app is installed, so they also
+ *   hold for a hook an earlier install wrote from a path this one no longer
+ *   runs from (an AppImage mounts at a new `/tmp/.mount_*` path on every
+ *   launch, and a user can move the app);
+ * - the exact path this running app ships the bridge at, which covers a
+ *   packaged macOS or Linux install (`/Applications/Kangentic.app/...`,
+ *   `/opt/Kangentic/...`) in a command that carries none of the above.
+ * User-defined hooks that happen to mention our script names without any of
+ * these are not swept up.
  */
 export function isKangenticHookCommand(command: string | undefined): boolean {
   if (typeof command !== 'string') return false;
@@ -17,8 +59,11 @@ export function isKangenticHookCommand(command: string | undefined): boolean {
     || command.includes('event-bridge')
     || command.includes('plan-approval-bridge')
     || command.includes('background-shell-hint-bridge');
-  const hasKangenticPath = command.includes('.kangentic') || command.includes('/kangentic/');
-  return hasBridge && hasKangenticPath;
+  if (!hasBridge) return false;
+  if (command.includes('.kangentic') || command.includes('/kangentic/')) return true;
+  if (command.includes(EVENTS_PATH_FROM_ENVIRONMENT)) return true;
+  if (command.includes('background-shell-hint-bridge') && carriesKangenticHintSpec(command)) return true;
+  return ownBridgePaths().some((bridgePath) => command.includes(bridgePath));
 }
 
 /**

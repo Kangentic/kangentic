@@ -414,10 +414,6 @@ export class OpenCodeAdapter implements AgentAdapter {
     return false;
   }
 
-  clearSettingsCache(): void {
-    // No merged settings cache to clear.
-  }
-
   getExitSequence(): string[] {
     // Verified 2026-04-28 via scripts/probe-opencode-exit.ts: Ctrl+C alone
     // closes OpenCode (PTY exits in ~1s with STATUS_CONTROL_C_EXIT). Neither

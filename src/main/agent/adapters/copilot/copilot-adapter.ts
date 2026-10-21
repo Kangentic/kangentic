@@ -208,10 +208,6 @@ export class CopilotAdapter implements AgentAdapter {
     return false;
   }
 
-  clearSettingsCache(): void {
-    // Copilot uses per-session config dirs, no shared settings cache.
-  }
-
   getExitSequence(): string[] {
     // Ctrl+C to interrupt, then /exit to quit the Copilot CLI TUI.
     return ['\x03', '/exit\r'];

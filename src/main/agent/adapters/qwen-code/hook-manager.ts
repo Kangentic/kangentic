@@ -272,10 +272,16 @@ function qwenSettingsPath(directory: string): string {
   return path.join(directory, '.qwen', 'settings.json');
 }
 
+/** The parts of a parsed `.qwen/settings.json` that Kangentic writes into. */
+export interface QwenSettingsWithKangenticEntries {
+  hooks?: Record<string, QwenHookEntry[]>;
+  mcpServers?: Record<string, unknown>;
+}
+
 /**
- * Remove ALL Kangentic-injected entries from `.qwen/settings.json` at
- * the given directory. Preserves user hooks, user MCP servers, and any
- * other user settings.
+ * Strip ALL Kangentic-injected entries from a parsed `.qwen/settings.json`,
+ * in place. Preserves user hooks, user MCP servers, and any other user
+ * settings. Returns whether anything was removed.
  *
  * Cleans up two kinds of injected entries:
  *   1. Hook entries written by `buildHooks()`, under any event key
@@ -285,6 +291,42 @@ function qwenSettingsPath(directory: string): string {
  *      when wiring the in-process MCP HTTP server. Pulled out unconditionally
  *      because the entry name is fixed.
  *
+ * Shared by `removeHooks()` and the command builder's read of the folder's
+ * settings. In the main repo that read finds the file the previous spawn
+ * wrote, and this strip is what keeps that spawn's entries out of the user's
+ * baseline.
+ */
+export function stripKangenticEntries(settings: QwenSettingsWithKangenticEntries): boolean {
+  let changed = false;
+
+  if (settings.hooks && typeof settings.hooks === 'object') {
+    for (const key of Object.keys(settings.hooks)) {
+      if (HOOK_CONFIG_KEYS.has(key) || !Array.isArray(settings.hooks[key])) continue;
+      const before = settings.hooks[key].length;
+      settings.hooks[key] = filterOurHooks(settings.hooks[key]);
+      if (settings.hooks[key].length !== before) changed = true;
+      if (settings.hooks[key].length === 0) delete settings.hooks[key];
+    }
+    if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+  }
+
+  if (
+    settings.mcpServers &&
+    typeof settings.mcpServers === 'object' &&
+    'kangentic' in settings.mcpServers
+  ) {
+    delete settings.mcpServers.kangentic;
+    changed = true;
+    if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
+  }
+
+  return changed;
+}
+
+/**
+ * Remove ALL Kangentic-injected entries from `.qwen/settings.json` at
+ * the given directory (`stripKangenticEntries`).
+ *
  * Called on session exit/suspend. Qwen Code has no --settings flag, so
  * these entries live in the shared project-level file and must be
  * explicitly removed when the session ends - otherwise stale tokens
@@ -292,36 +334,8 @@ function qwenSettingsPath(directory: string): string {
  */
 export function removeHooks(directory: string): void {
   safelyUpdateSettingsFile(qwenSettingsPath(directory), (parsed) => {
-    const settings = parsed as {
-      hooks?: Record<string, QwenHookEntry[]>;
-      mcpServers?: Record<string, unknown>;
-    };
+    const settings = parsed as QwenSettingsWithKangenticEntries;
     if (!settings || typeof settings !== 'object') return null;
-
-    let changed = false;
-
-    if (settings.hooks && typeof settings.hooks === 'object') {
-      for (const key of Object.keys(settings.hooks)) {
-        if (HOOK_CONFIG_KEYS.has(key) || !Array.isArray(settings.hooks[key])) continue;
-        const before = settings.hooks[key].length;
-        settings.hooks[key] = filterOurHooks(settings.hooks[key]);
-        if (settings.hooks[key].length !== before) changed = true;
-        if (settings.hooks[key].length === 0) delete settings.hooks[key];
-      }
-      if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
-    }
-
-    if (
-      settings.mcpServers &&
-      typeof settings.mcpServers === 'object' &&
-      'kangentic' in settings.mcpServers
-    ) {
-      delete settings.mcpServers.kangentic;
-      changed = true;
-      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
-    }
-
-    if (!changed) return null;
-    return settings;
+    return stripKangenticEntries(settings) ? settings : null;
   }, 'removeHooks');
 }

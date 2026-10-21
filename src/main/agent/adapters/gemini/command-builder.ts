@@ -6,7 +6,7 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { backgroundShellHintCommandFor, shippedHintBridgePath } from '../../shared/background-command-hooks';
-import { buildHooks, GEMINI_BACKGROUND_COMMAND_SPEC, GEMINI_HOOK_SHELL } from './hook-manager';
+import { buildHooks, GEMINI_BACKGROUND_COMMAND_SPEC, GEMINI_HOOK_SHELL, stripKangenticEntries } from './hook-manager';
 import type { GeminiHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -64,14 +64,6 @@ export interface GeminiCommandOptions {
 }
 
 export class GeminiCommandBuilder {
-  /** Cache of merged base settings keyed by project root path. */
-  private projectSettingsCache = new Map<string, GeminiSettings>();
-
-  /** Clear the cached project settings. */
-  clearSettingsCache(): void {
-    this.projectSettingsCache.clear();
-  }
-
   buildGeminiCommand(options: GeminiCommandOptions): string {
     const { shell } = options;
     const parts = [quoteArg(options.geminiPath, shell)];
@@ -147,11 +139,15 @@ export class GeminiCommandBuilder {
     return { [KANGENTIC_MCP_URL_ENV]: options.mcpServerUrl, [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken };
   }
 
-  /** Read and merge project settings, with per-projectRoot caching. */
+  /**
+   * The project's `.gemini/settings.json` with Kangentic's own hooks and
+   * `mcpServers.kangentic` entry stripped (`stripKangenticEntries`), read from
+   * disk on every spawn so an edit or a pull reaches the next session with no
+   * restart. In the main repo (`cwd` is the project root) this is the file the
+   * previous spawn wrote, and the strip keeps that spawn's entries out of the
+   * user's baseline.
+   */
   private readBaseSettings(projectRoot: string): GeminiSettings {
-    const cached = this.projectSettingsCache.get(projectRoot);
-    if (cached) return structuredClone(cached);
-
     let baseSettings: GeminiSettings = {};
     const projectSettingsPath = path.join(projectRoot, '.gemini', 'settings.json');
     try {
@@ -164,8 +160,8 @@ export class GeminiCommandBuilder {
       // No existing settings - start fresh
     }
 
-    this.projectSettingsCache.set(projectRoot, baseSettings);
-    return structuredClone(baseSettings);
+    stripKangenticEntries(baseSettings);
+    return baseSettings;
   }
 
   /**

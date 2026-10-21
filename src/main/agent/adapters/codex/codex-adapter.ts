@@ -252,11 +252,6 @@ export class CodexAdapter implements AgentAdapter {
     return false;
   }
 
-  clearSettingsCache(): void {
-    // No settings cache to clear - Codex uses config.toml, not merged
-    // settings files.
-  }
-
   getExitSequence(): string[] {
     // Codex sessions are API-backed (server-side threads) - no local
     // conversation state to flush. Ctrl+C is sufficient.

@@ -315,10 +315,6 @@ describe('OpenCode Adapter', () => {
       expect(() => adapter.removeHooks('/some/dir', 'session-001')).not.toThrow();
     });
 
-    it('clearSettingsCache is a no-op (no merged settings)', () => {
-      expect(() => adapter.clearSettingsCache()).not.toThrow();
-    });
-
     it('ensureTrust is a no-op (OpenCode has no trust dialog)', async () => {
       await expect(adapter.ensureTrust('/some/dir')).resolves.toBeUndefined();
     });

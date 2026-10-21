@@ -141,9 +141,6 @@ export class OllamaAdapter implements AgentAdapter {
   // Ollama does not use hooks - no-op
   removeHooks(_directory: string): void {}
 
-  // Ollama has no merged settings - no-op
-  clearSettingsCache(): void {}
-
   getExitSequence(): string[] {
     // Ctrl+C interrupts generation; /bye cleanly exits an interactive REPL.
     // Harmless when the one-shot process has already exited.

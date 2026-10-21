@@ -476,10 +476,6 @@ export class ClaudeAdapter implements AgentAdapter {
     removeClaudeHooks(directory);
   }
 
-  clearSettingsCache(): void {
-    this.commandBuilder.clearSettingsCache();
-  }
-
   /**
    * Esc first (it stops a running turn or declines an open permission prompt),
    * a pause so the TUI reads it as its own key, then Ctrl+C (clears a draft in

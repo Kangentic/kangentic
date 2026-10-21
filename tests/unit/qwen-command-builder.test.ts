@@ -206,13 +206,6 @@ describe('QwenCommandBuilder', () => {
     });
   });
 
-  describe('clearSettingsCache', () => {
-    it('does not throw', () => {
-      const builder = new QwenCommandBuilder();
-      expect(() => builder.clearSettingsCache()).not.toThrow();
-    });
-  });
-
   describe('git-exclude seeding', () => {
     let tmpDir: string;
 
@@ -553,9 +546,10 @@ describe('QwenCommandBuilder', () => {
         expect(mcpServers.kangentic).toEqual({ httpUrl: MCP_URL, headers: { 'X-Kangentic-Token': 'legacy-token' } });
       });
 
-      it('a second spawn for the same projectRoot does not carry the first spawn\'s entry from the cache', () => {
-        // The cache holds the user's pre-injection snapshot, so the second
-        // spawn writes exactly one kangentic entry with its own token.
+      it('a second spawn for the same projectRoot writes one kangentic entry, with its own token', () => {
+        // The second spawn reads the file the first one wrote, and the read
+        // strips the first spawn's entry, so exactly one kangentic entry with
+        // the second spawn's token is written.
         seedUserSettings({ 'user-server': { httpUrl: 'http://example.com/mcp' } });
         const builder = new QwenCommandBuilder();
         const legacyOptions = (token: string): QwenCommandOptions => ({
@@ -574,6 +568,95 @@ describe('QwenCommandBuilder', () => {
         expect(Object.keys(mcpServers).sort()).toEqual(['kangentic', 'user-server']);
         expect(mcpServers.kangentic.headers?.['X-Kangentic-Token']).toBe('second-token');
       });
+    });
+  });
+
+  /**
+   * One builder lives as long as the app, so each case builds twice with the SAME
+   * builder and edits the settings in between. In the main repo the file the
+   * builder reads is the one the previous spawn wrote, so the read must also drop
+   * that spawn's hooks and MCP entry.
+   */
+  describe('project settings read on every spawn', () => {
+    const MCP_URL = 'http://127.0.0.1:51234/mcp/proj-1';
+    let tmpDir: string;
+
+    const settingsFile = (directory: string) => path.join(directory, '.qwen', 'settings.json');
+    const readSettings = (directory: string) => JSON.parse(fs.readFileSync(settingsFile(directory), 'utf-8'));
+    const writeSettings = (directory: string, settings: Record<string, unknown>) => {
+      fs.mkdirSync(path.dirname(settingsFile(directory)), { recursive: true });
+      fs.writeFileSync(settingsFile(directory), JSON.stringify(settings));
+    };
+    const spawnOptions = (overrides: Partial<QwenCommandOptions> = {}): QwenCommandOptions => ({
+      ...baseOptions(),
+      cwd: tmpDir,
+      projectRoot: tmpDir,
+      statusOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'status.json'),
+      eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      mcpServerEnabled: true,
+      mcpServerUrl: MCP_URL,
+      mcpServerToken: 'token-1',
+      ...overrides,
+    });
+
+    function kangenticHookCommands(settings: { hooks?: Record<string, unknown> }): string[] {
+      return Object.values(settings.hooks ?? {})
+        .flatMap((entries) => (Array.isArray(entries) ? entries : []))
+        .flatMap((entry: { hooks?: Array<{ command?: string }> }) => (entry.hooks ?? []).map((hook) => hook.command ?? ''))
+        .filter((command) => isKangenticHookCommand(command));
+    }
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-fresh-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('an edit to the file the last spawn wrote reaches the next spawn, with one set of Kangentic hooks', () => {
+      const builder = new QwenCommandBuilder();
+      builder.buildQwenCommand(spawnOptions());
+      const firstHookCount = kangenticHookCommands(readSettings(tmpDir)).length;
+      expect(firstHookCount).toBeGreaterThan(0);
+
+      // The user edits the folder's settings while Kangentic's hooks are still in it.
+      writeSettings(tmpDir, { ...readSettings(tmpDir), ui: { theme: 'GitHub' } });
+
+      builder.buildQwenCommand(spawnOptions());
+      const second = readSettings(tmpDir);
+      expect(second.ui).toEqual({ theme: 'GitHub' });
+      expect(kangenticHookCommands(second)).toHaveLength(firstHookCount);
+    });
+
+    it('a spawn with the MCP server off keeps the user\'s edit and drops the kangentic entry the last spawn wrote', () => {
+      // A Qwen before 0.16 gets the entry in the folder's settings file.
+      const builder = new QwenCommandBuilder();
+      builder.buildQwenCommand(spawnOptions({ cliVersion: '0.15.3' }));
+      expect(readSettings(tmpDir).mcpServers.kangentic).toBeDefined();
+      writeSettings(tmpDir, { ...readSettings(tmpDir), ui: { theme: 'GitHub' } });
+
+      builder.buildQwenCommand(spawnOptions({ cliVersion: '0.15.3', mcpServerEnabled: false }));
+
+      const second = readSettings(tmpDir);
+      expect(second.ui).toEqual({ theme: 'GitHub' });
+      expect(second.mcpServers).toBeUndefined();
+    });
+
+    it('a worktree spawn picks up a change to the project root\'s settings', () => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cmd-fresh-root-'));
+      try {
+        writeSettings(projectRoot, { ui: { theme: 'Default' } });
+        const builder = new QwenCommandBuilder();
+        builder.buildQwenCommand(spawnOptions({ projectRoot }));
+
+        writeSettings(projectRoot, { ui: { theme: 'GitHub' } });
+
+        builder.buildQwenCommand(spawnOptions({ projectRoot }));
+        expect(readSettings(tmpDir).ui).toEqual({ theme: 'GitHub' });
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
   });
 

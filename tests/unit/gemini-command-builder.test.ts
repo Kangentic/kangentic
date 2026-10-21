@@ -14,6 +14,7 @@ import { quoteArg } from '../../src/shared/paths';
 import { GeminiCommandBuilder } from '../../src/main/agent/adapters/gemini';
 import { GEMINI_BACKGROUND_COMMAND_SPEC, removeHooks } from '../../src/main/agent/adapters/gemini/hook-manager';
 import { backgroundShellHintSpecOf } from '../../src/main/agent/shared/background-command-hooks';
+import { isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 import type { GeminiCommandOptions } from '../../src/main/agent/adapters/gemini';
 
 /** Minimal options for tests that don't need hooks/settings. */
@@ -160,6 +161,106 @@ describe('GeminiCommandBuilder', () => {
       expect(readSettings().mcpServers).toEqual({
         context7: { httpUrl: 'http://example.test/mcp' },
       });
+    });
+  });
+
+  /**
+   * One builder lives as long as the app, so each case builds twice with the SAME
+   * builder and edits the settings in between. In the main repo the file the
+   * builder reads is the one the previous spawn wrote, so the read must also drop
+   * that spawn's hooks and MCP entry.
+   */
+  describe('project settings read on every spawn', () => {
+    const SESSION_MCP_URL = 'http://127.0.0.1:5555/mcp/project-123/sess-xyz';
+    let tmpDir: string;
+
+    const settingsFile = (directory: string) => path.join(directory, '.gemini', 'settings.json');
+    const readSettings = (directory: string) => JSON.parse(fs.readFileSync(settingsFile(directory), 'utf-8'));
+    const writeSettings = (directory: string, settings: Record<string, unknown>) => {
+      fs.mkdirSync(path.dirname(settingsFile(directory)), { recursive: true });
+      fs.writeFileSync(settingsFile(directory), JSON.stringify(settings));
+    };
+    const spawnOptions = (overrides: Partial<GeminiCommandOptions> = {}) => baseOptions({
+      cwd: tmpDir,
+      projectRoot: tmpDir,
+      eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 's1', 'events.jsonl'),
+      mcpServerEnabled: true,
+      mcpServerUrl: SESSION_MCP_URL,
+      mcpServerToken: 'secret-token',
+      ...overrides,
+    });
+
+    function kangenticHookCommands(settings: { hooks?: Record<string, unknown> }): string[] {
+      return Object.values(settings.hooks ?? {})
+        .flatMap((entries) => (Array.isArray(entries) ? entries : []))
+        .flatMap((entry: { hooks?: Array<{ command?: string }> }) => (entry.hooks ?? []).map((hook) => hook.command ?? ''))
+        .filter((command) => isKangenticHookCommand(command));
+    }
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gemini-fresh-'));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('an edit to the file the last spawn wrote reaches the next spawn, with one set of Kangentic hooks', () => {
+      const builder = new GeminiCommandBuilder();
+      builder.buildGeminiCommand(spawnOptions());
+      const firstHookCount = kangenticHookCommands(readSettings(tmpDir)).length;
+      expect(firstHookCount).toBeGreaterThan(0);
+
+      // The user edits the folder's settings while Kangentic's entries are still in it.
+      const edited = readSettings(tmpDir);
+      writeSettings(tmpDir, { ...edited, ui: { theme: 'GitHub' }, mcpServers: { ...edited.mcpServers, docs: { httpUrl: 'http://example.test/mcp' } } });
+
+      builder.buildGeminiCommand(spawnOptions());
+      const second = readSettings(tmpDir);
+      expect(second.ui).toEqual({ theme: 'GitHub' });
+      expect(second.mcpServers.docs).toEqual({ httpUrl: 'http://example.test/mcp' });
+      expect(kangenticHookCommands(second)).toHaveLength(firstHookCount);
+    });
+
+    it('an MCP-only spawn keeps the user\'s edit and none of the hooks the last spawn wrote', () => {
+      const builder = new GeminiCommandBuilder();
+      builder.buildGeminiCommand(spawnOptions());
+      writeSettings(tmpDir, { ...readSettings(tmpDir), ui: { theme: 'GitHub' } });
+
+      builder.buildGeminiCommand(spawnOptions({ eventsOutputPath: undefined }));
+
+      const second = readSettings(tmpDir);
+      expect(second.ui).toEqual({ theme: 'GitHub' });
+      expect(kangenticHookCommands(second)).toEqual([]);
+    });
+
+    it('a spawn with the MCP server off keeps the user\'s edit and drops the kangentic entry the last spawn wrote', () => {
+      const builder = new GeminiCommandBuilder();
+      builder.buildGeminiCommand(spawnOptions());
+      expect(readSettings(tmpDir).mcpServers.kangentic).toBeDefined();
+      writeSettings(tmpDir, { ...readSettings(tmpDir), ui: { theme: 'GitHub' } });
+
+      builder.buildGeminiCommand(spawnOptions({ mcpServerEnabled: false }));
+
+      const second = readSettings(tmpDir);
+      expect(second.ui).toEqual({ theme: 'GitHub' });
+      expect(second.mcpServers).toBeUndefined();
+    });
+
+    it('a worktree spawn picks up a change to the project root\'s settings', () => {
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-gemini-fresh-root-'));
+      try {
+        writeSettings(projectRoot, { ui: { theme: 'Default' } });
+        const builder = new GeminiCommandBuilder();
+        builder.buildGeminiCommand(spawnOptions({ projectRoot }));
+
+        writeSettings(projectRoot, { ui: { theme: 'GitHub' } });
+
+        builder.buildGeminiCommand(spawnOptions({ projectRoot }));
+        expect(readSettings(tmpDir).ui).toEqual({ theme: 'GitHub' });
+      } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+      }
     });
   });
 
@@ -409,13 +510,6 @@ describe('GeminiCommandBuilder', () => {
         { name: 'test' },
       );
       expect(result).toBe('test is test');
-    });
-  });
-
-  describe('clearSettingsCache', () => {
-    it('does not throw', () => {
-      const builder = new GeminiCommandBuilder();
-      expect(() => builder.clearSettingsCache()).not.toThrow();
     });
   });
 

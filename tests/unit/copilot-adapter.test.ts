@@ -245,10 +245,6 @@ describe('CopilotAdapter - removeHooks', () => {
     expect(removeSessionConfig).toHaveBeenCalledTimes(2);
     expect(removeSessionConfig).not.toHaveBeenCalledWith(configDirFor('session-003'));
   });
-
-  it('clearSettingsCache does not throw', () => {
-    expect(() => adapter.clearSettingsCache()).not.toThrow();
-  });
 });
 
 // ── CopilotAdapter runtime strategy ─────────────────────────────────────────
