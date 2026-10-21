@@ -160,12 +160,20 @@ function isSessionBoundary(entry: TranscriptEntry): boolean {
  * column's stays alone, each opened by its date. A Route with no parseable stay
  * leaves the entries as they are. `isolatedSwimlaneIds` are the columns an
  * isolated session ran in, whose dividers in All are marked.
+ *
+ * `loadedFromMs` is set when the entries start partway through the
+ * conversation (a paged window with older history not loaded): a stay that
+ * began before it draws no divider, since where it begins is not among the
+ * entries. A divider drawn there would stay the first row while pages land
+ * under it, and the view would hold the divider in place instead of the row
+ * the reader was on.
  */
 export function sliceConversationByRoute(
   entries: ReadonlyArray<TranscriptEntry>,
   route: ReadonlyArray<TaskReportRouteColumn>,
   tab: string,
   isolatedSwimlaneIds: ReadonlySet<string> = NO_ISOLATED_COLUMNS,
+  loadedFromMs?: number,
 ): ConversationSlice {
   const dividerColumns = new Map<string, TaskReportColumn>();
   const isolatedDividers = new Set<string>();
@@ -188,11 +196,14 @@ export function sliceConversationByRoute(
       const uuid = showsAll
         ? moveDividerUuid(stay.column.swimlaneId, stay.startedAt)
         : visitDividerUuid(stay.column.swimlaneId, stay.startedAt);
-      pendingDivider = {
-        entry: dividerEntry(uuid, stay.startMs, showsAll ? stay.column.name : formatMonthDayTime(stay.startedAt)),
-        column: stay.column,
-      };
-      if (isSessionBoundary(entry)) return;
+      pendingDivider = loadedFromMs !== undefined && stay.startMs < loadedFromMs
+        ? null
+        : {
+          entry: dividerEntry(uuid, stay.startMs, showsAll ? stay.column.name : formatMonthDayTime(stay.startedAt)),
+          column: stay.column,
+        };
+      // The stay's divider stands in for a session boundary that opens it.
+      if (pendingDivider && isSessionBoundary(entry)) return;
     }
     if (stay && pendingDivider) {
       sliced.push(pendingDivider.entry);

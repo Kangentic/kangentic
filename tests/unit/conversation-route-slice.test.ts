@@ -210,6 +210,18 @@ describe('firstEntryOfStay', () => {
   });
 });
 
+describe('sliceConversationByRoute: entries that start partway through', () => {
+  it('draws no divider for a stay that began before the loaded entries, and keeps the boundary it would have folded', () => {
+    const entries: TranscriptEntry[] = [
+      boundary('mid-stay-boundary', 22),
+      say('review-later', 23),
+      say('exec-again', 31),
+    ];
+    const slice = sliceConversationByRoute(entries, ROUTE, ALL_CONVERSATION_TAB, undefined, at(22));
+    expect(describeEntries(slice)).toEqual(['mid-stay-boundary', 'review-later', 'divider:Executing', 'exec-again']);
+  });
+});
+
 describe('columnTimeRanges', () => {
   it('gives each stay of a column the time until the next stay of any column begins', () => {
     expect(columnTimeRanges(ROUTE, 'executing')).toEqual([

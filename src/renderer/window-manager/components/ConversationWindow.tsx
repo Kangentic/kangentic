@@ -387,9 +387,14 @@ export function ConversationWindow({
     turnUuid: activeScrollUuid,
   });
   const pagedEntries = paging.entries;
+  // With older history not loaded, the entries start partway through: a stay
+  // that began before them draws no divider (`sliceConversationByRoute`).
+  const loadedFromMs = paging.window?.topHole ? pagedEntries.find((entry) => entry.ts > 0)?.ts : undefined;
   const slice = useMemo(
-    () => (showTabs && response ? sliceConversationByRoute(pagedEntries, route, activeTab, isolatedSwimlaneIds) : null),
-    [showTabs, response, pagedEntries, route, activeTab, isolatedSwimlaneIds],
+    () => (showTabs && response
+      ? sliceConversationByRoute(pagedEntries, route, activeTab, isolatedSwimlaneIds, loadedFromMs)
+      : null),
+    [showTabs, response, pagedEntries, route, activeTab, isolatedSwimlaneIds, loadedFromMs],
   );
   const visibleEntries = slice?.entries ?? (response ? pagedEntries : EMPTY_ENTRIES);
   // A repeat-stay row asks for its stay's first turn; it scrolls there once the

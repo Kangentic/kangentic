@@ -13,7 +13,7 @@
  * fixture) never pages, which the last test pins.
  *
  * Cross-platform: no bare waitForTimeout; every wait polls a DOM or mock
- * condition, and the one geometry check carries a 2px tolerance.
+ * condition, and the one geometry check carries a 6px tolerance (see it).
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -37,8 +37,24 @@ interface PageCall {
   position?: number;
 }
 
+const BASE = Date.UTC(2026, 9, 1, 9, 0, 0);
+const MINUTE = 60_000;
+
+/** Executing from turn 5 and again from turn 160, Code Review from turn 20 in between. */
+function routeColumn(swimlaneId: string, name: string, visitTurns: number[]) {
+  return {
+    swimlaneId, name, color: '#3b82f6', icon: null, role: null, totalMs: 0,
+    visits: visitTurns.map((turn) => ({ startedAt: new Date(BASE + turn * MINUTE).toISOString(), durationMs: 0 })),
+  };
+}
+const ROUTE = [
+  routeColumn('lane-paging-executing', 'Executing', [5, 160]),
+  routeColumn('lane-paging-review', 'Code Review', [20]),
+];
+
 function preConfig(): string {
   return `
+    window.__mockTaskRoutes = { '${TASK_ID}': ${JSON.stringify(ROUTE)} };
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
       var BASE = Date.UTC(2026, 9, 1, 9, 0, 0);
@@ -143,14 +159,28 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   return { browser, page };
 }
 
-async function openConversation(page: Page, sessionId: string): Promise<void> {
-  await page.evaluate((sid) => {
+async function openConversation(page: Page, sessionId: string, tab: { swimlaneId: string } | null = null): Promise<void> {
+  await page.evaluate(({ sid, request }) => {
     const stores = (window as unknown as {
-      __zustandStores?: { session: { getState: () => { setConversationSessionId: (id: string) => void } } };
+      __zustandStores?: { session: { getState: () => { setConversationSessionId: (id: string, tab?: unknown) => void } } };
     }).__zustandStores;
-    stores?.session.getState().setConversationSessionId(sid);
-  }, sessionId);
+    stores?.session.getState().setConversationSessionId(sid, request ?? undefined);
+  }, { sid: sessionId, request: tab });
   await expect(page.getByTestId('conversation-view')).toBeVisible({ timeout: 5000 });
+}
+
+/** Hold every page read until the test releases it. */
+async function holdPages(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const host = window as unknown as {
+      __pagingAnswer: (input: unknown) => unknown;
+      __mockTranscriptsPageOverride: (input: unknown) => unknown;
+      __releasePage?: () => void;
+    };
+    host.__mockTranscriptsPageOverride = (input) => new Promise((resolve) => {
+      host.__releasePage = () => resolve(host.__pagingAnswer(input));
+    });
+  });
 }
 
 async function pageCalls(page: Page): Promise<PageCall[]> {
@@ -184,17 +214,7 @@ test.describe('Conversation Viewer - history paging', () => {
   test('loads one page above the tail as the reader reaches the top, and keeps the reader\'s row in place', async () => {
     const { browser, page } = await launch();
     try {
-      // Hold each page until the test lets it land.
-      await page.evaluate(() => {
-        const host = window as unknown as {
-          __pagingAnswer: (input: unknown) => unknown;
-          __mockTranscriptsPageOverride: (input: unknown) => unknown;
-          __releasePage?: () => void;
-        };
-        host.__mockTranscriptsPageOverride = (input) => new Promise((resolve) => {
-          host.__releasePage = () => resolve(host.__pagingAnswer(input));
-        });
-      });
+      await holdPages(page);
       await openConversation(page, PAGED_SESSION_ID);
       await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
       await expect(page.getByPlaceholder('Search loaded messages')).toBeVisible();
@@ -209,9 +229,79 @@ test.describe('Conversation Viewer - history paging', () => {
       expect(before).not.toBeNull();
       await page.evaluate(() => (window as unknown as { __releasePage: () => void }).__releasePage());
       await expect(page.locator('[data-turn-uuid="paged-turn-149"]')).toHaveCount(1);
-      await expect.poll(async () => Math.abs(((await rowTop(page, 150)) ?? Infinity) - before!)).toBeLessThanOrEqual(2);
+      // Unanchored, the row would move by the whole page (about 3,600px here).
+      // Anchored, it moves by the rounding of the corrections TanStack Virtual
+      // makes as it first measures each row above it: scrollTop is a whole
+      // pixel at device scale 1, so up to half a pixel each for the 8 overscan
+      // rows. Measured 0 to 3.75px.
+      await expect.poll(async () => Math.abs(((await rowTop(page, 150)) ?? Infinity) - before!)).toBeLessThanOrEqual(6);
       // The reader is far from the new top, so no second page is asked for.
       expect(await pageCalls(page)).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('asks for no second page while one is still being read', async () => {
+    const { browser, page } = await launch();
+    try {
+      await holdPages(page);
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect(page.getByText('PAGED_TURN_199', { exact: false })).toBeVisible();
+      await scrollToTop(page);
+      await expect.poll(async () => (await pageCalls(page)).length).toBe(1);
+      // Away from the top and back again while the first read is out.
+      await page.getByTestId('conversation-scroll-container').evaluate((element) => {
+        element.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+        element.scrollTop = element.scrollHeight;
+      });
+      await scrollToTop(page);
+      await expect(page.getByTestId('conversation-edge-top')).toContainText('Loading earlier messages');
+      expect(await pageCalls(page)).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a search hit in unloaded history loads its page and highlights it, with one lookup', async () => {
+    const { browser, page } = await launch();
+    try {
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __pagingAnswer: (input: unknown) => { status: string } & Record<string, unknown>;
+          __mockTranscriptsLocateOverride: (input: { turnUuid: string }) => unknown;
+        };
+        host.__mockTranscriptsLocateOverride = () => {
+          const { status: _status, ...found } = host.__pagingAnswer({ conversationId: 'agent-conv-paging', direction: 'around', position: 3000 });
+          return { status: 'found', page: found };
+        };
+        const stores = (window as unknown as {
+          __zustandStores: { session: { getState: () => { setScrollToTurnUuid: (uuid: string | null) => void } } };
+        }).__zustandStores;
+        stores.session.getState().setScrollToTurnUuid('paged-turn-30');
+      });
+      await openConversation(page, PAGED_SESSION_ID);
+      await expect.poll(async () => page.locator('[data-turn-uuid="paged-turn-30"] [data-highlighted="true"]').count())
+        .toBeGreaterThan(0);
+      const locateCalls = await page.evaluate(() => (window as unknown as { __mockTranscriptLocateCalls?: unknown[] }).__mockTranscriptLocateCalls ?? []);
+      expect(locateCalls).toHaveLength(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a column tab whose first stay is not loaded loads it and opens there, reading around the stay once', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, PAGED_SESSION_ID, { swimlaneId: 'lane-paging-executing' });
+      await expect(page.getByText('PAGED_TURN_5 ', { exact: false })).toBeVisible();
+      await expect(page.getByTestId('conversation-row-route-divider').first()).toBeVisible();
+      // The time between the stays is another column's, so nothing more is read.
+      await expect(page.getByTestId('conversation-edge-top')).toHaveCount(0);
+      const calls = await pageCalls(page);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({ direction: 'around' });
+      expect(calls[0].position).toBeLessThan(1500);
     } finally {
       await browser.close();
     }
