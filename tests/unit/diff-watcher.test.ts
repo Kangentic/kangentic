@@ -491,7 +491,7 @@ describe('DiffWatcher', () => {
 
       await subscribeAndFlush(vi.fn());
 
-      expect(simpleGit).toHaveBeenCalledWith(worktreePath);
+      expect(simpleGit).toHaveBeenCalledWith(worktreePath, { allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
       expect(mockGitRaw).toHaveBeenCalledWith(['rev-parse', '--absolute-git-dir']);
     });
   });

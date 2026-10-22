@@ -160,7 +160,7 @@ describe('getBlame', () => {
 
     await getBlame({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 
-    expect(simpleGit).toHaveBeenCalledWith('/project/.kangentic/worktrees/task');
+    expect(simpleGit).toHaveBeenCalledWith('/project/.kangentic/worktrees/task', { allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
   });
 
   it('fails safe to an empty result on a git error (untracked, binary, deleted file, etc.)', async () => {
