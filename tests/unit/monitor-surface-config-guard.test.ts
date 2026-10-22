@@ -39,9 +39,14 @@ const onOffscreenSurfacesMock = vi.fn();
 const syncSessionsMock = vi.fn().mockResolvedValue(undefined);
 const loadBrowserOffscreenTasksMock = vi.fn().mockResolvedValue(undefined);
 const setBrowserOffscreenTasksMock = vi.fn();
+// The table's Agent, Model and Permission cells read the installed agents, and
+// nothing else in this window loads them, so bootstrap and hmrResync call the
+// real config store's loadAgentList, which reads `agents.list`.
+const agentsListMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
+    agents: { list: agentsListMock },
     config: { get: configGetMock, getGlobal: configGetGlobalMock, set: configSetMock },
     monitor: {
       subscribe: monitorSubscribeMock,
@@ -103,6 +108,7 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     sessionsOnActivityMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    agentsListMock.mockResolvedValue([]);
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -171,6 +177,7 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     sessionsOnActivityMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    agentsListMock.mockResolvedValue([]);
     configSetMock.mockResolvedValue(undefined);
     resetStores();
     controller = new AbortController();
@@ -217,5 +224,14 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     monitorSurface.hmrResync?.();
 
     expect(loadBrowserOffscreenTasksMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads the installed agents on mount and again on a Fast Refresh, for the table\'s own labels', async () => {
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(agentsListMock).toHaveBeenCalledTimes(1);
+
+    monitorSurface.hmrResync?.();
+    expect(agentsListMock).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
   });
 });
