@@ -5,7 +5,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
 import { useBoardStore } from '../../../stores/board-store';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError } from '../../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
 import { ShortcutGlyph } from '../../../utils/swimlane-icons';
 import { warmIconCatalog } from '../../../utils/icon-registry';
@@ -355,7 +355,8 @@ export function ShortcutsTab() {
       }
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Could not save shortcuts. ${describeIpcError(error)}`,
+        title: "Couldn't save shortcuts",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     }

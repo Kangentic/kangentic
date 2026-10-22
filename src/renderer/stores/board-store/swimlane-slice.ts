@@ -1,6 +1,7 @@
 import { type StateCreator } from 'zustand';
 import type { BoardProfile, Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
 import { useToastStore } from '../toast-store';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import type { BoardStore } from './types';
 
 export interface SwimlaneSlice {
@@ -50,7 +51,8 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     } catch (error) {
       await get().loadBoardProfiles();
       useToastStore.getState().addToast({
-        message: `Failed to save profiles: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't save profiles",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       // Reported rather than rethrown: the toast and the reload are this
@@ -99,7 +101,8 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     } catch (err) {
       await get().loadBoard();
       useToastStore.getState().addToast({
-        message: `Failed to reorder columns: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't reorder columns",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     }

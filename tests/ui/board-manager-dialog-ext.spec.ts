@@ -580,11 +580,16 @@ test.describe('BoardManagerDialog extended', () => {
     // strategy sitting at the OTHER track's default, and only on a real change.
     expect(saved.spawn).toBe('always_spawn_new');
 
-    // Cleanup: restore the default.
+    // Cleanup: restore the default, then resync the board store. The raw call
+    // bypasses the store, so without the reload the next test that opens this
+    // dialog drafts from the stale 'isolated' lane and its Save writes it back,
+    // which left the rail test below seeing a Split icon on Code Review.
     await page.evaluate(async () => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((s) => s.name === 'Code Review');
       if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, session_target: 'main' });
+      const store = (window as unknown as { __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } } }).__zustandStores;
+      if (store?.board) await store.board.getState().loadBoard();
     });
   });
 

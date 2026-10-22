@@ -15,7 +15,7 @@
  * only what the renderer does once the notice arrives.
  */
 import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject, waitForBoard } from './helpers';
+import { launchPage, createProject, waitForBoard, toastCountRightNow } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -56,14 +56,16 @@ test('a failed auto_command raises a warning toast naming the command and reason
 
   const toast = page.getByTestId('toast');
   await expect(toast).toBeVisible({ timeout: 3000 });
-  await expect(toast).toContainText('Ship the feature');
-  await expect(toast).toContainText('/code-review');
-  await expect(toast).toContainText('the agent never confirmed delivery');
+  await expect(toast.getByTestId('toast-title')).toHaveText('Command didn\'t run');
+  // Main's reason is its own sentence after the one that names the task.
+  await expect(toast.getByTestId('toast-body')).toHaveText(
+    '"Ship the feature" did not run /code-review. The agent never confirmed delivery.',
+  );
 
   await browser.close();
 });
 
-test('a delivered auto_command that discarded a draft quotes the discarded text', async () => {
+test('a delivered auto_command that discarded a draft says it cleared the unsent text', async () => {
   const { browser, page } = await launchPage();
   await createProject(page, 'AutoCmdToastDraft');
   await waitForBoard(page);
@@ -75,8 +77,11 @@ test('a delivered auto_command that discarded a draft quotes the discarded text'
 
   const toast = page.getByTestId('toast');
   await expect(toast).toBeVisible({ timeout: 3000 });
-  await expect(toast).toContainText('Ship the feature');
-  await expect(toast).toContainText('instead can we');
+  await expect(toast.getByTestId('toast-title')).toHaveText('Command ran');
+  // One sentence: it names the cost, not the draft's text.
+  await expect(toast.getByTestId('toast-body')).toHaveText(
+    '"Ship the feature" ran /code-review and cleared your unsent text.',
+  );
 
   await browser.close();
 });
@@ -99,7 +104,7 @@ test('a result targeting a different project raises no toast', async () => {
   // (intentional fixed wait - negative assertion; cannot poll for
   // non-occurrence)
   await page.waitForTimeout(500);
-  expect(await page.getByTestId('toast').count()).toBe(0);
+  expect(await toastCountRightNow(page)).toBe(0);
 
   await browser.close();
 });
@@ -117,7 +122,7 @@ test('a plain delivery with nothing worth reporting raises no toast', async () =
   await fireResult(page, { state: 'confirmed' });
 
   await page.waitForTimeout(500);
-  expect(await page.getByTestId('toast').count()).toBe(0);
+  expect(await toastCountRightNow(page)).toBe(0);
 
   await browser.close();
 });

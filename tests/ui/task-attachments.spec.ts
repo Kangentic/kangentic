@@ -324,6 +324,7 @@ test.describe('Image Attachments', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't create task" });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-body')).toHaveText('Mock create failure.');
     const dialog = page.locator('.fixed.inset-0');
     await expect(dialog).toBeVisible();
     await expect(titleInput).toHaveValue('Create failure task');

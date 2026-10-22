@@ -171,7 +171,8 @@ describe('openTaskConversation: nothing to open', () => {
     expect(electronStub.listSessions).toHaveBeenCalledWith(TASK_ID, PROJECT_ID);
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
-    expect(toasts[0].message).toBe('No conversation history for this task yet');
+    expect(toasts[0].title).toBe('No conversation yet');
+    expect(toasts[0].message).toBe('This task has no conversation history.');
     expect(toasts[0].variant).toBe('info');
     expect(signal()).toEqual({
       conversationSessionId: SENTINEL_SESSION_ID,

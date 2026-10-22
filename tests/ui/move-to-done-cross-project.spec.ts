@@ -10,7 +10,7 @@
  *      move IPC routes to, even if the user switches projects before the gated
  *      persist runs. Proves the fix for the ambient-projectId root cause.
  *   B. A failed move surfaces failure and does NOT fire the false
- *      "completed and archived" success (recentlyArchivedId stays null).
+ *      "Task completed" success (recentlyArchivedId stays null).
  *   C. A move that succeeds while the user has switched away does NOT set the
  *      board-global recentlyArchivedId (which would mis-highlight a foreign
  *      board), but still routes to the correct source project.
@@ -24,7 +24,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -235,7 +235,7 @@ test.describe('cross-project Done-drop race', () => {
   });
 
   // B. A failed move must not report success.
-  test('a failed move fires no false "completed and archived" success', async () => {
+  test('a failed move fires no false "Task completed" success', async () => {
     const { browser, page } = await launch();
     try {
       await page.evaluate(() => {
@@ -250,8 +250,12 @@ test.describe('cross-project Done-drop race', () => {
       // though the move threw. recentlyArchivedId must stay null on failure.
       expect(board.recentlyArchivedId).toBeNull();
       // The error must surface and the success toast must never appear.
-      await expect(page.getByText(/Failed to move task/)).toBeVisible({ timeout: 5000 });
-      await expect(page.getByText(/completed and archived/)).toHaveCount(0);
+      const moveFailure = page.getByTestId('toast').filter({ hasText: "Couldn't move task" });
+      await expect(moveFailure).toBeVisible({ timeout: 5000 });
+      await expect(moveFailure.getByTestId('toast-body')).toHaveText('Simulated move failure.');
+      // persistCompletion decides on the success toast in the same await chain
+      // that raised the error toast above, so one immediate read is enough.
+      expect(await toastCountRightNow(page, 'Task completed')).toBe(0);
     } finally {
       await browser.close();
     }

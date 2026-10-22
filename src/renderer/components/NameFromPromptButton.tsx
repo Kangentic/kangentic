@@ -4,6 +4,7 @@ import { namingAgentReady } from '../../shared/answer-agent';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
+import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { tipLabel } from '../utils/tooltip';
 import { Tooltip } from './Tooltip';
 
@@ -75,15 +76,16 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
         onTitle(result.title);
       } else {
         useToastStore.getState().addToast({
-          message: `Could not generate title: ${result.reason}`,
+          title: "Couldn't generate title",
+          message: asSentence(result.reason),
           variant: 'warning',
         });
       }
     } catch (error) {
       if (!mountedRef.current) return;
-      const message = error instanceof Error ? error.message : String(error);
       useToastStore.getState().addToast({
-        message: `Could not generate title: ${message}`,
+        title: "Couldn't generate title",
+        message: asSentence(describeIpcError(error, String(error))),
         variant: 'error',
       });
     } finally {

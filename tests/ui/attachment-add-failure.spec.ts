@@ -81,9 +81,10 @@ test.describe('Attachment remove failure', () => {
 
     await dialog.locator('[data-testid="attachment-remove"]').click();
 
-    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't remove the attachment" });
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't remove attachment" });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText('bad file descriptor');
+    await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't remove attachment");
+    await expect(toast.getByTestId('toast-body')).toHaveText('EBADF: bad file descriptor, unlink.');
 
     // The rejected remove must not drop the chip.
     await expect(chip).toHaveCount(1);
@@ -104,8 +105,8 @@ test.describe('Attachment add failure', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'pasted-image-1.png' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText("Couldn't add");
-    await expect(toast).toContainText('bad file descriptor');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Couldn\'t add "pasted-image-1.png"');
+    await expect(toast.getByTestId('toast-body')).toHaveText('EBADF: bad file descriptor, write.');
 
     // The rejected add must not leave a phantom chip behind.
     await expect(dialog.locator('[data-testid="attachment-chip"]')).toHaveCount(0);

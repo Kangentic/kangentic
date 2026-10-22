@@ -97,7 +97,7 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
         onRequestRemove={() => setRemoving(true)}
         onSetRoute={(key, columns) => { void useWorkflowStore.getState().setRouteIn(homeProjectId, workflowId, key, columns); }}
         onSetLink={(blockerKey, blockedKey, linked) => { void useWorkflowStore.getState().setLinkIn(homeProjectId, workflowId, blockerKey, blockedKey, linked); }}
-        onRefuse={(message) => useToastStore.getState().addToast({ message, variant: 'warning' })}
+        onRefuse={(message) => useToastStore.getState().addToast({ title: 'Route step refused', message, variant: 'warning' })}
         // A popped-out window (the Agent Monitor's) has no Workflows view of its own.
         onOpenWorkflow={inPopOut ? undefined : () => {
           // Task detail is also hosted over the Agent Monitor, the Knowledge Graph

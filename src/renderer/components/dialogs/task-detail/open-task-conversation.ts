@@ -58,7 +58,11 @@ export async function openTaskConversation(taskId: string, projectId: string | n
     );
   const sessionId = reusedWindow?.anchor ?? liveSessionId ?? newestSessionId;
   if (!sessionId) {
-    useToastStore.getState().addToast({ message: 'No conversation history for this task yet', variant: 'info' });
+    useToastStore.getState().addToast({
+      title: 'No conversation yet',
+      message: 'This task has no conversation history.',
+      variant: 'info',
+    });
     return;
   }
   if (capture) {

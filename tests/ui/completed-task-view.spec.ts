@@ -692,7 +692,9 @@ test.describe('Completed task view', () => {
       await openCompletedTask(page);
       await resetBridgeCalls(page);
       await page.locator('[data-testid="completed-view-conversation"]').click();
-      await expect(page.locator('[data-testid="toast"]')).toContainText('No conversation history for this task yet');
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'No conversation yet' });
+      await expect(toast.getByTestId('toast-title')).toHaveText('No conversation yet');
+      await expect(toast.getByTestId('toast-body')).toHaveText('This task has no conversation history.');
       await expect(page.getByTestId('conversation-window')).toHaveCount(0);
       const calls = await bridgeCalls(page, 'transcripts.listSessions');
       expect(calls.length).toBeGreaterThan(0);

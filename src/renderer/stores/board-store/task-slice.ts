@@ -7,9 +7,10 @@ import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { isWorkflowLockMessage } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../../utils/workflow-refusal';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import { fetchArchivedReconcile } from './archived-tasks-slice';
@@ -143,7 +144,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? previous : t)) }));
       }
       useToastStore.getState().addToast({
-        message: `Failed to apply override: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't apply model or effort",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
       throw err;
@@ -161,12 +163,19 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       if (!isPostPersistFailure && previous) {
         set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? previous : t)) }));
       }
-      useToastStore.getState().addToast({
-        message: isPostPersistFailure
-          ? `Saved, but couldn't apply to the live session: ${result.reason}. Resume the task to retry.`
-          : `Could not apply model/effort: ${result.reason}`,
-        variant: 'error',
-      });
+      // A post-persist failure is not a failure for good: the override is
+      // saved and the agent picks it up on its next resume.
+      useToastStore.getState().addToast(isPostPersistFailure
+        ? {
+          title: 'Model change saved',
+          message: 'The running agent picks it up the next time it resumes.',
+          variant: 'info',
+        }
+        : {
+          title: "Couldn't apply model or effort",
+          message: asSentence(result.reason),
+          variant: 'error',
+        });
     } else if (result.mode === 'restart') {
       // The handler suspended the old PTY and spawned a new one with a new
       // session_id. The board store still has the OLD session_id on the
@@ -214,7 +223,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // race surface for a hard delete. Matches deleteArchivedTask.
       set({ tasks: previousTasks, archivedTasks: previousArchivedTasks, archivedTotalCount: previousArchivedTotalCount });
       useToastStore.getState().addToast({
-        message: `Failed to delete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't delete task",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
       // Re-throw so callers skip their own success toast on failure.
@@ -443,11 +453,14 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         // may not have been processed yet (races with the TASK_MOVE response).
         useSessionStore.getState().setSpawnProgress(input.taskId, null);
         const isResume = prevSessionId !== null;
+        const startedTaskId = movedTask.id;
         useToastStore.getState().addToast({
-          message: isResume
-            ? `Agent resumed for "${movedTask.title}"`
-            : `Agent started for "${movedTask.title}"`,
+          title: isResume ? 'Agent resumed' : 'Agent started',
+          message: `"${movedTask.title}" is running.`,
           variant: 'success',
+          onOpen: sourceProjectId !== null
+            ? () => openTaskFromNotification(sourceProjectId, startedTaskId)
+            : undefined,
         });
       } else if (isColumnChange && targetLane?.auto_spawn) {
         // No new session was spawned (e.g. user-paused task moved to auto_spawn column,
@@ -485,7 +498,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         return { ok: false };
       }
       useToastStore.getState().addToast({
-        message: `Failed to move task: ${message}`,
+        title: "Couldn't move task",
+        message: asSentence(message),
         variant: 'error',
       });
       return { ok: false };
@@ -556,7 +570,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       if (isSupersededMove(taskId, thisGen)) return; // Don't clobber newer state on error
       await get().loadBoard();
       useToastStore.getState().addToast({
-        message: `Failed to reorder task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't reorder task",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     }

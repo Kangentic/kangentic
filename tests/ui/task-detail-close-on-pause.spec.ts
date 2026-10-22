@@ -700,9 +700,9 @@ test('a failed suspend still closes the window but surfaces the error', async ()
 
     await dialog.locator('button[aria-label="Pause session"]').click();
 
-    const toast = page.locator('[data-testid="toast"]', { hasText: 'Failed to suspend session' });
+    const toast = page.locator('[data-testid="toast"]', { hasText: "Couldn't pause session" });
     await expect(toast).toBeVisible({ timeout: 10000 });
-    await expect(toast).toContainText('PTY refused to stop');
+    await expect(toast.getByTestId('toast-body')).toHaveText('PTY refused to stop.');
     await expect(dialog).toBeHidden({ timeout: 10000 });
   } finally {
     await browser.close();

@@ -141,8 +141,7 @@ function errnoError(code: string, message: string, syscall?: string): NodeJS.Err
   return error;
 }
 
-const NO_CAUSE_SENTENCE =
-  'Kangentic could not save a change to disk. It may be lost when Kangentic restarts.';
+const NO_CAUSE_SENTENCE = 'It may be lost on restart.';
 
 const originalPlatform = process.platform;
 
@@ -157,27 +156,25 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
   });
 
   it.each([
-    ['ENOSPC', 'because the disk is full'],
-    ['EACCES', 'because it does not have permission'],
-    ['EPERM', 'because it does not have permission'],
-    ['EROFS', 'because the volume is read-only'],
+    ['ENOSPC', 'The disk is full'],
+    ['EACCES', 'Kangentic does not have permission'],
+    ['EPERM', 'Kangentic does not have permission'],
+    ['EROFS', 'The volume is read-only'],
     // The removable-volume errno from DESKTOP-14/DESKTOP-13, the case that built this module.
-    ['EBADF', 'because the drive is unavailable'],
-    ['ENODEV', 'because the drive is unavailable'],
-    ['ENXIO', 'because the drive is unavailable'],
-    ['EIO', 'because the drive is unavailable'],
-  ])('names the cause for %s', (code, expectedClause) => {
+    ['EBADF', 'The drive is unavailable'],
+    ['ENODEV', 'The drive is unavailable'],
+    ['ENXIO', 'The drive is unavailable'],
+    ['EIO', 'The drive is unavailable'],
+  ])('names the cause for %s', (code, expectedCause) => {
     const notifier = vi.fn();
     setSyncWriteFailureNotifier(notifier);
 
     reportSyncWriteFailure(errnoError(code, `${code}: something, write`), 'config');
 
     expect(notifier).toHaveBeenCalledTimes(1);
-    const message = notifier.mock.calls[0][0] as string;
-    expect(message).toContain(expectedClause);
-    // The consequence half must survive the new clause. It is worded to hold for every
-    // source, including a project override, which keeps no in-memory copy.
-    expect(message).toContain('It may be lost when Kangentic restarts.');
+    // One sentence: the cause, then the consequence. The consequence is worded to hold
+    // for every source, including a project override, which keeps no in-memory copy.
+    expect(notifier).toHaveBeenCalledWith(`${expectedCause}, so it may be lost on restart.`);
   });
 
   it('falls back to the no-cause sentence for an errno with no clause', () => {
@@ -230,7 +227,7 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
     reportSyncWriteFailure(errnoError('EROFS', 'read-only now'), 'config');
 
     expect(notifier).toHaveBeenCalledTimes(1);
-    expect(notifier.mock.calls[0][0]).toContain('because the disk is full');
+    expect(notifier.mock.calls[0][0]).toContain('The disk is full');
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -242,13 +239,13 @@ describe('write-failure-notice cause clauses (DESKTOP-1C)', () => {
   ])(
     'falls back to the no-cause sentence for the Object.prototype-shaped errno %s, rather than resolving an inherited member',
     (code) => {
-      // CAUSE_CLAUSE_BY_ERRNO is a Map for exactly this reason: an errno that happens to
+      // CAUSE_BY_ERRNO is a Map for exactly this reason: an errno that happens to
       // name an Object.prototype member must MISS, not resolve to an inherited value. A
       // plain object literal with bracket access (`{ ... }[code]`) would resolve
       // `code: 'constructor'` to the Object constructor function and `code: '__proto__'`
-      // to Object.prototype - both truthy, so the `?? ''` fallback would never fire, and
+      // to Object.prototype - both truthy, so the no-cause fallback would never fire, and
       // the template literal would stringify whichever one it got straight into the
-      // user's message (e.g. "...to diskfunction Object() { [native code] }. ...").
+      // user's message (e.g. "function Object() { [native code] }, so it may be lost...").
       // Asserting full equality against NO_CAUSE_SENTENCE (not just a substring) is what
       // catches that splice: a `.toContain('It may be lost')` check would still pass with
       // garbage prepended to it.
@@ -283,10 +280,7 @@ describe('write-failure-notice held-file renames (DESKTOP-1Z)', () => {
 
       reportSyncWriteFailure(errnoError(code, `${code}: refused, rename`, 'rename'), 'config_project_override');
 
-      expect(notifier).toHaveBeenCalledWith(
-        'Kangentic could not save a change to disk because the file is in use or read-only. '
-          + 'It may be lost when Kangentic restarts.',
-      );
+      expect(notifier).toHaveBeenCalledWith('The file is in use or read-only, so it may be lost on restart.');
     },
   );
 
@@ -297,7 +291,7 @@ describe('write-failure-notice held-file renames (DESKTOP-1Z)', () => {
 
     reportSyncWriteFailure(errnoError('EACCES', 'EACCES: permission denied, rename', 'rename'), 'config');
 
-    expect(notifier.mock.calls[0][0]).toContain('because it does not have permission');
+    expect(notifier.mock.calls[0][0]).toContain('Kangentic does not have permission');
   });
 
   it('keeps the permission clause for an EPERM from a syscall other than rename on Windows', () => {
@@ -307,7 +301,7 @@ describe('write-failure-notice held-file renames (DESKTOP-1Z)', () => {
 
     reportSyncWriteFailure(errnoError('EPERM', 'EPERM: operation not permitted, open', 'open'), 'config');
 
-    expect(notifier.mock.calls[0][0]).toContain('because it does not have permission');
+    expect(notifier.mock.calls[0][0]).toContain('Kangentic does not have permission');
   });
 });
 

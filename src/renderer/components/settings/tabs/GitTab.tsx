@@ -5,7 +5,7 @@ import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError } from '../../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 
 /**
  * Three cards: Branches (where work starts and how current it stays),
@@ -36,7 +36,8 @@ export function GitTab({ config }: { config: AppConfig }) {
               // conflict markers, say), and that refusal has to reach the user.
               window.electronAPI.boardConfig.setDefaultBaseBranch(branch).catch((error: unknown) => {
                 useToastStore.getState().addToast({
-                  message: `Could not save the base branch to kangentic.json. ${describeIpcError(error)}`,
+                  title: "Couldn't save base branch",
+                  message: asSentence(describeIpcError(error)),
                   variant: 'error',
                 });
               });

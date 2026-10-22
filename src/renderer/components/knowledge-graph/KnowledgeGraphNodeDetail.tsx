@@ -67,7 +67,8 @@ export function openConversationForNode(
 ): void {
   if (!node.sessionId) {
     useToastStore.getState().addToast({
-      message: 'This conversation has no session record to open',
+      title: 'No session to open',
+      message: 'This conversation has no session record.',
       variant: 'info',
     });
     return;

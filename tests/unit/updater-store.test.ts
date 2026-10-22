@@ -128,11 +128,13 @@ describe('receiveUpdate()', () => {
     expect(useUpdaterStore.getState().autoOpened).toBe(false);
     expect(addToastMock).toHaveBeenCalledTimes(1);
     expect(addToastMock).toHaveBeenCalledWith({
-      message: 'Version 1.2.3 is ready to install',
+      title: 'Update ready',
+      message: 'Version 1.2.3 is ready to install.',
       variant: 'info',
-      duration: 0,
+      persistent: true,
       action: {
         label: 'Restart to update',
+        icon: 'update',
         onClick: expect.any(Function),
       },
     });

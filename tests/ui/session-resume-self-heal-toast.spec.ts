@@ -8,7 +8,7 @@
  * user clicks Resume, the IPC handler detects the live PTY and returns the
  * existing session object unchanged (same id, status='running') instead of
  * spawning a new one. useTaskActions detects this condition and shows an
- * info toast: "Reconnected to running session".
+ * info toast titled "Reconnected" ("The session was already running.").
  *
  * Gap 2: Toast fires when resumed id === prior id and status === 'running'.
  * Gap 3: Toast does NOT fire when resumed id !== prior id (normal spawn).
@@ -19,9 +19,12 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
+
+/** The reconnect toast's title, which the negative count below filters on. */
+const RECONNECT_TOAST_TITLE = 'Reconnected';
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 // Unique run suffix so parallel workers don't collide on shared mock state.
@@ -168,7 +171,7 @@ test.describe('Resume self-heal toast (same session id returned)', () => {
     await browser?.close();
   });
 
-  test('shows "Reconnected to running session" info toast when resume returns the same session id', async () => {
+  test('shows the "Reconnected" info toast when resume returns the same session id', async () => {
     // Override sessions.resume to return the SAME session id with status='running'.
     // This simulates main's self-heal path: the PTY was live all along, so main
     // returns the existing session object instead of spawning a new one.
@@ -201,9 +204,10 @@ test.describe('Resume self-heal toast (same session id returned)', () => {
     await resumeButton.click();
 
     // Poll for the toast with the specific reconnect message
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'Reconnected to running session' }),
-    ).toBeVisible({ timeout: 5000 });
+    const reconnectToast = page.locator('[data-testid="toast"]').filter({ hasText: RECONNECT_TOAST_TITLE });
+    await expect(reconnectToast).toBeVisible({ timeout: 5000 });
+    await expect(reconnectToast.getByTestId('toast-title')).toHaveText(RECONNECT_TOAST_TITLE);
+    await expect(reconnectToast.getByTestId('toast-body')).toHaveText('The session was already running.');
 
     await closeTaskDialog(page);
   });
@@ -257,11 +261,7 @@ test.describe('Normal session spawn does not show reconnect toast', () => {
     // interfere with the toast auto-dismiss timer (default 4s).
     await page.waitForTimeout(800);
 
-    const reconnectToastCount = await page
-      .locator('[data-testid="toast"]')
-      .filter({ hasText: 'Reconnected to running session' })
-      .count();
-    expect(reconnectToastCount).toBe(0);
+    expect(await toastCountRightNow(page, RECONNECT_TOAST_TITLE)).toBe(0);
 
     await closeTaskDialog(page);
   });

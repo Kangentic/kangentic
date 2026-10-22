@@ -7,8 +7,9 @@
  * download the user never asked for, and a file appearing in Downloads with no
  * UI anywhere is the worst of the three options considered.
  *
- * "Show in folder" reuses the existing `shell:showItemInFolder` channel rather
- * than adding one, so the only new IPC here is the push itself.
+ * A click on the finished toast's card shows the file in its folder, through
+ * the existing `shell:showItemInFolder` channel rather than a new one, so the
+ * only new IPC here is the push itself.
  *
  * See `docs/embedded-browser.md` decision 13.
  */
@@ -26,18 +27,17 @@ export function useBrowserDownloadToast(): void {
         // Named rather than generic: an interrupted download leaves a partial
         // file behind, and the user needs to know which one.
         addToast({
-          message: `Download did not finish: ${download.fileName}`,
+          title: "Download didn't finish",
+          message: download.fileName,
           variant: 'warning',
         });
         return;
       }
       addToast({
-        message: `Downloaded ${download.fileName}`,
+        title: 'Downloaded',
+        message: download.fileName,
         variant: 'success',
-        action: {
-          label: 'Show in folder',
-          onClick: () => { void window.electronAPI.shell.showItemInFolder(download.filePath); },
-        },
+        onOpen: () => { void window.electronAPI.shell.showItemInFolder(download.filePath); },
       });
     });
   }, []);

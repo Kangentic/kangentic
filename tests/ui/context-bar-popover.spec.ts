@@ -156,17 +156,20 @@ async function applyClaudeUsage(page: Page, sessionId: string, model: string, di
 }
 
 // ---------------------------------------------------------------------------
-// Shared toast helper (mirrors the pattern in delete-task-optimistic.spec.ts).
+// Shared toast helper: finds the toast by its title, then checks its body.
 // ---------------------------------------------------------------------------
 
-async function waitForToast(
+async function expectToast(
   page: Page,
-  textPattern: RegExp | string,
+  title: string,
+  body: string,
   timeoutMs = 5000,
 ): Promise<void> {
-  await expect(
-    page.locator('[data-testid="toast"]').filter({ hasText: textPattern }),
-  ).toBeVisible({ timeout: timeoutMs });
+  const toast = page.locator('[data-testid="toast"]').filter({
+    has: page.getByTestId('toast-title').filter({ hasText: title }),
+  });
+  await expect(toast).toBeVisible({ timeout: timeoutMs });
+  await expect(toast.getByTestId('toast-body')).toHaveText(body);
 }
 
 interface ResetSnapshot {
@@ -403,7 +406,7 @@ test.describe('ContextBar model/effort popover', () => {
     await expect(page.locator('[data-testid="context-bar-model-popover"]')).toHaveCount(0);
   });
 
-  test('pre-persist failure rolls back optimistic update and shows a "Could not apply" toast', async () => {
+  test('pre-persist failure rolls back optimistic update and shows a "Couldn\'t apply" toast', async () => {
     // The handler returns ok:false with a reason that does NOT start with
     // 'suspend failed', 'respawn failed', or 'respawn aborted', so the DB
     // write never happened. The store must roll back the optimistic update so
@@ -436,8 +439,9 @@ test.describe('ContextBar model/effort popover', () => {
     // Popover closes after the pick.
     await expect(popover).toHaveCount(0);
 
-    // Error toast must appear with "Could not apply" prefix (pre-persist path).
-    await waitForToast(page, 'Could not apply model/effort: task not found');
+    // Error toast titled "Couldn't apply" (pre-persist path). The reason
+    // arrives as its body, capitalized with a period by asSentence.
+    await expectToast(page, "Couldn't apply model or effort", 'Task not found.');
 
     // Optimistic update must be rolled back: model_override returns to null.
     await expect.poll(async () => {
@@ -450,7 +454,7 @@ test.describe('ContextBar model/effort popover', () => {
     }, { timeout: 3000 }).toBeNull();
   });
 
-  test('post-persist failure keeps optimistic update and shows a "Saved, but..." toast', async () => {
+  test('post-persist failure keeps optimistic update and shows a "Model change saved" toast', async () => {
     // The handler returns ok:false with a reason starting with 'suspend failed:',
     // so the DB write DID happen, but applying the change to the live
     // session failed. The store must KEEP the optimistic update (so the pill
@@ -474,8 +478,9 @@ test.describe('ContextBar model/effort popover', () => {
     // Popover closes after the pick.
     await expect(popover).toHaveCount(0);
 
-    // Recovery toast must appear with "Saved, but..." prefix (post-persist path).
-    await waitForToast(page, /Saved, but couldn't apply to the live session/);
+    // Info toast saying the change is saved and lands on the next resume
+    // (post-persist path): nothing failed for good.
+    await expectToast(page, 'Model change saved', 'The running agent picks it up the next time it resumes.');
 
     // Optimistic update must be KEPT: model_override is now 'sonnet' (in DB).
     await expect.poll(async () => {

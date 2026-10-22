@@ -174,7 +174,7 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
   // the only copy of its own message. The card's text cannot be selected
   // (see the root below), which is the cost this button buys back. Scoped to
   // `error`, because nobody copies "Saved 1 column".
-  const copyText = toast.title ? `${toast.title}\n${toast.message}` : toast.message;
+  const copyText = `${toast.title}\n${toast.message}`;
   const handleCopyClick = useCallback(() => {
     navigator.clipboard.writeText(copyText).then(
       () => setCopied(true),
@@ -231,12 +231,7 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
     >
       <div className="flex min-w-0 flex-col gap-1 pb-3 pl-3.5 pr-2.5 pt-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          {toast.title ? (
-            <span className="min-w-0 truncate text-sm font-semibold text-fg" data-testid="toast-title">{toast.title}</span>
-          ) : (
-            // The one-line form, until every call site carries a title.
-            <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-secondary" data-testid="toast-body">{toast.message}</span>
-          )}
+          <span className="min-w-0 truncate text-sm font-semibold text-fg" data-testid="toast-title">{toast.title}</span>
           {toast.since && <ToastAge since={toast.since} />}
           <span className="flex-1" />
           {toast.variant === 'error' && (
@@ -262,13 +257,11 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
             <X size={14} />
           </button>
         </div>
-        {toast.title && (
-          // A body breaks only where it has to: copy is one sentence on one
-          // line, and only a task or file name is long enough to wrap.
-          <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-muted" data-testid="toast-body">
-            {toast.message}
-          </span>
-        )}
+        {/* A body breaks only where it has to: copy is one sentence on one
+            line, and only a task or file name is long enough to wrap. */}
+        <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-muted" data-testid="toast-body">
+          {toast.message}
+        </span>
         {toast.action && (
           <div className="mt-1.5 flex items-center justify-end gap-2">
             <button

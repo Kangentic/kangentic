@@ -11,8 +11,8 @@
  * Gap 2 - Failure path rollback
  *   When tasks.delete rejects, state.tasks reverts to the pre-call snapshot
  *   (task back in its original swimlane and position) and an error toast
- *   starting "Failed to delete task:" is shown. The promise rejects so
- *   callers can skip their own success toasts.
+ *   titled "Couldn't delete task", with the reason as its body, is shown.
+ *   The promise rejects so callers can skip their own success toasts.
  *
  * Gap 3 - Rapid double-delete is consistent
  *   Two rapid deleteTask() calls for the same task settle without producing
@@ -28,7 +28,7 @@
  * Gap 5 - useTaskActions.handleDelete skips success toast on failure
  *   Opening the task detail dialog and clicking Delete while
  *   __mockTaskDeleteThrow is armed must produce only the error toast
- *   and NOT a "Deleted task ..." info toast. Covers the re-throw
+ *   and NOT a "Task deleted" info toast. Covers the re-throw
  *   path in useTaskActions.ts:346-358.
  *
  * Gap 6 - deleteTask() handles archivedTasks as the primary hit
@@ -47,7 +47,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -161,14 +161,14 @@ async function readTaskLists(page: Page, taskId: string): Promise<{
   }, taskId);
 }
 
-async function waitForToast(
-  page: Page,
-  textPattern: RegExp | string,
-  timeoutMs = 5000,
-): Promise<void> {
-  await expect(
-    page.locator('[data-testid="toast"]').filter({ hasText: textPattern }),
-  ).toBeVisible({ timeout: timeoutMs });
+const DELETE_FAILURE_TITLE = "Couldn't delete task";
+
+/** The delete failure toast: its title, and the thrown reason as a sentence in its body. */
+async function expectDeleteFailureToast(page: Page, body: string): Promise<void> {
+  const toast = page.getByTestId('toast').filter({ hasText: DELETE_FAILURE_TITLE });
+  await expect(toast).toBeVisible({ timeout: 5000 });
+  await expect(toast.getByTestId('toast-title')).toHaveText(DELETE_FAILURE_TITLE);
+  await expect(toast.getByTestId('toast-body')).toHaveText(body);
 }
 
 async function resolveLaneId(page: Page, laneName: string): Promise<string> {
@@ -299,9 +299,8 @@ test.describe('deleteTask - failure path rollback', () => {
       expect(afterState.taskSwimlaneId).toBe(todoLaneId);
       expect(afterState.taskPosition).toBe(0);
 
-      // Error toast must surface with the thrown message
-      await waitForToast(page, 'Failed to delete task:');
-      await waitForToast(page, 'Worktree cleanup failed');
+      // Error toast must surface with the thrown message as its body
+      await expectDeleteFailureToast(page, 'Worktree cleanup failed.');
     } finally {
       await browser.close();
     }
@@ -583,11 +582,7 @@ test.describe('deleteTask - rapid double delete', () => {
       expect(finalState.inArchivedTasks).toBe(false);
 
       // No error toast was raised
-      const errorToastCount = await page
-        .locator('[data-testid="toast"]')
-        .filter({ hasText: 'Failed to delete task:' })
-        .count();
-      expect(errorToastCount).toBe(0);
+      expect(await toastCountRightNow(page, DELETE_FAILURE_TITLE)).toBe(0);
     } finally {
       await browser.close();
     }
@@ -640,8 +635,7 @@ test.describe('deleteTask - TaskCard context menu caller survives re-throw', () 
 
       // (a) Error toast must appear - the re-throw propagates through handleContextDelete
       // which is an async event handler. The toast is fired inside deleteTask's catch block.
-      await waitForToast(page, 'Failed to delete task:');
-      await waitForToast(page, 'forced delete failure');
+      await expectDeleteFailureToast(page, 'Forced delete failure.');
 
       // (b) Card must reappear in its original slot (rollback restored previousTasks).
       await expect.poll(async () => {
@@ -672,7 +666,7 @@ test.describe('deleteTask - TaskCard context menu caller survives re-throw', () 
 // Gap 5: useTaskActions.handleDelete skips success toast on failure
 // -----------------------------------------------------------------------
 test.describe('deleteTask - TaskDetailDialog handleDelete skips success toast on failure', () => {
-  test('error toast appears but no Deleted task info toast when IPC rejects', async () => {
+  test('error toast appears but no Task deleted info toast when IPC rejects', async () => {
     const { browser, page } = await launchWithCallerTask();
 
     try {
@@ -716,21 +710,16 @@ test.describe('deleteTask - TaskDetailDialog handleDelete skips success toast on
       await page.locator('button', { hasText: 'Delete' }).last().click();
 
       // (a) Error toast must appear.
-      await waitForToast(page, 'Failed to delete task:');
-      await waitForToast(page, 'forced delete failure');
+      await expectDeleteFailureToast(page, 'Forced delete failure.');
 
-      // (b) NO "Deleted task" info toast must appear. The line
-      // `addToast({ message: 'Deleted task "..."', variant: 'info' })` in
-      // handleDelete comes AFTER the awaited deleteTask() call. With re-throw,
-      // that line is never reached. Give a fixed budget for any latent toast
-      // to materialize before asserting absence.
+      // (b) NO "Task deleted" info toast must appear. The line
+      // `addToast({ title: 'Task deleted', ... })` in handleDelete comes AFTER
+      // the awaited deleteTask() call. With re-throw, that line is never
+      // reached. Give a fixed budget for any latent toast to materialize
+      // before asserting absence.
       // (intentional fixed wait - cannot poll for non-occurrence)
       await page.waitForTimeout(1500);
-      const successToastCount = await page
-        .locator('[data-testid="toast"]')
-        .filter({ hasText: /^Deleted task/ })
-        .count();
-      expect(successToastCount).toBe(0);
+      expect(await toastCountRightNow(page, 'Task deleted')).toBe(0);
     } finally {
       await browser.close();
     }
@@ -788,11 +777,7 @@ test.describe('deleteTask - archivedTasks primary hit', () => {
       expect(finalTaskCount).toBe(initialTaskCount);
 
       // No error toast was raised.
-      const errorToastCount = await page
-        .locator('[data-testid="toast"]')
-        .filter({ hasText: 'Failed to delete task:' })
-        .count();
-      expect(errorToastCount).toBe(0);
+      expect(await toastCountRightNow(page, DELETE_FAILURE_TITLE)).toBe(0);
     } finally {
       await browser.close();
     }

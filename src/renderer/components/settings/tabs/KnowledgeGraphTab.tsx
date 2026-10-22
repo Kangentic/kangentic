@@ -17,6 +17,7 @@ import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, knowledgeGraphOn, knowledgeGraphSuppor
 import type {
   AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
+import { asSentence } from '../../../lib/ipc-error';
 
 /**
  * Settings > Knowledge Graph (tab id `knowledgeGraph`). GLOBAL/shared scope (below the
@@ -163,7 +164,8 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
       // and says so rather than leaving a click that did nothing.
       .catch((error: unknown) => {
         useToastStore.getState().addToast({
-          message: `Rebuild did not start: ${error instanceof Error ? error.message : String(error)}`,
+          title: "Rebuild didn't start",
+          message: asSentence(error instanceof Error ? error.message : String(error)),
           variant: 'error',
         });
       })

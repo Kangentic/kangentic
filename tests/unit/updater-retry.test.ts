@@ -432,8 +432,8 @@ describe("autoUpdater.on('error') listener", () => {
     expect(mocks.webContentsSend).toHaveBeenCalledTimes(1);
     const [channel, message] = mocks.webContentsSend.mock.calls[0];
     expect(channel).toBe('updater:blocked');
-    expect(message).toContain('read-only volume');
-    expect(message).toContain('Applications');
+    // The body under the renderer's "Updates blocked" title: the one move that fixes it.
+    expect(message).toBe('Move Kangentic to Applications to keep it updated.');
 
     consoleLogSpy.mockRestore();
   });

@@ -26,8 +26,8 @@ import { launchPage, waitForBoard, createProject } from './helpers';
 test.describe.configure({ mode: 'parallel' });
 
 /**
- * Long enough to wrap. The card caps at `max-w-[min(34rem,...)]` (544px), so
- * this reaches about four lines and ~98px of height. That matters: at 1920x1080
+ * Long enough to wrap. The card is a fixed 380px wide, so this body runs to
+ * several lines and the card to well over 100px of height. That matters: at 1920x1080
  * the Column Manager is `min(1080px, 88vh)` = 950px centred, putting Save around
  * y 974-1002 while a single UNWRAPPED toast spans 1002-1040 and merely touches
  * its bottom edge. The tests still measure rather than trust this.
@@ -38,6 +38,9 @@ const TALL_MESSAGE =
   + 'changed may be lost when Kangentic restarts. Close the program holding the file.';
 
 const SHORT_MESSAGE = 'Kangentic could not save a change to disk.';
+
+/** The title App.tsx puts over a config write failure's body. */
+const WRITE_FAILED_TITLE = 'Change not saved to disk';
 
 interface Rect { left: number; top: number; right: number; bottom: number }
 
@@ -54,7 +57,10 @@ async function waitForToastHook(page: Page): Promise<void> {
     .toBe(true);
 }
 
-/** App.tsx toasts this push verbatim at variant 'error', duration 12000. */
+/**
+ * App.tsx toasts this push verbatim as the body, under the title in
+ * WRITE_FAILED_TITLE, at variant 'error', durationMs 12000.
+ */
 async function pushToast(page: Page, message: string): Promise<void> {
   const before = await page.locator('[data-testid="toast"]').count();
   await page.evaluate((text) => window.__mockFireConfigWriteFailed?.(text), message);
@@ -229,7 +235,7 @@ test.describe('a toast does not eat clicks on what is under it', () => {
 
   // The message is not selectable any more (the card is inert), so an error a
   // user needs to paste into an issue has to be reachable some other way.
-  test('an error toast copies its message, and other variants carry no copy button', async () => {
+  test('an error toast copies its title and message, and other variants carry no copy button', async () => {
     const { browser, page } = await launchPage();
     try {
       await browser.contexts()[0].grantPermissions(['clipboard-read', 'clipboard-write']);
@@ -238,18 +244,22 @@ test.describe('a toast does not eat clicks on what is under it', () => {
 
       await expect(page.locator('[data-testid="toast-copy"]')).toHaveCount(1);
       await page.locator('[data-testid="toast-copy"]').click();
+      // The copy is the title, a newline, then the body: what the card shows.
+      // The Windows clipboard hands a newline back as CRLF, so read it as LF.
       await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 5000 })
-        .toBe(SHORT_MESSAGE);
+        .poll(() => page.evaluate(async () => (await navigator.clipboard.readText()).replace(/\r\n/g, '\n')), { timeout: 5000 })
+        .toBe(`${WRITE_FAILED_TITLE}\n${SHORT_MESSAGE}`);
       // The icon says it landed rather than leaving the user guessing.
       await expect(page.locator('[data-testid="toast-copy"]')).toHaveAttribute('aria-label', 'Message copied');
 
       // An info toast is not something anyone copies, so it carries no button.
       await page.evaluate(async () => {
         const store = (window as unknown as {
-          __zustandStores: { toast: { getState: () => { addToast: (input: { message: string; variant: string }) => void } } };
+          __zustandStores: {
+            toast: { getState: () => { addToast: (input: { title: string; message: string; variant: string }) => void } };
+          };
         }).__zustandStores.toast;
-        store.getState().addToast({ message: 'Saved 1 column', variant: 'info' });
+        store.getState().addToast({ title: 'Board saved', message: 'Saved 1 column.', variant: 'info' });
       });
       await expect(page.locator('[data-testid="toast"]')).toHaveCount(2, { timeout: 5000 });
       await expect(page.locator('[data-testid="toast-copy"]')).toHaveCount(1);
@@ -389,14 +399,18 @@ test.describe('a toast does not eat clicks on what is under it', () => {
     const { browser, page } = await launchPage();
     try {
       await browser.contexts()[0].grantPermissions(['clipboard-read', 'clipboard-write']);
-      await page.evaluate((message) => {
+      await page.evaluate(({ title, message }) => {
         const store = (window as unknown as {
           __zustandStores: {
-            toast: { getState: () => { addToast: (input: { message: string; variant: string; duration: number }) => void } };
+            toast: {
+              getState: () => {
+                addToast: (input: { title: string; message: string; variant: string; durationMs: number }) => void;
+              };
+            };
           };
         }).__zustandStores.toast;
-        store.getState().addToast({ message, variant: 'error', duration: 60000 });
-      }, SHORT_MESSAGE);
+        store.getState().addToast({ title, message, variant: 'error', durationMs: 60000 });
+      }, { title: WRITE_FAILED_TITLE, message: SHORT_MESSAGE });
       await expect(page.locator('[data-testid="toast"]')).toHaveCount(1, { timeout: 5000 });
 
       const copyButton = page.locator('[data-testid="toast-copy"]');
@@ -473,8 +487,8 @@ test.describe('a toast does not eat clicks on what is under it', () => {
   //
   // saveBoardProfiles catches the IPC failure itself (it reloads and raises its
   // own toast), so it never rejected. handleSave read that as success and
-  // printed "saved profiles" next to the store's "Failed to save profiles",
-  // then closed - taking the edit with it. It now reports `false`, which folds
+  // printed "saved profiles" next to the store's "Couldn't save profiles",
+  // then closed, taking the edit with it. It now reports `false`, which folds
   // into the same firstError path as a failed column write.
   test('a failed profile save keeps the dialog open and prints no success', async () => {
     test.slow();
@@ -505,9 +519,10 @@ test.describe('a toast does not eat clicks on what is under it', () => {
       // exactly the thing under test. Both toasts are added in the same tick
       // (nothing awaits between them), so the snapshot that holds one holds
       // both.
-      const toasts = await toastTextsWhen(page, /failed to save profiles/i);
+      const toasts = await toastTextsWhen(page, /couldn't save profiles/i);
+      // The success toast is "Board saved" over a body that says "saved profiles".
       expect(
-        toasts.some((text) => /saved profiles/i.test(text)),
+        toasts.some((text) => /board saved|saved profiles/i.test(text)),
         `a success toast printed alongside the failure: ${toasts.join(' | ')}`,
       ).toBe(false);
       await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible();

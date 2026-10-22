@@ -51,7 +51,7 @@ import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -306,14 +306,17 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       .then((result) => {
         setSessionId(result.session.id);
         if (result.checkoutError) {
-          useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
+          useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
         }
       })
       .catch((error) => {
         // Main's refusals (the cap, a taken slot, a shell that did not start)
         // are sentences written for the user; drop Electron's IPC decoration.
-        const message = describeIpcError(error, String(error));
-        useToastStore.getState().addToast({ message, variant: 'error' });
+        useToastStore.getState().addToast({
+          title: "Couldn't start Command Terminal",
+          message: asSentence(describeIpcError(error, String(error))),
+          variant: 'error',
+        });
         // Drop just this window; the layer's count bridge hides the layer if it
         // was the last one.
         closeWindow(windowId);
@@ -387,7 +390,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
       if (killOutcome === 'failed') {
         useToastStore.getState().addToast({
-          message: 'Could not stop the old terminal. Its process may still be running.',
+          title: "Couldn't stop the old terminal",
+          message: 'Its process may still be running.',
           variant: 'warning',
         });
       }
@@ -396,10 +400,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
       setSessionId(result.session.id);
       if (result.checkoutError) {
-        useToastStore.getState().addToast({ message: result.checkoutError, variant: 'warning' });
+        useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
       }
     } catch (error) {
-      useToastStore.getState().addToast({ message: describeIpcError(error, String(error)), variant: 'error' });
+      useToastStore.getState().addToast({
+        title: "Couldn't switch branch",
+        message: asSentence(describeIpcError(error, String(error))),
+        variant: 'error',
+      });
     }
   }, [defaultBranch, slot]);
 
@@ -435,7 +443,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     }
     if (outcome === 'failed') {
       useToastStore.getState().addToast({
-        message: 'Could not stop the terminal. Its process may still be running.',
+        title: "Couldn't stop the terminal",
+        message: 'Its process may still be running.',
         variant: 'error',
       });
     }

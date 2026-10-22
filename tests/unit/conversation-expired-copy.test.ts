@@ -21,13 +21,13 @@ describe('describeConversationExpired', () => {
 
   it('names the task and when its old conversation last ran, in one sentence', () => {
     expect(describeConversationExpired(notice(), NOW)).toBe(
-      '"Fix login redirect" started a new conversation because the one from Aug 16 expired.',
+      '"Fix login redirect" started fresh because its conversation from Aug 16 expired.',
     );
   });
 
   it('reads cleanly with no date', () => {
     expect(describeConversationExpired(notice({ lastActiveAt: null }), NOW)).toBe(
-      '"Fix login redirect" started a new conversation because its previous one expired.',
+      '"Fix login redirect" started fresh because its last conversation expired.',
     );
   });
 });

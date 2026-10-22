@@ -10,7 +10,8 @@
  *   - A rejected take is swallowed with a `console.warn` and toasts nothing: the
  *     toast is advisory, so it must never surface as an unhandled rejection.
  *   - Each notice for the project that is still current becomes its own toast:
- *     variant 'info', 12000 ms, message from `describeConversationExpired`.
+ *     title "New conversation", variant 'info', 12000 ms, body from
+ *     `describeConversationExpired`, and a card that opens the notice's task.
  *   - Notices taken while the user moved to another project (or to none) are
  *     dropped, since they name tasks of a board no longer on screen.
  *   - An empty take adds nothing.
@@ -49,6 +50,9 @@ vi.mock('../../src/renderer/stores/config-store', () => ({
 vi.mock('../../src/renderer/stores/project-cache', () => ({
   dropProject: vi.fn(),
 }));
+// The card click's target; the open path itself is pinned with its own module.
+const openTaskFromNotification = vi.hoisted(() => vi.fn());
+vi.mock('../../src/renderer/utils/open-task-from-notification', () => ({ openTaskFromNotification }));
 
 import { showConversationExpiredNotices } from '../../src/renderer/lib/conversation-expired-toast';
 import { describeConversationExpired } from '../../src/renderer/lib/conversation-expired';
@@ -144,10 +148,22 @@ describe('showConversationExpiredNotices', () => {
     expect(take).toHaveBeenCalledWith(PROJECT_ID);
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
+    expect(toasts[0].title).toBe('New conversation');
     expect(toasts[0].variant).toBe('info');
-    expect(toasts[0].duration).toBe(12000);
+    expect(toasts[0].persistent).toBe(false);
+    expect(toasts[0].durationMs).toBe(12000);
+    expect(toasts[0].action).toBeUndefined();
     expect(toasts[0].message).toBe(describeConversationExpired(NOTICE));
-    expect(toasts[0].message).toBe('"Resume me" started a new conversation because its previous one expired.');
+    expect(toasts[0].message).toBe('"Resume me" started fresh because its last conversation expired.');
+  });
+
+  it('opens the notice\'s task when the card is clicked', async () => {
+    stubTake(vi.fn(async () => [NOTICE]));
+
+    await showConversationExpiredNotices(PROJECT_ID);
+
+    useToastStore.getState().toasts[0].onOpen?.();
+    expect(openTaskFromNotification).toHaveBeenCalledWith(PROJECT_ID, 'task-1');
   });
 
   it('toasts each of several notices on its own, one sentence each', async () => {
@@ -164,7 +180,7 @@ describe('showConversationExpiredNotices', () => {
     // No summary: every message names its own task.
     expect(toasts[0].message).toContain('"Resume me"');
     expect(toasts[1].message).toContain('"Another"');
-    expect(toasts.every((toast) => toast.variant === 'info' && toast.duration === 12000)).toBe(true);
+    expect(toasts.every((toast) => toast.title === 'New conversation' && toast.variant === 'info' && toast.durationMs === 12000)).toBe(true);
   });
 
   it('adds no toast when the take comes back empty', async () => {

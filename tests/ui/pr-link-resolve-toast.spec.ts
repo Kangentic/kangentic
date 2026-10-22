@@ -17,7 +17,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -262,6 +262,11 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
       hasText: 'Azure CLI unavailable for PR lookup. Check: az login, az extension add --name azure-devops',
     });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('No PR resolver');
+    // The resolver's message, made a sentence (a period added).
+    await expect(toast.getByTestId('toast-body')).toHaveText(
+      'Azure CLI unavailable for PR lookup. Check: az login, az extension add --name azure-devops.',
+    );
     // The bug this fix guards: an Azure DevOps user must never be told to run
     // the GitHub CLI's auth command.
     await expect(toast).not.toContainText('gh auth login');
@@ -290,8 +295,10 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     await clickLinkPr();
 
-    const toast = page.getByTestId('toast').filter({ hasText: 'No PR resolver available for this repository' });
+    const toast = page.getByTestId('toast').filter({ hasText: 'None is available for this repository.' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('No PR resolver');
+    await expect(toast).not.toContainText('gh auth login');
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -319,7 +326,10 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     const toast = page.getByTestId('toast').filter({ hasText: 'Nothing to search by' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).not.toContainText('No PR found');
+    await expect(toast.getByTestId('toast-body')).toHaveText('This task has no branch, commit or PR number yet.');
+    // And not the not-found toast. No test before this one raises it, so a
+    // stale one from earlier on this shared page cannot be what is counted.
+    expect(await toastCountRightNow(page, 'No PR found')).toBe(0);
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -352,6 +362,8 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     const toast = page.getByTestId('toast').filter({ hasText: 'Temporary Azure DevOps error - try again.' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('PR host unreachable');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Temporary Azure DevOps error - try again.');
     await expect(toast).not.toContainText('GitHub');
 
     await page.keyboard.press('Control+Shift+W');
@@ -388,8 +400,10 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     await clickLinkPr();
 
-    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #42 (blocked)' });
+    const toast = page.getByTestId('toast').filter({ hasText: '#42 (Blocked)' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('PR linked');
+    await expect(toast.getByTestId('toast-body')).toHaveText('#42 (Blocked)');
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -427,8 +441,10 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     await clickLinkPr();
 
-    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #43 (open)' });
+    const toast = page.getByTestId('toast').filter({ hasText: '#43 (Open)' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('PR linked');
+    await expect(toast.getByTestId('toast-body')).toHaveText('#43 (Open)');
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -466,8 +482,10 @@ test.describe('Link PR kebab action: degrade toast uses the resolver message', (
 
     await clickLinkPr();
 
-    const toast = page.getByTestId('toast').filter({ hasText: 'Linked PR #44 (conflicts)' });
+    const toast = page.getByTestId('toast').filter({ hasText: '#44 (Conflicts)' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('PR linked');
+    await expect(toast.getByTestId('toast-body')).toHaveText('#44 (Conflicts)');
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
@@ -508,12 +526,13 @@ test.describe('Link/Refresh PR kebab item: pushed_branch and pr_number anchors',
     await linkPrItem.click();
 
     const toast = page.getByTestId('toast').filter({
-      hasText: `No PR found for branch "${PUSHED_BRANCH_NAME}"`,
+      hasText: `Nothing matches branch "${PUSHED_BRANCH_NAME}".`,
     });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('No PR found');
     // Before the fix, a task with branch_name null fell straight to the
     // generic message even with pushed_branch set.
-    await expect(toast).not.toContainText('No PR found for this task');
+    expect(await toastCountRightNow(page, 'Nothing matches this task.')).toBe(0);
 
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });

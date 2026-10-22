@@ -20,7 +20,8 @@ import { test, expect } from '@playwright/test';
 import { launchPage, createProject, toastCountRightNow } from './helpers';
 import type { Page } from '@playwright/test';
 
-const FAILURE_TOAST = 'This setting did not save';
+/** The title of the panel's own failed-write toast (AppSettingsPanel's reportFailure). */
+const FAILURE_TOAST = 'Setting not saved';
 
 /** Open the Settings panel via the title-bar gear. With a project open this also sets
  *  `projectSettingsPath`, which the project-scoped write path needs. */
@@ -59,7 +60,7 @@ test.describe('settings write failure toast', () => {
       // A degraded write says why, which FAILURE_TOAST alone does not pin. The REJECTED case
       // below asserts the same clause is absent. Read while exactly one toast is up, so the
       // locator stays unambiguous.
-      await expect(failureToasts(page)).toContainText('could not write its settings file');
+      await expect(failureToasts(page).getByTestId('toast-body')).toHaveText('Kangentic could not write its settings file.');
 
       // `animationsEnabled` is a DIFFERENT top-level key, so the per-key cooldown must
       // not silence it. This is the regression the cooldown could reintroduce: a plain
@@ -173,8 +174,9 @@ test.describe('settings write failure toast', () => {
 
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: FAILURE_TOAST });
       await expect(toast).toHaveCount(1, { timeout: 5000 });
-      // A rejected call is not evidence the settings file is unwritable, so that clause
-      // must not appear.
+      // The body is the rejection's own reason, made a sentence. A rejected call is not
+      // evidence the settings file is unwritable, so that clause must not appear.
+      await expect(toast.getByTestId('toast-body')).toHaveText('Unknown project path.');
       await expect(toast).not.toContainText('settings file');
     } finally {
       await browser.close();

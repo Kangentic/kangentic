@@ -132,7 +132,10 @@ describe('agent-reachable window opens declare their origin', () => {
     expect(scanned).toEqual([
       'src/renderer/App.tsx',
       'src/renderer/components/command-bar/CommandTerminalLayer.tsx',
+      'src/renderer/components/dialogs/task-detail/useTaskActions.ts',
       'src/renderer/components/monitor/useMonitorDetailOwnership.ts',
+      'src/renderer/hooks/useAgentDrivenInvalidation.ts',
+      'src/renderer/stores/board-store/archived-tasks-slice.ts',
       'src/renderer/window-manager/bridge/useBrowserPaneRequestBridge.ts',
       'src/renderer/window-manager/bridge/useTaskDetailWindowBridge.ts',
     ]);
@@ -141,6 +144,15 @@ describe('agent-reachable window opens declare their origin', () => {
     // Terminal windows. That push opens nothing (it re-reads HEAD for the branch
     // pills), so the file carries an `agent-focus-ok` marker rather than an
     // origin; it is pinned here so the marker cannot be dropped unnoticed.
+    // `useAgentDrivenInvalidation` is on it the same way: its agent pushes raise
+    // toasts whose card opens the task only on the user's click, so it carries
+    // the marker too.
+    // `archived-tasks-slice` is on it because its restore toasts open the task on
+    // a card click, and it subscribes to `tasks.onBulkDeleteProgress`, which opens
+    // nothing. It carries the marker as well.
+    // `useTaskActions` takes no push at all: the scan reads the task window's own
+    // `onClose()` callback as one. Its Task moved and failed-archive toasts open
+    // the task on a card click, so it carries the marker.
     // `useProjectSwitchEffect` is deliberately NOT here: it re-opens a task
     // detail from `_pendingOpenTaskId` but subscribes to no push itself, so it
     // is downstream of whoever parked the id rather than a site that can tell

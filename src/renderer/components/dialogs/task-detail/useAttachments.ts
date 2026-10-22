@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useToastStore } from '../../../stores/toast-store';
-import { describeIpcError } from '../../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../attachment-utils';
 import { compressClipboardImage } from '../image-compress';
 import type { TaskAttachment } from '../../../../shared/types';
@@ -50,7 +50,8 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       useToastStore.getState().addToast({
-        message: `File "${file.name}" exceeds 10MB limit`,
+        title: 'File too large',
+        message: `"${file.name}" is over the 10 MB limit.`,
         variant: 'warning',
       });
       return;
@@ -93,7 +94,8 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
     } catch (error) {
       console.error('Failed to add attachment:', error);
       useToastStore.getState().addToast({
-        message: `Couldn't add "${filename}": ${describeIpcError(error)}`,
+        title: `Couldn't add "${filename}"`,
+        message: asSentence(describeIpcError(error)),
         variant: 'warning',
       });
     }
@@ -107,7 +109,8 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
     } catch (error) {
       console.error('Failed to remove attachment:', error);
       useToastStore.getState().addToast({
-        message: `Couldn't remove the attachment: ${describeIpcError(error)}`,
+        title: "Couldn't remove attachment",
+        message: asSentence(describeIpcError(error)),
         variant: 'warning',
       });
     }

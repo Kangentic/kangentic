@@ -932,7 +932,8 @@ test.describe('ImportDialog - execute result toast', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'comments unavailable for 1' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText('Imported 1 item');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Issues imported');
+    await expect(toast.getByTestId('toast-body')).toHaveText('1 imported, comments unavailable for 1 item.');
 
     await browser.close();
   });
@@ -964,8 +965,9 @@ test.describe('ImportDialog - execute result toast', () => {
     await expect(importButton).toBeEnabled();
     await importButton.click();
 
-    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Imported 1 item' });
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Issues imported' });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-body')).toHaveText('1 imported.');
     await expect(toast).not.toContainText('comments unavailable');
 
     await browser.close();

@@ -4,8 +4,8 @@
  * These tests cover the renderer-side behavior that cannot be observed through
  * the existing bulk-delete-progress.spec.ts (which only tests the happy path):
  *
- *   #2  (HIGH) Partial-failure toast: "Deleted N tasks. Failed to clean up M
- *       worktrees - check logs." appears when result.failures.length > 0.
+ *   #2  (HIGH) Partial-failure toast: "Some worktrees remain" over "M of N
+ *       worktrees could not be cleaned up." appears when result.failures.length > 0.
  *   #6  (Medium) `(N failed)` red fragment renders inside the progress pill
  *       when bulkDeleteProgress.failures.length > 0.
  *   #7  (Medium) BulkToolbar is hidden while bulkDeleteProgress !== null and
@@ -197,12 +197,12 @@ test.describe('Bulk delete - partial failure + hard failure UI behavior', () => 
       timeout: 8000,
     }).toBeNull();
 
-    // Error toast must contain the partial-failure message.
-    // Use a partial text match on data-testid="toast" to be resilient to
-    // other text around the message (error bar, buttons, etc.).
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to clean up 2 worktrees' }),
-    ).toBeVisible({ timeout: 5000 });
+    // Error toast must carry the partial-failure message: the failures counted
+    // against the whole batch, since every attempted task's row is gone.
+    const partialFailure = page.locator('[data-testid="toast"]').filter({ hasText: 'Some worktrees remain' });
+    await expect(partialFailure).toBeVisible({ timeout: 5000 });
+    await expect(partialFailure.getByTestId('toast-body'))
+      .toHaveText(`${FAILURE_TASK_IDS.length} of ${TASK_COUNT} worktrees could not be cleaned up.`);
   });
 
   // -------------------------------------------------------------------------
@@ -318,10 +318,10 @@ test.describe('Bulk delete - partial failure + hard failure UI behavior', () => 
       timeout: 5000,
     }).toBe(TASK_COUNT);
 
-    // Error toast should be visible
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to delete tasks' }),
-    ).toBeVisible({ timeout: 5000 });
+    // Error toast should be visible, with the thrown reason as its body
+    const hardFailure = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't delete tasks" });
+    await expect(hardFailure).toBeVisible({ timeout: 5000 });
+    await expect(hardFailure.getByTestId('toast-body')).toHaveText('No project is currently open.');
   });
 
   // -------------------------------------------------------------------------

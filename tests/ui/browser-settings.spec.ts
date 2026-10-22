@@ -98,7 +98,10 @@ test.describe('Browser settings tab', () => {
     // disambiguate from the settings-row button that has the same label
     await dialog.getByRole('button', { name: 'Clear data', exact: true }).click();
 
-    await expect(page.getByTestId('toast').filter({ hasText: 'Browser data cleared. Reload the browser pane to apply.' })).toBeVisible();
+    const successToast = page.getByTestId('toast').filter({ hasText: 'Browser data cleared' });
+    await expect(successToast).toBeVisible();
+    await expect(successToast.getByTestId('toast-title')).toHaveText('Browser data cleared');
+    await expect(successToast.getByTestId('toast-body')).toHaveText('Reload the browser pane to apply.');
 
     const callCount = await page.evaluate(
       () => (window as unknown as { __browserClearCalls: number }).__browserClearCalls,
@@ -136,13 +139,12 @@ test.describe('Browser settings tab', () => {
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: 'Clear data', exact: true }).click();
 
-    // Error toast must contain the static prefix and the thrown message.
-    await expect(
-      page.getByTestId('toast').filter({ hasText: 'Failed to clear browser data' }),
-    ).toBeVisible();
-    await expect(
-      page.getByTestId('toast').filter({ hasText: 'simulated electron failure' }),
-    ).toBeVisible();
+    // The error toast's title says what failed, and its body is the thrown
+    // message made a sentence.
+    const errorToast = page.getByTestId('toast').filter({ hasText: "Couldn't clear browser data" });
+    await expect(errorToast).toBeVisible();
+    await expect(errorToast.getByTestId('toast-title')).toHaveText("Couldn't clear browser data");
+    await expect(errorToast.getByTestId('toast-body')).toHaveText('Simulated electron failure.');
 
     // Button must return to idle state: enabled and labelled "Clear data".
     await expect(page.getByTestId('browser-clear-storage')).toBeEnabled();

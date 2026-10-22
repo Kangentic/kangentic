@@ -318,18 +318,3 @@ export function hostOf(url: string): string {
     return firstLine(url, 40);
   }
 }
-
-/**
- * The one-line sentence a failed run's toast leads with.
- *
- * Names the automation AND the column, because neither alone locates it: two
- * columns can hold automations with the same name, and a column name alone does
- * not say which of its rows broke.
- *
- * Here rather than beside the notifier for the same reason `describeAutomation`
- * is: the renderer draws it and cannot import from `src/main/`, so a copy in
- * each would be two strings that have to agree and nothing making them.
- */
-export function describeAutomationFailure(failure: { automationName: string; columnName: string }): string {
-  return `${failure.automationName} failed on ${failure.columnName}`;
-}

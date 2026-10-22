@@ -115,9 +115,8 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('When max sessions are reached', { exact: true })).toHaveCount(0);
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
     await expect(page.locator('text=Auto-Resume Agents on Restart')).toBeVisible();
-    // Idle Timeout moved here from the Agent tab: it is a flat, agent-agnostic
-    // session-lifecycle setting, not a per-agent one.
-    await expect(page.getByText('Idle Timeout (minutes)')).toBeVisible();
+    // The idle timer left Behavior for Performance > Pausing agents;
+    // settings-pausing-agents.spec.ts asserts it is gone from here.
     // Windows section: task-window light-dismiss + app window position restore,
     // merged from the old separate Task Windows / App Window sections.
     await expect(page.locator('text=Close on Outside Click')).toBeVisible();

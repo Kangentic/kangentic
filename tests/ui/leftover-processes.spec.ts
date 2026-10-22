@@ -1,13 +1,14 @@
 /**
  * The leftover-process toast and its Review list, driven over the mock bridge:
- * a report main pushes after a task ends becomes a counts-only toast, Review
- * opens the list, and a row's Stop walks Stop, Stopping, then Stopped, Ended
- * or a red failure in the same slot. A toast for a report that leaves something
- * running or could not be stopped stays until the user closes it (Review is the
- * only way into the list), leads with what is still running, and shows how long
+ * a report main pushes after a task ends becomes a counts-only toast that opens
+ * the list, and a row's Stop walks Stop, Stopping, then Stopped, Ended or a red
+ * failure in the same slot. A toast for a report that leaves something running
+ * or could not be stopped stays until the user closes it and opens the list
+ * with its Review button, leads with what is still running, and shows how long
  * ago the report came, as does the list's header, and both labels keep ticking
- * while they stay on screen; one for a report where every process was stopped
- * closes on its own like any other toast, with no age.
+ * while they stay on screen. One that closes on its own (every process stopped,
+ * or stopping turned off) has no button: a click on its card opens the list,
+ * and it shows no age.
  *
  * Every test launches its own page (cross-platform-parity.md).
  *
@@ -65,10 +66,22 @@ async function fireReport(page: Page, report: TestReport): Promise<void> {
   await page.evaluate((payload) => window.__mockFireLeftoverReport?.(payload), stamped);
 }
 
+/** Open the list with the Review button of a toast that stays up. */
 async function openReview(page: Page, message: string): Promise<void> {
   const toast = page.locator('[data-testid="toast"]', { hasText: message });
   await expect(toast).toBeVisible({ timeout: 5000 });
+  await expect(toast).toHaveAttribute('data-persistent', 'true');
   await toast.getByRole('button', { name: 'Review' }).click();
+  await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toBeVisible({ timeout: 5000 });
+}
+
+/** Open the list from a timed toast, which has no button: its card opens the list. */
+async function openListFromCard(page: Page, message: string): Promise<void> {
+  const toast = page.locator('[data-testid="toast"]', { hasText: message });
+  await expect(toast).toBeVisible({ timeout: 5000 });
+  await expect(toast).toHaveAttribute('data-persistent', 'false');
+  expect(await toast.getByTestId('toast-action').count()).toBe(0);
+  await toast.getByTestId('toast-body').click();
   await expect(page.locator('[data-testid="leftover-processes-dialog"]')).toBeVisible({ timeout: 5000 });
 }
 
@@ -83,6 +96,8 @@ test.describe('Leftover processes', () => {
       await fireReport(page, ONE_TASK);
       const toast = page.locator('[data-testid="toast"]', { hasText: '2 processes from "Fix login" are still running.' });
       await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-title')).toHaveText('Processes still running');
+      await expect(toast.getByTestId('toast-body')).toHaveText('2 processes from "Fix login" are still running.');
       // What stopped is in the list, not the toast.
       await expect(toast).not.toContainText('Stopped');
       await expect(toast.locator('[data-testid="toast-age"]')).toHaveText('37 minutes ago');
@@ -240,7 +255,7 @@ test.describe('Leftover processes', () => {
     }
   });
 
-  test('with stopping turned off, the list says so and links to the setting', async () => {
+  test('with stopping turned off, the timed toast\'s card opens the list, which says so and links to the setting', async () => {
     const { browser, page } = await launchPage();
     try {
       await fireReport(page, {
@@ -248,7 +263,9 @@ test.describe('Leftover processes', () => {
         stoppingEnabled: false,
         processes: [leftover('off-vite', { outcome: 'kept' }), leftover('off-chrome', { label: 'chrome', outcome: 'kept', reason: 'window' })],
       });
-      await openReview(page, '"Fix login" left 2 processes running.');
+      const toast = page.locator('[data-testid="toast"]', { hasText: '"Fix login" left 2 processes running.' });
+      await expect(toast.getByTestId('toast-title')).toHaveText('Leftover processes', { timeout: 5000 });
+      await openListFromCard(page, '"Fix login" left 2 processes running.');
       await expect(page.locator('[data-testid="leftover-processes-stopping-off"]')).toContainText('Stopping leftover processes is off');
       await expect(row(page, 'node')).toContainText('Runs in the worktree.');
       await expect(row(page, 'node').getByRole('button', { name: 'Stop node (vite)' })).toBeEnabled();
@@ -441,6 +458,8 @@ test.describe('Leftover processes toast lifetime', () => {
       });
       const toast = page.locator('[data-testid="toast"]', { hasText: 'Stopped 1 leftover process from "Fix login".' });
       await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-title')).toHaveText('Leftover processes stopped');
+      await expect(toast).toHaveAttribute('data-persistent', 'false');
       // It closes on its own within seconds, so it shows no age.
       expect(await toast.locator('[data-testid="toast-age"]').count()).toBe(0);
 
@@ -487,9 +506,9 @@ async function checkCalls(page: Page): Promise<string[][]> {
 async function churnToastStore(page: Page): Promise<void> {
   await page.evaluate(() => {
     const stores = (window as unknown as {
-      __zustandStores: { toast: { getState: () => { addToast: (input: { message: string; duration: number }) => string; dismissToast: (id: string) => void } } };
+      __zustandStores: { toast: { getState: () => { addToast: (input: { title: string; message: string; durationMs: number }) => string; dismissToast: (id: string) => void } } };
     }).__zustandStores;
-    const toastId = stores.toast.getState().addToast({ message: 'An unrelated toast', duration: 60_000 });
+    const toastId = stores.toast.getState().addToast({ title: 'Unrelated', message: 'An unrelated toast.', durationMs: 60_000 });
     stores.toast.getState().dismissToast(toastId);
   });
 }

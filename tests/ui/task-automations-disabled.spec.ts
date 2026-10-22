@@ -361,8 +361,9 @@ test.describe('per-task automations switch: the card menu', () => {
       await expect(byTestId(page, 'task-context-menu')).toHaveCount(0);
 
       // The sentence main wrote, with the user's task named and Electron's wrapper gone.
-      const toast = toastWith(page, 'Could not disable automations');
-      await expect(toast).toContainText(`Could not disable automations for "${title}": The board is busy.`);
+      const toast = toastWith(page, "Couldn't turn off automations");
+      await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't turn off automations");
+      await expect(toast.getByTestId('toast-body')).toHaveText(`"${title}": The board is busy.`);
       await expect(toast).not.toContainText(DECORATION_FRAGMENT);
 
       // The write was attempted, and nothing on the card moved: no strip, and the menu
@@ -665,8 +666,9 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
         await menu.getByTestId('context-toggle-automations').click();
         await expect(byTestId(page, 'monitor-row-menu')).toHaveCount(0);
 
-        const toast = toastWith(page, 'Failed to disable automations');
-        await expect(toast).toContainText(`Failed to disable automations for "${title}": The board is busy.`);
+        const toast = toastWith(page, "Couldn't turn off automations");
+        await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't turn off automations");
+        await expect(toast.getByTestId('toast-body')).toHaveText(`"${title}": The board is busy.`);
         await expect(toast).not.toContainText(DECORATION_FRAGMENT);
         await expect.poll(() => readUpdateCalls(page)).toEqual([{ id: failingTaskId, automations_disabled: true }]);
 

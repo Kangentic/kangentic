@@ -86,6 +86,7 @@ import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
+import { asSentence } from '../../lib/ipc-error';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -1317,7 +1318,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       setActiveId(invalid);
       setAutoFocusNameId(invalid);
       useToastStore.getState().addToast({
-        message: 'Name a column before saving.',
+        title: 'Column needs a name',
+        message: 'Name it before saving.',
         variant: 'error',
       });
       return;
@@ -1331,7 +1333,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       if (!unnamed) continue;
       setActiveId(columnId);
       setEditing({ columnId, rowId: unnamed.id, isNew: false });
-      useToastStore.getState().addToast({ message: 'Name an automation before saving.', variant: 'error' });
+      useToastStore.getState().addToast({ title: 'Automation needs a name', message: 'Name it before saving.', variant: 'error' });
       return;
     }
 
@@ -1407,8 +1409,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       } catch (error) {
         if (!firstError) {
           firstError = error instanceof Error
-            ? new Error(`Could not delete "${deletedColumnName}": ${error.message}`)
-            : new Error(`Could not delete "${deletedColumnName}"`);
+            ? new Error(`Couldn't delete "${deletedColumnName}": ${error.message}`)
+            : new Error(`Couldn't delete "${deletedColumnName}"`);
         }
       }
     }
@@ -1550,8 +1552,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           if (!firstError) {
             const columnName = drafts[entry.columnId]?.name ?? 'column';
             firstError = error instanceof Error
-              ? new Error(`Could not save automations on "${columnName}": ${error.message}`)
-              : new Error(`Could not save automations on "${columnName}"`);
+              ? new Error(`Couldn't save automations on "${columnName}": ${error.message}`)
+              : new Error(`Couldn't save automations on "${columnName}"`);
           }
         }
       }
@@ -1580,7 +1582,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         if (await saveBoardProfiles(profilesToSave)) {
           setProfileOriginals(structuredClone(profilesToSave) as BoardProfile[]);
         } else {
-          firstError = new Error('Could not save profiles');
+          firstError = new Error("Couldn't save profiles");
         }
       } catch (error) {
         firstError = error instanceof Error ? error : new Error(String(error));
@@ -1592,24 +1594,34 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const partialParts: string[] = [];
       if (savedTotal > 0) partialParts.push(`${savedTotal} column${savedTotal > 1 ? 's' : ''}`);
       if (savedAutomationColumns > 0) partialParts.push(`automations on ${savedAutomationColumns} column${savedAutomationColumns > 1 ? 's' : ''}`);
-      const partialNote = partialParts.length > 0 ? ` (saved ${partialParts.join(' and ')} before failing)` : '';
-      useToastStore.getState().addToast({
-        message: `${firstError.message}${partialNote}`,
-        variant: 'error',
-      });
+      const reason = asSentence(firstError.message);
+      // "Stopped partway" only when something did land; a save that failed on
+      // its first write is the plain "Couldn't save".
+      useToastStore.getState().addToast(partialParts.length > 0
+        ? {
+          title: 'Save stopped partway',
+          message: `${reason} Saved ${partialParts.join(' and ')} before failing.`,
+          variant: 'error',
+        }
+        : { title: "Couldn't save", message: reason, variant: 'error' });
       setSaving(false);
       return;
     }
 
     const parts: string[] = [];
-    if (savedUpdates > 0) parts.push(`Saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
+    if (savedUpdates > 0) parts.push(`saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
     if (savedCreates > 0) parts.push(`created ${savedCreates} column${savedCreates > 1 ? 's' : ''}`);
-    if (savedDeletes > 0) parts.push(`${parts.length === 0 ? 'Deleted' : 'deleted'} ${savedDeletes} column${savedDeletes > 1 ? 's' : ''}`);
-    if (orderDirty) parts.push(parts.length === 0 ? 'Updated column order' : 'updated column order');
-    if (profilesDirty) parts.push(parts.length === 0 ? 'Saved profiles' : 'saved profiles');
-    if (savedAutomationColumns > 0) parts.push(parts.length === 0 ? 'Saved automations' : 'saved automations');
+    if (savedDeletes > 0) parts.push(`deleted ${savedDeletes} column${savedDeletes > 1 ? 's' : ''}`);
+    if (orderDirty) parts.push('updated the column order');
+    if (profilesDirty) parts.push('saved profiles');
+    if (savedAutomationColumns > 0) parts.push('saved automations');
+    // One sentence: "Saved 2 columns, created 1 column and updated the column order."
+    const summary = parts.length > 1
+      ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+      : (parts[0] ?? 'no changes to save');
     useToastStore.getState().addToast({
-      message: parts.length > 0 ? parts.join(' and ') : 'No changes to save',
+      title: 'Board saved',
+      message: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.`,
       variant: 'info',
     });
     // Defensive, not a fix for a reachable path: every failure above returns
@@ -1639,7 +1651,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     handleSave().catch((error) => {
       setSaving(false);
       useToastStore.getState().addToast({
-        message: `Could not save: ${error instanceof Error ? error.message : String(error)}`,
+        title: "Couldn't save",
+        message: asSentence(error instanceof Error ? error.message : String(error)),
         variant: 'error',
       });
     });
@@ -1743,12 +1756,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // A column that still has tasks cannot be removed. Answered from the store's
   // task list so the refusal is immediate; the repository re-checks at save
   // time, so this is feedback, not the authority. Returns the refusal toast's
-  // text, or null when the removal can go ahead.
-  const removalRefusal = useCallback((id: string): string | null => {
+  // title and body, or null when the removal can go ahead.
+  const removalRefusal = useCallback((id: string): { title: string; message: string } | null => {
     const name = drafts[id]?.name.trim() || 'Untitled';
     const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
     if (taskCount === 0) return null;
-    return `Cannot remove "${name}". Move or delete all ${taskCount} task${taskCount > 1 ? 's' : ''} first.`;
+    return {
+      title: `Can't remove "${name}"`,
+      message: taskCount === 1 ? 'Move or delete its task first.' : `Move or delete all ${taskCount} tasks first.`,
+    };
   }, [drafts, tasks]);
 
   // The footer's Remove column. An unsaved draft is simply discarded: it has
@@ -1762,7 +1778,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
     const refusal = removalRefusal(activeId);
     if (refusal) {
-      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
+      useToastStore.getState().addToast({ ...refusal, variant: 'error' });
       return;
     }
     setConfirmDeleteId(activeId);
@@ -1779,13 +1795,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     if (!id || newDraftIds.has(id)) return;
     const refusal = removalRefusal(id);
     if (refusal) {
-      useToastStore.getState().addToast({ message: refusal, variant: 'error' });
+      useToastStore.getState().addToast({ ...refusal, variant: 'error' });
       return;
     }
     const name = drafts[id]?.name.trim() || 'Untitled';
     removeDraftLocally(id);
     setPendingDeleteIds((previous) => new Set(previous).add(id));
     useToastStore.getState().addToast({
+      title: 'Removal staged',
       message: `"${name}" will be removed when you save.`,
       variant: 'info',
     });

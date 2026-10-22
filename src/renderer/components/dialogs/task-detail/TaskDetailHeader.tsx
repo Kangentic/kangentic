@@ -18,6 +18,7 @@ import { useTaskDetailHost } from './task-detail-host';
 import { useSessionStore } from '../../../stores/session-store';
 import { openTaskConversation } from './open-task-conversation';
 import { prStatePresentation } from '../../../lib/pr-state';
+import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 /**
@@ -634,35 +635,52 @@ function TaskDetailKebabItems({
       switch (result.status) {
         case 'updated':
           toast.addToast({
-            message: `Updated from ${result.baseBranch}: fast-forwarded ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'}.`,
+            title: `Updated from ${result.baseBranch}`,
+            message: `Fast-forwarded ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'}.`,
             variant: 'success',
           });
           break;
         case 'already-up-to-date':
-          toast.addToast({ message: `Already up to date with ${result.baseBranch}.`, variant: 'info' });
+          toast.addToast({ title: 'Already up to date', message: `Nothing new on ${result.baseBranch}.`, variant: 'info' });
           break;
         case 'cannot-ff':
           toast.addToast({
-            message: `Cannot fast-forward: this branch has its own commits (${result.ahead} ahead, ${result.behind} behind ${result.baseBranch}). Rebase or merge in the session instead.`,
+            title: "Can't fast-forward",
+            message: 'Rebase or merge it in the session instead.',
             variant: 'warning',
           });
           break;
         case 'dirty-tree':
-          toast.addToast({ message: 'Cannot update: the worktree has uncommitted changes.', variant: 'warning' });
-          break;
-        case 'fetch-failed':
           toast.addToast({
-            message: `Could not fetch ${result.baseBranch} from origin. ${(result.reason.split('\n')[0] ?? '').trim()}`.trim(),
+            title: `Can't update from ${result.baseBranch}`,
+            message: 'The worktree has uncommitted changes.',
             variant: 'warning',
           });
           break;
+        case 'fetch-failed': {
+          const fetchReason = (result.reason.split('\n')[0] ?? '').trim();
+          toast.addToast({
+            title: `Couldn't fetch ${result.baseBranch}`,
+            message: fetchReason ? asSentence(fetchReason) : 'Git could not reach origin.',
+            variant: 'warning',
+          });
+          break;
+        }
         case 'no-remote':
-          toast.addToast({ message: `No origin remote to fetch ${result.baseBranch} from.`, variant: 'info' });
+          toast.addToast({
+            title: 'No origin remote',
+            message: `There is no remote to fetch ${result.baseBranch} from.`,
+            variant: 'info',
+          });
           break;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      useToastStore.getState().addToast({ message: `Update from base failed: ${message}`, variant: 'warning' });
+      useToastStore.getState().addToast({
+        title: 'Update from base failed',
+        message: asSentence(message),
+        variant: 'warning',
+      });
     } finally {
       setUpdatingFromBase(false);
     }
@@ -679,19 +697,22 @@ function TaskDetailKebabItems({
         // hardcoded gh wording told an Azure DevOps user to run `gh auth login`
         // when gh was installed and working. Mirrors task-commands.ts.
         useToastStore.getState().addToast({
-          message: result.message ?? 'No PR resolver available for this repository',
+          title: 'No PR resolver',
+          message: result.message ? asSentence(result.message) : 'None is available for this repository.',
           variant: 'error',
         });
       } else if (result.reason === 'transient-error') {
         useToastStore.getState().addToast({
-          message: result.message ?? 'Could not reach the PR host - try again in a moment',
+          title: 'PR host unreachable',
+          message: result.message ? asSentence(result.message) : 'Try again in a moment.',
           variant: 'error',
         });
       } else if (result.reason === 'no-anchor') {
         // Nothing was searched. Distinct from not-found so the user does not
         // conclude the PR does not exist when the task simply has no anchor.
         useToastStore.getState().addToast({
-          message: 'Nothing to search by: no branch, pushed branch, commit, or PR number is recorded for this task',
+          title: 'Nothing to search by',
+          message: 'This task has no branch, commit or PR number yet.',
           variant: 'info',
         });
       } else if (result.linked && result.task?.pr_number != null) {
@@ -700,18 +721,24 @@ function TaskDetailKebabItems({
         // second "open"). A null state falls back to "open" as before.
         const chipWord = prStatePresentation(result.task.pr_state, result.task.pr_merge_readiness).label || 'open';
         useToastStore.getState().addToast({
-          message: `Linked PR #${result.task.pr_number} (${chipWord})`,
+          title: 'PR linked',
+          message: `#${result.task.pr_number} (${chipWord.charAt(0).toUpperCase()}${chipWord.slice(1)})`,
           variant: 'success',
         });
       } else {
         const searchedBranch = task.branch_name ?? task.pushed_branch;
         useToastStore.getState().addToast({
-          message: searchedBranch ? `No PR found for branch "${searchedBranch}"` : 'No PR found for this task',
+          title: 'No PR found',
+          message: searchedBranch ? `Nothing matches branch "${searchedBranch}".` : 'Nothing matches this task.',
           variant: 'info',
         });
       }
-    } catch {
-      useToastStore.getState().addToast({ message: 'Could not resolve PR', variant: 'error' });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        title: "Couldn't resolve PR",
+        message: asSentence(describeIpcError(error, 'The PR host returned an error.')),
+        variant: 'error',
+      });
     } finally {
       setLinkingPr(false);
     }

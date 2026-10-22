@@ -37,7 +37,8 @@ export function useCommandBar() {
     const currentProject = useProjectStore.getState().currentProject;
     if (!currentProject) {
       useToastStore.getState().addToast({
-        message: 'Open a project first',
+        title: 'No project open',
+        message: 'Open a project first.',
         variant: 'warning',
       });
       return;

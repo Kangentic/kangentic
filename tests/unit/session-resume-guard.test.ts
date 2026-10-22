@@ -91,8 +91,8 @@ describe('resumeBlockReason', () => {
   });
 
   it('phrases every refusal as user-facing guidance', () => {
-    // These strings reach the user verbatim through the task detail's
-    // "Failed to resume session: <reason>" toast.
+    // These strings reach the user verbatim as the body under the
+    // "Couldn't resume session" toast title, so each is one sentence.
     for (const reason of ['todo', 'done', 'archived'] as const) {
       const message = resumeBlockMessage(reason);
       expect(message.length).toBeGreaterThan(0);
@@ -100,6 +100,7 @@ describe('resumeBlockReason', () => {
       // long dash (see .claude/rules/writing-style.md).
       expect(message).not.toContain(String.fromCharCode(0x2014));
       expect(message).not.toContain('--');
+      expect(message).toMatch(/^[A-Z][^.!?]*\.$/);
     }
   });
 });

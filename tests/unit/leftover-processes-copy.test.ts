@@ -51,7 +51,10 @@ function report(processes: LeftoverProcess[], stoppingEnabled = true): LeftoverP
 describe('describeLeftoverReport', () => {
   it('A: all stopped, closes on its own, with no age', () => {
     expect(describeLeftoverReport(report([leftoverProcess(), leftoverProcess({ label: 'python3 (http.server)' })]))).toEqual({
-      message: 'Stopped 2 leftover processes from "Fix login".', variant: 'info', sticky: false,
+      title: 'Leftover processes stopped',
+      message: 'Stopped 2 leftover processes from "Fix login".',
+      variant: 'info',
+      sticky: false,
     });
   });
 
@@ -60,12 +63,22 @@ describe('describeLeftoverReport', () => {
       leftoverProcess(),
       leftoverProcess({ outcome: 'kept', reason: 'window', label: 'chrome' }),
       leftoverProcess({ outcome: 'kept', reason: 'multiplexer', label: 'tmux' }),
-    ]))).toEqual({ message: '2 processes from "Fix login" are still running.', variant: 'info', sticky: true, since: REPORTED_AT });
+    ]))).toEqual({
+      title: 'Processes still running',
+      message: '2 processes from "Fix login" are still running.',
+      variant: 'info',
+      sticky: true,
+      since: REPORTED_AT,
+    });
   });
 
   it('C: one could not be stopped, a warning that stays, with anything still running after it', () => {
     expect(describeLeftoverReport(report([leftoverProcess({ outcome: 'failed' })]))).toEqual({
-      message: 'Couldn\'t stop 1 process from "Fix login".', variant: 'warning', sticky: true, since: REPORTED_AT,
+      title: 'Couldn\'t stop processes',
+      message: 'Couldn\'t stop 1 process from "Fix login".',
+      variant: 'warning',
+      sticky: true,
+      since: REPORTED_AT,
     });
     expect(describeLeftoverReport(report([leftoverProcess(), leftoverProcess({ outcome: 'failed' })]))?.message)
       .toBe('Couldn\'t stop 1 process from "Fix login".');
@@ -87,7 +100,13 @@ describe('describeLeftoverReport', () => {
       leftoverProcess({ taskId: 'task-b', taskTitle: 'Update deps' }),
       leftoverProcess({ taskId: 'task-c', taskTitle: 'Add search' }),
       leftoverProcess({ taskId: 'task-c', taskTitle: 'Add search', outcome: 'kept', reason: 'window', label: 'Code' }),
-    ]))).toEqual({ message: '1 process from 3 tasks is still running.', variant: 'info', sticky: true, since: REPORTED_AT });
+    ]))).toEqual({
+      title: 'Processes still running',
+      message: '1 process from 3 tasks is still running.',
+      variant: 'info',
+      sticky: true,
+      since: REPORTED_AT,
+    });
   });
 
   it('E: stopping turned off, closes on its own', () => {
@@ -95,12 +114,21 @@ describe('describeLeftoverReport', () => {
       leftoverProcess({ outcome: 'kept' }),
       leftoverProcess({ outcome: 'kept' }),
       leftoverProcess({ outcome: 'kept', reason: 'window' }),
-    ], false))).toEqual({ message: '"Fix login" left 3 processes running.', variant: 'info', sticky: false });
+    ], false))).toEqual({
+      title: 'Leftover processes',
+      message: '"Fix login" left 3 processes running.',
+      variant: 'info',
+      sticky: false,
+    });
   });
 
   it('a task that left only a window says so, and stays', () => {
     expect(describeLeftoverReport(report([leftoverProcess({ outcome: 'kept', reason: 'window' })]))).toEqual({
-      message: '1 process from "Fix login" is still running.', variant: 'info', sticky: true, since: REPORTED_AT,
+      title: 'Processes still running',
+      message: '1 process from "Fix login" is still running.',
+      variant: 'info',
+      sticky: true,
+      since: REPORTED_AT,
     });
   });
 

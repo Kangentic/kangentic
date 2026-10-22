@@ -34,7 +34,9 @@ const PROJECT_ID = `proj-fork-toast-${RUN_ID}`;
 const TASK_ID = `task-fork-toast-${RUN_ID}`;
 const SESSION_ID = `sess-fork-toast-${RUN_ID}`;
 
-const FORK_TOAST_TEXT = 'moved to a new session';
+// The toast's title. The negative counts below filter on it, so it must be the
+// live copy: a filter on text the toast no longer says counts zero whatever happens.
+const FORK_TOAST_TEXT = 'Conversation moved';
 
 /**
  * Launch a headless page pre-configured with a project, a task in the
@@ -219,13 +221,13 @@ test.describe('Conversation-fork toast (agentSessionId flip on a running session
     await browser?.close();
   });
 
-  test('shows exactly one info toast when the agent id flips to a different non-null value', async () => {
+  test('shows exactly one info toast when the agent id flips to a different non-null value, and its card opens the task', async () => {
     await fireStatusPush(page, `agent-b-${RUN_ID}`);
 
     const forkToast = page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT });
     await expect(forkToast).toBeVisible({ timeout: 5000 });
-    // The label resolves the task title from the board store.
-    await expect(forkToast).toContainText(`Fork Toast Task ${RUN_ID}`);
+    await expect(forkToast.getByTestId('toast-title')).toHaveText('Conversation moved');
+    await expect(forkToast.getByTestId('toast-body')).toHaveText('Resume follows the conversation started by /clear.');
 
     // A repeat push with the SAME (already-reconciled) id must not re-toast:
     // after the first upsert the store already holds agent-b.
@@ -234,6 +236,15 @@ test.describe('Conversation-fork toast (agentSessionId flip on a running session
     // the React render cycle and below the toast auto-dismiss window.
     await page.waitForTimeout(800);
     expect(await page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT }).count()).toBe(1);
+
+    // The card names no task, so a click on it is how the user finds which one.
+    await forkToast.getByTestId('toast-body').click();
+    await expect.poll(async () => page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores?: { session?: { getState: () => { detailTaskId: string | null } } };
+      }).__zustandStores;
+      return stores?.session?.getState().detailTaskId ?? null;
+    }), { timeout: 10000 }).toBe(TASK_ID);
   });
 });
 

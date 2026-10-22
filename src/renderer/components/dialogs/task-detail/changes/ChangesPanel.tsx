@@ -13,6 +13,7 @@ import { CommitGraphPanel } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useToastStore } from '../../../../stores/toast-store';
+import { describeIpcError, asSentence } from '../../../../lib/ipc-error';
 import { POP_OUT_SURFACES } from '../../../../../shared/pop-out';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { MousePointerClick } from 'lucide-react';
@@ -586,10 +587,18 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         });
         if (!opened) {
           const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances;
-          useToastStore.getState().addToast({ message: `File diff window limit reached (${maxInstances}). Close one to open another.` });
+          useToastStore.getState().addToast({
+            title: 'Window limit reached',
+            message: `${maxInstances} file diff windows are open. Close one to open another.`,
+            variant: 'info',
+          });
         }
-      } catch {
-        useToastStore.getState().addToast({ message: 'Could not open the file diff window.' });
+      } catch (error) {
+        useToastStore.getState().addToast({
+          title: "Couldn't open file diff",
+          message: asSentence(describeIpcError(error, 'The window could not be created.')),
+          variant: 'error',
+        });
       }
     })();
   }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, scope, projectPath, worktreePath, baseBranch]);

@@ -160,14 +160,14 @@ test.describe("What's New dialog", () => {
     }
   });
 
-  test('the no-notes toast stays clickable over an open what\'s-new dialog', async () => {
+  test('the no-notes toast shows over an open what\'s-new dialog and is clickable once it closes', async () => {
     // The notes-less update path shows a persistent toast instead of a modal, so
     // the store deliberately leaves what's-new open. That is only correct if the
-    // toast actually reaches the user: toasts render at z-[60] and BaseDialog at
-    // z-50, so the toast should sit above the dialog's `fixed inset-0` backdrop.
-    // Asserting store state cannot prove that - this clicks the toast's action
-    // for real, so Playwright's actionability check fails if the backdrop is
-    // swallowing the pointer events.
+    // toast actually reaches the user. While any dialog is open no toast takes a
+    // click (the toast container is inert, so a toast over a dialog's footer
+    // cannot swallow it), so the toast has to stay up until the dialog closes
+    // and then work. This clicks the toast's button for real, so Playwright's
+    // actionability check fails if anything is still swallowing the pointer.
     const { browser, page } = await launchWithState();
     try {
       await page.getByTestId('status-bar-version-pill').click();
@@ -181,9 +181,17 @@ test.describe("What's New dialog", () => {
       });
 
       await expect(page.getByTestId('whats-new-dialog')).toBeVisible();
-      await page.getByRole('button', { name: 'Restart to update' }).click();
+      const toast = page.getByTestId('toast');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Update ready');
+      await expect(toast.getByTestId('toast-action')).toHaveText('Restart to update');
+      await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'closed');
 
-      expect(await page.evaluate(() => window.__mockInstallUpdateCalls ?? [])).toHaveLength(1);
+      await page.getByTestId('whats-new-close').click();
+      await expect(page.getByTestId('whats-new-dialog')).toBeHidden();
+      await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'open');
+      await toast.getByRole('button', { name: 'Restart to update' }).click();
+
+      await expect.poll(() => page.evaluate(() => window.__mockInstallUpdateCalls ?? [])).toHaveLength(1);
     } finally {
       await browser.close();
     }

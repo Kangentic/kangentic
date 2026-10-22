@@ -34,14 +34,14 @@ const failingSources = new Set<string>();
  * change (Sentry DESKTOP-1Z). A target with the read-only attribute fails the same way,
  * as EPERM from `rename`, and the error carries nothing that tells the two apart. A local
  * POSIX filesystem never refuses a rename over an open file, so there these codes keep
- * the meaning `CAUSE_CLAUSE_BY_ERRNO` gives them. The async writer in
+ * the meaning `CAUSE_BY_ERRNO` gives them. The async writer in
  * `agent/adapters/claude/trust-manager.ts` also retries on these three codes, with its
  * own budget and no platform or syscall check.
  */
 const HELD_FILE_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
 
 /** Names both causes, because a held file and a read-only one raise the same error. */
-const HELD_FILE_CLAUSE = ' because the file is in use or read-only';
+const HELD_FILE_CAUSE = 'The file is in use or read-only';
 
 /**
  * What the user can actually do about it, keyed by errno. A full disk, a permissions
@@ -54,7 +54,7 @@ const HELD_FILE_CLAUSE = ' because the file is in use or read-only';
  * `EBADF` is here deliberately: it is the errno from DESKTOP-14/DESKTOP-13, the
  * userData-on-a-removable-volume case this whole subsystem was built for.
  *
- * An unlisted errno gets no clause, so the message falls back to the plain sentence.
+ * An unlisted errno gets no cause, so the message falls back to the plain sentence.
  * A cause we have not seen degrades to no cause rather than to a wrong guess.
  *
  * A `Map` rather than an object literal so an errno that happens to name an
@@ -64,15 +64,15 @@ const HELD_FILE_CLAUSE = ' because the file is in use or read-only';
  * The last four keys are one condition, not four: a drive that went away reports itself
  * differently depending on where in the stack the write died.
  */
-const CAUSE_CLAUSE_BY_ERRNO = new Map<string, string>([
-  ['ENOSPC', ' because the disk is full'],
-  ['EACCES', ' because it does not have permission'],
-  ['EPERM', ' because it does not have permission'],
-  ['EROFS', ' because the volume is read-only'],
-  ['EBADF', ' because the drive is unavailable'],
-  ['ENODEV', ' because the drive is unavailable'],
-  ['ENXIO', ' because the drive is unavailable'],
-  ['EIO', ' because the drive is unavailable'],
+const CAUSE_BY_ERRNO = new Map<string, string>([
+  ['ENOSPC', 'The disk is full'],
+  ['EACCES', 'Kangentic does not have permission'],
+  ['EPERM', 'Kangentic does not have permission'],
+  ['EROFS', 'The volume is read-only'],
+  ['EBADF', 'The drive is unavailable'],
+  ['ENODEV', 'The drive is unavailable'],
+  ['ENXIO', 'The drive is unavailable'],
+  ['EIO', 'The drive is unavailable'],
 ]);
 
 /** The errno of a Node fs error, or undefined for anything that carries no `code`. */
@@ -104,13 +104,15 @@ export function isRenameOntoHeldFile(error: unknown): boolean {
  * One wording for every source. "Its data folder" did not describe a project's
  * `.kangentic/`, and the old consequence ("Changes apply to this session") was false for
  * a project override, which keeps no in-memory copy and so loses the change outright.
+ *
+ * The toast body, one sentence: the renderer titles it "Change not saved to disk", which
+ * is what "it" refers to, so the body is only the cause and what it costs.
  */
 function buildUserMessage(error: unknown): string {
-  const causeClause = isRenameOntoHeldFile(error)
-    ? HELD_FILE_CLAUSE
-    : CAUSE_CLAUSE_BY_ERRNO.get(readErrnoCode(error) ?? '') ?? '';
-  return `Kangentic could not save a change to disk${causeClause}. `
-    + 'It may be lost when Kangentic restarts.';
+  const cause = isRenameOntoHeldFile(error)
+    ? HELD_FILE_CAUSE
+    : CAUSE_BY_ERRNO.get(readErrnoCode(error) ?? '');
+  return cause ? `${cause}, so it may be lost on restart.` : 'It may be lost on restart.';
 }
 
 /**

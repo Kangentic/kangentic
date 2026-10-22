@@ -25,8 +25,7 @@ export interface ToastAction {
  */
 export interface Toast {
   id: string;
-  /** Null only for a call site still on the one-line form. */
-  title: string | null;
+  title: string;
   message: string;
   variant: ToastVariant;
   persistent: boolean;
@@ -44,7 +43,9 @@ export interface Toast {
 }
 
 interface ToastFields {
-  title?: string;
+  /** What happened, in a few words. */
+  title: string;
+  /** The body: the task, the place or the detail, as one sentence. */
   message: string;
   variant?: ToastVariant;
   since?: string;
@@ -55,9 +56,8 @@ interface ToastFields {
 export interface TimedToastInput extends ToastFields {
   persistent?: false;
   durationMs?: number;
-  /** The one-line form's countdown: 0 or less meant "stays until closed". */
-  duration?: number;
-  action?: ToastAction;
+  /** A timed toast has no button: it could close while the user reaches for it. Give it `onOpen` instead. */
+  action?: never;
 }
 
 /** A toast that stays until closed. The only kind that carries a button. */
@@ -91,12 +91,11 @@ export function countdownRemaining(toast: Pick<Toast, 'remainingMs' | 'runningSi
 
 /** Build a stored toast from what a caller passed. */
 export function resolveToast(input: ToastInput, id: string, defaultDurationMs: number, now: number): Toast {
-  const timedInput = input.persistent === true ? null : input;
-  const persistent = input.persistent === true || (timedInput?.duration !== undefined && timedInput.duration <= 0);
-  const durationMs = persistent ? 0 : (timedInput?.durationMs ?? timedInput?.duration ?? defaultDurationMs);
+  const persistent = input.persistent === true;
+  const durationMs = input.persistent === true ? 0 : (input.durationMs ?? defaultDurationMs);
   return {
     id,
-    title: input.title ?? null,
+    title: input.title,
     message: input.message,
     variant: input.variant ?? 'info',
     persistent,

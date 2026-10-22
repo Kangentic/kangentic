@@ -68,6 +68,11 @@ vi.mock('../../src/renderer/stores/project-cache', () => ({
 vi.mock('../../src/renderer/lib/session-update-coalescer', () => ({
   enqueueReload: mocks.enqueueReload,
 }));
+// The task toasts open their task on a click, through a helper that imports the
+// session store; that store's import graph has no place in this file.
+vi.mock('../../src/renderer/utils/open-task-from-notification', () => ({
+  openTaskFromNotification: vi.fn(),
+}));
 
 import { useAgentDrivenInvalidation } from '../../src/renderer/hooks/useAgentDrivenInvalidation';
 

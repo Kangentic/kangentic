@@ -73,7 +73,7 @@ export function ArchivedTaskContextMenu({
         type="button"
         onClick={() => {
           navigator.clipboard.writeText(`Task #${task.display_id}`);
-          useToastStore.getState().addToast({ message: `Copied Task ID #${task.display_id}` });
+          useToastStore.getState().addToast({ title: 'Task ID copied', message: `#${task.display_id}`, variant: 'info' });
           onClose();
         }}
         className="w-full px-3 py-1.5 text-sm font-mono text-fg-faint hover:text-fg-secondary transition-colors flex items-center gap-2 cursor-pointer"

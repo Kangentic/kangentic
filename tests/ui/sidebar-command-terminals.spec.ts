@@ -746,7 +746,7 @@ test.describe('Notification click reopen (App.tsx sibling of the sidebar indicat
 
   // Coverage hole found in review: App.tsx's shared `openTaskFromNotification`
   // branches on `currentProject.id === notifyProjectId`. The same-project branch
-  // (setDetailTaskId directly) is covered by idle-toast.spec.ts's Open-action
+  // (setDetailTaskId directly) is covered by idle-toast.spec.ts's card-click
   // test; this covers the cross-project else branch, which had no test at all.
   test('a notification click for a task on a different project defers the open instead of setting detail directly', async () => {
     const { browser, page } = await launchWithState(preConfig());

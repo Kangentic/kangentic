@@ -1,6 +1,7 @@
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from './ConfirmDialog';
+import { asSentence } from '../../lib/ipc-error';
 
 /**
  * Shown when a registered project's folder no longer exists on disk (moved
@@ -38,13 +39,17 @@ export function ProjectPathMissingDialog() {
       // about a switch that did not happen.
       if (reopened) {
         useToastStore.getState().addToast({
-          message: `Project "${updated.name}" now points at ${updated.path}`,
+          title: 'Project relocated',
+          message: `"${updated.name}" now points at ${updated.path}.`,
           variant: 'success',
         });
       }
-    } catch (err) {
+    } catch (error) {
       useToastStore.getState().addToast({
-        message: err instanceof Error ? err.message : 'Failed to relocate project',
+        title: "Couldn't relocate project",
+        message: error instanceof Error && error.message
+          ? asSentence(error.message)
+          : 'The folder could not be used.',
         variant: 'error',
       });
     }

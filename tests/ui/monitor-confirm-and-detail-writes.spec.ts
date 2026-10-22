@@ -213,10 +213,10 @@ test.describe('Agent Monitor row menu confirm branches', () => {
       }, failure);
       await menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'Executing' }).click();
 
-      const toast = byTestId(page, 'toast').filter({ hasText: 'Failed to move' });
+      const toast = byTestId(page, 'toast').filter({ hasText: "Couldn't move task" });
       await expect(toast).toBeVisible();
-      await expect(toast).toContainText(title);
-      await expect(toast).toContainText(failure);
+      await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't move task");
+      await expect(toast.getByTestId('toast-body')).toHaveText(`"${title}": ${failure}.`);
       expect(await moveProjectIds(page)).toEqual([PROJECT_ID]);
 
       // The board under the overlay learned the committed half.
@@ -314,9 +314,10 @@ test.describe('Writes from a task detail', () => {
       await expect.poll(() => moveProjectIds(page)).toEqual([PROJECT_ID]);
       // The failure is shown, not left to the global unhandled-rejection listener
       // (red: `handleArchive` without its catch shows no toast at all).
-      const toast = byTestId(page, 'toast').filter({ hasText: 'Failed to archive' });
+      const toast = byTestId(page, 'toast').filter({ hasText: "Couldn't archive task" });
       await expect(toast).toBeVisible();
-      await expect(toast).toContainText(failure);
+      await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't archive task");
+      await expect(toast.getByTestId('toast-body')).toHaveText(`"Archived, then failed": ${failure}.`);
       // The board under the overlay shows the card in Done, before the monitor closes.
       await expect(cardInLane(page, 'Done', taskId)).toHaveCount(1);
       await expect(cardInLane(page, 'Executing', taskId)).toHaveCount(0);

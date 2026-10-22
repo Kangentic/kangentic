@@ -164,10 +164,10 @@ describe('handleStartSession', () => {
     // A To Do or Done column, an archived task, a task that does not exist:
     // startTaskSession throws the desktop's own Resume copy before anything
     // starts, and the router turns the throw into the ok:false the phone shows.
-    startTaskSessionMock.mockRejectedValueOnce(new Error('This task is complete. Move it out of Done to continue working on it.'));
+    startTaskSessionMock.mockRejectedValueOnce(new Error('The task is in Done.'));
     await expect(
       handleStartSession(fakeRequest(START_PAYLOAD), fakeContext()),
-    ).rejects.toThrow('Move it out of Done');
+    ).rejects.toThrow('The task is in Done.');
 
     await afterUnhandledRejectionWindow();
     // The refusal surfaced through the response; it is not ALSO logged as a

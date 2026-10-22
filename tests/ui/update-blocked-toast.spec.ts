@@ -51,14 +51,15 @@ async function fireUpdateBlocked(target: Page, message: string) {
  * bridge method exists.
  */
 test.describe('Update-blocked toast', () => {
-  test('toasts the message main sent, verbatim and unstyled by the renderer', async () => {
+  test('toasts the message main sent as its body, verbatim, under the renderer\'s title', async () => {
     await fireUpdateBlocked(page, READ_ONLY_VOLUME_MESSAGE);
 
     const toast = page.getByTestId('toast');
     await expect(toast).toBeVisible();
-    // Verbatim: the renderer must not reformat, truncate, or prefix it. main
-    // owns the wording so the two halves cannot drift into two sentences.
-    await expect(toast).toHaveText(READ_ONLY_VOLUME_MESSAGE);
+    await expect(toast.getByTestId('toast-title')).toHaveText('Updates blocked');
+    // Verbatim: the renderer must not reformat, truncate, or prefix the body.
+    // main owns the wording so the two halves cannot drift into two sentences.
+    await expect(toast.getByTestId('toast-body')).toHaveText(READ_ONLY_VOLUME_MESSAGE);
   });
 
   test('uses the warning variant, not error', async () => {
@@ -67,6 +68,7 @@ test.describe('Update-blocked toast', () => {
     // Deliberately different from the config write-failure toast next to it in
     // App.tsx: nothing is broken and nothing was lost, the app simply cannot
     // update itself from where it was launched.
+    await expect(page.getByTestId('toast')).toHaveAttribute('data-variant', 'warning');
     await expect(page.getByTestId('toast')).toHaveClass(/border-yellow-500\/50/);
   });
 
@@ -80,11 +82,12 @@ test.describe('Update-blocked toast', () => {
 
     const toast = page.getByTestId('toast');
     await expect(toast).toBeVisible();
+    await expect(toast).toHaveAttribute('data-persistent', 'true');
 
     // The condition does not resolve on its own, so neither does the toast. A
     // regression to a timed toast would let the one notice this app run gets
     // disappear while the user was looking elsewhere. Generous margin over the
-    // 4s default so the assertion is about duration: 0, not about timing.
+    // 4s default so the assertion is about `persistent: true`, not about timing.
     await page.waitForTimeout(DEFAULT_TOAST_MS * 2);
     await expect(toast).toBeVisible();
   });
@@ -101,7 +104,7 @@ test.describe('Update-blocked toast', () => {
     // count itself is the non-retrying helper rather than toHaveCount(0):
     // that matcher retries for ~5s, which is long enough for an ordinary
     // toast to auto-dismiss and report a false pass. This one cannot (it is
-    // duration: 0), but the helper is the house rule and the assertion is
+    // persistent), but the helper is the house rule and the assertion is
     // then true for the reason it claims rather than by accident.
     await page.getByTestId('toast').waitFor({ state: 'detached' });
     expect(await toastCountRightNow(page)).toBe(0);

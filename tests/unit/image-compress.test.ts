@@ -303,7 +303,8 @@ describe('compressClipboardImage', () => {
       // Toast must have been called exactly once with the canonical message.
       expect(addToastMock).toHaveBeenCalledOnce();
       expect(addToastMock).toHaveBeenCalledWith({
-        message: 'Could not compress image - using original.',
+        title: "Couldn't compress image",
+        message: 'Sending the original instead.',
         variant: 'warning',
       });
     });

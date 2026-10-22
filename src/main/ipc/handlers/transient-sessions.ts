@@ -445,8 +445,13 @@ async function checkOutStartBranch(
     // Checkout may fail (dirty working tree, branch doesn't exist locally)
     // Fall back to whatever branch is currently checked out
     const branch = await readCurrentBranch();
-    const reason = error instanceof Error ? error.message : String(error);
-    return { branch, checkoutError: `Could not switch to "${targetBranch}" - staying on "${branch}". ${reason}` };
+    // Git's own text is multi-line and names paths, so it goes to the log and
+    // the toast body stays one sentence, shaped like the refusals above.
+    console.warn(`[COMMAND_TERMINAL] checkout of "${targetBranch}" failed:`, error);
+    return {
+      branch,
+      checkoutError: `Staying on "${branch}": git could not switch this terminal to "${targetBranch}".`,
+    };
   }
 }
 

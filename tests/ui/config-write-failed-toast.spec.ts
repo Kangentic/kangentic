@@ -6,8 +6,9 @@
  * from the config:set IPC handler (unhandled rejection the renderer never
  * caught, DESKTOP-13). It now degrades and reports through the source-keyed
  * latch in write-failure-notice.ts, which pushes this channel once per failing
- * source. This spec covers the push half - main composes the message and the
- * renderer toasts it verbatim, the same shape as task:spawnBlocked.
+ * source. This spec covers the push half: main composes the body and the
+ * renderer toasts it verbatim under its own title, the same shape as
+ * task:spawnBlocked.
  *
  * Tier: UI (headless Chromium). No PTY, no Electron main process.
  */
@@ -48,17 +49,19 @@ function fireConfigWriteFailed(page: Page, message: string) {
 }
 
 test.describe('config:writeFailed push', () => {
-  test('toasts the message verbatim as an error-variant toast', async () => {
+  test('toasts the message verbatim as the body of an error-variant toast', async () => {
     const { browser, page } = await launch();
     try {
       await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
 
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: WRITE_FAILED_MESSAGE });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      // ToastItem.tsx keys its border/accent classes off toast.variant; App.tsx
-      // pushes this one with variant: 'error', which renders as
-      // border-red-500/50 (see variantStyles in ToastItem.tsx). There is no
-      // data-variant attribute, so the class is the only observable marker.
+      // App.tsx puts its own title over main's body and passes the body through untouched.
+      await expect(toast.getByTestId('toast-title')).toHaveText('Change not saved to disk');
+      await expect(toast.getByTestId('toast-body')).toHaveText(WRITE_FAILED_MESSAGE);
+      // App.tsx pushes this one with variant: 'error'. The card carries it as
+      // data-variant, and ToastItem.tsx keys its red border off it.
+      await expect(toast).toHaveAttribute('data-variant', 'error');
       await expect(toast).toHaveClass(/border-red-500/);
     } finally {
       await browser.close();

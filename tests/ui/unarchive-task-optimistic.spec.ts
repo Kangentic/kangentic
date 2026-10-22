@@ -12,8 +12,8 @@
  * Gap 2 - Failure path rollback
  *   When tasks.unarchive rejects, state.tasks and state.archivedTasks revert
  *   to their pre-call snapshots, loadBoard() fires (observable via the error
- *   toast being added), and an error toast starting "Failed to restore task:"
- *   is shown.
+ *   toast being added), and an error toast titled "Couldn't restore task",
+ *   with the reason as its body, is shown.
  *
  * Gap 3 - spawnProgress lifecycle
  *   When the target lane has auto_spawn=true, sessionStore.spawnProgress[taskId]
@@ -176,19 +176,21 @@ async function readSpawnProgress(page: Page, taskId: string): Promise<string | n
 }
 
 /**
- * Wait for and return a toast element matching a text pattern.
+ * Wait for a toast with this title, and assert its body.
  * Toasts are rendered with data-testid="toast" by the ToastContainer.
  * Uses DOM polling rather than the toast store (which is not exposed on
  * __zustandStores - only board/backlog/config/project/session are).
  */
-async function waitForToast(
+async function expectToast(
   page: Page,
-  textPattern: RegExp | string,
+  title: string,
+  body: string,
   timeoutMs = 5000,
 ): Promise<void> {
-  await expect(
-    page.locator('[data-testid="toast"]').filter({ hasText: textPattern }),
-  ).toBeVisible({ timeout: timeoutMs });
+  const toast = page.locator('[data-testid="toast"]').filter({ hasText: title });
+  await expect(toast).toBeVisible({ timeout: timeoutMs });
+  await expect(toast.getByTestId('toast-title')).toHaveText(title);
+  await expect(toast.getByTestId('toast-body')).toHaveText(body);
 }
 
 /** Resolve the ID of a named swimlane from the mock. */
@@ -329,8 +331,7 @@ test.describe('unarchiveTask - failure path rollback', () => {
       // Error toast must be visible (the catch block calls addToast).
       // loadBoard() fires in the catch block before addToast, so the toast
       // being visible implies loadBoard() also completed.
-      await waitForToast(page, 'Failed to restore task:');
-      await waitForToast(page, 'Worktree locked by another process');
+      await expectToast(page, "Couldn't restore task", 'Worktree locked by another process.');
 
       // spawnProgress must be cleared (finally block)
       const spawnProgress = await readSpawnProgress(page, TASK_ID);

@@ -166,12 +166,13 @@ test.describe('task move revert on spawn failure', () => {
       await expect(page.locator('[data-swimlane-name="Planning"]').locator('text=Task To Revert'))
         .toHaveCount(0);
 
-      // Toast shows the real failure reason from the main process - both
-      // the "Failed to move task:" prefix (renderer-added) and the actual
-      // underlying error text must appear in the same toast element.
-      await expect(
-        page.locator('text=/Failed to move task:.*uncommitted changes/').first(),
-      ).toBeVisible({ timeout: 3000 });
+      // Toast shows the real failure reason from the main process: the
+      // renderer's "Couldn't move task" title, and the underlying error text
+      // as the body of the same toast element.
+      const moveFailure = page.getByTestId('toast').filter({ hasText: "Couldn't move task" });
+      await expect(moveFailure).toBeVisible({ timeout: 3000 });
+      await expect(moveFailure.getByTestId('toast-title')).toHaveText("Couldn't move task");
+      await expect(moveFailure.getByTestId('toast-body')).toHaveText(errorMessage);
     } finally {
       await browser.close();
     }

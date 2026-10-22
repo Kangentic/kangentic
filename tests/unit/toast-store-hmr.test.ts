@@ -97,7 +97,7 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('addToast returns a non-empty string id and appends to toasts', () => {
-    const id = useToastStore.getState().addToast({ message: 'Hello' });
+    const id = useToastStore.getState().addToast({ title: 'Toast', message: 'Hello' });
     expect(typeof id).toBe('string');
     expect(id.length).toBeGreaterThan(0);
     const { toasts } = useToastStore.getState();
@@ -108,7 +108,7 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('addToast respects the variant override', () => {
-    useToastStore.getState().addToast({ message: 'Oh no', variant: 'error' });
+    useToastStore.getState().addToast({ title: 'Toast', message: 'Oh no', variant: 'error' });
     const { toasts } = useToastStore.getState();
     expect(toasts[0].variant).toBe('error');
   });
@@ -137,12 +137,6 @@ describe('toast-store HMR preservation', () => {
     expect(toast.runningSince).toBeNull();
   });
 
-  it('reads the one-line form\'s duration 0 as persistent', () => {
-    useToastStore.getState().addToast({ message: 'Waiting', duration: 0 });
-    const [toast] = useToastStore.getState().toasts;
-    expect(toast.persistent).toBe(true);
-    expect(toast.title).toBeNull();
-  });
 
   it('updateToast changes the words in place and keeps the toast\'s spot and countdown', () => {
     const firstId = useToastStore.getState().addToast({ title: 'Idle agent paused', message: 'Kangentic paused it to free memory.', persistent: true });
@@ -196,9 +190,9 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('dismissToast removes the targeted toast and leaves others intact', () => {
-    const idA = useToastStore.getState().addToast({ message: 'A' });
-    const idB = useToastStore.getState().addToast({ message: 'B' });
-    const idC = useToastStore.getState().addToast({ message: 'C' });
+    const idA = useToastStore.getState().addToast({ title: 'Toast', message: 'A' });
+    const idB = useToastStore.getState().addToast({ title: 'Toast', message: 'B' });
+    const idC = useToastStore.getState().addToast({ title: 'Toast', message: 'C' });
 
     useToastStore.getState().dismissToast(idB);
 
@@ -208,14 +202,14 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('dismissToast is a no-op for an unknown id', () => {
-    useToastStore.getState().addToast({ message: 'X' });
+    useToastStore.getState().addToast({ title: 'Toast', message: 'X' });
     useToastStore.getState().dismissToast('does-not-exist');
     expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 
   it('addToast enforces maxCount from config (capped at 5)', () => {
     for (let index = 0; index < 7; index++) {
-      useToastStore.getState().addToast({ message: `Toast ${index}` });
+      useToastStore.getState().addToast({ title: 'Toast', message: `Toast ${index}` });
     }
     // maxCount: 5 from the config mock
     expect(useToastStore.getState().toasts).toHaveLength(5);
@@ -224,9 +218,9 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('never pushes out a toast that waits for the user while routine toasts can go instead', () => {
-    useToastStore.getState().addToast({ message: 'Waiting', duration: 0 });
+    useToastStore.getState().addToast({ title: 'Toast', message: 'Waiting', persistent: true });
     for (let index = 0; index < 7; index++) {
-      useToastStore.getState().addToast({ message: `Toast ${index}` });
+      useToastStore.getState().addToast({ title: 'Toast', message: `Toast ${index}` });
     }
     const messages = useToastStore.getState().toasts.map((toast) => toast.message);
     expect(messages).toHaveLength(5);
@@ -236,9 +230,9 @@ describe('toast-store HMR preservation', () => {
 
   it('drops the oldest waiting toast only when waiting toasts alone overflow, and always shows the newest', () => {
     for (let index = 0; index < 6; index++) {
-      useToastStore.getState().addToast({ message: `Waiting ${index}`, duration: 0 });
+      useToastStore.getState().addToast({ title: 'Toast', message: `Waiting ${index}`, persistent: true });
     }
-    useToastStore.getState().addToast({ message: 'Newest' });
+    useToastStore.getState().addToast({ title: 'Toast', message: 'Newest' });
     const messages = useToastStore.getState().toasts.map((toast) => toast.message);
     expect(messages).toEqual(['Waiting 2', 'Waiting 3', 'Waiting 4', 'Waiting 5', 'Newest']);
   });
@@ -279,8 +273,8 @@ describe('toast-store HMR preservation', () => {
   // ---------------------------------------------------------------------------
 
   it('dispose body contract: getState().toasts captures live store state', () => {
-    const idA = useToastStore.getState().addToast({ message: 'Preserved A' });
-    const idB = useToastStore.getState().addToast({ message: 'Preserved B' });
+    const idA = useToastStore.getState().addToast({ title: 'Toast', message: 'Preserved A' });
+    const idB = useToastStore.getState().addToast({ title: 'Toast', message: 'Preserved B' });
 
     // Simulate what the dispose callback does:
     const hotData: Record<string, unknown> = {};

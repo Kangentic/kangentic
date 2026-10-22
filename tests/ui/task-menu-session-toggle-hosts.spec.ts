@@ -247,7 +247,8 @@ test.describe('Task menu session row on the Workflows canvas', () => {
       const menu = await openCanvasCardMenu(page, taskId);
       await menu.getByTestId('context-toggle-session').click();
 
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to suspend session' })).toContainText(failureReason);
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't pause session" });
+      await expect(toast.getByTestId('toast-body')).toHaveText(`${failureReason}.`);
       // The pause reached the mock before it threw, so the write did commit.
       expect(await suspendCalls(page)).toEqual([{ taskId, projectId: OTHER_PROJECT_ID }]);
 
@@ -311,8 +312,10 @@ test.describe('Move to on a Workflows canvas card of another board', () => {
       await moveFromCanvas(page, taskId, 'Code Review');
       await expect.poll(() => moveProjectIds(page)).toEqual([OTHER_PROJECT_ID]);
       // The move settles while the open board is still this one.
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Moved "Workflow task moved from the canvas" to Code Review' }))
-        .toHaveCount(1);
+      const movedToast = page.locator('[data-testid="toast"]')
+        .filter({ hasText: '"Workflow task moved from the canvas" is now in Code Review.' });
+      await expect(movedToast).toHaveCount(1);
+      await expect(movedToast.getByTestId('toast-title')).toHaveText('Task moved');
 
       await showOtherBoard(page);
       await expect(cardInLane(page, 'Code Review', taskId)).toBeVisible();
@@ -331,7 +334,9 @@ test.describe('Move to on a Workflows canvas card of another board', () => {
       await warmOtherBoard(page, taskId);
       await page.evaluate(() => { window.__mockMoveRejectAfterCommit = 'Agent failed to start'; });
       await moveFromCanvas(page, taskId, 'Code Review');
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to move' })).toContainText('Agent failed to start');
+      const moveFailure = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't move task" });
+      await expect(moveFailure.getByTestId('toast-body'))
+        .toHaveText('"Workflow task moved from the canvas": Agent failed to start.');
 
       await showOtherBoard(page);
       await expect(cardInLane(page, 'Code Review', taskId)).toBeVisible();
@@ -508,8 +513,8 @@ test.describe('Task menu session row outcomes on the board', () => {
       await menu.getByTestId('context-toggle-session').click();
       await expect(byTestId(page, 'task-context-menu')).toHaveCount(0);
 
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to suspend session' });
-      await expect(toast).toContainText('PTY refused to stop');
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't pause session" });
+      await expect(toast.getByTestId('toast-body')).toHaveText('PTY refused to stop.');
 
       // The toast follows the heal, so the next open reads the healed row.
       const reopened = await openCardMenu(page, 'Executing', taskId);
@@ -549,7 +554,10 @@ test.describe('Task menu session row outcomes on the board', () => {
       await expect(row).toHaveText('Resume session');
       await row.click();
 
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Reconnected to running session' })).toHaveCount(1);
+      const reconnectToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Reconnected' });
+      await expect(reconnectToast).toHaveCount(1);
+      await expect(reconnectToast.getByTestId('toast-title')).toHaveText('Reconnected');
+      await expect(reconnectToast.getByTestId('toast-body')).toHaveText('The session was already running.');
     } finally {
       await browser.close();
     }

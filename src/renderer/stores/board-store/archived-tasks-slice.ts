@@ -5,9 +5,15 @@ import { useSessionStore } from '../session-store';
 import { withoutSessionsForTasks } from '../session-store/session-index';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { applyStructuralSharing } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import type { BoardStore } from './types';
+
+// agent-focus-ok: the only task this file opens is through a restore toast's
+// card click, which is the user asking for that task. The one push it takes,
+// bulk-delete progress, opens nothing.
 
 /**
  * How many of the newest archived tasks the board hydrates for the Done
@@ -201,8 +207,14 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       useSessionStore.setState((state) => withoutSessionsForTasks(state.sessions, input.id));
     }
 
+    // Read once, at interaction time: the restore and a click on its toasts
+    // both name the project the user restored the task in.
+    const restoreProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    const openRestoredTask = restoreProjectId !== null
+      ? () => openTaskFromNotification(restoreProjectId, input.id)
+      : undefined;
     try {
-      await window.electronAPI.tasks.unarchive(input, useProjectStore.getState().currentProject?.id ?? null);
+      await window.electronAPI.tasks.unarchive(input, restoreProjectId);
 
       const [nextTasks, archivedReconcile] = await Promise.all([
         window.electronAPI.tasks.list(),
@@ -215,8 +227,12 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       }));
 
       useToastStore.getState().addToast({
-        message: `"${archivedRecord.title}" restored to ${targetLane?.name || 'board'}`,
+        title: 'Task restored',
+        message: targetLane?.name
+          ? `"${archivedRecord.title}" is back in ${targetLane.name}.`
+          : `"${archivedRecord.title}" is back on the board.`,
         variant: 'success',
+        onOpen: openRestoredTask,
       });
 
       // Detect if the unarchived task got a session (transition engine fired).
@@ -226,8 +242,10 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       if (restoredTask?.session_id) {
         useSessionStore.setState({ activeSessionId: restoredTask.session_id });
         useToastStore.getState().addToast({
-          message: `Agent resumed for "${restoredTask.title}"`,
+          title: 'Agent resumed',
+          message: `"${restoredTask.title}" is running.`,
           variant: 'success',
+          onOpen: openRestoredTask,
         });
       }
     } catch (err) {
@@ -249,7 +267,8 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // during the await window is not clobbered.
       if (targetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
-        message: `Failed to restore task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't restore task",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     } finally {
@@ -281,7 +300,8 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // Revert optimistic removal so stale tasks don't reappear on next load
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       useToastStore.getState().addToast({
-        message: `Failed to delete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't delete task",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     }
@@ -319,9 +339,11 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       if (result.failures.length > 0) {
         // Partial success: keep the successfully deleted tasks removed from
         // the dialog, surface the failure count.
+        // Every attempted task's row is gone (a failed cleanup still deletes
+        // it), so the count to measure the failures against is the batch.
         useToastStore.getState().addToast({
-          message: `Deleted ${result.deleted} task${result.deleted === 1 ? '' : 's'}. `
-            + `Failed to clean up ${result.failures.length} worktree${result.failures.length === 1 ? '' : 's'} - check logs.`,
+          title: 'Some worktrees remain',
+          message: `${result.failures.length} of ${ids.length} worktree${ids.length === 1 ? '' : 's'} could not be cleaned up.`,
           variant: 'error',
         });
       }
@@ -330,7 +352,8 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // removal since we can't trust any partial state.
       set({ archivedTasks: prevArchived, archivedTotalCount: prevArchivedTotalCount });
       useToastStore.getState().addToast({
-        message: `Failed to delete tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't delete tasks",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     } finally {
@@ -368,8 +391,12 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       set((state) => applyTaskListPayload(state, nextTasks));
 
       const targetLane = get().swimlanes.find((lane) => lane.id === targetSwimlaneId);
+      const restoredCount = ids.length === 1 ? '1 task is' : `${ids.length} tasks are`;
       useToastStore.getState().addToast({
-        message: `${ids.length} tasks restored to ${targetLane?.name || 'board'}`,
+        title: 'Tasks restored',
+        message: targetLane?.name
+          ? `${restoredCount} back in ${targetLane.name}.`
+          : `${restoredCount} back on the board.`,
         variant: 'success',
       });
     } catch (error) {
@@ -379,7 +406,8 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
       // that never landed, and loadBoard() does not refetch sessions.
       if (bulkTargetLane?.role === 'todo') await useSessionStore.getState().syncSessions();
       useToastStore.getState().addToast({
-        message: `Failed to restore tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't restore tasks",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     }

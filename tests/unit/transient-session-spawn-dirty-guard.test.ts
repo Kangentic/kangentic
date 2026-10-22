@@ -772,7 +772,7 @@ describe('startCommandTerminal: an unattended (phone) start always launches', ()
     const result = await startCommandTerminal(context as never, { projectId: 'proj-1', unattended: true });
 
     expect(result.branch).toBe('feature/live');
-    expect(result.checkoutError).toMatch(/Could not switch to "main"/);
+    expect(result.checkoutError).toBe('Staying on "feature/live": git could not switch this terminal to "main".');
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 

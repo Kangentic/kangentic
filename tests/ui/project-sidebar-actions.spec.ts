@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { launchPage, createProject, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -230,9 +230,9 @@ test.describe('Project Relocation', () => {
     });
     await page.getByRole('button', { name: 'Locate Folder...' }).click();
 
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'now points at /mock/relocate-guard-landed' }),
-    ).toBeVisible({ timeout: 5000 });
+    const relocatedToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Project relocated' });
+    await expect(relocatedToast).toBeVisible({ timeout: 5000 });
+    await expect(relocatedToast.getByTestId('toast-body')).toHaveText('"TestProject" now points at /mock/relocate-guard-landed.');
   });
 
   test('Locate Folder does not toast success when the guarded re-open fails', async () => {
@@ -265,19 +265,16 @@ test.describe('Project Relocation', () => {
 
     // Positive signal the guarded re-open actually ran and failed, rather
     // than the click doing nothing: openProject's own failure toast.
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
-    ).toBeVisible({ timeout: 5000 });
+    const reopenFailedToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't open project" });
+    await expect(reopenFailedToast).toBeVisible({ timeout: 5000 });
+    await expect(reopenFailedToast.getByTestId('toast-body')).toHaveText('Simulated reopen failure.');
 
     // A one-shot count, not expect(...).toHaveCount(0): toasts auto-dismiss
     // after their configured duration, so a retrying assertion would keep
     // polling past that window and report "0" once the (wrongly shown)
     // success toast had already expired on its own, masking the bug this
     // test exists to catch.
-    const successToastCount = await page
-      .locator('[data-testid="toast"]')
-      .filter({ hasText: 'now points at' })
-      .count();
-    expect(successToastCount).toBe(0);
+    expect(await toastCountRightNow(page, 'Project relocated')).toBe(0);
+    expect(await toastCountRightNow(page, 'now points at')).toBe(0);
   });
 });

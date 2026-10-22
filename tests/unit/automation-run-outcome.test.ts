@@ -13,9 +13,6 @@ import {
   notifyAutomationFailure,
   __resetAutomationFailureCooldownsForTest,
 } from '../../src/main/automations/automation-run-outcome';
-// Shared, not main-side: the renderer's toast draws this string and cannot
-// import from `src/main/`, so both sides read the one definition.
-import { describeAutomationFailure } from '../../src/shared/automation-describe';
 import type { AutomationRunFailure } from '../../src/shared/types';
 
 vi.mock('electron', () => ({ BrowserWindow: class {} }));
@@ -129,13 +126,5 @@ describe('notifyAutomationFailure', () => {
 
   it('sends nothing when there is no window at all', () => {
     expect(notifyAutomationFailure({ window: null, projectId: 'project-1', failure: makeFailure() })).toBe(false);
-  });
-});
-
-describe('describeAutomationFailure', () => {
-  it('names the automation AND the column', () => {
-    // Neither alone locates it: two columns can hold rows with the same name,
-    // and a column name alone does not say which of its rows broke.
-    expect(describeAutomationFailure(makeFailure())).toBe('Ping the channel failed on Code Review');
   });
 });

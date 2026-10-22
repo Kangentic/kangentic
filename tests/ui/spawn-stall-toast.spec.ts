@@ -8,8 +8,9 @@
  *     the existing TaskCard 'preparing' case, so no card change is needed.
  *
  *  2. When a task sits in a preparing spawn-progress state past the stall
- *     threshold (8s), App.tsx raises a non-blocking toast with a Cancel action.
- *     Clicking Cancel calls window.electronAPI.tasks.cancelSpawn(taskId).
+ *     threshold (8s), App.tsx raises a non-blocking "Still preparing" toast that
+ *     stays until the spawn resolves. It has no button: dragging the task back
+ *     to To Do stops the spawn, and a click on the card opens the task.
  *
  *  3. The toast is gated by notifications.toasts.onSpawnStalled - when off, no
  *     toast appears even after the threshold.
@@ -161,7 +162,7 @@ test.describe('spawn stall: waiting label + notification', () => {
     }
   });
 
-  test('raises a Cancel toast after the stall threshold and cancels the spawn on click', async () => {
+  test('raises a stall toast after the threshold, and a click on its card opens the task', async () => {
     const { browser, page } = await launchWithState(true);
     try {
       await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -180,14 +181,20 @@ test.describe('spawn stall: waiting label + notification', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText('still preparing');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Still preparing');
+      await expect(toast.getByTestId('toast-body')).toHaveText('"Stalling Task" is waiting on the git queue.');
+      // It stays until the spawn resolves, and carries no button.
+      await expect(toast).toHaveAttribute('data-persistent', 'true');
+      expect(await toast.getByTestId('toast-action').count()).toBe(0);
 
-      await toast.getByRole('button', { name: 'Cancel' }).click();
+      await toast.getByTestId('toast-body').click();
 
-      const cancelled: string[] = await page.evaluate(
-        () => (window as unknown as { __mockCancelSpawnCalls?: string[] }).__mockCancelSpawnCalls ?? [],
-      );
-      expect(cancelled).toContain(TASK_ID);
+      await expect.poll(async () => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session?: { getState: () => { detailTaskId: string | null } } };
+        }).__zustandStores;
+        return stores?.session?.getState().detailTaskId ?? null;
+      }), { timeout: 10000 }).toBe(TASK_ID);
     } finally {
       await browser.close();
     }
@@ -239,7 +246,7 @@ test.describe('spawn stall: waiting label + notification', () => {
   // -------------------------------------------------------------------------
   // Gap 4: dismiss-on-leave - when the stall toast is visible and the spawn
   // finishes (spawnProgress entry is cleared), the sticky toast must be
-  // auto-dismissed so the stale Cancel button cannot abort a later move.
+  // auto-dismissed so it does not keep reporting a spawn that already finished.
   // -------------------------------------------------------------------------
   test('auto-dismisses the stall toast when spawnProgress is cleared', async () => {
     const { browser, page } = await launchWithState(true);
@@ -286,7 +293,7 @@ test.describe('spawn stall: waiting label + notification', () => {
       await expect(toast).toBeVisible({ timeout: 5000 });
 
       // Must contain the lowercased label with trailing '...' removed.
-      await expect(toast).toContainText('fetching latest');
+      await expect(toast.getByTestId('toast-body')).toHaveText('"Stalling Task" is fetching latest.');
       // Must NOT claim a git-queue wait.
       await expect(toast).not.toContainText('waiting on the git queue');
     } finally {
@@ -316,7 +323,7 @@ test.describe('spawn stall: waiting label + notification', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText('waiting on the git queue');
+      await expect(toast.getByTestId('toast-body')).toHaveText('"Stalling Task" is waiting on the git queue.');
       await expect(toast).not.toContainText('base fetch failed');
     } finally {
       await browser.close();

@@ -3,6 +3,7 @@ import type { ElementType } from 'react';
 import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
 import { SETTINGS_TABS } from './settings-tabs';
@@ -166,7 +167,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       const lastAt = lastFailureToastByKeyRef.current.get(settingKey) ?? 0;
       if (Date.now() - lastAt < FAILED_WRITE_TOAST_COOLDOWN_MS) return;
       lastFailureToastByKeyRef.current.set(settingKey, Date.now());
-      useToastStore.getState().addToast({ message, variant: 'error', duration: 12000 });
+      useToastStore.getState().addToast({ title: 'Setting not saved', message, variant: 'error', durationMs: 12000 });
     };
 
     const write = scope === 'project' ? updateProjectOverride(partial, projectPath) : updateConfig(partial);
@@ -178,19 +179,20 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
         // did. On the first failure of an outage both can be up, and they read as one
         // cause and one consequence rather than as the same bug twice. "Its settings
         // file" covers the global config and a project's `.kangentic/config.json` alike.
-        reportFailure('This setting did not save. Kangentic could not write its settings file.');
+        reportFailure('Kangentic could not write its settings file.');
       },
       // A REJECTED write is a different failure from a write that degraded: the two
       // project-scoped channels throw for an unknown or unopened project. It used to
       // land as a silent unhandled rejection, which is the same class of bug as the
-      // one above. No settings-file clause, because that is not what went wrong.
+      // one above. No settings-file clause, because that is not what went wrong: the
+      // body is the rejection's own reason.
       //
       // It shares the degraded path's per-key cooldown deliberately, rather than
       // keeping its own. The cooldown is keyed to the fact the user needs ("this
       // setting did not save"), which is identical either way; the clause only
       // explains it. Giving each branch its own timer would toast twice for one
       // setting that is failing for two reasons at once.
-      () => reportFailure('This setting did not save.'),
+      (error: unknown) => reportFailure(asSentence(describeIpcError(error, 'The change was not written.'))),
     );
   }, [updateProjectOverride, updateConfig]);
 

@@ -30,7 +30,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -166,16 +166,14 @@ test.describe('SESSION_EXIT intentional-suspend gate', () => {
 
     // The genuine crash produces a warning toast. Waiting for it guarantees
     // both fired events have been processed and rendered.
-    await expect(
-      page.getByText(/Session ended for .*Genuine Crash Task.*\(exit/),
-    ).toBeVisible({ timeout: 5000 });
+    const crashToast = page.getByTestId('toast').filter({ hasText: '"Genuine Crash Task" exited with code' });
+    await expect(crashToast).toBeVisible({ timeout: 5000 });
+    await expect(crashToast.getByTestId('toast-title')).toHaveText('Session ended');
+    await expect(crashToast.getByTestId('toast-body')).toHaveText(`"Genuine Crash Task" exited with code ${EXIT_CODE}.`);
 
     // The intentional suspend must NOT produce a "Session ended" toast. A
     // one-shot snapshot (not the auto-retrying toHaveCount) so a present toast
     // fails now instead of being waited out until it auto-dismisses.
-    const intentionalToastCount = await page
-      .getByText(/Session ended for .*Intentional Suspend Task/)
-      .count();
-    expect(intentionalToastCount).toBe(0);
+    expect(await toastCountRightNow(page, '"Intentional Suspend Task"')).toBe(0);
   });
 });

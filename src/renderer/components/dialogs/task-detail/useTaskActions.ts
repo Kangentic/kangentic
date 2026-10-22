@@ -9,20 +9,36 @@ import type { useBranchConfig } from './useBranchConfig';
 import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
-import { describeIpcError } from '../../../lib/ipc-error';
-import { sessionToggleFailureMessage, toastIfReconnectedResume } from '../../../utils/session-toggle';
+import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+import { sessionToggleFailureToast, toastIfReconnectedResume } from '../../../utils/session-toggle';
+import { openTaskFromNotification } from '../../../utils/open-task-from-notification';
+
+// agent-focus-ok: this file takes no main-process push. The scan reads the
+// window's own `onClose()` callback as one. The task a toast card opens here is
+// the user clicking that toast, so the detail it opens should take focus.
+
+/** A toast card that opens the task, when the task's project is known. */
+function opensTask(projectId: string | null, taskId: string): { onOpen?: () => void } {
+  return projectId ? { onOpen: () => openTaskFromNotification(projectId, taskId) } : {};
+}
 
 /**
  * Surface a send-to-backlog or archive that failed. Both close the window first
  * and then write straight to the host or the IPC, so no store rolls back and
  * toasts for them. Without this the rejection reached only the global
  * `unhandledrejection` listener, and the user saw the window close with no word
- * that nothing happened.
+ * that nothing happened. The task is still on the board, so the card opens it.
  */
-function reportActionFailure(action: string, taskTitle: string, error: unknown): void {
+function reportActionFailure(
+  action: 'archive' | 'send to backlog',
+  task: { id: string; title: string; projectId: string | null },
+  error: unknown,
+): void {
   useToastStore.getState().addToast({
-    message: `Failed to ${action} "${taskTitle}": ${describeIpcError(error)}`,
+    title: action === 'archive' ? "Couldn't archive task" : "Couldn't send to backlog",
+    message: `"${task.title}": ${asSentence(describeIpcError(error, ''))}`,
     variant: 'warning',
+    ...opensTask(task.projectId, task.id),
   });
 }
 
@@ -178,7 +194,7 @@ export function useTaskActions(input: {
         setResumeError(describeIpcError(err, ''));
       }
       useToastStore.getState().addToast({
-        message: sessionToggleFailureMessage(direction, err),
+        ...sessionToggleFailureToast(direction, err),
         variant: 'warning',
       });
       setPendingAction(null);
@@ -216,7 +232,8 @@ export function useTaskActions(input: {
     } catch (err) {
       console.error('Reset session failed:', err);
       useToastStore.getState().addToast({
-        message: 'Failed to reset session',
+        title: "Couldn't reset session",
+        message: asSentence(describeIpcError(err, '')),
         variant: 'warning',
       });
     }
@@ -234,7 +251,8 @@ export function useTaskActions(input: {
       console.error('Command invocation failed:', error);
       useSessionStore.getState().clearPendingCommandLabel(input.task.id);
       useToastStore.getState().addToast({
-        message: `Failed to invoke ${command.displayName}`,
+        title: `Couldn't run ${command.displayName}`,
+        message: asSentence(describeIpcError(error, '')),
         variant: 'warning',
       });
       await host.refresh().catch(() => {});
@@ -266,8 +284,10 @@ export function useTaskActions(input: {
       }
     }
     useToastStore.getState().addToast({
-      message: `Moved "${input.task.title}" to ${targetName}`,
+      title: 'Task moved',
+      message: `"${input.task.title}" is now in ${targetName}.`,
       variant: 'success',
+      ...opensTask(taskProjectId, input.task.id),
     });
   };
 
@@ -396,7 +416,8 @@ export function useTaskActions(input: {
         } catch (error) {
           console.error('switchBranch failed:', error);
           useToastStore.getState().addToast({
-            message: `Failed to switch branch: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            title: "Couldn't switch branch",
+            message: asSentence(describeIpcError(error, '')),
             variant: 'warning',
           });
           return;
@@ -469,11 +490,12 @@ export function useTaskActions(input: {
     try {
       await host.sendToBacklog(input.task.id);
     } catch (error) {
-      reportActionFailure('send to backlog', taskTitle, error);
+      reportActionFailure('send to backlog', { id: input.task.id, title: taskTitle, projectId: taskProjectId }, error);
       return;
     }
     useToastStore.getState().addToast({
-      message: `Sent "${taskTitle}" to backlog`,
+      title: 'Sent to backlog',
+      message: `"${taskTitle}"`,
       variant: 'info',
     });
   };
@@ -499,7 +521,7 @@ export function useTaskActions(input: {
     try {
       await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, host.projectId || null);
     } catch (error) {
-      reportActionFailure('archive', taskTitle, error);
+      reportActionFailure('archive', { id: taskId, title: taskTitle, projectId: taskProjectId }, error);
       return;
     } finally {
       // The board host archived optimistically, and this reconciles it either
@@ -508,7 +530,8 @@ export function useTaskActions(input: {
       void host.refresh().catch(() => {});
     }
     useToastStore.getState().addToast({
-      message: `Archived "${taskTitle}"`,
+      title: 'Task archived',
+      message: `"${taskTitle}"`,
       variant: 'info',
     });
   };
@@ -522,7 +545,8 @@ export function useTaskActions(input: {
     }
     await host.deleteTask(input.task.id);
     useToastStore.getState().addToast({
-      message: `Deleted task "${taskTitle}"`,
+      title: 'Task deleted',
+      message: `"${taskTitle}"`,
       variant: 'info',
     });
   };

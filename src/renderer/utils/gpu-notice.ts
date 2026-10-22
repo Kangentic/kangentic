@@ -19,11 +19,13 @@ import type { GpuGraphicsStatus } from '../../shared/types';
  * what killed the GPU process (see src/main/diagnostics/gpu-health.ts).
  */
 export interface GpuNoticeResult {
+  title: string;
   message: string;
 }
 
-export const GPU_NOTICE_MESSAGE =
-  'Graphics acceleration is off. Repeated failures shut down your last run.';
+export const GPU_NOTICE_TITLE = 'Graphics acceleration off';
+
+export const GPU_NOTICE_MESSAGE = 'Repeated failures shut down your last run.';
 
 export function resolveGpuNotice(status: GpuGraphicsStatus | null | undefined): GpuNoticeResult | null {
   if (!status?.noticePending) return null;
@@ -31,5 +33,5 @@ export function resolveGpuNotice(status: GpuGraphicsStatus | null | undefined): 
   // a status claiming one without the other is incoherent enough that saying
   // nothing beats saying something wrong.
   if (!status.softwareRendering) return null;
-  return { message: GPU_NOTICE_MESSAGE };
+  return { title: GPU_NOTICE_TITLE, message: GPU_NOTICE_MESSAGE };
 }

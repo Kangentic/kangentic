@@ -1367,7 +1367,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'notification-toast',
     reach: 'state',
     description: 'An in-app toast over the board, for the Notifications page, which can otherwise show only the announcement banner because an OS notification cannot appear in a browser. This is the session-ended toast, which the app raises off the exit push seeded below. The idle toast the Notifications tab also offers is edge-triggered off an activity TRANSITION, and a scene can seed only a static activity value into the mock cache, so there is still no push here for it to fire on.',
-    alt: 'The board with an in-app toast in its bottom right corner, reporting that the session for Integration test coverage ended with exit code 0, and carrying a control to dismiss it.',
+    alt: 'The board with an in-app toast in its bottom right corner titled Session ended, saying Integration test coverage exited with code 0, with its age, a control to dismiss it, and a countdown line along its bottom edge.',
     // The app raises this itself off the exit push, gated on notifications.toasts.onAgentCrash;
     // the scene seeds the push, never the toast store.
     seeds: { __mockInitialExit: { sessionId: SESSION_INTEGRATION, exitCode: 0, projectId: PROJECT_CONTOSO } },
@@ -1388,7 +1388,9 @@ export const SCENES: Record<string, SceneDefinition> = {
     focus: '[data-testid="toast"]',
     // No dismiss-and-raise cycle: raising the toast again would take an exit push main never sends
     // twice. The toasts that come later are the sample install's own.
-    motion: 'The toast counts its 30 s down and closes, and the board\'s sessions raise their own toasts as each finishes its turn on its recording\'s clock, Generate API client types about 25 s in and again every cycle under loop=1.',
+    // A still pauses the countdown line where it starts (demo/boot.js freezes every Web
+    // Animation), so the poster is the same frame on every shot.
+    motion: 'The toast\'s countdown line fills over its 30 s, holding while the pointer is over the card, and the toast closes; the board\'s sessions raise their own toasts as each finishes its turn on its recording\'s clock, Generate API client types about 25 s in and again every cycle under loop=1.',
   },
   'board-config-change': {
     name: 'board-config-change',

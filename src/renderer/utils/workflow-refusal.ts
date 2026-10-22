@@ -29,10 +29,10 @@ export function refusedBoardMove(
 }
 
 /**
- * Say why, and show it: the refusal as a toast whose action opens the
- * workflow on this task, and the links overlay on the card, so what it waits
- * on or holds up is on screen without leaving the board. `openWorkflowsView`
- * is the caller's (the board store owns the view switch).
+ * Say why, and show it: the refusal as a toast whose card opens the workflow
+ * on this task, and the links overlay on the card, so what it waits on or
+ * holds up is on screen without leaving the board. `openWorkflowsView` is the
+ * caller's (the board store owns the view switch).
  */
 export function showWorkflowRefusal(
   task: Pick<Task, 'id' | 'workflow_id' | 'workflow_project_id'>,
@@ -41,15 +41,13 @@ export function showWorkflowRefusal(
 ): void {
   const workflow = boardWorkflowNow(task);
   useToastStore.getState().addToast({
+    title: 'Workflow controls this task',
     message: refusal,
     variant: 'info',
-    action: workflow
-      ? {
-        label: 'Open workflow',
-        onClick: () => {
-          openWorkflowsView();
-          useWorkflowStore.getState().openWorkflow(workflow.homeProjectId, workflow.workflowId, task.id);
-        },
+    onOpen: workflow
+      ? () => {
+        openWorkflowsView();
+        useWorkflowStore.getState().openWorkflow(workflow.homeProjectId, workflow.workflowId, task.id);
       }
       : undefined,
   });

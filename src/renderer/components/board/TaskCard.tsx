@@ -25,9 +25,10 @@ import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 
 interface TaskCardProps {
   task: Task;
@@ -104,7 +105,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     const taskTitle = task.title;
     await useBacklogStore.getState().demoteTask({ taskId: task.id });
     useToastStore.getState().addToast({
-      message: `Sent "${taskTitle}" to backlog`,
+      title: 'Sent to backlog',
+      message: `"${taskTitle}"`,
       variant: 'info',
     });
   };
@@ -115,13 +117,19 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     const laneTasks = currentTasks.filter(
       (boardTask) => boardTask.swimlane_id === targetSwimlaneId,
     );
-    await moveTask({ taskId: task.id, targetSwimlaneId, targetPosition: laneTasks.length }, false, useProjectStore.getState().currentProject?.id ?? null);
+    // Read once, at the click: the move and a click on its toast both name the
+    // project the card was on.
+    const moveProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    const movedTaskId = task.id;
+    await moveTask({ taskId: movedTaskId, targetSwimlaneId, targetPosition: laneTasks.length }, false, moveProjectId);
     // If a confirmation dialog was triggered, moveTask returns early without
     // moving. Don't show a success toast in that case.
     if (useBoardStore.getState().pendingMoveConfirm) return;
     useToastStore.getState().addToast({
-      message: `Moved "${task.title}" to ${targetName}`,
+      title: 'Task moved',
+      message: `"${task.title}" is now in ${targetName}.`,
       variant: 'success',
+      onOpen: moveProjectId !== null ? () => openTaskFromNotification(moveProjectId, movedTaskId) : undefined,
     });
   };
 
@@ -137,7 +145,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     );
     await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, useProjectStore.getState().currentProject?.id ?? null);
     useToastStore.getState().addToast({
-      message: `Archived "${taskTitle}"`,
+      title: 'Task archived',
+      message: `"${taskTitle}"`,
       variant: 'info',
     });
   };
@@ -171,10 +180,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   // workflow task, which never offers the row) or a lost write says why.
   const handleToggleAutomations = () => {
     const disable = !task.automations_disabled;
-    useBoardStore.getState().updateTask({ id: task.id, automations_disabled: disable }).catch((error: unknown) => {
+    const toggleProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    const toggledTaskId = task.id;
+    useBoardStore.getState().updateTask({ id: toggledTaskId, automations_disabled: disable }).catch((error: unknown) => {
       useToastStore.getState().addToast({
-        message: `Could not ${disable ? 'disable' : 'enable'} automations for "${task.title}": ${describeIpcError(error)}`,
+        title: disable ? "Couldn't turn off automations" : "Couldn't turn on automations",
+        message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
         variant: 'warning',
+        onOpen: toggleProjectId !== null ? () => openTaskFromNotification(toggleProjectId, toggledTaskId) : undefined,
       });
     });
   };

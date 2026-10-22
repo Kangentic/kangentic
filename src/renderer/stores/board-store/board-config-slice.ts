@@ -1,7 +1,7 @@
 import { type StateCreator } from 'zustand';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import type { BoardStore } from './types';
 
 export interface BoardConfigSlice {
@@ -83,7 +83,8 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
       warnings = await window.electronAPI.boardConfig.apply(projectId);
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Could not apply the kangentic.json change. ${describeIpcError(error)}`,
+        title: "Couldn't apply kangentic.json",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       return;
@@ -91,7 +92,7 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     if (warnings.length > 0) {
       set({ configWarnings: warnings });
       for (const warning of warnings) {
-        useToastStore.getState().addToast({ message: warning, variant: 'warning' });
+        useToastStore.getState().addToast({ title: 'kangentic.json warning', message: warning, variant: 'warning' });
       }
     } else {
       set({ configWarnings: [] });

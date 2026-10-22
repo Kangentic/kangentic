@@ -93,7 +93,7 @@ export interface NamingAgentCandidate extends AnswerAgentCandidate {
  * no Automation agent, naming is off and hidden rather than falling back to
  * another agent, the same way a Condition check never spends on an agent
  * nobody chose. The one test the renderer's Name-from-prompt button, the
- * rename suggestion, and main's summarize handler and terminal namer all read.
+ * automatic rename, and main's summarize handler and terminal namer all read.
  */
 export function namingAgentReady<T extends NamingAgentCandidate>(
   agents: ReadonlyArray<T>,
