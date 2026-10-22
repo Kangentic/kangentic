@@ -395,6 +395,67 @@ describe('PtyHostCore', () => {
     expect(result).toMatchObject({ ok: false, previousScrollback: 'previous bytes', error: { message: 'spawn failed', code: 'ENOENT' } });
   });
 
+  describe('the agentOutput latch (the launch overlay\'s evidence that the agent is on screen)', () => {
+    // The shell's prompt with the typed command, the shell's own erase-scrollback
+    // clear, then the agent's first line. Each chunk gets its own flush, as the
+    // reads of a real PTY do. Inlined: test files here never import fixtures
+    // from each other.
+    const handoffStream = ['PS C:\\Users\\dev> clear; agent\r\n', '\x1b[3J', 'AGENT READY\r\n'];
+
+    async function feedHandoff(fake: FakePty): Promise<void> {
+      for (const chunk of handoffStream) {
+        fake.feed(chunk);
+        await flush();
+      }
+    }
+
+    const agentOutputEvents = (events: PtyHostEvent[]) => events.filter((event) => event.type === 'agentOutput');
+
+    it('is silent for a session spawned with no agent name, and fires once for the same stream on one with an agent', async () => {
+      // A bare shell types no clear prelude, so the host never scans its output
+      // for a handoff.
+      const bareShell = makeCore();
+      bareShell.core.spawn(spawnParams({ agentName: null }));
+      await feedHandoff(bareShell.fake);
+      expect(agentOutputEvents(bareShell.events)).toEqual([]);
+
+      // Control: the identical stream on an agent session reports, so the
+      // silence above is the gate and not a feed that never reached the tracker.
+      const agentSession = makeCore();
+      agentSession.core.spawn(spawnParams({ agentName: 'fake' }));
+      await feedHandoff(agentSession.fake);
+      expect(agentOutputEvents(agentSession.events)).toEqual([{ type: 'agentOutput', sessionId: 'session-1' }]);
+
+      // Once per session: later output does not report again.
+      agentSession.fake.feed('more agent text');
+      await flush();
+      expect(agentOutputEvents(agentSession.events)).toHaveLength(1);
+    });
+
+    it('reports again for a new session spawned under the id of one the host dropped', async () => {
+      const { core, events, fake, spawnPty } = makeCore();
+      core.spawn(spawnParams({ agentName: 'fake' }));
+      await feedHandoff(fake);
+      expect(agentOutputEvents(events)).toHaveLength(1);
+
+      // The PTY exiting does not drop the session; main's removeSession command
+      // does, and that is what forgets that the latch fired.
+      fake.exit(0);
+      core.handleCommand({ type: 'removeSession', sessionId: 'session-1' });
+
+      // A resume spawns a new PTY under the same session id.
+      const respawnedFake = createFakePty(4343);
+      spawnPty.mockReturnValueOnce(respawnedFake.pty);
+      core.spawn(spawnParams({ ptyId: 2, agentName: 'fake' }));
+      await feedHandoff(respawnedFake);
+
+      expect(agentOutputEvents(events)).toEqual([
+        { type: 'agentOutput', sessionId: 'session-1' },
+        { type: 'agentOutput', sessionId: 'session-1' },
+      ]);
+    });
+  });
+
   describe('a PTY whose program is this app\'s own executable', () => {
     // With the RunAsNode fuse off, a packaged Kangentic.exe started as a child
     // boots a second app, so the host refuses it for a PTY as it does for a

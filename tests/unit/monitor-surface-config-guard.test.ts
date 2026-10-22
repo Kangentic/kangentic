@@ -25,6 +25,11 @@ const monitorUnsubscribeMock = vi.fn();
 const monitorGetSnapshotMock = vi.fn();
 const monitorOnChangedMock = vi.fn();
 const sessionsOnActivityMock = vi.fn();
+// A hosted task detail's launch overlay lifts only on the first-output push,
+// which bootstrap subscribes to; without it bootstrap throws before any test
+// reaches its subject.
+const sessionsOnFirstOutputMock = vi.fn();
+const markFirstOutputMock = vi.fn();
 const configSetMock = vi.fn();
 const configGetMock = vi.fn();
 const configGetGlobalMock = vi.fn();
@@ -54,7 +59,7 @@ const agentsListMock = vi.fn();
       getSnapshot: monitorGetSnapshotMock,
       onChanged: monitorOnChangedMock,
     },
-    sessions: { onActivity: sessionsOnActivityMock },
+    sessions: { onActivity: sessionsOnActivityMock, onFirstOutput: sessionsOnFirstOutputMock },
     browser: { onOffscreenSurfaces: onOffscreenSurfacesMock },
   },
 };
@@ -65,6 +70,7 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
       syncSessions: syncSessionsMock,
       loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
       setBrowserOffscreenTasks: setBrowserOffscreenTasksMock,
+      markFirstOutput: markFirstOutputMock,
     }),
   },
 }));
@@ -79,6 +85,8 @@ vi.mock('../../src/renderer/pop-out/roots/PopOutMonitorRoot', () => ({
 import { useConfigStore } from '../../src/renderer/stores/config-store';
 import { useMonitorStore } from '../../src/renderer/stores/monitor-store';
 import { monitorSurface } from '../../src/renderer/pop-out/surfaces/monitor-surface';
+import { POP_OUT_SURFACES } from '../../src/shared/pop-out';
+import { IPC } from '../../src/shared/ipc-channels';
 
 function resetStores(): void {
   useConfigStore.setState({
@@ -106,6 +114,7 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
+    sessionsOnFirstOutputMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
@@ -175,6 +184,7 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
+    sessionsOnFirstOutputMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
@@ -233,5 +243,67 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     monitorSurface.hmrResync?.();
     expect(agentsListMock).toHaveBeenCalledTimes(2);
     await Promise.resolve();
+  });
+});
+
+/**
+ * A task detail hosted in this window keeps its terminal behind the launch
+ * overlay until `sessionFirstOutput` says the agent is on screen, and main
+ * announces that once per session on SESSION_FIRST_OUTPUT. Usage no longer
+ * lifts the overlay, so a missed announcement leaves the terminal covered.
+ * Red-green: drop the channel from the monitor surface's list, the
+ * subscription from bootstrap, or the syncSessions call from hmrResync, and
+ * the matching test below reads red.
+ */
+describe('monitorSurface bootstrap: first-output wiring', () => {
+  let controller: AbortController;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    monitorSubscribeMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorUnsubscribeMock.mockResolvedValue(undefined);
+    monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorOnChangedMock.mockReturnValue(() => {});
+    sessionsOnActivityMock.mockReturnValue(() => {});
+    sessionsOnFirstOutputMock.mockReturnValue(() => {});
+    onOffscreenSurfacesMock.mockReturnValue(() => {});
+    loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    agentsListMock.mockResolvedValue([]);
+    configSetMock.mockResolvedValue(undefined);
+    resetStores();
+    controller = new AbortController();
+  });
+
+  afterEach(() => {
+    controller.abort();
+  });
+
+  it('declares SESSION_FIRST_OUTPUT, so main broadcasts it to this window', () => {
+    expect(POP_OUT_SURFACES.monitor.channels).toContain(IPC.SESSION_FIRST_OUTPUT);
+  });
+
+  it('marks first output in this window\'s session store on the push, and unsubscribes on abort', () => {
+    let pushedCallback: ((sessionId: string) => void) | undefined;
+    const unsubscribe = vi.fn();
+    sessionsOnFirstOutputMock.mockImplementation((callback: (sessionId: string) => void) => {
+      pushedCallback = callback;
+      return unsubscribe;
+    });
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(sessionsOnFirstOutputMock).toHaveBeenCalledTimes(1);
+
+    pushedCallback?.('session-hosted');
+    expect(markFirstOutputMock).toHaveBeenCalledWith('session-hosted');
+
+    expect(unsubscribe).not.toHaveBeenCalled();
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('hmrResync re-reads the sessions, which rebuilds sessionFirstOutput from main\'s cache', () => {
+    monitorSurface.hmrResync?.();
+
+    expect(syncSessionsMock).toHaveBeenCalledTimes(1);
   });
 });

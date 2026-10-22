@@ -9,9 +9,10 @@
  *     to sessions.write), so a burst of synchronous keystrokes produces one
  *     IPC write per microtask instead of one per character.
  *
- *   - When sessionId is null at flush time (effectiveSessionId=null, xterm
- *     never initialized), sessions.write is never called even if the overlay
- *     is open.
+ *   - When sessionId is null at flush time (the spawn has not returned, so
+ *     CommandTerminalWindow has not mounted the pane and xterm never
+ *     initialized), sessions.write is never called even if the overlay is
+ *     open.
  *
  *   - The clipboard paths are exercised end-to-end: Ctrl+Enter sends a single
  *     write containing the newline character through the onWrite callback
@@ -35,8 +36,9 @@
  * at unmount" scenario reduces to the same observable outcome: write was called.
  *
  * Coverage of gap 2 (null sessionId): the batcher is created inside
- * initTerminal, which only runs when effectiveSessionId is non-null. When
- * sessionId is null, initTerminal is never called, so no batcher is created
+ * initTerminal, which only runs once CommandTerminalWindow has a sessionId to
+ * mount the pane with. When sessionId is null, initTerminal is never called,
+ * so no batcher is created
  * and sessions.write can never be called. This is verified by the
  * "write never called while spawn is pending" test below.
  */
@@ -232,8 +234,9 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
 
   test('sessions.write is never called while sessionId is null (spawn pending)', async () => {
     // Override spawnTransient with a promise that never resolves.
-    // This keeps effectiveSessionId=null so initTerminal is never called,
-    // the batcher is never created, and sessions.write must stay at 0 calls.
+    // This keeps sessionId null, so the pane never mounts, initTerminal is
+    // never called, the batcher is never created, and sessions.write must
+    // stay at 0 calls.
     const hangingSpawnScript = `
       window.electronAPI.sessions.spawnTransient = function () {
         return new Promise(function () {});
