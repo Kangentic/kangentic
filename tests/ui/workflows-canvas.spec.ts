@@ -162,8 +162,10 @@ test.describe('Workflows canvas', () => {
   test('draws a workflow\'s cards and the links between them', async () => {
     const { browser, page } = await launch(true);
     try {
-      // Not started, so nothing runs: no mark on the Workflows segment.
-      await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows');
+      // Not started, so nothing runs. The Workflows segment shows its count and no mark.
+      await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
+      await expect(page.locator('[data-testid="view-toggle-workflows-count"]')).toHaveText('1');
+      await expect(page.locator('[data-testid="view-toggle-workflows-running"]')).toHaveCount(0);
       await page.locator('[data-testid="view-toggle-workflows"]').click();
       await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(3);
       await expect(card(page, 'task-2')).toContainText('Budget checks on spawn');
