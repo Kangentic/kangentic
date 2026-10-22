@@ -20,7 +20,7 @@ Steps:
 1. **Create a task** in `To Do` with a title and a description that asks OpenCode to read a known file in the project (e.g. "Read README.md and summarize the first paragraph").
 2. **Drag the task to `Planning`.** Verify:
    - A PTY session spawns and the OpenCode TUI renders in the bottom panel
-   - The shimmer overlay clears within a few seconds (cursor-hide marker observed)
+   - The shimmer overlay clears within a few seconds, straight onto the OpenCode TUI with no shell prompt in between
    - A session ID is captured (visible in the task detail dialog header)
 3. **Verify the model responds.** Wait for OpenCode to produce a real assistant turn (not the mock's static greeting). Confirm the response references the prompt content.
 4. **Verify a real tool call.** Confirm OpenCode invokes its file-read tool against the file named in the prompt and that the response paraphrases the actual file contents.
@@ -29,3 +29,10 @@ Steps:
    - The same session ID is reused (no new ID emitted)
    - The TUI reattaches with the prior conversation visible in scrollback
 7. **Verify conversation continuity.** Send a second prompt that depends purely on the prior assistant turn (e.g. "Repeat the summary you just gave back to me verbatim" or "What did you just tell me?"). Confirm OpenCode answers using the prior context, proving the resume is real and not a fresh session.
+
+## Launch overlay on macOS
+
+The launch overlay lifts on the agent's first text after the shell's own clear. The clear's bytes were measured on Windows and Linux, but not on macOS, whose terminfo may send a different erase. Run this on a macOS build whenever one ships.
+
+1. **Open a Command Terminal** (Ctrl+Shift+P, Cmd+Shift+P on macOS) in a project whose default agent is Claude. Verify the overlay goes straight to Claude's TUI within a few seconds, with no shell prompt in between and no 15 s wait.
+2. **Move a task into a column that spawns an agent** and open it while the agent starts. Verify the same handoff in the task window.

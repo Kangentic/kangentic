@@ -346,9 +346,15 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     },
   );
 
+  // Broadcast to the main window and every pop-out that declares the channel,
+  // not focus-routed: it is the only thing that lifts a terminal's launch
+  // overlay, and it fires once per session. A window that was not focused on
+  // the session when its agent came up (a pop-out held the focus, then closed)
+  // would otherwise keep that overlay until a resync.
   context.sessionManager.on('first-output', (sessionId: string) => {
+    if (context.mainWindow.isDestroyed()) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    sendToFocusedRenderers(IPC.SESSION_FIRST_OUTPUT, sessionId, projectId);
+    broadcast(context.mainWindow, IPC.SESSION_FIRST_OUTPUT, sessionId, projectId);
   });
 
   context.sessionManager.on('usage', (sessionId: string, data: unknown) => {

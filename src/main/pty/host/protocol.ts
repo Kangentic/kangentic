@@ -297,6 +297,9 @@ export type PtyHostEvent =
   /** The adapter's first-output marker. `inAltScreen` is the stream's state
    *  at that moment. */
   | { type: 'firstOutput'; sessionId: string; inAltScreen: boolean }
+  /** The agent's first visible text after the shell ran the spawn command
+   *  (`AgentOutputTracker`). Once per session, for a session with an agent. */
+  | { type: 'agentOutput'; sessionId: string }
   | { type: 'altScreen'; sessionId: string; inAltScreen: boolean }
   /** The PTY produced output. Coalesced in the utility process; each carries
    *  how many chunks it stands for. */

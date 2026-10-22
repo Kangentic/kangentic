@@ -6011,8 +6011,10 @@ export interface ProjectEnsureGitResult {
 export interface AgentParser {
   /**
    * Detect whether the agent has produced its first meaningful output.
-   * Called on each PTY data flush. Return true to emit the 'first-output'
-   * event that lifts the shimmer overlay in the renderer.
+   * Called on each PTY data flush. A match times the boot geometry re-assert
+   * only: the launch overlay waits for evidence no shell can fake (see
+   * `AgentOutputTracker`), because a shell's startup frame can carry the very
+   * escape a detector matches. See `AgentAdapter.detectFirstOutput`.
    */
   detectFirstOutput(data: string): boolean;
   /**
@@ -7489,9 +7491,10 @@ export interface ElectronAPI {
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     /**
-     * Unscoped map of sessionId -> true for sessions that have emitted first
-     * output. Lets syncSessions rebuild `sessionFirstOutput` after an HMR
-     * reload so a running session is not flashed back to its boot state.
+     * Unscoped map of sessionId -> true for sessions whose agent is on screen
+     * (`SessionManager.markAgentReady`). Lets syncSessions rebuild
+     * `sessionFirstOutput` after an HMR reload so a running session is not
+     * flashed back to its boot state.
      */
     getFirstOutput: () => Promise<Record<string, boolean>>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;

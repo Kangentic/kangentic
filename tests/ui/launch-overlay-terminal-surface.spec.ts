@@ -1,14 +1,16 @@
 /**
- * UI coverage for LaunchOverlay's `variant="terminal"` (TerminalTab.tsx),
- * which paints the resolved terminal background/foreground
- * (useTerminal.ts's resolveTerminalBackground / resolveTerminalForeground)
- * instead of the theme-tracking `bg-surface`, so a cold terminal launch
- * shows one continuous surface color instead of a flash when the overlay
- * lifts and the settled xterm underneath is revealed.
+ * UI coverage for LaunchOverlay's colors. It paints the resolved terminal
+ * background/foreground (useTerminal.ts's resolveTerminalBackground /
+ * resolveTerminalForeground) instead of the theme-tracking `bg-surface`, so a
+ * launch shows one continuous color from the pre-session pane
+ * ("Creating worktree...", TaskDetailBody.tsx) through TerminalTab's overlay
+ * to the settled xterm underneath, and follows the user's Settings > Terminal
+ * colors.
  *
- * The session is deliberately left COLD (no markFirstOutput) so the launch
- * overlay stays mounted and inspectable, mirroring the cold-session setup
- * in terminal-replay-veil.spec.ts.
+ * The running-session cases leave the session COLD (no markFirstOutput) so the
+ * launch overlay stays mounted and inspectable, mirroring the cold-session
+ * setup in terminal-replay-veil.spec.ts. The pre-session cases seed
+ * spawnProgress on a task with no session, which is the "preparing" state.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -55,7 +57,7 @@ function customTerminalBackgroundScript(background: string): string {
 }
 
 /** Same interception as customTerminalBackgroundScript, for the foreground slot -
- *  proves LaunchOverlay's terminal-variant label color is wired to
+ *  proves LaunchOverlay's label color is wired to
  *  resolveTerminalForeground (a live user override) rather than a hardcoded
  *  constant that happens to match the default. */
 function customTerminalForegroundScript(foreground: string): string {
@@ -79,7 +81,13 @@ function customTerminalForegroundScript(foreground: string): string {
   `;
 }
 
-function basePreConfigScript(fixture: SessionFixture, extraConfig: string = ''): string {
+/** `withSession: false` seeds the task with no session, the pre-session
+ *  "preparing" state that TaskDetailBody.tsx's spawn-label pane covers. */
+function basePreConfigScript(
+  fixture: SessionFixture,
+  extraConfig: string = '',
+  { withSession = true }: { withSession?: boolean } = {},
+): string {
   return `
     ${extraConfig}
     window.__mockPreConfigure(function (state) {
@@ -105,17 +113,19 @@ function basePreConfigScript(fixture: SessionFixture, extraConfig: string = ''):
       // A running session so TerminalTab mounts a real xterm (displayKind ===
       // 'running' inside TaskDetailBody), left cold (no markFirstOutput) so
       // the launch overlay stays showing.
-      state.sessions.push({
-        id: '${fixture.sessionId}',
-        taskId: '${fixture.taskId}',
-        projectId: '${fixture.projectId}',
-        pid: 9999,
-        status: 'running',
-        shell: 'bash',
-        cwd: '/mock/${fixture.projectId}',
-        startedAt: ts,
-        exitCode: null,
-      });
+      if (${withSession}) {
+        state.sessions.push({
+          id: '${fixture.sessionId}',
+          taskId: '${fixture.taskId}',
+          projectId: '${fixture.projectId}',
+          pid: 9999,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/${fixture.projectId}',
+          startedAt: ts,
+          exitCode: null,
+        });
+      }
 
       state.tasks.push({
         id: '${fixture.taskId}',
@@ -125,7 +135,7 @@ function basePreConfigScript(fixture: SessionFixture, extraConfig: string = ''):
         swimlane_id: laneIds['Code Review'],
         position: 0,
         agent: 'claude',
-        session_id: '${fixture.sessionId}',
+        session_id: ${withSession ? `'${fixture.sessionId}'` : 'null'},
         worktree_path: null,
         branch_name: null,
         pr_number: null,
@@ -157,6 +167,23 @@ async function launchWithState(extraScript: string): Promise<{ browser: Browser;
   return { browser, page };
 }
 
+/** Seeds spawnProgress on the session store, which drives a task with no
+ *  session to displayKind 'preparing' (task-progress.ts) without a real spawn. */
+async function seedSpawnProgress(page: Page, taskId: string, label: string): Promise<void> {
+  await page.evaluate(
+    ({ seededTaskId, seededLabel }) => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          session: { getState: () => { setSpawnProgress: (id: string, label: string | null) => void } };
+        };
+      }).__zustandStores;
+      if (!stores?.session) throw new Error('session store not exposed on __zustandStores');
+      stores.session.getState().setSpawnProgress(seededTaskId, seededLabel);
+    },
+    { seededTaskId: taskId, seededLabel: label },
+  );
+}
+
 async function openTaskDialog(page: Page, laneName: string, taskTitle: string): Promise<ReturnType<Page['locator']>> {
   await page.locator(`[data-swimlane-name="${laneName}"]`).waitFor({ state: 'visible', timeout: 15000 });
   const card = page.locator(`[data-swimlane-name="${laneName}"]`).locator(`text=${taskTitle}`).first();
@@ -166,7 +193,7 @@ async function openTaskDialog(page: Page, laneName: string, taskTitle: string): 
   return dialog;
 }
 
-test.describe('LaunchOverlay terminal-variant surface', () => {
+test.describe('LaunchOverlay terminal colors', () => {
   test('matches the resolved default terminal background, not the theme surface', async () => {
     const fixture: SessionFixture = {
       projectId: 'proj-overlay-terminal-default',
@@ -181,8 +208,7 @@ test.describe('LaunchOverlay terminal-variant surface', () => {
       const overlay = dialog.locator('[data-testid="launch-overlay"]');
       await expect(overlay).toBeVisible();
 
-      // Resolved default (#0c0c0c), not the theme-tracking bg-surface color -
-      // this is the property that goes red if variant="terminal" is dropped.
+      // Resolved default (#0c0c0c), not the theme-tracking bg-surface color.
       const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
       expect(overlayBackground).toBe('rgb(12, 12, 12)');
 
@@ -193,14 +219,13 @@ test.describe('LaunchOverlay terminal-variant surface', () => {
       expect(overlayBackground).toBe(containerBackground);
 
       // The label's resolved default foreground (#e4e4e7), not the theme-tracking
-      // text-fg-muted color - this is the property that goes red if the span's
-      // inline style is reverted to the surface variant's Tailwind class.
+      // text-fg-muted color.
       const label = overlay.locator('span');
       const labelColor = await label.evaluate((element) => getComputedStyle(element).color);
       expect(labelColor).toBe('rgb(228, 228, 231)');
 
-      // The terminal variant dims the label via inline opacity (no muted token
-      // in the terminal palette) - pins TERMINAL_LABEL_MUTED_OPACITY.
+      // The label is dimmed via inline opacity (no muted token in the
+      // terminal palette) - pins TERMINAL_LABEL_MUTED_OPACITY.
       const labelOpacity = await label.evaluate((element) => getComputedStyle(element).opacity);
       expect(labelOpacity).toBe('0.7');
     } finally {
@@ -247,6 +272,62 @@ test.describe('LaunchOverlay terminal-variant surface', () => {
       const dialog = await openTaskDialog(page, 'Code Review', fixture.taskTitle);
       const overlay = dialog.locator('[data-testid="launch-overlay"]');
       await expect(overlay).toBeVisible();
+
+      const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
+      expect(overlayBackground).toBe('rgb(255, 0, 255)');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The pre-session pane ("Creating worktree...") comes before TerminalTab's
+  // overlay in the same spot, so it paints the same terminal colors. It used to
+  // paint the theme's bg-surface, and the background stepped on the handoff.
+  test('the pre-session pane paints the default terminal colors', async () => {
+    const fixture: SessionFixture = {
+      projectId: 'proj-overlay-pre-session-default',
+      taskId: 'task-overlay-pre-session-default',
+      sessionId: 'sess-overlay-pre-session-default',
+      taskTitle: 'Overlay Pre Session Default Task',
+      laneIdPrefix: 'lane-lots-pre-session-default',
+    };
+    const { browser, page } = await launchWithState(basePreConfigScript(fixture, '', { withSession: false }));
+    try {
+      await seedSpawnProgress(page, fixture.taskId, 'Creating worktree...');
+      const dialog = await openTaskDialog(page, 'Code Review', fixture.taskTitle);
+      const overlay = dialog.locator('[data-testid="launch-overlay"]');
+      await expect(overlay).toBeVisible();
+      await expect(overlay).toContainText('Creating worktree...');
+      // The pane, not TerminalTab: no session means no terminal container.
+      await expect(dialog.locator('[data-testid="terminal-tab-container"]')).toHaveCount(0);
+
+      const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
+      expect(overlayBackground).toBe('rgb(12, 12, 12)');
+      const label = overlay.locator('span');
+      const labelColor = await label.evaluate((element) => getComputedStyle(element).color);
+      expect(labelColor).toBe('rgb(228, 228, 231)');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the pre-session pane tracks a custom terminal background override', async () => {
+    const fixture: SessionFixture = {
+      projectId: 'proj-overlay-pre-session-custom',
+      taskId: 'task-overlay-pre-session-custom',
+      sessionId: 'sess-overlay-pre-session-custom',
+      taskTitle: 'Overlay Pre Session Custom Task',
+      laneIdPrefix: 'lane-lots-pre-session-custom',
+    };
+    const { browser, page } = await launchWithState(
+      basePreConfigScript(fixture, customTerminalBackgroundScript('#ff00ff'), { withSession: false }),
+    );
+    try {
+      await seedSpawnProgress(page, fixture.taskId, 'Creating worktree...');
+      const dialog = await openTaskDialog(page, 'Code Review', fixture.taskTitle);
+      const overlay = dialog.locator('[data-testid="launch-overlay"]');
+      await expect(overlay).toBeVisible();
+      await expect(dialog.locator('[data-testid="terminal-tab-container"]')).toHaveCount(0);
 
       const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
       expect(overlayBackground).toBe('rgb(255, 0, 255)');

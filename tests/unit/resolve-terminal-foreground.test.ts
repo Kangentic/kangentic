@@ -2,7 +2,7 @@
  * Unit tests for resolveTerminalForeground (src/renderer/hooks/useTerminal.ts).
  *
  * Mirrors resolve-terminal-background.test.ts: a surface that must paint
- * terminal-matching text (e.g. LaunchOverlay's terminal variant) calls this
+ * terminal-matching text (e.g. LaunchOverlay's label) calls this
  * function so it never drifts from the user's configured terminal
  * foreground. It must return the user's override when set, and fall back to
  * the built-in default whenever the override is absent OR is an empty string

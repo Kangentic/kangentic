@@ -37,8 +37,7 @@ interface TerminalTabProps {
 
 export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointerOutside, deferContainerResize, immediatePanelResize }: TerminalTabProps) {
   const config = useConfigStore((s) => s.config);
-  const hasFirstOutput = useSessionStore((s) => !!s.sessionFirstOutput[sessionId]);
-  const hasUsage = useSessionStore((s) => !!s.sessionUsage[sessionId]);
+  const hasAgentOnScreen = useSessionStore((s) => !!s.sessionFirstOutput[sessionId]);
 
   const sessionStatus = useSessionStore(
     useCallback(
@@ -83,19 +82,22 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // an overlay hides the raw command line and suppressDataRef prevents
   // PTY output from accumulating in xterm behind the overlay.
   //
-  // Lifted when Claude Code's TUI activates the alternate screen buffer
-  // (first-output), when usage data arrives (fallback), or when the session
-  // exits before either (Ctrl+C, a crash), so the terminal is never stuck
-  // behind the shimmer. Derived from the store rather than held as state an
-  // effect set: every host keys this component by session id, and each of the
-  // three signals is monotonic for a session, so it can never flip back. That
-  // is also what retires the StrictMode-remount reset the state needed - the
-  // derived value is right on every mount, synthetic or real, with nothing to
-  // re-seed and no frame at the wrong value.
-  const terminalReady = hasFirstOutput || hasUsage || sessionStatus === 'exited';
+  // Lifted when the session's agent is on screen (main's markAgentReady: its
+  // first text after the shell ran the spawn command, its first alt-screen
+  // entry, its SessionStart hook, or a backstop ceiling), or when the session
+  // exits first (Ctrl+C, a crash), so the terminal is never stuck behind the
+  // shimmer. Not on usage: the spawn seeds it with the model name, which lifted
+  // the overlay onto the shell's prompt for seconds. Derived from the store
+  // rather than held as state an effect set: every host keys this component by
+  // session id, and both signals are monotonic for a session, so it can never
+  // flip back. That is also what retires the StrictMode-remount reset the state
+  // needed - the derived value is right on every mount, synthetic or real, with
+  // nothing to re-seed and no frame at the wrong value. An HMR remount reads
+  // the map that `syncSessions` rebuilds from main (`getFirstOutputCache`).
+  const terminalReady = hasAgentOnScreen || sessionStatus === 'exited';
 
-  // For an already-running session, terminalReady starts true so the
-  // LaunchOverlay never shows - which used to leave the whole mount-time
+  // For an already-running session, terminalReady is already true (the
+  // first-output map is seeded) so the LaunchOverlay never shows - which used to leave the whole mount-time
   // fit -> replay -> refit -> held-byte-flush sequence painting live (the
   // occasional open-flash). The replay veil below covers the terminal from
   // mount until the first scrollback settle so only the settled frame is
@@ -265,10 +267,10 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
           style={{ backgroundColor: terminalBackground }}
         />
       )}
-      {/* Placeholder overlay while Claude CLI is loading (before first usage report).
-          Stays visible until scrollback replay + clear are both done.
+      {/* Placeholder overlay while the agent starts, until main says it is on
+          screen (`terminalReady` above) or the session exits.
           z-10 ensures it paints above xterm's WebGL canvas layers. */}
-      {!terminalReady && <LaunchOverlay label={overlayLabel} variant="terminal" />}
+      {!terminalReady && <LaunchOverlay label={overlayLabel} />}
     </div>
   );
 }

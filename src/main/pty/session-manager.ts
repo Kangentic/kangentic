@@ -34,6 +34,7 @@ import type { CliChildProcess, OffMainCliOptions } from '../utility-process/off-
  *  for exits and exits itself, so main never stops waiting first. */
 const HOST_EXIT_MARGIN_MS = 200;
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
+import { AGENT_READY_CEILING_MS } from './lifecycle/agent-output-tracker';
 import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
@@ -413,7 +414,8 @@ export class SessionManager extends EventEmitter {
   private deferredKills = new DeferredKillRegistry({ killPty: safeKillPty });
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
-  /** Which sessions have emitted first output, as the pty host reports it. */
+  /** Which sessions' agents are on screen (`markAgentReady`), and the
+   *  backstop timer for each one still waiting. */
   private firstOutputTracker = new FirstOutputTracker();
   /**
    * The pty host: every PTY, its output pipeline (ring, headless parser,
@@ -666,6 +668,9 @@ export class SessionManager extends EventEmitter {
       },
       onTurnStarted: (sessionId, turnStartedAt, cause) => this.noteTurnStarted(sessionId, turnStartedAt, cause),
       onEvent: (sessionId, event) => {
+        // The agent's own hook: evidence it runs, for an agent that starts
+        // without drawing anything the stream can see.
+        if (event.type === EventType.SessionStart) this.markAgentReady(sessionId);
         this.noteCommandTerminalAgentEvent(sessionId, event);
         this.emit('event', sessionId, event);
       },
@@ -917,26 +922,35 @@ export class SessionManager extends EventEmitter {
         this.telemetry.activityEngine.markPtyOutput(event.sessionId);
         this.emit('output-seen', event.sessionId);
         return;
-      // These two re-create per-session state too (the first-output latch and
+      // These re-create per-session state too (the first-output latch and
       // the alt-screen mirror), so a session removed while its parked PTY
       // still writes its exit screen is dropped here like the cases below.
-      case 'firstOutput':
-        if (!this.registry.has(event.sessionId)) return;
-        if (!this.firstOutputTracker.markEmitted(event.sessionId)) return;
-        this.emit('first-output', event.sessionId);
-        // First-output can be tripped by a SHELL preamble, not the agent (see
-        // the arming comment in resize()), so this trigger DISARMS only when
-        // the stream was already in the alt buffer - the output provably came
-        // from the TUI. Otherwise the jiggle still fires (for an inline-mode
-        // agent this is the only trigger, and one extra repaint is harmless)
-        // but the flag stays armed for the alt-screen-entry trigger, which is
-        // what actually reaches a fullscreen agent that boots after the shell.
-        // `resuming` is NOT cleared here: the card and the context bar read it
-        // for their "Resuming agent..." label until the model name lands.
+      case 'firstOutput': {
+        const session = this.registry.get(event.sessionId);
+        if (!session || session.firstOutputDetected) return;
+        session.firstOutputDetected = true;
+        // The adapter's detector lifts the launch overlay only for a session
+        // with no agent, whose shell IS the output. An agent session waits for
+        // markAgentReady's evidence: this match can be the shell's own
+        // startup frame (pwsh emits the cursor-hide escape Claude's detector
+        // matches), seconds before the agent runs.
+        if (!session.agentParser) this.markAgentReady(event.sessionId);
+        // For the same reason this trigger DISARMS only when the stream was
+        // already in the alt buffer - the output provably came from the TUI.
+        // Otherwise the jiggle still fires (for an inline-mode agent this is
+        // the only trigger, and one extra repaint is harmless) but the flag
+        // stays armed for the alt-screen-entry trigger, which is what actually
+        // reaches a fullscreen agent that boots after the shell. `resuming`
+        // is NOT cleared here: the card and the context bar read it for their
+        // "Resuming agent..." label until the model name lands.
         this.reassertGeometryForBootingChild(event.sessionId, {
           trigger: 'first-output',
           disarm: event.inAltScreen,
         });
+        return;
+      }
+      case 'agentOutput':
+        this.markAgentReady(event.sessionId);
         return;
       case 'altScreen': {
         if (!this.registry.has(event.sessionId)) return;
@@ -953,6 +967,8 @@ export class SessionManager extends EventEmitter {
         // later re-entry is not a boot and must not re-open the window.
         const session = this.registry.get(event.sessionId);
         if (session) session.altScreenEnteredAt ??= Date.now();
+        // No shell enters the alt buffer, so this is the agent's first frame.
+        this.markAgentReady(event.sessionId);
         this.reassertGeometryForBootingChild(event.sessionId, {
           trigger: 'alt-screen-enter',
           disarm: true,
@@ -1052,6 +1068,43 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       console.warn('[pty-host] closing a project database failed:', error);
     }
+  }
+
+  /**
+   * The session's agent is on screen: emit 'first-output', once, which lifts
+   * the launch overlay in every renderer (`sessionFirstOutput`) and enters
+   * `getFirstOutputCache`. Evidence, whichever lands first: the agent's first
+   * visible text after the shell ran the spawn command (the pty host's
+   * `agentOutput`), its first alt-screen entry, its SessionStart hook, or
+   * the AGENT_READY_CEILING_MS backstop. A session with no agent takes its
+   * raw first output instead. Never the adapter's first-output detector for
+   * an agent session: the shell's startup frame can match it.
+   *
+   * A stopped row is skipped. `suspend()` stamps 'suspended' and `kill()`
+   * stamps `intentionalExit` (its row still reads 'running') before the PTY
+   * exits, and the ceiling, a late host event or a SessionStart can land in
+   * that gap. Its exit is what lifts its overlay. A `queued` row is not
+   * skipped, since a queue promotion's row reads `queued` through the host
+   * round trip and a session with no agent has no other signal to lift on.
+   */
+  private markAgentReady(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session || session.intentionalExit === true) return;
+    if (session.status === 'exited' || session.status === 'suspended') return;
+    if (!this.firstOutputTracker.markEmitted(sessionId)) return;
+    this.emit('first-output', sessionId);
+  }
+
+  /**
+   * Arm the backstop for a session whose agent never shows the evidence
+   * `markAgentReady` waits for. Armed after the spawn resolves, so a queue
+   * promotion, which reuses its placeholder's id, is past the sibling drain
+   * that clears the tracker for that id. A no-op once the agent is on screen.
+   */
+  private armAgentReadyCeiling(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.agentParser || session.status !== 'running') return;
+    this.firstOutputTracker.armCeiling(sessionId, AGENT_READY_CEILING_MS, () => this.markAgentReady(sessionId));
   }
 
   /**
@@ -1821,6 +1874,7 @@ export class SessionManager extends EventEmitter {
       // debounce (a surface that opens the session inside it cancels the
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
+      if (session.status === 'running') this.armAgentReadyCeiling(id);
       if (session.status === 'running' && input.resuming && !input.transient) this.announceResumed(id, input.agentSessionId ?? null);
       return session;
     } catch (error) {
@@ -1903,7 +1957,12 @@ export class SessionManager extends EventEmitter {
         const inFlight = this.spawnsInFlight.get(sessionId);
         if (inFlight) inFlight.abandonedPtyExit = ptyExited;
       },
-      onPtyExited: (sessionId) => this.endCommandTerminalAfterPtyExit(sessionId),
+      onPtyExited: (sessionId) => {
+        // An exit lifts the overlay on its own (the renderers read it), so the
+        // backstop has nothing left to do, and must not mark a dead row.
+        this.firstOutputTracker.disarmCeiling(sessionId);
+        this.endCommandTerminalAfterPtyExit(sessionId);
+      },
     });
   }
 
@@ -3668,10 +3727,10 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Map of sessionId -> true for every session that has emitted first output.
-   * Unscoped (the set is tiny). Lets the renderer rebuild `sessionFirstOutput`
-   * after an HMR reload so a running session that already produced output is
-   * not flashed back to its "Starting agent..." boot state.
+   * Map of sessionId -> true for every session whose agent is on screen
+   * (`markAgentReady`). Unscoped (the set is tiny). Lets the renderer rebuild
+   * `sessionFirstOutput` after an HMR reload so a running session that already
+   * produced output is not flashed back to its "Starting agent..." boot state.
    */
   getFirstOutputCache(): Record<string, boolean> {
     const result: Record<string, boolean> = {};

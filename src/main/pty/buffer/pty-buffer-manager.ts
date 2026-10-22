@@ -222,14 +222,38 @@ function updateModeState(state: ModeState, text: string): void {
 
 /**
  * Full-screen erase. The marker a fullscreen TUI emits when it redraws its whole
- * frame, which is therefore both "where the TUI took over" (first occurrence) and
- * "where the current frame begins" (last occurrence).
+ * frame, which is therefore "where the current frame begins" (last occurrence).
+ * Where a fresh session's shell ends is SPAWN_HANDOFF_CLEAR's job, since the
+ * shells ConPTY hosts never send this one at the handoff.
  */
 const FULL_FRAME_CLEAR = '\x1b[2J';
 
 /**
+ * The shell's own clear at the spawn handoff, in either shape it reaches the
+ * stream. Every agent spawn types the shell's clear in front of the agent
+ * command (`buildSpawnClearPrelude`). ConPTY renders Clear-Host (Windows
+ * PowerShell 5.1, pwsh 7.6) and cmd's `cls` as line erases plus
+ * erase-scrollback (\x1b[3J) with NO \x1b[2J. A POSIX `clear` sends
+ * \x1b[2J\x1b[3J, and a terminfo without E3 sends the \x1b[2J alone. The first
+ * one preceded by printable output is the handoff; ConPTY's own escape-only
+ * startup \x1b[2J never qualifies. The pre-TUI strip below and
+ * `AgentOutputTracker` both find the handoff through findSpawnHandoffClear, so
+ * the byte replay, the parsed grid and the launch overlay agree on where the
+ * shell ends. Global, for `matchAll`.
+ *
+ * Known miss: a terminfo whose clear is cursor-home plus erase-below
+ * (\x1b[H\x1b[J, as TERM=screen sends) has no shape here, so a dev build
+ * launched from GNU screen never sees the handoff. Its launch overlay lifts on
+ * the alt screen, the SessionStart hook or the ceiling instead. That pair is
+ * left out on purpose. It is plain cursor-home plus erase-below, no shell's
+ * redraws before the typed command runs were measured free of it, and a match
+ * there would stamp this strip on the prompt for every user.
+ */
+const SPAWN_HANDOFF_CLEAR = /\x1b\[[23]J/g;
+
+/**
  * Erase-scrollback-only (ED 3). Injected right after a fresh session's first
- * NORMAL-buffer FULL_FRAME_CLEAR into two streams (never the ring): the
+ * NORMAL-buffer SPAWN_HANDOFF_CLEAR into two streams (never the ring): the
  * HEADLESS PARSER, so the parser's retained scrollback starts where the TUI
  * took over, and the LIVE FLUSH buffer, so a terminal that was already
  * mounted at spawn drops the same pre-TUI noise the moment the TUI's first
@@ -238,7 +262,9 @@ const FULL_FRAME_CLEAR = '\x1b[2J';
  * serialized frame (or the live view) resurrects the shell's spawn-command
  * echo that the byte replay has always sliced off. Alt-screen sessions skip
  * the injection: the alt buffer has no scrollback for ED 3 to act on, and
- * their normal-buffer scrollback is not user-visible.
+ * their normal-buffer scrollback is not user-visible. Behind a Clear-Host
+ * handoff the injection repeats the shell's own \x1b[3J, which changes
+ * nothing; what that case needs is the tuiStartIndex stamp beside it.
  */
 const PRE_TUI_SCROLLBACK_CLEAR = '\x1b[3J';
 
@@ -246,7 +272,7 @@ const PRE_TUI_SCROLLBACK_CLEAR = '\x1b[3J';
  * How long after initSession the takeover-clear one-shot stays armed. The
  * takeover clear is a SPAWN event - the shell preamble, echoed command, and
  * the agent TUI's first draw all land within the first seconds - so a
- * FULL_FRAME_CLEAR arriving later is a mid-session repaint (Claude's active
+ * SPAWN_HANDOFF_CLEAR arriving later is a mid-session repaint (Claude's active
  * turns settle `marker` in 15-160ms after a resize, i.e. they DO emit \x1b[2J
  * routinely), and firing the one-shot then would ED3 genuine user-scrollable
  * history out of the live terminal and the parser. Expiring the arm bounds
@@ -275,14 +301,40 @@ const PRE_TUI_TAKEOVER_WINDOW_MS = 15_000;
  * 0x20-0x2f, final 0x40-0x7e) so DECSCUSR's `\x1b[2 q` or a colon SGR cannot
  * shed printable-looking residue, and an unterminated CSI at the very end of
  * the chunk is dropped whole for the same split-tolerance reason.
+ * `AgentOutputTracker` strips with it too, so the two read a chunk alike.
  */
-function stripAnsiSequences(text: string): string {
+export function stripAnsiSequences(text: string): string {
   return text
     .replace(/\x1b[\]P_^X][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
     .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '')
     .replace(/\x1b\[[\x20-\x3f]*$/, '')
     .replace(/\x1b[\s\S]/g, '')
     .replace(/[\r\n\x00-\x1f]/g, '');
+}
+
+/** Whether any printable output survives stripAnsiSequences. */
+export function hasPrintableOutput(text: string): boolean {
+  return stripAnsiSequences(text).length > 0;
+}
+
+/**
+ * The spawn handoff in `text`: the first SPAWN_HANDOFF_CLEAR with printable
+ * output before it (or anywhere, once `printableSeen` says an earlier chunk had
+ * some), or null. Scans FORWARD past a clear with nothing printable before it,
+ * so a chunk that holds ConPTY's escape-only startup clear and the real one
+ * still finds the latter. The pre-TUI strip and `AgentOutputTracker` both call
+ * this, so they cannot disagree on which clear ends the shell.
+ */
+export function findSpawnHandoffClear(
+  text: string,
+  printableSeen: boolean,
+): { index: number; length: number } | null {
+  for (const match of text.matchAll(SPAWN_HANDOFF_CLEAR)) {
+    if (printableSeen || hasPrintableOutput(text.slice(0, match.index))) {
+      return { index: match.index, length: match[0].length };
+    }
+  }
+  return null;
 }
 
 /**
@@ -404,14 +456,15 @@ interface BufferState {
    *  Used by waitForResizeRepaint to detect that the SIGWINCH repaint has
    *  landed (data after the resize stamp) and then quiesced. */
   lastDataAt: number | null;
-  /** Position of the first \x1b[2J (clear screen) in the scrollback, or -1
-   *  if not found yet. Set once and cached. Used by getScrollback() to strip
-   *  shell command noise that precedes the agent TUI's first draw. The frame
-   *  route and the live view get the same strip via
-   *  pendingPreTuiScrollbackClear below. */
+  /** Where the replayable history begins, or -1 if not decided yet. Used by
+   *  getScrollback() to strip shell command noise that precedes the agent's
+   *  first draw. A fresh session's is stamped by onData at the spawn handoff
+   *  clear (pendingPreTuiScrollbackClear below, which gives the frame route
+   *  and the live view the same strip). Otherwise getScrollback() falls back
+   *  to the first \x1b[2J and caches it. */
   tuiStartIndex: number;
   /** True until the session's TUI-takeover clear arrives: the first
-   *  NORMAL-buffer FULL_FRAME_CLEAR preceded by PRINTABLE output (ConPTY's
+   *  NORMAL-buffer SPAWN_HANDOFF_CLEAR preceded by PRINTABLE output (ConPTY's
    *  own startup clear arrives inside a run of pure escape sequences and must
    *  not consume this one-shot - see stripAnsiSequences). At that clear,
    *  onData injects PRE_TUI_SCROLLBACK_CLEAR into the headless parser's
@@ -586,25 +639,22 @@ export class PtyBufferManager {
         this.callbacks.onAltScreenExit?.(sessionId);
       }
       // The TUI-takeover clear of a fresh session: the first NORMAL-buffer
-      // full clear PRECEDED by printable output (ConPTY's escape-only startup
-      // clear stays armed - see the field and stripAnsiSequences docs).
-      // Scanned on `combined` so a clear split across two chunks is still
-      // caught, and scanned FORWARD past disqualified matches so a chunk that
-      // coalesces ConPTY's escape-only startup clear, the printable shell
-      // echo, AND the real takeover clear still fires on the qualifying one
-      // (stopping at the first \x1b[2J would leave the one-shot armed with
-      // the takeover clear already consumed into the ring). inAltScreen is
-      // read after updateModeState, so a chunk that both clears and enters
-      // the alt screen counts as alt (a fullscreen TUI clearing on entry)
-      // and is skipped.
+      // handoff clear (SPAWN_HANDOFF_CLEAR, \x1b[2J or \x1b[3J) PRECEDED by
+      // printable output (ConPTY's escape-only startup clear stays armed -
+      // see the field and stripAnsiSequences docs). Scanned on `combined` so
+      // a clear split across two chunks is still caught, and scanned FORWARD
+      // past disqualified matches so a chunk that coalesces ConPTY's
+      // escape-only startup clear, the printable shell echo, AND the real
+      // takeover clear still fires on the qualifying one (stopping at the
+      // first match would leave the one-shot armed with the takeover clear
+      // already consumed into the ring). inAltScreen is read after
+      // updateModeState, so a chunk that both clears and enters the alt
+      // screen counts as alt (a fullscreen TUI clearing on entry) and is
+      // skipped.
       if (state.pendingPreTuiScrollbackClear && !state.inAltScreen) {
-        let clearIndex = combined.indexOf(FULL_FRAME_CLEAR);
-        while (clearIndex !== -1
-          && !state.preTuiPrintableSeen
-          && stripAnsiSequences(combined.slice(0, clearIndex)).length === 0) {
-          clearIndex = combined.indexOf(FULL_FRAME_CLEAR, clearIndex + 1);
-        }
-        if (clearIndex !== -1) {
+        const handoff = findSpawnHandoffClear(combined, state.preTuiPrintableSeen);
+        if (handoff) {
+          const clearIndex = handoff.index;
           state.pendingPreTuiScrollbackClear = false;
           clearParserScrollbackAfterWrite = true;
           // Stamp the byte route's strip at the SAME boundary. The carry's
@@ -618,7 +668,7 @@ export class PtyBufferManager {
           // and a chunk-end ED3 would erase those along with the pre-TUI
           // noise. The clear can begin inside the carry (whose bytes went to
           // the parser with the PREVIOUS chunk), so clamp at 0.
-          preTuiInjectionIndex = Math.max(0, clearIndex + FULL_FRAME_CLEAR.length - state.modeParseCarry.length);
+          preTuiInjectionIndex = Math.max(0, clearIndex + handoff.length - state.modeParseCarry.length);
         }
       }
       // A carry can only be a partial sequence at the very END of `combined`,
@@ -642,7 +692,7 @@ export class PtyBufferManager {
     // character" (\x7f deliberately counts, matching the full strip).
     if (state.pendingPreTuiScrollbackClear && !state.preTuiPrintableSeen) {
       const chunkHasPrintable = data.includes('\x1b')
-        ? stripAnsiSequences(data).length > 0
+        ? hasPrintableOutput(data)
         : /[^\x00-\x1f]/.test(data);
       if (chunkHasPrintable) state.preTuiPrintableSeen = true;
     }
@@ -1169,11 +1219,14 @@ export class PtyBufferManager {
 
     let scrollback = state.scrollback;
 
-    // Strip pre-TUI noise (shell command line) on first read.
-    // The \x1b[2J (clear screen) marks where the agent TUI took over.
-    // Best-effort heuristic: agents without a TUI (e.g. Aider) don't emit
-    // [2J, so their shell command stays in scrollback.
-    // Cache the index so subsequent reads don't re-scan.
+    // Strip pre-TUI noise (shell command line). A fresh session's start was
+    // stamped by onData at the spawn handoff clear. This fallback covers the
+    // rest (a Command Terminal, a trimmed ring, a takeover window that
+    // passed): the first \x1b[2J, best effort, so an agent that never emits
+    // one keeps its shell command in scrollback. Under ConPTY that first
+    // \x1b[2J is ConPTY's own escape-only startup clear, which strips the
+    // mode sets ahead of it and nothing printable. Cached so later reads do
+    // not re-scan.
     if (state.tuiStartIndex === -1) {
       const clearIdx = scrollback.indexOf(FULL_FRAME_CLEAR);
       state.tuiStartIndex = clearIdx > 0 ? clearIdx : 0;

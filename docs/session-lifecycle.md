@@ -1154,7 +1154,7 @@ When a task moves to a column where `resolveTargetAgent()` returns a different a
 4. A `handoff-context.md` file is written to the new session directory for reference
 5. A `handoffs` record is inserted in the database tracking the from/to agents, sessions, and the full context packet
 
-The handoff is transparent to the user - the task card shows spawn progress phases (`packaging-handoff`, `detecting-agent`, `starting-agent`) and the shimmer overlay lifts when the new agent's TUI is ready.
+The handoff is transparent to the user - the task card shows spawn progress phases (`packaging-handoff`, `detecting-agent`, `starting-agent`) and the shimmer overlay lifts when the new agent is on screen (`SessionManager.markAgentReady`, see [Agent Integration](agent-integration.md#the-launch-overlay)).
 
 ## Output Streaming
 
@@ -1191,15 +1191,19 @@ phone needs and reads the rest by request.
   the command executes - a real clear in the real byte stream that every consumer (live
   terminal, ring, parser, replays, phone) honors natively, immune to pwsh/ConPTY updates
   reshaping their startup bytes. The DETECTION layer: a fresh session's TUI-takeover clear
-  (the first NORMAL-buffer `\x1b[2J` PRECEDED by printable output - ConPTY's own escape-only
-  startup clear must not consume the one-shot) injects an `\x1b[3J` (erase scrollback only)
-  into the HEADLESS PARSER's stream and the LIVE FLUSH buffer (never the ring) and stamps
-  `tuiStartIndex` at the same boundary, so neither a serialized frame nor a terminal that
-  was already mounted at spawn resurrects the echo. The two layers are deliberately
-  INDEPENDENT, not chained: pwsh's `Clear-Host` renders through ConPTY as per-row erases
-  plus `\x1b[3J` with no `\x1b[2J` at all, so the prelude cleans every consumer purely
-  in-stream while the detection layer keys on whichever real `2J` the TUI itself emits -
-  either alone suffices. The one-shot is bounded to the spawn: transient sessions (Command
+  (the first NORMAL-buffer `SPAWN_HANDOFF_CLEAR`, a `\x1b[2J` or `\x1b[3J`, PRECEDED by
+  printable output - ConPTY's own escape-only startup clear must not consume the one-shot)
+  injects an `\x1b[3J` (erase scrollback only) into the HEADLESS PARSER's stream and the LIVE
+  FLUSH buffer (never the ring) and stamps `tuiStartIndex` at the same boundary, so neither a
+  serialized frame nor a terminal that was already mounted at spawn resurrects the echo. It
+  accepts both shapes because pwsh's `Clear-Host` and cmd's `cls` render through ConPTY as
+  per-row erases plus `\x1b[3J` with no `\x1b[2J` at all, while a POSIX `clear` sends
+  `\x1b[2J\x1b[3J`. Keyed on `\x1b[2J` alone, it never fired under PowerShell or cmd, and the
+  byte replay fell back to ConPTY's startup clear and replayed the prompt and the typed
+  command. The launch overlay's `AgentOutputTracker` finds the handoff with the same
+  definition. The two layers stay INDEPENDENT, not chained: the prelude cleans every consumer
+  purely in-stream with no Kangentic parsing, and the detection layer only stamps and repeats
+  what the stream already did, so either alone suffices. The one-shot is bounded to the spawn: transient sessions (Command
   Terminals and a workflow's agent) never arm it, because the prelude already erases their echo
   in-stream and the one-shot would add only its risk (a late qualifying clear wiping history a
   Command Terminal user has already built up), and it expires after a takeover window
@@ -1755,8 +1759,16 @@ phone needs and reads the rest by request.
   so a healthy session never reads double), and a disagreeing width can come out as a multiple or
   sub-multiple of the true one (an agent composing 306 in a 210 grid reads 153). The renderer ring
   is not persisted.
-- **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay
-  never shows (`terminalReady` starts true), so the whole mount-time fit -> replay -> refit ->
+- **The launch overlay waits for the agent.** `TerminalTab` and the Command Terminal pane lift
+  their launch overlay on `sessionFirstOutput`, which main sets only once the session's agent is
+  on screen (`SessionManager.markAgentReady`: its first text after the shell ran the spawn command,
+  its first alt-screen entry, its SessionStart hook, or a 15 s ceiling), or on an exit. Not on the
+  adapter's first-output latch, which a shell's startup frame trips, and not on usage, which the
+  spawn seeds with the model name. Both hosts mount the terminal at once under the overlay and
+  drop PTY output until the lift, then replay the scrollback. See
+  [agent-integration.md](agent-integration.md#the-launch-overlay).
+- **Replay veil for a warm mount.** For an already-running session, `sessionFirstOutput` is already
+  set, so `TerminalTab`'s launch overlay never shows (`terminalReady` is derived from it), so the whole mount-time fit -> replay -> refit ->
   held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now
   covers the terminal with a veil (fixed terminal-background color, no spinner or transition) from
   mount until `useTerminal` fires its first `onScrollbackSettled` notification, so only the settled

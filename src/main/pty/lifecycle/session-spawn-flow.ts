@@ -266,10 +266,12 @@ export async function performSpawn(
     // so a spurious "session ID not captured" warning cannot fire
     // 30s after respawn.
     context.sessionIdManager.removeSession(sibling.id);
-    // Drop the old session's first-output latch. A queue promotion reuses
-    // its placeholder's id, and a latched entry under the reused id would
-    // permanently suppress 'first-output' for the new session - and with it
-    // the post-first-output geometry re-assert.
+    // Drop the old session's first-output latch (and any ceiling it still
+    // had armed). A queue promotion reuses its placeholder's id, and a
+    // latched entry under the reused id would permanently suppress
+    // 'first-output' for the new session, leaving its terminal behind the
+    // launch overlay. SessionManager arms the new session's ceiling only
+    // after this spawn resolves, so this cannot cancel it.
     context.firstOutputTracker.removeSession(sibling.id);
     // Tear down any adapter-attached work from the previous spawn.
     disposeAdapterAttachment(sibling);

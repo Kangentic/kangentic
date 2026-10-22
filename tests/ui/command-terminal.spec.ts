@@ -1746,19 +1746,18 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Launch overlay (terminal variant) - CommandTerminalWindow.tsx passes
-  // variant="terminal" to LaunchOverlay so the pre-terminal shimmer is painted
-  // with the resolved terminal background instead of the theme's bg-surface (no
-  // flash when the overlay lifts and the real terminal is revealed). This is a
-  // SEPARATE call site from TerminalTab.tsx (covered by
-  // launch-overlay-terminal-surface.spec.ts) - reverting variant="terminal" here
-  // alone would go undetected by that spec.
+  // Launch overlay - CommandTerminalWindow.tsx and CommandTerminalPane.tsx
+  // render LaunchOverlay, which paints the resolved terminal background (no
+  // flash when the overlay lifts and the real terminal is revealed). These are
+  // SEPARATE call sites from TerminalTab.tsx (covered by
+  // launch-overlay-terminal-surface.spec.ts), so an overlay swapped for another
+  // cover here alone would go undetected by that spec.
   // ---------------------------------------------------------------------------
-  test.describe('Launch overlay (terminal variant)', () => {
+  test.describe('Launch overlay', () => {
     test('a cold command-terminal spawn paints the launch overlay with the resolved terminal background', async () => {
-      // multiTerminalPreConfig's spawnTransient never fires onFirstOutput or
-      // onUsage, so `terminalReady` (CommandTerminalWindow.tsx) stays false and
-      // the launch overlay stays mounted after the window opens - mirrors the
+      // multiTerminalPreConfig's spawnTransient never fires onFirstOutput, so
+      // `terminalReady` (CommandTerminalWindow.tsx) stays false and the pane's
+      // launch overlay stays mounted after the window opens - mirrors the
       // cold-session setup in launch-overlay-terminal-surface.spec.ts.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
@@ -1771,9 +1770,7 @@ test.describe('Command Terminal', () => {
         const overlay = commandWindow.locator('[data-testid="launch-overlay"]');
         await expect(overlay).toBeVisible();
 
-        // Resolved default (#0c0c0c), not the theme-tracking bg-surface color -
-        // this is the property that goes red if variant="terminal" is dropped
-        // from the CommandTerminalWindow.tsx call site.
+        // Resolved default (#0c0c0c), not the theme-tracking bg-surface color.
         const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
         expect(overlayBackground).toBe('rgb(12, 12, 12)');
       } finally {

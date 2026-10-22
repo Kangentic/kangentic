@@ -22,6 +22,7 @@ import { TranscriptWriter, type TranscriptSink } from '../buffer/transcript-writ
 import { BackpressureController } from '../buffer/backpressure-controller';
 import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
+import { AgentOutputTracker } from '../lifecycle/agent-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { isProcessAlive } from '../../shared/process-liveness';
@@ -240,6 +241,7 @@ export class PtyHostCore {
   /** Agent CLI runs (`cliSpawn`), with piped stdio. */
   private readonly cliProcesses: HostCliProcesses;
   private readonly firstOutput = new FirstOutputTracker();
+  private readonly agentOutput = new AgentOutputTracker();
   private readonly resizeManager = new ResizeManager();
   private readonly coalesce = new Map<string, CoalesceState>();
   private readonly bufferManager: PtyBufferManager;
@@ -1016,6 +1018,7 @@ export class PtyHostCore {
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter.remove(sessionId);
     this.firstOutput.removeSession(sessionId);
+    this.agentOutput.removeSession(sessionId);
     this.resizeManager.removeSession(sessionId);
     this.backpressure.release(sessionId);
     const coalesceState = this.coalesce.get(sessionId);
@@ -1040,6 +1043,11 @@ export class PtyHostCore {
     if (this.firstOutput.consume(sessionId, data, detector)) {
       const inAltScreen = this.bufferManager.getDimensionState(sessionId)?.inAltScreen === true;
       this.deps.emit({ type: 'firstOutput', sessionId, inAltScreen });
+    }
+    // Only an agent spawn types the clear prelude this waits for; a bare
+    // shell would scan its output for a handoff that never comes.
+    if (session?.agentName && this.agentOutput.consume(sessionId, data)) {
+      this.deps.emit({ type: 'agentOutput', sessionId });
     }
   }
 

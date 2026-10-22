@@ -55,6 +55,10 @@ import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
+/** The launch overlay's label, before the spawn returns and after it, so the
+ *  hand-off from the window's overlay to the pane's reads as one surface. */
+const COMMAND_TERMINAL_LAUNCH_LABEL = 'Starting Command Terminal...';
+
 /** What a window attaches to at mount; see `resolveMountAttach`. */
 type MountAttach =
   | { kind: 'reattach'; sessionId: string }
@@ -324,24 +328,24 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Wait for Claude Code's TUI to activate (alternate screen buffer detected) or
-  // usage data to arrive before mounting xterm, so the scrollback contains the
-  // clean TUI rather than shell noise.
-  const hasFirstOutput = useSessionStore((state) => (sessionId ? !!state.sessionFirstOutput[sessionId] : false));
-  const hasUsage = useSessionStore((state) => (sessionId ? !!state.sessionUsage[sessionId] : false));
-  const hasSessionStarted = hasFirstOutput || hasUsage;
-  // The launch shimmer lifts when the session has started, or when something
-  // else says the terminal is ready: an exit before any usage arrives, or a
-  // mount that attached to a PTY already running (a reattach after the layer
-  // was hidden, an HMR remount, or an adopted reload survivor), which must not
-  // flash the launch overlay over a conversation that is already running.
-  // Derived, not synced: `terminalReady` used to be state that an effect set
-  // from `hasSessionStarted`, which is the cascading-render shape React's
-  // compiler rules forbid. The latch holds the two non-derivable answers.
+  // The agent is on screen: main's markAgentReady saw its first text after the
+  // shell ran the spawn command, its first alt-screen entry, or its SessionStart
+  // hook. Never the adapter's first-output detector or the usage seed: the shell's
+  // startup frame trips the first, and the spawn seeds the second with the
+  // model name, so either one showed the shell's prompt for seconds.
+  const hasAgentOnScreen = useSessionStore((state) => (sessionId ? !!state.sessionFirstOutput[sessionId] : false));
+  // The launch shimmer lifts when the agent is on screen, or when something
+  // else says the terminal is ready: an exit before that, or a mount that
+  // attached to a PTY already running (a reattach after the layer was hidden,
+  // an HMR remount, or an adopted reload survivor), which must not flash the
+  // launch overlay over a conversation that is already running. Derived, not
+  // synced: `terminalReady` used to be state that an effect set, which is the
+  // cascading-render shape React's compiler rules forbid. The latch holds the
+  // two non-derivable answers.
   const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null);
-  const terminalReady = readyLatch || hasSessionStarted;
+  const terminalReady = readyLatch || hasAgentOnScreen;
 
-  // Lift the shimmer if the session exits before usage arrives.
+  // Lift the shimmer if the session exits before its agent is on screen.
   useEffect(() => {
     if (!sessionId || terminalReady) return;
     const cleanup = window.electronAPI.sessions.onExit((exitSessionId) => {
@@ -349,10 +353,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     });
     return cleanup;
   }, [sessionId, terminalReady]);
-
-  // Only pass sessionId to useTerminal once ready, so xterm does not init and
-  // fetch noisy scrollback before Claude Code's TUI is drawn.
-  const effectiveSessionId = terminalReady ? sessionId : null;
 
   // The transient session's activity, surfaced as the Stop button's ring (the
   // command-terminal counterpart to the task-detail pause button). Classified via
@@ -719,20 +719,26 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
             the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
         <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: resolveTerminalBackground(config.terminal.colors) }}>
-          {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." variant="terminal" />}
+          {/* Covers the spawn in flight, before there is a pane. From then on
+              the pane draws the overlay inside its own `data-terminal-host`
+              until the agent is on screen (see CommandTerminalPane). */}
+          {!sessionId && <LaunchOverlay label={COMMAND_TERMINAL_LAUNCH_LABEL} />}
           {/* Keyed (and gated, not just keyed) by session id: useTerminal is
               unmount-only teardown, so a session swap on a live instance would
               leave onData/onResize/clipboard/WebGL bound to the dead session.
-              Gating on effectiveSessionId (rather than keying an always-mounted
-              subtree) matters because effectiveSessionId goes null mid-switch
-              (see handleBranchChange) - a null key would mount a throwaway
-              Terminal with no onData/onResize, then tear it down. See
-              CommandTerminalPane.tsx. */}
-          {effectiveSessionId && (
+              Gating on sessionId (rather than keying an always-mounted subtree)
+              matters because sessionId goes null mid-switch (see
+              handleBranchChange) - a null key would mount a throwaway Terminal
+              with no onData/onResize, then tear it down. The pane mounts while
+              the agent is still starting so its fit sizes the PTY before the
+              agent's first frame. See CommandTerminalPane.tsx. */}
+          {sessionId && (
             <CommandTerminalPane
-              key={effectiveSessionId}
-              sessionId={effectiveSessionId}
+              key={sessionId}
+              sessionId={sessionId}
               isMaximized={isMaximized}
+              ready={terminalReady}
+              launchLabel={COMMAND_TERMINAL_LAUNCH_LABEL}
               gridGetterRef={gridGetterRef}
             />
           )}

@@ -580,7 +580,7 @@ export function App() {
       }));
     }
 
-    // Session first output (alternate screen buffer detected) -- lifts shimmer early
+    // The session's agent is on screen (main's markAgentReady): lifts the launch overlay
     if (sessions.onFirstOutput) {
       cleanups.push(sessions.onFirstOutput((sessionId) => {
         enqueueSessionUpdate(() => {

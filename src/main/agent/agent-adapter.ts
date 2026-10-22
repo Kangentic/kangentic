@@ -628,8 +628,13 @@ export interface AgentAdapter {
 
   /**
    * Detect whether the agent has produced its first meaningful output.
-   * Called on each PTY data flush. Return true to emit the 'first-output'
-   * event that lifts the shimmer overlay in the renderer.
+   * Called on each PTY data flush. A match times the boot geometry re-assert
+   * (`SessionManager.reassertGeometryForBootingChild`). It does not lift the
+   * launch overlay: a shell's startup frame can carry the very escape a
+   * detector matches (pwsh and Windows PowerShell both emit `\x1b[?25l`), so
+   * the overlay waits for the agent's own output after the shell ran the
+   * spawn command (`AgentOutputTracker`), its alt-screen entry, or its
+   * SessionStart hook.
    */
   detectFirstOutput(data: string): boolean;
 
