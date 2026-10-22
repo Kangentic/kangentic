@@ -72,8 +72,9 @@ When the Step 7 report lists updated docs, append a note: "Website may need upda
   in `/`, with an optional `title` naming the symbols). Its `index.md` lists every concept as
   `* [Title](file.md) - description`, with the concept's exact description. `docs/log.md` records
   dated changes to the docs layout, newest first. The pilot split saved an agent no reading
-  (`docs/log.md`), so do not split another flat doc into a concept folder without measuring it
-  first (`scripts/eval-docs-reads.mjs`)
+  (`docs/log.md`), so never split another flat doc into a concept folder from this skill. That is
+  a person's decision, measured first with `scripts/eval-docs-reads.mjs`, which spends agent quota
+  and is run by hand only, never by an agent or a pipeline
 - Never name a docs file like an agent instruction file (`claude.md`, `gemini.md`, `agents.md`,
   `warp.md`): on a case-insensitive filesystem the agent loads it as instructions
 - Each doc has a clear H1 title and opening paragraph stating purpose
