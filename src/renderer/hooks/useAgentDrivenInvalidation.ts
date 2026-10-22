@@ -45,6 +45,9 @@
  *     ephemeral progress labels into session-store. Lives with the
  *     other session-lifecycle listeners.
  */
+// agent-focus-ok: no push here opens a window. The created and updated toasts
+// open their task only when the user clicks the card, which is the user asking
+// for that task, so its detail may take focus like any user open.
 import { useEffect } from 'react';
 import { useBoardStore } from '../stores/board-store';
 import { useBacklogStore } from '../stores/backlog-store';
@@ -53,6 +56,17 @@ import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
 import { invalidateProject, invalidateAllProjects } from '../stores/project-cache';
 import { enqueueReload } from '../lib/session-update-coalescer';
+import { openTaskFromNotification } from '../utils/open-task-from-notification';
+
+/**
+ * A click on a task toast's card opens that task, in the project the push
+ * named (or the open one, for a push that names none). Undefined when neither
+ * is known, so the card opens nothing.
+ */
+function openTaskOnCardClick(taskId: string, pushProjectId: string | undefined): (() => void) | undefined {
+  const projectId = pushProjectId || useProjectStore.getState().currentProject?.id;
+  return projectId ? () => openTaskFromNotification(projectId, taskId) : undefined;
+}
 
 export function useAgentDrivenInvalidation(): void {
   useEffect(() => {
@@ -101,7 +115,7 @@ export function useAgentDrivenInvalidation(): void {
 
     const tasks = window.electronAPI?.tasks;
     if (tasks?.onCreatedByAgent) {
-      cleanups.push(tasks.onCreatedByAgent((_taskId, taskTitle, columnName, createdByAgentProjectId) => {
+      cleanups.push(tasks.onCreatedByAgent((taskId, taskTitle, columnName, createdByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         const matchesActiveProject = !createdByAgentProjectId || createdByAgentProjectId === activeProjectId;
         console.debug('[agent-push] task:createdByAgent received', {
@@ -118,14 +132,16 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(createdByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          message: `Task created by agent: "${taskTitle}" in ${columnName}`,
+          title: 'Task created by agent',
+          message: `"${taskTitle}" in ${columnName}.`,
           variant: 'success',
+          onOpen: openTaskOnCardClick(taskId, createdByAgentProjectId),
         });
       }));
     }
 
     if (tasks?.onUpdatedByAgent) {
-      cleanups.push(tasks.onUpdatedByAgent((_taskId, taskTitle, updatedByAgentProjectId) => {
+      cleanups.push(tasks.onUpdatedByAgent((taskId, taskTitle, updatedByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         const matchesActiveProject = !updatedByAgentProjectId || updatedByAgentProjectId === activeProjectId;
         console.debug('[agent-push] task:updatedByAgent received', {
@@ -139,8 +155,10 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(updatedByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          message: `Task updated by agent: "${taskTitle}"`,
+          title: 'Task updated by agent',
+          message: `"${taskTitle}"`,
           variant: 'info',
+          onOpen: openTaskOnCardClick(taskId, updatedByAgentProjectId),
         });
       }));
     }
@@ -160,7 +178,8 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(deletedByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          message: `Task deleted by agent: "${taskTitle}"`,
+          title: 'Task deleted by agent',
+          message: `"${taskTitle}"`,
           variant: 'info',
         });
       }));
@@ -300,7 +319,8 @@ export function useAgentDrivenInvalidation(): void {
         // exists. Say what the payload actually tells us. Distinguishing the
         // three would mean threading a discriminator through the channel.
         useToastStore.getState().addToast({
-          message: `Column changed by agent: "${swimlaneName}"`,
+          title: 'Column changed by agent',
+          message: `"${swimlaneName}"`,
           variant: 'info',
         });
       }));

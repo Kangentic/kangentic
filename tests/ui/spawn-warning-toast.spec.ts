@@ -3,7 +3,7 @@
  *
  * Unlike `task:spawnBlocked`, the agent DID start; main composes the whole
  * message (which base branch, why the fetch failed) and cooldown-guards it,
- * so the renderer toasts it verbatim with no framing of its own. This spec
+ * so the renderer toasts it verbatim as the body under its own title. This spec
  * covers App.tsx's `tasks.onSpawnWarning` subscription: it toasts for the
  * current project and stays silent for a background one, mirroring the
  * `task:spawnBlocked` coverage in spawn-blocked-toast.spec.ts.
@@ -13,7 +13,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -88,14 +88,15 @@ test.describe('task:spawnWarning push', () => {
     try {
       await fireSpawnWarning(page, CURRENT_PROJECT_ID, WARNING_MESSAGE);
 
-      // Main composes the whole message with no renderer framing, unlike
-      // onSpawnBlocked's "did not start its agent" wrapper - assert both that
-      // the message appears AND that it was not routed through the blocked
-      // handler's framing, so a future merge of the two channels reds here.
+      // Main composes the whole body with no renderer framing, unlike
+      // onSpawnBlocked's "Agent didn't start" toast. Assert both that the
+      // message appears under this toast's own title AND that it was not routed
+      // through the blocked handler, so a future merge of the two channels reds here.
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'could not fetch latest' });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText(WARNING_MESSAGE);
-      await expect(toast).not.toContainText('did not start its agent');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Base branch not refreshed');
+      await expect(toast.getByTestId('toast-body')).toHaveText(WARNING_MESSAGE);
+      expect(await toastCountRightNow(page, 'Agent didn\'t start')).toBe(0);
     } finally {
       await browser.close();
     }
@@ -111,10 +112,10 @@ test.describe('task:spawnWarning push', () => {
       await fireSpawnWarning(page, OTHER_PROJECT_ID, 'Background project warning message', 'task-background');
       await fireSpawnWarning(page, CURRENT_PROJECT_ID, 'Foreground project warning message', 'task-foreground');
 
-      await expect(page.locator('text=/Foreground project warning message/'))
+      await expect(page.getByTestId('toast').filter({ hasText: 'Foreground project warning message' }))
         .toBeVisible({ timeout: 5000 });
 
-      await expect(page.locator('text=/Background project warning message/')).toHaveCount(0);
+      expect(await toastCountRightNow(page, 'Background project warning message')).toBe(0);
     } finally {
       await browser.close();
     }

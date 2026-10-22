@@ -674,7 +674,7 @@ function FileContextMenu({
         type="button"
         onClick={() => {
           navigator.clipboard.writeText(file.path);
-          useToastStore.getState().addToast({ message: 'Copied file path' });
+          useToastStore.getState().addToast({ title: 'Path copied', message: file.path, variant: 'info' });
           onClose();
         }}
         className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"

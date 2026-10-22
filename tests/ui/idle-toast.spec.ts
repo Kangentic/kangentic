@@ -21,8 +21,8 @@
  * Two more describe blocks live in this file, both because they share this
  * file's fixtures rather than because they are about the toast itself: one
  * covers auto-focus reading the SAME `ownedSessionIds` value App.tsx computes
- * for the toast, and one covers the toast's Open action re-reading the current
- * project at click time instead of at toast-creation time.
+ * for the toast, and one covers a click on the toast's card re-reading the
+ * current project at click time instead of at toast-creation time.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -49,7 +49,7 @@ const MOBILE_SESSION_ID = 'session-idle-toast-mobile';
 const MOBILE_TASK_ID = 'task-idle-toast-mobile';
 const MOBILE_TASK_TITLE = 'Stream this one to the phone';
 
-// A second project, used only by the "Open after a project switch" test below,
+// A second project, used only by the "card click after a project switch" test below,
 // so that test can leave the fixture's normal single-project shape alone.
 const OTHER_PROJECT_ID = 'proj-idle-toast-other';
 
@@ -241,8 +241,8 @@ async function launchWithMobileStreamedState(): Promise<{ browser: Browser; page
 
 /**
  * The fixture's normal single project (used as the toast's own project) plus a
- * second, empty project to switch to. Used only by the "Open after a project
- * switch" test below, which needs somewhere else to go.
+ * second, empty project to switch to. Used only by the "card click after a
+ * project switch" test below, which needs somewhere else to go.
  */
 async function launchWithSecondProjectState(): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
@@ -446,7 +446,8 @@ test.describe('Agent Idle toast', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast.first()).toBeVisible();
-      await expect(toast.first()).toContainText(`"${TASK_TITLE}" finished its turn`);
+      await expect(toast.first().getByTestId('toast-title')).toHaveText('Agent finished');
+      await expect(toast.first().getByTestId('toast-body')).toHaveText(`"${TASK_TITLE}" is waiting on you.`);
       expect(await toastCountRightNow(page)).toBe(1);
     } finally {
       await browser.close();
@@ -461,7 +462,8 @@ test.describe('Agent Idle toast', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast.first()).toBeVisible();
-      await expect(toast.first()).toContainText(`"${TASK_TITLE}" needs permission`);
+      await expect(toast.first().getByTestId('toast-title')).toHaveText('Needs permission');
+      await expect(toast.first().getByTestId('toast-body')).toHaveText(`"${TASK_TITLE}" is asking to run a tool.`);
       expect(await toastCountRightNow(page)).toBe(1);
     } finally {
       await browser.close();
@@ -498,13 +500,14 @@ test.describe('Agent Idle toast', () => {
     }
   });
 
-  test('the Open action opens the task detail', async () => {
+  test('a click on the card opens the task detail', async () => {
     const { browser, page } = await launchWithState();
     try {
       await fireActivity(page, 'thinking');
       await fireActivity(page, 'idle');
 
-      await page.getByTestId('toast').getByRole('button', { name: 'Open' }).click();
+      // A timed toast has no button: the card itself opens the task.
+      await page.getByTestId('toast').getByTestId('toast-body').click();
 
       await expect.poll(async () => page.evaluate(() => {
         const stores = (window as unknown as {
@@ -631,15 +634,15 @@ test.describe('Auto-focus reads the same ownedSessionIds as the toast', () => {
  * `openTaskFromNotification`'s docblock (App.tsx) states the current project
  * is re-read at CLICK time rather than captured by the caller, because a toast
  * can sit for `durationSeconds` while the user switches projects. Nothing
- * exercised that through the toast's own Open action: the existing same-project
- * click test (above) never switches projects, and the existing cross-project
+ * exercised that through a click on the toast's own card: the existing
+ * same-project click test (above) never switches projects, and the existing cross-project
  * click test (sidebar-command-terminals.spec.ts) drives the OS-notification
  * caller, whose projects already differ the instant the click fires - it
  * cannot distinguish a live re-read from a value captured when the toast (or
  * notification) was first raised.
  */
-test.describe('The Open action re-reads the current project at click time', () => {
-  test('clicking Open after switching away from the toast\'s project reopens that project instead of opening the detail in place', async () => {
+test.describe('A card click re-reads the current project at click time', () => {
+  test('clicking the card after switching away from the toast\'s project reopens that project instead of opening the detail in place', async () => {
     const { browser, page } = await launchWithSecondProjectState();
     try {
       await fireActivity(page, 'thinking');
@@ -670,7 +673,7 @@ test.describe('The Open action re-reads the current project at click time', () =
       );
       expect(openCallsBeforeClick).toEqual([OTHER_PROJECT_ID]);
 
-      await toast.getByRole('button', { name: 'Open' }).click();
+      await toast.getByTestId('toast-body').click();
 
       // Primary assertion: it re-read the (now different) current project and
       // took the cross-project branch, which is the ONLY branch that calls

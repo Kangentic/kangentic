@@ -45,7 +45,6 @@ export const IPC = {
   TASK_UPDATE: 'task:update',
   TASK_DELETE: 'task:delete',
   TASK_MOVE: 'task:move',
-  TASK_CANCEL_SPAWN: 'task:cancelSpawn',
   TASK_LIST_ARCHIVED: 'task:list-archived',
   TASK_LIST_ARCHIVED_PREVIEW: 'task:list-archived-preview',
   TASK_UNARCHIVE: 'task:unarchive',

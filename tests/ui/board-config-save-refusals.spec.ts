@@ -72,10 +72,11 @@ test.describe('kangentic.json save refusals reach the user', () => {
       await openSettingsTab(page, 'Shortcuts');
       await page.locator('[data-testid="add-shortcut"]').click();
 
-      const toast = page.getByTestId('toast').filter({ hasText: 'Could not save shortcuts' });
+      const toast = page.getByTestId('toast').filter({ hasText: "Couldn't save shortcuts" });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      // The refusal text is the sentence main authored, with no channel or class prefix.
-      await expect(toast).toContainText(REFUSAL_MESSAGE);
+      // The refusal text is the sentence main authored, with no channel or class
+      // prefix. It starts with "kangentic.json", which stays lowercase.
+      await expect(toast.getByTestId('toast-body')).toHaveText(REFUSAL_MESSAGE);
 
       // The save really went through the rejecting write, so the toast is the
       // product of the catch and not of some other error path.
@@ -112,9 +113,9 @@ test.describe('kangentic.json save refusals reach the user', () => {
       // The mock lists main, develop, feature/auth, feature/dashboard, fix/login-bug.
       await dropdown.getByRole('button', { name: 'develop', exact: true }).click();
 
-      const toast = page.getByTestId('toast').filter({ hasText: 'Could not save the base branch to kangentic.json' });
+      const toast = page.getByTestId('toast').filter({ hasText: "Couldn't save base branch" });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText(REFUSAL_MESSAGE);
+      await expect(toast.getByTestId('toast-body')).toHaveText(REFUSAL_MESSAGE);
 
       const calls = await page.evaluate(
         () => (window as unknown as { __setDefaultBaseBranchCalls: string[] }).__setDefaultBaseBranchCalls,

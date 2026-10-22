@@ -10,7 +10,8 @@ import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { useHmrGeneration } from '../../utils/hmr-generation';
 import { boardTaskFilter, isOpenFilter, matchesBoardTaskFilter } from '../../utils/board-task-filter';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
@@ -50,8 +51,9 @@ type ViewDialog =
   | { kind: 'editPlanned'; key: string }
   | { kind: 'deleteTask'; task: Task; projectId: string };
 
+/** A route step toggle the inspector refused, with its reason as the body. */
 function refuse(message: string): void {
-  useToastStore.getState().addToast({ message, variant: 'warning' });
+  useToastStore.getState().addToast({ title: 'Route step refused', message, variant: 'warning' });
 }
 
 /** What an empty workflow's canvas walks through, in order (sign-off 10). */
@@ -91,6 +93,16 @@ function EmptyWorkflowWelcome() {
   );
 }
 
+/** A failed delete from the canvas menu. The task is still there, so a click on the card opens it. */
+function reportDeleteFailure(task: Task, taskProjectId: string, error: unknown): void {
+  useToastStore.getState().addToast({
+    title: "Couldn't delete task",
+    message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
+    variant: 'warning',
+    onOpen: () => openTaskFromNotification(taskProjectId, task.id),
+  });
+}
+
 /** Delete a workflow task from its canvas menu: as the board card does on its own board, by id elsewhere. */
 async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<void> {
   if (taskProjectId === useProjectStore.getState().currentProject?.id) {
@@ -99,7 +111,7 @@ async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<vo
       try {
         await useSessionStore.getState().killSession(session.id);
       } catch (error) {
-        useToastStore.getState().addToast({ message: `Failed to delete "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });
+        reportDeleteFailure(task, taskProjectId, error);
         return;
       }
     }
@@ -110,7 +122,7 @@ async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<vo
   try {
     await window.electronAPI.tasks.delete(task.id, taskProjectId);
   } catch (error) {
-    useToastStore.getState().addToast({ message: `Failed to delete "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });
+    reportDeleteFailure(task, taskProjectId, error);
   }
 }
 

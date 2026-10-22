@@ -155,21 +155,6 @@ async function suspendLiveSessionForRespawn(args: {
 }
 
 /**
- * Abort the in-flight move/spawn for a task, if any. Returns true if a move
- * was actually aborted. The abort is deliberately OUTSIDE any task lock (per
- * the task-lifecycle-lock contract): the holder observes the signal and runs
- * the existing AbortError path, which clears spawn progress and rolls the move
- * back. Used by the TASK_CANCEL_SPAWN handler so the user can cancel a spawn
- * that is parked in the git queue or stuck fetching.
- */
-export function abortTaskMove(taskId: string): boolean {
-  const controller = taskMoveControllers.get(taskId);
-  if (!controller) return false;
-  controller.abort();
-  return true;
-}
-
-/**
  * Core task-move logic shared by the TASK_MOVE IPC handler and the
  * plan-exit auto-move listener. Moves the task, runs transitions, and
  * manages session lifecycle based on the target column's role.
@@ -1755,12 +1740,5 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
     const notices = takeConversationExpired(projectId);
     if (notices.length === 0) return notices;
     return keepNoticesForLiveTasks(notices, () => getProjectRepos(context, projectId).tasks);
-  });
-
-  // Cancel an in-flight spawn (e.g. from the "still preparing" stall toast).
-  // Fire-and-forget abort, OUTSIDE any lock - the move's holder observes the
-  // signal and runs the existing AbortError rollback.
-  ipcMain.handle(IPC.TASK_CANCEL_SPAWN, (_event, taskId: string) => {
-    abortTaskMove(taskId);
   });
 }

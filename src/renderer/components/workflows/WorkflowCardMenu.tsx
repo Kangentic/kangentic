@@ -6,11 +6,12 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { boardMoveRefusal, boardWorkflowOf, sendAwayRefusal } from '../../utils/board-workflow';
 import { findBoardTask } from '../../utils/board-task-index';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { TaskContextMenu } from '../board/TaskContextMenu';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
 
@@ -62,8 +63,23 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
 
   // This view is the workflow's home, so its summary is in this project's list.
   const workflow = boardWorkflowOf(summaries, homeSummaries, task, currentProjectId);
-  const reportFailure = (action: string, error: unknown) => {
-    useToastStore.getState().addToast({ message: `Failed to ${action} "${task.title}": ${describeIpcError(error)}`, variant: 'warning' });
+  // A click on a toast about the task opens it, on the task's own board.
+  const openTask = () => openTaskFromNotification(viewTask.projectId, taskId);
+  const reportMoved = (targetName: string) => {
+    useToastStore.getState().addToast({
+      title: 'Task moved',
+      message: `"${task.title}" is now in ${targetName}.`,
+      variant: 'success',
+      onOpen: openTask,
+    });
+  };
+  const reportMoveFailure = (error: unknown) => {
+    useToastStore.getState().addToast({
+      title: "Couldn't move task",
+      message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
+      variant: 'warning',
+      onOpen: openTask,
+    });
   };
 
   const moveTo = (targetSwimlaneId: string) => {
@@ -72,15 +88,13 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
       const { tasks, moveTask } = useBoardStore.getState();
       const position = tasks.filter((candidate) => candidate.swimlane_id === targetSwimlaneId).length;
       void moveTask({ taskId, targetSwimlaneId, targetPosition: position }, false, currentProjectId).then((result) => {
-        if (result.ok && !useBoardStore.getState().pendingMoveConfirm) {
-          useToastStore.getState().addToast({ message: `Moved "${task.title}" to ${targetName}`, variant: 'success' });
-        }
+        if (result.ok && !useBoardStore.getState().pendingMoveConfirm) reportMoved(targetName);
       });
       return;
     }
     void window.electronAPI.tasks.move({ taskId, targetSwimlaneId, targetPosition: 0 }, viewTask.projectId)
-      .then(() => useToastStore.getState().addToast({ message: `Moved "${task.title}" to ${targetName}`, variant: 'success' }))
-      .catch((error) => reportFailure('move', error))
+      .then(() => reportMoved(targetName))
+      .catch(reportMoveFailure)
       // Main sends no push for a move from this window, and a warm switch reads
       // that project's snapshot, so bring its board up to date as the Agent
       // Monitor's menu does. It runs however the move settles, because a move

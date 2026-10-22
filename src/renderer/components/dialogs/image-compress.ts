@@ -159,7 +159,8 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
 
       if (blob.size > TARGET_BYTES) {
         useToastStore.getState().addToast({
-          message: 'Image still large after compression - sending at reduced quality.',
+          title: 'Image sent at lower quality',
+          message: 'It was still large after compression.',
           variant: 'warning',
         });
       }
@@ -173,7 +174,8 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
   } catch (error) {
     console.error('[image-compress] Failed to compress pasted image:', error);
     useToastStore.getState().addToast({
-      message: 'Could not compress image - using original.',
+      title: "Couldn't compress image",
+      message: 'Sending the original instead.',
       variant: 'warning',
     });
     return { file: input, compressed: false };

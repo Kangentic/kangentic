@@ -61,11 +61,13 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
       // is no longer the one `installUpdate()` would install.
       set({ pendingUpdate: null, isModalOpen: false, autoOpened: false });
       useToastStore.getState().addToast({
-        message: `Version ${info.version} is ready to install`,
+        title: 'Update ready',
+        message: `Version ${info.version} is ready to install.`,
         variant: 'info',
-        duration: 0, // persistent - user must act or dismiss
+        persistent: true, // the user must act or dismiss
         action: {
           label: 'Restart to update',
+          icon: 'update',
           onClick: () => window.electronAPI.updater.installUpdate(),
         },
       });

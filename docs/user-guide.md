@@ -37,7 +37,7 @@ board, not from the defaults. A column's message to its agent is one kind of aut
 
 ### Create a Task
 
-Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. A **Name from prompt** button beside the title suggests one from the description, and a task still carrying a placeholder title such as `fix` gets the same suggestion as a toast 30 seconds after its agent starts. Both appear only when an Automation agent is set up in Settings > Workflows. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
+Click the **+** button on any column header, or **New Task** in the backlog toolbar. Enter a title and optional description. A **Name from prompt** button beside the title suggests one from the description, and a task still carrying a placeholder title such as `fix` is renamed for you the first time its agent stops for you after its first 30 seconds, with a Task renamed toast. Both work only when an Automation agent is set up in Settings > Workflows. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 Pasted screenshots are capped at a 2000px long edge, which bounds a multi-monitor grab without costing the detail an agent needs to read small text. Oversized pastes are re-encoded as WebP, stepping quality down until each image lands under a ~1.5MB target, so a large grab is not rejected by the API. Small pastes (under 500KB), GIFs, SVGs, and PNGs already inside the cap are attached as-is.
 
@@ -148,7 +148,7 @@ Each column chooses WHEN its message arrives via **Message timing**: `immediate`
 
 Drag to Done. The worktree directory is removed to reclaim disk, the session is suspended (not destroyed), the task is archived, and the conversation ID is preserved. The branch is deleted too when **git.autoCleanup** is on (the default) and kept when it is off. A clean move happens silently; a confirmation dialog appears only when the move would destroy real work - uncommitted files, or commits that exist only on the local branch about to be deleted - and it spells out exactly what is at risk (worktree deleted, branch kept or deleted, session history kept). If you later unarchive the task and drag it to an active column, Kangentic recreates the worktree and the agent resumes with full conversation context.
 
-Anything the task's agent left running in its folder, such as a dev server it started in the background, is stopped before the worktree is removed. When that happens a toast gives the counts, and its **Review** link lists each process with a **Stop** button for any that kept running: a window the agent opened, a tmux server, or a tool other work also uses (another task, or a command running in one of your terminals). A process that exits on its own after that reads **Ended** in the list, and the toast closes once nothing it named is still running. The same happens when a task returns to To Do or is deleted. Turn it off with [Stop Leftover Processes](#behavior-settings); the toast then lists what kept running and stops nothing.
+Anything the task's agent left running in its folder, such as a dev server it started in the background, is stopped before the worktree is removed. When that happens a toast gives the counts, and a click on it lists each process with a **Stop** button for any that kept running: a window the agent opened, a tmux server, or a tool other work also uses (another task, or a command running in one of your terminals). A process that exits on its own after that reads **Ended** in the list, and the toast closes once nothing it named is still running. The same happens when a task returns to To Do or is deleted. Turn it off with [Stop Leftover Processes](#behavior-settings); the toast then lists what kept running and stops nothing.
 
 Clicking a completed task opens the completed task view. A strip under the title reads when the task started (its first move out of To Do) and ended (its move into Done), the elapsed time between them, the agent runtime (how long an agent was working on it, summed over every conversation), the lines and files it changed, its pull request, and its cost, then Completed, or Exited with the code when the agent's last run ended with an error. The strip stays on one row: on a narrow window the dates drop their time first, then the status keeps only its icon. Under it are three tabs, Summary, Usage and Description, and View conversation on the right; the arrow keys, Home and End move between tabs.
 
@@ -726,7 +726,7 @@ clears either message.
 drag stays in the card's own column, where you can still reorder it. The exception is a card you
 move on yourself (no Automation agent, or a column with no agent), which you drag onto the next
 column of its route. No workflow task can be moved back to To Do. A refused move leaves the card
-where it is, says why with an Open workflow link, and shows the card's links. The menu keeps Move
+where it is, says why in a toast that opens the workflow when clicked, and shows the card's links. The menu keeps Move
 to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
 
@@ -1023,7 +1023,9 @@ Notifications fire when an agent needs attention and you cannot already see it. 
 
 Desktop notifications are for when you are away: they fire only when the window is minimized or unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), plan-completion auto-moves, a stalled spawn, and a finished workflow. The task name is the title (a finished workflow's reads "Workflow complete: <name>") and the project name is the body. For a task in a workflow, the idle and crash bodies name the workflow after the project ("kangentic: Usage budgets workflow"). Clicking one brings the window to the foreground, switches to the correct project, and opens the task detail dialog (a finished workflow names no single task, so it opens none). The taskbar also flashes on Windows. A 10-second cooldown prevents the same agent repeating the same kind of desktop notification. Idle and crash are counted separately, so an agent that dies right after finishing a turn still reports the crash. A newer desktop notification for a task replaces that task's older one in Windows Action Center or macOS Notification Center, so they do not stack. Command Terminal notifications are the exception and still stack.
 
-Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. It carries an **Open** button that opens the task. One toast per turn, not one per progress update.
+Toasts are for when you are here but looking elsewhere. Every notification toast is scoped to the open project, so a background project speaks through the desktop channel alone. The idle toast fires when an agent finishes its turn or needs permission, and is skipped when that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it. A click on it opens the task. One toast per turn, not one per progress update.
+
+Every toast has a title over one line of detail. One that closes on its own draws a thin line along its bottom edge that fills as its time runs out; hovering it holds the time until the pointer leaves. A toast about one thing (a task, a list, a workflow, a downloaded file) opens it when clicked. A toast that stays until closed carries a button instead (Review, Settings, Run again, Restart to update). While a dialog or the settings panel is open, toasts take no clicks, so one sitting over a dialog's buttons never swallows them. Toasts also show in detached windows such as the Agent Monitor.
 
 The Settings > Notifications panel exposes five configurable events: **Agent idle**, **Agent crash** (session exit; desktop alerts on error exits only, toasts also cover clean exits), **Plan complete**, **Spawn stalled** (a task spawn that waits too long on the git queue while preparing), and **Workflow complete** (every task in a workflow reached Done). Each can be set to Off, Desktop, Toast, or Both. Toast duration and max visible count are also configurable.
 
@@ -1167,13 +1169,14 @@ Two changes give agents more room:
   size", and choose Custom size. Set the Initial size so the limit sits at least 8 GB above the
   Committed figure you see with your usual agents running, and the Maximum size no lower than that.
 - **Run fewer agents at once.** Lower Max Concurrent Sessions in Settings > Behavior, which the
-  warning's Behavior settings button opens. Requests past the limit wait in the [Session Queue](#session-queue).
+  warning's Settings button opens. Requests past the limit wait in the [Session Queue](#session-queue).
 
 For an MCP server launched through `npx`, install the package once and point its MCP config at the
 installed command, so no `npx` process sits beside each agent.
 
-The warning shows how long ago the reading was taken, and it clears by itself once the room climbs
-back past twice the line.
+The warning reads "Low on memory" over how much room is left, shows how long ago the reading was
+taken, and clears by itself once the room climbs back past twice the line. When Kangentic is also
+pausing idle agents for you, see [Pausing agents](#pausing-agents).
 
 ## Pausing agents
 
@@ -1204,6 +1207,14 @@ Either way the agent stays paused until you resume it: a restart does not bring 
 neither does memory recovering or a move into a column that starts agents. Resume it from its card
 or its task window, as you would one you paused yourself. The conversation picks up where it
 stopped. Pausing frees a slot, so a queued task can start in it.
+
+A memory pause says so: a toast reads "Idle agent paused", and as more are paused it counts them
+("3 idle agents paused") in place rather than stacking. Its **Review** button lists them, longest
+wait first, with each project's name when they come from more than one. Each row has its own
+**Resume**, which brings that agent back without opening the task, and the row then reads Running.
+There is no Resume all, since bringing every agent back at once would fill the memory that was
+just freed. Closing the toast clears the list; the next pause starts a new one. An idle timer pause
+shows a short "Agent paused" toast for its task instead.
 
 ## Conversation Memory
 

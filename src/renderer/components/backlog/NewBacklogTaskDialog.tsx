@@ -13,7 +13,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { AttachmentChipStrip } from '../dialogs/AttachmentChipStrip';
@@ -184,7 +184,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       useToastStore.getState().addToast({
-        message: `File "${file.name}" exceeds 10MB limit`,
+        title: 'File too large',
+        message: `"${file.name}" is over the 10 MB limit.`,
         variant: 'warning',
       });
       return;
@@ -222,7 +223,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       }).catch((error: unknown) => {
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
         useToastStore.getState().addToast({
-          message: `Couldn't remove the attachment: ${describeIpcError(error)}`,
+          title: "Couldn't remove attachment",
+          message: asSentence(describeIpcError(error)),
           variant: 'warning',
         });
       });
@@ -343,7 +345,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       // are not lost and the user can retry.
       console.error('[NewBacklogTaskDialog] Failed to save backlog task:', error);
       useToastStore.getState().addToast({
-        message: `Couldn't save backlog task: ${describeIpcError(error)}`,
+        title: "Couldn't save backlog task",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     } finally {
@@ -368,7 +371,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
     } catch (error) {
       console.error('[NewBacklogTaskDialog] Failed to delete backlog task:', error);
       useToastStore.getState().addToast({
-        message: 'Failed to delete backlog task',
+        title: "Couldn't delete backlog task",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       setDeleting(false);

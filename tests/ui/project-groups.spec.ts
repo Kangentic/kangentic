@@ -102,9 +102,9 @@ test.describe('Project Groups', () => {
     await menu.getByTestId('sidebar-background-add-project').click();
 
     await expect(page.getByTestId('sidebar-background-menu')).toHaveCount(0);
-    const errorToast = page.locator('[data-testid="toast"]')
-      .filter({ hasText: 'That folder could not be opened. It may have been moved or renamed.' });
+    const errorToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't open that folder" });
     await expect(errorToast).toBeVisible({ timeout: 5000 });
+    await expect(errorToast.getByTestId('toast-body')).toHaveText('It may have been moved or renamed.');
   });
 
   test('right-clicking a project row does not open the background menu', async () => {

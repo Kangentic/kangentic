@@ -240,17 +240,18 @@ export function isPauseOffered(input: {
 }
 
 /**
- * User-facing copy for a refusal. The main-process handler throws this string
- * and the task detail surfaces it verbatim in a toast, so it reads as guidance,
- * not as an internal error.
+ * User-facing copy for a refusal: where the task is, as one sentence. The
+ * main-process handler throws this string, and it is the body under a
+ * "Couldn't resume session" toast title, the disabled Resume row's tooltip, and
+ * the phone's error, so it reads as the reason, not as an internal error.
  */
 export function resumeBlockMessage(reason: ResumeBlockReason): string {
   switch (reason) {
     case 'todo':
-      return 'Cannot resume a session for a task in the To Do column';
+      return 'The task is in To Do.';
     case 'done':
-      return 'This task is complete. Move it out of Done to continue working on it.';
+      return 'The task is in Done.';
     case 'archived':
-      return 'This task is archived. Restore it to the board to continue working on it.';
+      return 'The task is archived.';
   }
 }

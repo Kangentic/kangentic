@@ -16,7 +16,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -93,9 +93,11 @@ test.describe('task:spawnBlocked push', () => {
 
       // The task name matters: the user is looking at a board where the task
       // exists and looks normal, so the toast has to say which one did not start.
-      const toast = page.locator('text=/Task B.*did not start its agent/');
+      const toast = page.getByTestId('toast').filter({ hasText: '"Task B"' });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(page.locator('text=/is already running an agent there/')).toBeVisible();
+      await expect(toast.getByTestId('toast-title')).toHaveText('Agent didn\'t start');
+      await expect(toast.getByTestId('toast-body')).toContainText('"Task B": Cannot switch branches in /mock/blocked-current');
+      await expect(toast.getByTestId('toast-body')).toContainText('is already running an agent there.');
     } finally {
       await browser.close();
     }
@@ -114,10 +116,11 @@ test.describe('task:spawnBlocked push', () => {
       // definitively been handled and dropped. That is the signal a bare
       // waitForTimeout only guesses at, and it does not get slower under CI load.
       await fireSpawnBlocked(page, CURRENT_PROJECT_ID, 'Foreground Task');
-      await expect(page.locator('text=/Foreground Task.*did not start its agent/'))
-        .toBeVisible({ timeout: 5000 });
+      const foregroundToast = page.getByTestId('toast').filter({ hasText: '"Foreground Task"' });
+      await expect(foregroundToast).toBeVisible({ timeout: 5000 });
+      await expect(foregroundToast.getByTestId('toast-title')).toHaveText('Agent didn\'t start');
 
-      await expect(page.locator('text=/Background Task/')).toHaveCount(0);
+      expect(await toastCountRightNow(page, 'Background Task')).toBe(0);
     } finally {
       await browser.close();
     }
@@ -134,8 +137,9 @@ test.describe('task:spawnBlocked push', () => {
         }).__mockFireTaskSpawnBlocked('task-blocked-2', 'Task C', message, undefined);
       }, BLOCK_MESSAGE);
 
-      await expect(page.locator('text=/Task C.*did not start its agent/'))
-        .toBeVisible({ timeout: 5000 });
+      const toast = page.getByTestId('toast').filter({ hasText: '"Task C"' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-title')).toHaveText('Agent didn\'t start');
     } finally {
       await browser.close();
     }
@@ -173,17 +177,17 @@ test.describe('task:spawnBlocked push', () => {
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Long Path Task' });
       await expect(toast).toBeVisible({ timeout: 5000 });
 
-      // The CSS cap is 34rem (544px at the default 16px root font-size - index.css
-      // carries no root-level font-size override). 600 leaves headroom for the
-      // border and accent bar without being loose enough to pass a broken cap.
-      // This alone only proves the max-w cap holds on the toast's OWN box -
+      // The card is a fixed 380px wide (TOAST_WIDTH_PX in ToastItem.tsx). 400
+      // leaves headroom for sub-pixel rounding without being loose enough to
+      // pass a card that grew with its content.
+      // This alone only proves the width holds on the toast's OWN box -
       // removing `min-w-0` / `break-words` does not move this number, because
       // the root also carries `overflow-hidden`, so an unbreakable child that
       // cannot shrink overflows invisibly rather than growing the box. The
       // overflow check below is what actually exercises those two classes.
       const box = await toast.boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.width).toBeLessThan(600);
+      expect(box!.width).toBeLessThan(400);
 
       // `min-w-0` (every flex ancestor down to the message span can shrink
       // below its content's intrinsic width) and `break-words` (the token

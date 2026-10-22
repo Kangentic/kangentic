@@ -1,6 +1,7 @@
 import type { ConversationExpiredNotice } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
+import { openTaskFromNotification } from '../utils/open-task-from-notification';
 import { describeConversationExpired } from './conversation-expired';
 
 /**
@@ -34,12 +35,15 @@ export async function showConversationExpiredNotices(projectId: string): Promise
   if (useProjectStore.getState().currentProject?.id !== projectId) return;
   // One toast per task. Info, not a warning: nothing failed, and each agent is
   // already summarizing where its work stands. The toast store's own limit
-  // drops the oldest when a launch finds many tasks expired at once.
+  // drops the oldest when a launch finds many tasks expired at once. The card
+  // opens the task, where the agent's recap is.
   for (const notice of notices) {
     useToastStore.getState().addToast({
+      title: 'New conversation',
       message: describeConversationExpired(notice),
       variant: 'info',
-      duration: 12000,
+      durationMs: 12000,
+      onOpen: () => openTaskFromNotification(notice.projectId, notice.taskId),
     });
   }
 }

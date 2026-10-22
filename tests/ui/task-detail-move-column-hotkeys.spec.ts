@@ -10,7 +10,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -76,7 +76,7 @@ const REPEAT_SESSION_ID = 'sess-move-column-repeat';
 const REPEAT_TASK_TITLE = 'Move Column Repeat Task';
 
 // Fixture 6: Executing lane, running session. Used for the keepOpen + failed
-// move case: moveTask's IPC rejection must not also report a `Moved "..."`
+// move case: moveTask's IPC rejection must not also report a "Task moved"
 // success toast underneath the store's own error toast, and the task must
 // roll back to its pre-move lane.
 const FAILMOVE_TASK_ID = 'task-move-column-failmove';
@@ -533,8 +533,9 @@ test.describe('Task Detail move-column hotkeys', () => {
     ).toBeVisible();
 
     const movedToast = page.locator('[data-testid="toast"]')
-      .filter({ hasText: `Moved "${ROUNDTRIP_TASK_TITLE}" to Code Review` });
+      .filter({ hasText: `"${ROUNDTRIP_TASK_TITLE}" is now in Code Review.` });
     await expect(movedToast).toBeVisible({ timeout: 5000 });
+    await expect(movedToast.getByTestId('toast-title')).toHaveText('Task moved');
 
     await page.keyboard.press('Alt+Shift+ArrowLeft');
 
@@ -790,20 +791,21 @@ test.describe('Task Detail move-column hotkeys', () => {
     // returns immediately on `!result.ok` with no toast of its own - the two
     // are sequential in the same await chain, so there is no race to poll for
     // the negative half of this assertion.
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: `Failed to move task: ${errorMessage}` }),
-    ).toBeVisible({ timeout: 5000 });
+    // The reason arrives as a sentence: the first word capitalized and a stop added.
+    const moveFailure = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't move task" });
+    await expect(moveFailure).toBeVisible({ timeout: 5000 });
+    await expect(moveFailure.getByTestId('toast-body')).toHaveText('Boom: simulated spawn failure.');
     // An immediate, non-retrying count check, not `await expect(...).toHaveCount(0)`:
     // toasts auto-dismiss after notifications.toasts.durationSeconds (default 4s -
     // see src/shared/types.ts), and toHaveCount's default 5s retry window is long
-    // enough that a genuinely-added "Moved" toast would auto-dismiss DURING the
+    // enough that a genuinely-added "Task moved" toast would auto-dismiss DURING the
     // retry and the assertion would pass anyway, masking the very regression this
     // test exists to catch. The decision not to add it is made synchronously by
     // the time the error toast above is visible (see comment above), so a single
     // immediate read is the correct - and only non-racy - way to assert absence.
-    expect(
-      await page.locator('[data-testid="toast"]').filter({ hasText: `Moved "${FAILMOVE_TASK_TITLE}"` }).count(),
-    ).toBe(0);
+    // The success toast's body names the task, which tells it apart from any
+    // other task's "Task moved" toast still up from an earlier test on this page.
+    expect(await toastCountRightNow(page, `"${FAILMOVE_TASK_TITLE}" is now in`)).toBe(0);
 
     // The window stayed open on the same task, and the rollback (loadBoard()
     // in moveTask's catch) restores the pre-move lane.
@@ -896,9 +898,7 @@ test.describe('Task Detail move-column hotkeys', () => {
     // auto-dismisses after notifications.toasts.durationSeconds would defeat
     // toHaveCount's own retry window and mask a real regression).
     expect(await readMoveCount(page)).toBe(0);
-    expect(
-      await page.locator('[data-testid="toast"]').filter({ hasText: `Moved "${CONFIRM_TASK_TITLE}"` }).count(),
-    ).toBe(0);
+    expect(await toastCountRightNow(page, `"${CONFIRM_TASK_TITLE}" is now in`)).toBe(0);
     await expect(dialog).toBeVisible();
     await expect(dialog.locator('[data-testid="task-title-text"]')).toHaveText(CONFIRM_TASK_TITLE);
 
@@ -950,9 +950,10 @@ test.describe('Task Detail move-column hotkeys', () => {
     // here - options.keepOpen is unset, so handleMoveTo takes the `else`
     // branch (input.onClose()) instead of returning early on `!result.ok`.
     await expect(dialog).not.toBeVisible({ timeout: 5000 });
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: `Moved "${KEBAB_TASK_TITLE}" to Code Review` }),
-    ).toBeVisible({ timeout: 5000 });
+    const movedToast = page.locator('[data-testid="toast"]')
+      .filter({ hasText: `"${KEBAB_TASK_TITLE}" is now in Code Review.` });
+    await expect(movedToast).toBeVisible({ timeout: 5000 });
+    await expect(movedToast.getByTestId('toast-title')).toHaveText('Task moved');
     await expect.poll(
       () => readSwimlaneId(page, KEBAB_TASK_ID),
       { timeout: 5000 },

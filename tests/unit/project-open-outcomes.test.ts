@@ -126,7 +126,12 @@ describe('openProject: success', () => {
 
     expect(outcome).toBe('failed');
     expect(addToastSpy).toHaveBeenCalledTimes(1);
-    expect(addToastSpy.mock.calls[0][0]).toMatchObject({ variant: 'error' });
+    expect(addToastSpy.mock.calls[0][0]).toMatchObject({
+      title: "Couldn't open project",
+      // Main's reason, as the toast body's one sentence.
+      message: 'Database is locked.',
+      variant: 'error',
+    });
     expect(useProjectStore.getState().currentProject).toBeNull();
   });
 });
@@ -146,10 +151,11 @@ describe('openProject: PROJECT_NOT_FOUND', () => {
     expect(useProjectStore.getState().projects).toEqual([PROJECT_A]);
     expect(addToastSpy).toHaveBeenCalledTimes(1);
     expect(addToastSpy.mock.calls[0][0].variant).toBe('error');
-    expect(addToastSpy.mock.calls[0][0].message).toMatch(/no longer available/);
+    expect(addToastSpy.mock.calls[0][0].title).toBe('Project not available');
+    expect(addToastSpy.mock.calls[0][0].message).toBe('The list has been refreshed.');
   });
 
-  it('reports a main-side inconsistency instead of "no longer available" when the refetch still lists it', async () => {
+  it('reports a main-side inconsistency instead of "the list has been refreshed" when the refetch still lists it', async () => {
     projectsApi.open.mockRejectedValue(wrapped(PROJECT_NOT_FOUND_PREFIX + PROJECT_B.id));
     // The refetch still returns the row - main is now inconsistent with
     // itself, not merely behind the renderer.
@@ -161,8 +167,8 @@ describe('openProject: PROJECT_NOT_FOUND', () => {
     expect(outcome).toBe('not-found');
     expect(addToastSpy).toHaveBeenCalledTimes(1);
     const message = addToastSpy.mock.calls[0][0].message as string;
-    expect(message).not.toMatch(/no longer available/);
-    expect(message).toMatch(/Could not open that project/);
+    expect(message).not.toMatch(/has been refreshed/);
+    expect(message).toMatch(/out of sync/);
     // The underlying error's message IS the sentinel - a naive
     // describeIpcError(err) interpolation would leak it verbatim.
     expect(message).not.toMatch(PROJECT_NOT_FOUND_PREFIX);

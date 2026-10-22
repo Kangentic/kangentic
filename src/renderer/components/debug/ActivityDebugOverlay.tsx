@@ -54,7 +54,8 @@ export function ActivityDebugOverlay() {
     const next = !overlayEnabled;
     void updateConfig({ developer: { activityDebugOverlay: next } });
     useToastStore.getState().addToast({
-      message: next ? 'Activity engine debug overlay enabled' : 'Activity engine debug overlay disabled',
+      title: next ? 'Debug overlay on' : 'Debug overlay off',
+      message: next ? 'Activity engine debug overlay enabled.' : 'Activity engine debug overlay disabled.',
       variant: 'info',
     });
   });

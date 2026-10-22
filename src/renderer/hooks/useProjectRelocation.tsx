@@ -6,6 +6,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
 import { ConfirmDialog } from '../components/dialogs/ConfirmDialog';
 import type { Project, ProjectMoveProgress } from '../../shared/types';
+import { asSentence } from '../lib/ipc-error';
 
 interface PendingMove {
   project: Project;
@@ -63,19 +64,22 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
     try {
       const result = await relocateProject(project.id, newPath, { mode: 'move' });
       useToastStore.getState().addToast({
-        message: `Project "${result.project.name}" moved to ${result.project.path}`,
+        title: 'Project moved',
+        message: `"${result.project.name}" is now at ${result.project.path}.`,
         variant: 'success',
       });
       if (result.warnings.includes('source-delete-failed')) {
         useToastStore.getState().addToast({
-          message: `The old folder could not be fully removed; the original copy remains at ${project.path}`,
+          title: 'Old folder not removed',
+          message: `The original copy remains at ${project.path}.`,
           variant: 'warning',
         });
       }
       onRelocated?.(result.project);
     } catch (err) {
       useToastStore.getState().addToast({
-        message: err instanceof Error ? err.message : 'Failed to move project',
+        title: "Couldn't move project",
+        message: asSentence(err instanceof Error ? err.message : 'Unknown error'),
         variant: 'error',
       });
     } finally {

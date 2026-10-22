@@ -139,13 +139,13 @@ async function openPerformanceTab(page: Page): Promise<void> {
 }
 
 test.describe('the graphics recovery toast', () => {
-  test('fires on the launch that recovered, and carries the action to Performance settings', async () => {
+  test('fires on the launch that recovered, and carries a Settings button', async () => {
     const { browser, page } = await launchWithState({ noticePending: true, softwareRendering: true });
     try {
       const toast = page.getByTestId('toast');
       await expect(toast).toHaveCount(1);
-      await expect(toast).toContainText('Graphics acceleration is off');
-      await expect(toast).toContainText('Repeated failures shut down your last run');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Graphics acceleration off');
+      await expect(toast.getByTestId('toast-body')).toHaveText('Repeated failures shut down your last run.');
 
       // No cause claim and no tally. Both were cut deliberately: we never
       // established what killed the GPU process, and a failure count is
@@ -155,34 +155,37 @@ test.describe('the graphics recovery toast', () => {
 
       // The action is the only route the toast offers, and the value it leads
       // to IS the undo.
-      await expect(toast.getByRole('button', { name: 'Performance settings' })).toBeVisible();
+      await expect(toast.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
     } finally {
       await browser.close();
     }
   });
 
-  test('renders the action inside the message, not beside it as a flex sibling', async () => {
+  test('draws the Settings button below the body, not inside it', async () => {
     // Structural, not pixel-based: cross-platform-parity.md forbids
     // pixel-exact layout assertions (they differ across OS and CI), so this
-    // checks DOM nesting instead of coordinates. As a flex sibling under
-    // `items-start` the button pinned to the top right, detached from a
-    // message that wraps to three lines; inline, it trails the last line of
-    // the sentence it belongs to.
+    // checks DOM order instead of coordinates. A persistent toast's one button
+    // sits in its own row after the body, at the card's bottom right, so it
+    // never splits the sentence it belongs to.
     const { browser, page } = await launchWithState({ noticePending: true, softwareRendering: true });
     try {
       const toast = page.getByTestId('toast');
       await expect(toast).toHaveCount(1);
-      const actionButton = toast.getByRole('button', { name: 'Performance settings' });
-      await expect(actionButton).toBeVisible();
+      const actionButton = toast.getByTestId('toast-action');
+      await expect(actionButton).toHaveText('Settings');
 
-      const isInsideMessageSpan = await actionButton.evaluate((buttonElement) => {
-        const messageSpan = buttonElement.closest('span');
-        return messageSpan !== null && (messageSpan.textContent ?? '').includes('Graphics acceleration is off');
+      const placement = await toast.evaluate((card) => {
+        const body = card.querySelector('[data-testid="toast-body"]');
+        const button = card.querySelector('[data-testid="toast-action"]');
+        if (!body || !button) return null;
+        return {
+          insideBody: body.contains(button),
+          afterBody: (body.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+        };
       });
-      expect(
-        isInsideMessageSpan,
-        'the action button must be a descendant of the span carrying the toast message, not a sibling that only renders beside it',
-      ).toBe(true);
+      expect(placement, 'the toast has no body or no action button').not.toBeNull();
+      expect(placement?.insideBody, 'the action button renders inside the body').toBe(false);
+      expect(placement?.afterBody, 'the action button renders before the body').toBe(true);
     } finally {
       await browser.close();
     }
@@ -195,7 +198,7 @@ test.describe('the graphics recovery toast', () => {
     // after N seconds" against an unknown default is how a test like this
     // passes vacuously - it did, on the first version of this case. A control
     // raised with no duration takes whatever the default is, so if it is gone
-    // and the notice is not, the difference is the notice's own `duration: 0`.
+    // and the notice is not, the difference is the notice's own `persistent: true`.
     const { browser, page } = await launchWithState({ noticePending: true, softwareRendering: true });
     try {
       await expect(page.getByTestId('toast')).toHaveCount(1);
@@ -205,7 +208,8 @@ test.describe('the graphics recovery toast', () => {
           __zustandStores: { toast: { getState: () => Record<string, unknown> } };
         }).__zustandStores;
         (stores.toast.getState().addToast as (input: Record<string, unknown>) => void)({
-          message: 'CONTROL: ordinary toast',
+          title: 'Control',
+          message: 'An ordinary timed toast.',
         });
       });
       await expect(page.getByTestId('toast')).toHaveCount(2);
@@ -220,9 +224,9 @@ test.describe('the graphics recovery toast', () => {
         'the control toast should have auto-dismissed on the configured default; if it is still here the calibration is broken and this test proves nothing',
       ).toHaveCount(1);
       await expect(
-        toasts,
-        'the recovery notice must outlive an ordinary toast raised beside it, which it can only do by passing duration: 0',
-      ).toContainText('Graphics acceleration is off');
+        toasts.getByTestId('toast-title'),
+        'the recovery notice must outlive an ordinary toast raised beside it, which it can only do by being persistent',
+      ).toHaveText('Graphics acceleration off');
     } finally {
       await browser.close();
     }
@@ -273,9 +277,13 @@ test.describe('the graphics recovery toast', () => {
   });
 
   test('opens Settings on Performance when the action is clicked', async () => {
-    const { browser, page } = await launchWithState({ noticePending: true, softwareRendering: true });
+    // omitProject: an open project raises the onboarding checklist (this spec
+    // seeds an empty onboardedProjectIds), and while any dialog is open no
+    // toast takes a click. Performance is a system tab and renders with no
+    // project open.
+    const { browser, page } = await launchWithState({ noticePending: true, softwareRendering: true, omitProject: true });
     try {
-      await page.getByTestId('toast').getByRole('button', { name: 'Performance settings' }).click();
+      await page.getByTestId('toast').getByRole('button', { name: 'Settings', exact: true }).click();
       await expect(page.getByText('Graphics acceleration', { exact: true })).toBeVisible();
       await expect(page.getByText('Animations', { exact: true })).toBeVisible();
     } finally {
@@ -430,7 +438,9 @@ test.describe('Settings > Performance', () => {
       await dialog.getByRole('button', { name: 'Restart now' }).click();
 
       await expect(dialog).toHaveCount(0);
-      await expect(page.getByTestId('toast').filter({ hasText: 'Kangentic could not restart' })).toHaveCount(1);
+      const failureToast = page.getByTestId('toast').filter({ hasText: "Couldn't restart" });
+      await expect(failureToast).toHaveCount(1);
+      await expect(failureToast.getByTestId('toast-body')).toHaveText('Restart Kangentic to apply the change.');
       await expect(graphicsSwitch).toHaveAttribute('aria-checked', 'true');
     } finally {
       await browser.close();

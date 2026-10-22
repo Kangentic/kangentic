@@ -835,8 +835,9 @@ test('a move main rejects leaves no gap behind, and the card goes back', async (
     await page.mouse.up();
 
     // The rejection ran, and the card is back where it came from.
-    await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to move task: Working tree is dirty' }))
-      .toBeVisible({ timeout: 3000 });
+    const moveFailure = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't move task" });
+    await expect(moveFailure).toBeVisible({ timeout: 3000 });
+    await expect(moveFailure.getByTestId('toast-body')).toHaveText('Working tree is dirty.');
     await expect.poll(() => laneOrder(page, 'Planning'), { timeout: 3000 }).toEqual(PLANNING_IDS);
     await expect.poll(() => laneOrder(page, 'To Do'), { timeout: 3000 }).toContain(MOVER_ID);
 

@@ -1,6 +1,8 @@
 import { type StateCreator } from 'zustand';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import type { BoardStore, CompletingTask } from './types';
 import { type CompletionGate, createGate, canPersist } from './completion-gate';
 
@@ -84,8 +86,10 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
           set({ recentlyArchivedId: taskId });
         }
         useToastStore.getState().addToast({
-          message: `"${taskTitle}" completed and archived`,
+          title: 'Task completed',
+          message: `"${taskTitle}" is archived.`,
           variant: 'success',
+          onOpen: projectId !== null ? () => openTaskFromNotification(projectId, taskId) : undefined,
         });
       }
       // result.ok === false: moveTask already surfaced the error toast and did a
@@ -95,7 +99,8 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
       // Safety net: moveTask returns { ok: false } rather than throwing for IPC
       // failures, but guard an unexpected throw so the gate still cleans up below.
       useToastStore.getState().addToast({
-        message: `Failed to complete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: "Couldn't complete task",
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     } finally {

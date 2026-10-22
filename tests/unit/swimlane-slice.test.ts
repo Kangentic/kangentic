@@ -221,6 +221,6 @@ describe('saveBoardProfiles', () => {
     expect(addToast).toHaveBeenCalledOnce();
     const toastArgument = addToast.mock.calls[0][0] as { message: string; variant: string };
     expect(toastArgument.variant).toBe('error');
-    expect(toastArgument.message).toContain('disk full');
+    expect(toastArgument.message).toBe('Disk full.');
   });
 });

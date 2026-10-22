@@ -6,7 +6,8 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { useWorkflowAgentWorking } from '../../hooks/useWorkflowAgentWorking';
 import { useTaskBoardFacts } from '../../hooks/useTaskBoardFacts';
@@ -297,7 +298,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       useToastStore.getState().addToast({
-        message: `File "${file.name}" exceeds 10MB limit`,
+        title: 'File too large',
+        message: `"${file.name}" is over the 10 MB limit.`,
         variant: 'warning',
       });
       return;
@@ -428,7 +430,11 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
         if (saved) onClose();
         return;
       }
-      await createTask({
+      // The project the slice stamps on the create, read at the same moment so
+      // a project switch while the create is in flight cannot re-point the
+      // toast's click at the wrong board.
+      const createdInProjectId = useProjectStore.getState().currentProject?.id ?? null;
+      const createdTask = await createTask({
         title: taskTitle,
         description: description.trim(),
         swimlane_id: swimlaneId,
@@ -457,8 +463,14 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       // Revoke all preview URLs
       attachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
       useToastStore.getState().addToast({
-        message: `Created task "${taskTitle}"`,
+        title: 'Task created',
+        message: openBoardLane
+          ? `"${taskTitle}" is in ${openBoardLane.name}.`
+          : `"${taskTitle}" is on the board.`,
         variant: 'info',
+        ...(createdInProjectId
+          ? { onOpen: () => openTaskFromNotification(createdInProjectId, createdTask.id) }
+          : {}),
       });
       onClose();
     } catch (error) {
@@ -469,7 +481,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       // are not lost and the user can retry.
       console.error('[NewTaskDialog] Failed to create task:', error);
       useToastStore.getState().addToast({
-        message: `Couldn't create task: ${describeIpcError(error)}`,
+        title: "Couldn't create task",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     } finally {

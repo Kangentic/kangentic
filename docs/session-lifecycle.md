@@ -448,9 +448,9 @@ the project on screen and whenever a project becomes current (`useProjectSwitchE
 is a synchronous handler that removes what it returns, so a notice shows at most once however the
 two takes race. It can show not at all: a renderer reload between the take and the toast loses
 it, and a take that resolves after the user switched to another project is dropped rather than
-toasted over that board. Each notice gives its own toast, one sentence naming the task and the old
-conversation's date: "Fix login redirect" started a new conversation because the one from Sep 3
-expired. A long absence expires every suspended task on the same launch, so the toast limit drops
+toasted over that board. Each notice gives its own toast, titled New conversation, with one
+sentence naming the task and the old conversation's date: "Fix login redirect" started fresh
+because its conversation from Sep 3 expired. A click on it opens the task. A long absence expires every suspended task on the same launch, so the toast limit drops
 the oldest. The toast does not say whether a message was held back: the agent summarizing instead
 of acting shows that, the run log records it for a column's rows, and a handoff logs it only in
 main.
@@ -1844,7 +1844,8 @@ first await and released once the spawn has registered its row or the start has 
    response carries a `checkoutError` the renderer toasts ("Staying on ..."); nothing else runs.
    Otherwise the handler checks out the target if needed, then fast-forwards it onto
    `origin/<target>` (`--ff-only`, failure ignored) whenever the fetch produced a remote start
-   point. A checkout failure falls back to the current branch with a `checkoutError`. This runs
+   point. A checkout failure falls back to the current branch with a `checkoutError`, and git's
+   own reason goes to the log rather than the toast. This runs
    on a cold spawn only; a reattach never fetches or checks out
 2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
 3. `await adapter.ensureTrust(projectRoot)` - trust pre-population, `kangentic` MCP enablement,

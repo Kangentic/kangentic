@@ -30,12 +30,12 @@ import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { resolveIdleToast } from './utils/idle-toast';
 import { openTaskFromNotification } from './utils/open-task-from-notification';
+import { asSentence, describeIpcError } from './lib/ipc-error';
 import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../shared/notification-constants';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../shared/pty-host';
-import { describeAutomationFailure } from '../shared/automation-describe';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { clearDropGapDom } from './utils/board-drop-preview';
@@ -52,6 +52,16 @@ import {
   enqueueReload,
   resetCoalescerForHmr,
 } from './lib/session-update-coalescer';
+import type { AutomationRunStatus } from '../shared/types';
+
+/** How a Run again result reads after the automation's name. */
+const RUN_AGAIN_OUTCOME: Record<AutomationRunStatus, string> = {
+  succeeded: 'succeeded',
+  failed: 'failed',
+  skipped: 'was skipped',
+  interrupted: 'was interrupted',
+  running: 'is still running',
+};
 
 export function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -158,6 +168,12 @@ export function App() {
     const cleanupHostMemoryRecoveryListener = window.electronAPI.hostMemory?.onRecovery(() => {
       useHostMemoryStore.getState().receiveRecovery();
     });
+    // Low memory paused an agent that was waiting on the user: one push per
+    // agent, on every platform. The store counts them in one toast and keeps
+    // the Review list (stores/host-memory-store.ts).
+    const cleanupHostMemoryAgentPausedListener = window.electronAPI.hostMemory?.onAgentPaused((event) => {
+      useHostMemoryStore.getState().receiveAgentPaused(event);
+    });
 
     // Graphics state (Sentry DESKTOP-18/DESKTOP-W). PULLED, not pushed: main
     // decides both facts during boot, possibly before this renderer could
@@ -189,14 +205,16 @@ export function App() {
       // dropped the tri-state to avoid.
       void useConfigStore.getState().loadConfig();
       useToastStore.getState().addToast({
+        title: notice.title,
         message: notice.message,
         variant: 'warning',
         // Never auto-dismisses: the app stays degraded until the user acts,
         // and a 4-second toast about why their app vanished is worse than
         // none at all.
-        duration: 0,
+        persistent: true,
         action: {
-          label: 'Performance settings',
+          label: 'Settings',
+          icon: 'settings',
           onClick: () => {
             useConfigStore.getState().setLastSettingsTab('performance');
             useConfigStore.getState().setSettingsOpen(true);
@@ -244,6 +262,7 @@ export function App() {
       cleanupUpdateListener?.();
       cleanupHostMemoryPressureListener?.();
       cleanupHostMemoryRecoveryListener?.();
+      cleanupHostMemoryAgentPausedListener?.();
       cleanupAnnouncementsChanged?.();
       cleanupOffscreenSurfaces?.();
     };
@@ -315,10 +334,15 @@ export function App() {
           if (forkedConversation
             && session.projectId === useProjectStore.getState().currentProject?.id) {
             const forkTask = useBoardStore.getState().tasks.find((boardTask) => boardTask.id === session.taskId);
-            const forkLabel = forkTask ? `"${forkTask.title}"` : sessionId.slice(0, 8);
+            const forkProjectId = session.projectId;
             useToastStore.getState().addToast({
-              message: `Conversation for ${forkLabel} moved to a new session (e.g. /clear). Resume will follow the new conversation.`,
+              title: 'Conversation moved',
+              message: 'Resume follows the conversation started by /clear.',
               variant: 'info',
+              // The card names no task, so a click is how the user finds which one.
+              onOpen: forkTask && forkProjectId
+                ? () => { openTaskFromNotification(forkProjectId, forkTask.id); }
+                : undefined,
             });
           }
         });
@@ -365,21 +389,23 @@ export function App() {
       window.electronAPI.window.flashFrame(true);
     }
 
-    // agent-focus-ok: the two pushes below that open a task (an OS notification
-    // click, and an idle toast's click) do it because the user clicked it, so
-    // the detail SHOULD take focus. openTaskFromNotification says so too.
+    // agent-focus-ok: every push below that opens a task (an OS notification
+    // click, and a click on a toast about a task) does it because the user
+    // clicked it, so the detail SHOULD take focus. openTaskFromNotification
+    // says so too.
 
     // Spawn-stall watcher: when a task sits in a "preparing" spawn-progress
     // state (worktree creation / git fetch / queue wait) past the threshold,
-    // surface a non-blocking toast (with a Cancel action) and an optional
-    // desktop notification so a slow/head-of-line-blocked spawn never hangs
-    // silently. Timers are effect-scoped (like notificationCooldowns above), so
-    // they tear down with the effect on unmount/HMR - no module-scope state.
+    // surface a non-blocking toast and an optional desktop notification so a
+    // slow/head-of-line-blocked spawn never hangs silently. The toast has no
+    // Cancel: dragging the task back to To Do stops the spawn, and its card
+    // opens the task. Timers are effect-scoped (like notificationCooldowns
+    // above), so they tear down with the effect on unmount/HMR - no
+    // module-scope state.
     const STALL_THRESHOLD_MS = 8000;
     const spawnStallTimers = new Map<string, ReturnType<typeof setTimeout>>();
-    // Toast id per task so the stall toast can be dismissed when the spawn
-    // resolves or is superseded - this also prevents a stale Cancel from
-    // aborting a newer move for the same task.
+    // Toast id per task so the persistent stall toast can be dismissed when
+    // the spawn resolves or is superseded.
     const spawnStallToastIds = new Map<string, string>();
 
     function maybeNotifySpawnStall(taskId: string) {
@@ -402,20 +428,25 @@ export function App() {
       // carrying a "(waiting 45s)" qualifier; both collapse to one phrase. Not
       // anchored to the end: a staleness note may trail the qualifier (e.g.
       // "Removing worktree (waiting 45s) (base fetch failed)").
+      //
+      // Any other label continues `"<task>" is ...`, so its ellipsis goes (a
+      // staleness note can trail it too) and only its first letter is lowered,
+      // since an automation's label quotes the automation's own name.
       const isGitQueueWait = label.startsWith('Waiting') || /\(waiting \d+s\)/.test(label);
+      const phase = label.replace(/\.\.\./g, '').trim();
       const detail = isGitQueueWait
         ? 'waiting on the git queue'
-        : label.replace(/\.\.\.$/, '').toLowerCase();
+        : `${phase.charAt(0).toLowerCase()}${phase.slice(1)}`;
 
       if (notifyConfig.toasts.onSpawnStalled) {
         const toastId = useToastStore.getState().addToast({
-          message: `"${task.title}" is still preparing - ${detail}`,
+          title: 'Still preparing',
+          message: `"${task.title}" is ${detail}.`,
           variant: 'warning',
-          duration: 0, // sticky: the Cancel action must outlive the default auto-dismiss
-          action: {
-            label: 'Cancel',
-            onClick: () => { window.electronAPI.tasks.cancelSpawn(taskId); },
-          },
+          // Stays until the spawn resolves (the disarm below closes it), so a
+          // slow spawn is never left looking like a healthy one.
+          persistent: true,
+          onOpen: projectId ? () => { openTaskFromNotification(projectId, taskId); } : undefined,
         });
         spawnStallToastIds.set(taskId, toastId);
       }
@@ -451,9 +482,8 @@ export function App() {
         }
       }
       // Disarm when a task leaves spawnProgress (session arrived, abort, or
-      // moved to To Do). Also dismiss any stall toast so its now-stale Cancel
-      // can't abort a newer move for the same task, and the sticky toast for a
-      // resolved spawn doesn't linger.
+      // moved to To Do). Also dismiss any stall toast, so the persistent toast
+      // for a resolved spawn doesn't linger.
       for (const taskId of Object.keys(previous)) {
         if (!(taskId in current)) {
           const timer = spawnStallTimers.get(taskId);
@@ -516,7 +546,8 @@ export function App() {
           const now = Date.now();
           if (notifyConfig.toasts.onAgentCrash && now - lastHostLostToastAt >= PTY_HOST_LOST_NOTICE_WINDOW_MS) {
             useToastStore.getState().addToast({
-              message: 'Terminals restarted. Running agents are resuming.',
+              title: 'Terminals restarted',
+              message: 'Running agents are resuming.',
               variant: 'warning',
             });
           }
@@ -527,9 +558,14 @@ export function App() {
             const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId)
               ?? useBoardStore.getState().tasks.find((t) => t.id === currentSession?.taskId);
             const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
+            const exitProjectId = projectId ?? currentSession?.projectId;
             useToastStore.getState().addToast({
-              message: `Session ended for ${label} (exit ${exitCode})`,
+              title: 'Session ended',
+              message: `${label} exited with code ${exitCode}.`,
               variant: exitCode === 0 ? 'info' : 'warning',
+              onOpen: task && exitProjectId
+                ? () => { openTaskFromNotification(exitProjectId, task.id); }
+                : undefined,
             });
           }
         }
@@ -714,11 +750,12 @@ export function App() {
               const openProjectId = toastSession.projectId;
               const openTaskId = toastSession.taskId;
               useToastStore.getState().addToast({
+                title: idleToast.title,
                 message: idleToast.message,
                 variant: idleToast.variant,
-                // No board row means nothing to open, so the toast stays informational.
-                action: idleToast.hasTask
-                  ? { label: 'Open', onClick: () => { openTaskFromNotification(openProjectId, openTaskId); } }
+                // No board row means nothing to open, so the card stays informational.
+                onOpen: idleToast.hasTask
+                  ? () => { openTaskFromNotification(openProjectId, openTaskId); }
                   : undefined,
               });
             }
@@ -741,9 +778,15 @@ export function App() {
         if ((timeoutProjectId ?? '') === activeProjectId) {
           const task = useBoardStore.getState().tasks.find((t) => t.id === timeoutTaskId);
           const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
+          const pausedProjectId = timeoutProjectId;
           useToastStore.getState().addToast({
-            message: `Session suspended after ${timeoutMinutes} minutes idle: ${label}`,
+            // "Paused", matching the Pausing agents card that sets this timer.
+            title: 'Agent paused',
+            message: `${label} was idle for ${timeoutMinutes} ${timeoutMinutes === 1 ? 'minute' : 'minutes'}.`,
             variant: 'info',
+            onOpen: task && pausedProjectId
+              ? () => { openTaskFromNotification(pausedProjectId, task.id); }
+              : undefined,
           });
         }
       }));
@@ -793,7 +836,7 @@ export function App() {
           useProjectStore.getState().openProject(projectId);
           return;
         }
-        // Shared with the idle toast's Open action. Also the path the DETACHED
+        // Shared with a click on a toast about a task. Also the path the DETACHED
         // monitor takes: its row click routes through main and re-emits here, so
         // pop-out and in-app behave identically.
         openTaskFromNotification(projectId, taskId);
@@ -866,17 +909,23 @@ export function App() {
     // indistinguishable from a healthy spawn. Current project only: the message
     // names a task the user cannot see from another project.
     if (tasks?.onSpawnBlocked) {
-      cleanups.push(tasks.onSpawnBlocked((_taskId, taskTitle, message, blockedProjectId) => {
+      cleanups.push(tasks.onSpawnBlocked((blockedTaskId, taskTitle, message, blockedProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (blockedProjectId && blockedProjectId !== activeProjectId) return;
+        const openProjectId = blockedProjectId ?? activeProjectId;
         useToastStore.getState().addToast({
           // Deliberately verb-free about how the task got here. This same event
           // fires from create, promote, unarchive and MCP auto-spawn, and only
           // the first of those created anything - "was created" would be a lie
-          // on three of the four paths.
-          message: `"${taskTitle}" did not start its agent. ${message}`,
+          // on three of the four paths. Main words the reason; the title says
+          // the agent did not start, so the body leads with the task.
+          title: 'Agent didn\'t start',
+          message: `"${taskTitle}": ${asSentence(message)}`,
           variant: 'warning',
-          duration: 12000,
+          durationMs: 12000,
+          onOpen: openProjectId
+            ? () => { openTaskFromNotification(openProjectId, blockedTaskId); }
+            : undefined,
         });
       }));
     }
@@ -905,49 +954,63 @@ export function App() {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (warningProjectId && warningProjectId !== activeProjectId) return;
         useToastStore.getState().addToast({
+          title: 'Base branch not refreshed',
           message,
           variant: 'warning',
-          duration: 12000,
+          durationMs: 12000,
         });
       }));
     }
 
     // A sync write to the data directory (config or one of the other small
     // per-machine/per-project state files) failed - DESKTOP-14/DESKTOP-13. Main
-    // composes the whole sentence and latches it per failing source, so this
-    // toasts verbatim, same as onSpawnWarning. Not project-filtered: an
-    // unwritable data directory is a machine-level condition, not one tied to
-    // whichever project happens to be open.
+    // composes the body (the cause, and that the change may be lost) and
+    // latches it per failing source, so this toasts it verbatim under its
+    // title, same as onSpawnWarning. Not project-filtered: an unwritable data
+    // directory is a machine-level condition, not one tied to whichever
+    // project happens to be open.
     if (window.electronAPI?.config?.onWriteFailed) {
       cleanups.push(window.electronAPI.config.onWriteFailed((message) => {
         useToastStore.getState().addToast({
+          title: 'Change not saved to disk',
           message,
           variant: 'error',
-          duration: 12000,
+          durationMs: 12000,
         });
       }));
     }
 
     // What a task left running when it reached Done or To Do, or was deleted
-    // (src/main/pty/process-tag/). The toast gives counts; Review opens the
-    // list with the names. Not project-filtered: a delete or the startup sweep
+    // (src/main/pty/process-tag/). The toast gives counts and opens the list
+    // with the names: a timed toast when its card is clicked, one that stays
+    // up through Review. Not project-filtered: a delete or the startup sweep
     // in a background project still leaves processes on this machine.
     if (window.electronAPI?.leftoverProcesses?.onReport) {
       cleanups.push(window.electronAPI.leftoverProcesses.onReport((report) => {
         const toast = describeLeftoverReport(report);
         if (!toast) return;
-        const toastId = useToastStore.getState().addToast({
-          message: toast.message,
-          variant: toast.variant,
-          ...(toast.sticky ? { duration: 0 } : {}),
-          since: toast.since,
-          action: {
-            label: 'Review',
-            onClick: () => useLeftoverProcessesStore.getState().openReport(report.id),
-          },
-        });
-        // A toast whose report the store no longer keeps has a Review link
-        // that opens nothing, so it closes with its report.
+        const openList = () => useLeftoverProcessesStore.getState().openReport(report.id);
+        // Stays while something is still running or could not be stopped, so
+        // the list stays reachable; the leftover store closes it once every
+        // such process has stopped.
+        const toastId = toast.sticky
+          ? useToastStore.getState().addToast({
+            title: toast.title,
+            message: toast.message,
+            variant: toast.variant,
+            since: toast.since,
+            persistent: true,
+            action: { label: 'Review', icon: 'review', onClick: openList },
+          })
+          : useToastStore.getState().addToast({
+            title: toast.title,
+            message: toast.message,
+            variant: toast.variant,
+            since: toast.since,
+            onOpen: openList,
+          });
+        // A toast whose report the store no longer keeps opens nothing, so it
+        // closes with its report.
         for (const evictedToastId of useLeftoverProcessesStore.getState().addReport(report, toastId)) {
           useToastStore.getState().dismissToast(evictedToastId);
         }
@@ -962,18 +1025,19 @@ export function App() {
     }
 
     // This install cannot update itself until the user moves it - DESKTOP-1A,
-    // the macOS read-only-volume case. Main composes the whole sentence and
-    // latches it for the app's lifetime, so this toasts verbatim, same as
-    // onWriteFailed above. Persistent rather than timed: unlike a failed write,
-    // this does not resolve on its own, and the updater already uses a
+    // the macOS read-only-volume case. Main composes the body and latches it
+    // for the app's lifetime, so this toasts it verbatim under its title, same
+    // as onWriteFailed above. Persistent rather than timed: unlike a failed
+    // write, this does not resolve on its own, and the updater already uses a
     // persistent toast for the other thing the user has to act on (see
     // updater-store's no-release-notes branch).
     if (window.electronAPI?.updater?.onUpdateBlocked) {
       cleanups.push(window.electronAPI.updater.onUpdateBlocked((message) => {
         useToastStore.getState().addToast({
+          title: 'Updates blocked',
           message,
           variant: 'warning',
-          duration: 0,
+          persistent: true,
         });
       }));
     }
@@ -987,29 +1051,41 @@ export function App() {
       cleanups.push(tasks.onAutoCommandResult((result) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (result.projectId && result.projectId !== activeProjectId) return;
+        const openProjectId = result.projectId ?? activeProjectId;
+        const openTask = openProjectId
+          ? () => { openTaskFromNotification(openProjectId, result.taskId); }
+          : undefined;
 
         if (result.state === 'failed') {
+          // Main's reason is its own sentence, so it follows the one that
+          // names the task.
+          const reason = result.reason ? ` ${asSentence(result.reason)}` : '';
           useToastStore.getState().addToast({
-            message: `"${result.taskTitle}" did not run ${result.command}. ${result.reason ?? ''}`.trim(),
+            title: 'Command didn\'t run',
+            message: `"${result.taskTitle}" did not run ${result.command}.${reason}`,
             variant: 'warning',
-            duration: 12000,
+            durationMs: 12000,
+            onOpen: openTask,
           });
           return;
         }
 
-        // Delivered, but it cost the user something. Quote the discarded draft
-        // verbatim so it can be copied back out of the toast: clearing typed
-        // text is defensible, losing it silently is not.
-        const notes: string[] = [];
-        if (result.discardedDraft) notes.push(`Your unsent text was cleared: "${result.discardedDraft}"`);
-        else if (result.interruptedTurn) notes.push('The agent was interrupted mid-task.');
-        if (result.escalated) notes.push('The session was restarted to deliver it.');
-        if (notes.length === 0) return;
+        // Delivered, but it cost the user something, so say what. Clearing
+        // typed text is defensible; doing it silently is not.
+        const costs: string[] = [];
+        if (result.discardedDraft) costs.push('cleared your unsent text');
+        else if (result.interruptedTurn) costs.push('interrupted the agent mid-task');
+        if (result.escalated) costs.push('restarted the session to deliver it');
+        if (costs.length === 0) return;
+        const actions = [`ran ${result.command}`, ...costs];
+        const lastAction = actions.pop();
 
         useToastStore.getState().addToast({
-          message: `"${result.taskTitle}" ran ${result.command}. ${notes.join(' ')}`,
+          title: 'Command ran',
+          message: `"${result.taskTitle}" ${actions.join(', ')} and ${lastAction}.`,
           variant: 'info',
-          duration: 12000,
+          durationMs: 12000,
+          onOpen: openTask,
         });
       }));
     }
@@ -1027,34 +1103,53 @@ export function App() {
 
         // The automation AND the column, because neither alone locates it:
         // two columns can hold rows with the same name.
-        const detail = failure.detail ? ` ${failure.detail}` : '';
-        useToastStore.getState().addToast({
-          message: `${describeAutomationFailure(failure)}.${detail}`,
+        const detail = failure.detail ? ` ${asSentence(failure.detail)}` : '';
+        const failureToastId = useToastStore.getState().addToast({
+          title: 'Automation failed',
+          message: `"${failure.automationName}" failed on ${failure.columnName}.${detail}`,
           variant: 'warning',
-          duration: 12000,
-          // Re-runs against the task's CURRENT state, which the label says,
+          // Stays so Run again is there when the user reaches for it.
+          persistent: true,
+          // Re-runs against the task's CURRENT state, which the result says,
           // because the task may have moved twice since the failure. An
           // interrupted run is offered the same action: it is the one status
           // where the work definitely did not finish.
           action: {
             label: 'Run again',
+            icon: 'retry',
             onClick: () => {
+              // The result toast takes over from here, and a failure left up
+              // beside it would invite a second run.
+              useToastStore.getState().dismissToast(failureToastId);
               void useBoardStore.getState()
                 .runAutomationAgain(failure.automationId, failure.taskId)
                 .then((result) => {
+                  if (!result.ok) {
+                    // The run never started (a deleted automation, a closed project).
+                    useToastStore.getState().addToast({
+                      title: 'Couldn\'t run again',
+                      message: asSentence(result.error),
+                      variant: 'error',
+                      durationMs: 8000,
+                    });
+                    return;
+                  }
+                  const succeeded = result.status === 'succeeded';
+                  // A run that did not succeed says why after the sentence.
+                  const resultDetail = !succeeded && result.detail ? ` ${asSentence(result.detail)}` : '';
                   useToastStore.getState().addToast({
-                    message: result.ok
-                      ? `Ran "${result.automationName}" again against the task's current state. ${result.detail ?? result.status}`
-                      : result.error,
-                    variant: result.ok && result.status === 'succeeded' ? 'success' : 'warning',
-                    duration: 8000,
+                    title: 'Ran again',
+                    message: `"${result.automationName}" ${RUN_AGAIN_OUTCOME[result.status]} against the task's current state.${resultDetail}`,
+                    variant: succeeded ? 'success' : 'warning',
+                    durationMs: 8000,
                   });
                 })
                 .catch((error: unknown) => {
                   useToastStore.getState().addToast({
-                    message: error instanceof Error ? error.message : 'The automation could not be run again.',
+                    title: 'Couldn\'t run again',
+                    message: asSentence(describeIpcError(error, ''), 'The automation did not start.'),
                     variant: 'error',
-                    duration: 8000,
+                    durationMs: 8000,
                   });
                 });
             },
@@ -1072,17 +1167,16 @@ export function App() {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (summary.projectId && summary.projectId !== activeProjectId) return;
         useToastStore.getState().addToast({
-          message: summary.count === 1
-            ? '1 automation was still running when Kangentic last closed. It did not finish.'
-            : `${summary.count} automations were still running when Kangentic last closed. They did not finish.`,
+          title: summary.count === 1 ? 'Automation interrupted' : 'Automations interrupted',
+          message: `${summary.count} ${summary.count === 1 ? 'automation' : 'automations'} didn't finish before Kangentic closed.`,
           variant: 'info',
-          duration: 10000,
+          durationMs: 10000,
         });
       }));
     }
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
-      cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {
+      cleanups.push(tasks.onAutoMoved((autoMovedTaskId, targetSwimlaneId, taskTitle, autoMoveProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (autoMoveProjectId && autoMoveProjectId !== activeProjectId) {
           // Background project: drop the cache so the next warm switch
@@ -1105,9 +1199,16 @@ export function App() {
         // one event raised both alerts at once.
         const isActiveProjectMove = !autoMoveProjectId || autoMoveProjectId === activeProjectId;
         if (isActiveProjectMove && notifyConfig.toasts.onPlanComplete) {
+          // The board on screen is the move's own, so its columns name the target.
+          const targetColumn = useBoardStore.getState().swimlanes.find((lane) => lane.id === targetSwimlaneId);
+          const movedProjectId = autoMoveProjectId ?? activeProjectId;
           useToastStore.getState().addToast({
-            message: `Plan complete. Moved "${taskTitle}" to next column`,
+            title: 'Plan complete',
+            message: `Moved "${taskTitle}" to ${targetColumn ? targetColumn.name : 'the next column'}.`,
             variant: 'success',
+            onOpen: movedProjectId
+              ? () => { openTaskFromNotification(movedProjectId, autoMovedTaskId); }
+              : undefined,
           });
         }
 
@@ -1130,10 +1231,20 @@ export function App() {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (completed.projectId === activeProjectId && notifyConfig.toasts.onWorkflowComplete) {
           useToastStore.getState().addToast({
+            title: 'Workflow complete',
             message: completed.taskCount === 1
-              ? `Workflow complete. The task of "${completed.title}" is in Done.`
-              : `Workflow complete. All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
+              ? `The task of "${completed.title}" is in Done.`
+              : `All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
             variant: 'success',
+            // Opens the workflow the way a task's Workflow panel does: the
+            // overlays the Workflows view would sit under make way first.
+            onOpen: () => {
+              if (useMonitorStore.getState().monitorOpen) useMonitorStore.getState().close();
+              if (useKnowledgeGraphStore.getState().graphOpen) useKnowledgeGraphStore.getState().close();
+              if (useUsageDashboardStore.getState().statsOpen) useUsageDashboardStore.getState().close();
+              useBoardStore.getState().setActiveView('workflows');
+              useWorkflowStore.getState().openWorkflow(completed.projectId, completed.workflowId);
+            },
           });
         }
         if (notifyConfig.desktop.onWorkflowComplete) {

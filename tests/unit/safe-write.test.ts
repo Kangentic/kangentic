@@ -198,7 +198,7 @@ describe('safeWriteJson renames onto a file another program holds', () => {
     expect(fs.readFileSync(filePath, 'utf-8')).toBe('{"previous":true}\n');
     expect(fs.readdirSync(tmpDir)).toEqual(['config.json']);
     expect(notifications).toHaveLength(1);
-    expect(notifications[0]).toContain('because the file is in use or read-only');
+    expect(notifications[0]).toContain('The file is in use or read-only');
 
     expect(mocks.reportHandledErrorSpy).toHaveBeenCalledTimes(1);
     const [reported, tags] = mocks.reportHandledErrorSpy.mock.calls[0] as [Error, Record<string, string>];

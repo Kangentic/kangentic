@@ -22,6 +22,7 @@ import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
+import { asSentence } from '../../lib/ipc-error';
 
 // Side-pane in the task-detail window that hosts an Electron <webview>, a
 // free-draw annotation overlay, and a "Send to agent" button which composites
@@ -461,12 +462,14 @@ function BrowserPaneActive({
     try {
       await saveForProject(target);
       useToastStore.getState().addToast({
-        message: 'Saved as project default',
+        title: 'Default URL saved',
+        message: 'The browser pane opens it for this project.',
         variant: 'success',
       });
     } catch (caught) {
       useToastStore.getState().addToast({
-        message: caught instanceof Error ? caught.message : 'Failed to save URL',
+        title: "Couldn't save URL",
+        message: asSentence(caught instanceof Error ? caught.message : 'Unknown error'),
         variant: 'error',
       });
     } finally {
@@ -517,9 +520,10 @@ function BrowserPaneActive({
       // Surface paste/submit failures via toast as well, since the inline
       // error is easy to miss next to the URL bar.
       useToastStore.getState().addToast({
-        message,
+        title: "Couldn't send to agent",
+        message: asSentence(message),
         variant: 'error',
-        duration: 6000,
+        durationMs: 6000,
       });
     } finally {
       setSending(false);

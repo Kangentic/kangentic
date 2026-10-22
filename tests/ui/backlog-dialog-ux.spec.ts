@@ -528,7 +528,9 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
     // The delete failed: an error toast appears, and both the confirm and the
     // edit dialog stay open - performDelete's catch never calls
     // setConfirmDelete(false) or onClose().
-    await expect(page.locator('[data-testid="toast"]')).toContainText('Failed to delete backlog task');
+    const deleteToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't delete backlog task" });
+    await expect(deleteToast).toBeVisible({ timeout: 5000 });
+    await expect(deleteToast.getByTestId('toast-body')).toHaveText('Mock delete failure.');
     await expect(confirmHeading).toBeVisible();
     await expect(editDialog).toBeVisible();
 
@@ -596,6 +598,7 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't save backlog task" });
     await expect(toast).toBeVisible({ timeout: 5000 });
+    await expect(toast.getByTestId('toast-body')).toHaveText('Mock create failure.');
     const dialog = page.locator('[data-testid="new-backlog-task-dialog"]');
     await expect(dialog).toBeVisible();
     await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Create failure item');
@@ -754,9 +757,9 @@ test.describe('New Backlog Task Dialog - Header, Delete, Meta', () => {
 
     await chip.locator('[data-testid="attachment-remove"]').click();
 
-    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't remove the attachment" });
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't remove attachment" });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText('bad file descriptor');
+    await expect(toast.getByTestId('toast-body')).toHaveText('EBADF: bad file descriptor, unlink.');
 
     // The rejected remove must not drop the chip.
     await expect(chip).toHaveCount(1);

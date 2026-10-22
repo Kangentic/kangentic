@@ -608,6 +608,19 @@
     // The two ticking clocks seed their state synchronously and only tick through
     // setInterval; the mock has no intervals of its own; the seed installs none.
     window.setInterval = function () { return 0; };
+    // A Web Animation is not a CSS animation, so the zeroed durations above do not reach it.
+    // The one the renderer runs is a timed toast's countdown line, which would otherwise be
+    // drawn wherever its clock had got to when the frame was shot. A still holds every Web
+    // Animation where it starts, so the line is empty in every capture.
+    var nativeAnimate = Element.prototype.animate;
+    if (typeof nativeAnimate === 'function') {
+      Element.prototype.animate = function () {
+        var animation = nativeAnimate.apply(this, arguments);
+        animation.pause();
+        animation.play = function () {};
+        return animation;
+      };
+    }
   }
 
   // ---------------------------------------------------------------- scene application

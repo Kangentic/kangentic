@@ -10,6 +10,7 @@ import type {
 import { useBoardStore } from './board-store';
 import { useProjectStore } from './project-store';
 import { useToastStore } from './toast-store';
+import { describeIpcError, asSentence } from '../lib/ipc-error';
 
 interface BacklogState {
   items: BacklogTask[];
@@ -191,7 +192,8 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
       // Rollback: restore removed items
       set((state) => ({ items: [...state.items, ...removedItems] }));
       useToastStore.getState().addToast({
-        message: `Failed to promote tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't promote tasks",
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       throw error;

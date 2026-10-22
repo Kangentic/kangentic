@@ -195,8 +195,8 @@ describe('startTaskSession', () => {
   });
 
   it.each([
-    ['todo', 'Cannot resume a session for a task in the To Do column'],
-    ['done', 'This task is complete. Move it out of Done to continue working on it.'],
+    ['todo', 'The task is in To Do.'],
+    ['done', 'The task is in Done.'],
   ])('refuses a task in a %s column with the desktop Resume copy and spawns nothing', async (role, message) => {
     mockReconcileTaskSessionRef.mockReturnValue({ task: makeTask(), liveSession: null });
     mockSwimlaneGetById.mockReturnValue({ id: LANE_ID, name: 'Role lane', role });
@@ -212,7 +212,7 @@ describe('startTaskSession', () => {
     });
 
     await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow(
-      'This task is archived. Restore it to the board to continue working on it.',
+      'The task is archived.',
     );
     expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
   });
@@ -351,17 +351,17 @@ describe('startTaskSession', () => {
     it('rejects with the resume\'s own refusal when its Phase 1 throws before accepting', async () => {
       registryRows = [{ id: 'sess-paused', taskId: TASK_ID, status: 'suspended' }];
       mockResumeTaskSession.mockImplementationOnce(async () => {
-        throw new Error('This task is complete. Move it out of Done to continue working on it.');
+        throw new Error('The task is in Done.');
       });
 
-      await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow('Move it out of Done');
+      await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow('The task is in Done.');
     });
 
     it('a paused task in Done is refused by the decision itself, before any resume', async () => {
       registryRows = [{ id: 'sess-paused', taskId: TASK_ID, status: 'suspended' }];
       mockSwimlaneGetById.mockReturnValue({ id: LANE_ID, name: 'Done', role: 'done' });
 
-      await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow('Move it out of Done');
+      await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow('The task is in Done.');
       expect(mockResumeTaskSession).not.toHaveBeenCalled();
       expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
     });

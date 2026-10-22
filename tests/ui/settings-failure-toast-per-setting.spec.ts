@@ -15,7 +15,8 @@ import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Page } from '@playwright/test';
 
-const FAILURE_TOAST = 'This setting did not save';
+/** The title of the panel's own failed-write toast (AppSettingsPanel's reportFailure). */
+const FAILURE_TOAST = 'Setting not saved';
 
 async function openSettings(page: Page): Promise<void> {
   await page.locator('[data-testid="settings-button"]').click();

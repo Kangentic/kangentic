@@ -339,9 +339,10 @@ test.describe('BoardManagerDialog', () => {
       await openManagerByHeader('Merge');
       await page.locator('[data-testid="board-manager-delete"]').click();
 
-      const toast = page.locator('[data-testid="toast"]', { hasText: 'Cannot remove "Merge"' });
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'Can\'t remove "Merge"' });
       await expect(toast).toBeVisible({ timeout: 3000 });
-      await expect(toast).toContainText('Move or delete all 1 task first.');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Can\'t remove "Merge"');
+      await expect(toast.getByTestId('toast-body')).toHaveText('Move or delete its task first.');
       await expect(page.locator('h3', { hasText: 'Remove column' })).toHaveCount(0);
       // Nothing was staged: Save stays disabled and the column stays in the rail.
       await expect(page.locator('[data-testid="board-manager-save"]')).toBeDisabled();
@@ -390,9 +391,10 @@ test.describe('BoardManagerDialog', () => {
     try {
       await page.getByRole('button', { name: 'Remove', exact: true }).click();
 
-      const toast = page.locator('[data-testid="toast"]', { hasText: 'Cannot remove "Executing"' });
+      const toast = page.locator('[data-testid="toast"]', { hasText: 'Can\'t remove "Executing"' });
       await expect(toast).toBeVisible({ timeout: 3000 });
-      await expect(toast).toContainText('Move or delete all 1 task first.');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Can\'t remove "Executing"');
+      await expect(toast.getByTestId('toast-body')).toHaveText('Move or delete its task first.');
       // The confirm always closes on Remove (it is not the authority, the
       // refusal is), and nothing was staged.
       await expect(confirmTitle).toBeHidden({ timeout: 1500 });

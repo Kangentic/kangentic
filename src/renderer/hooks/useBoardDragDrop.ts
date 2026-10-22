@@ -45,6 +45,7 @@ import {
   settleDropGap,
 } from '../utils/board-drop-preview';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
+import { asSentence } from '../lib/ipc-error';
 
 /**
  * How long dnd-kit's sortable keeps `wasDragging` true after a drop
@@ -635,7 +636,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       const todoIndex = ordered.findIndex((swimlane) => swimlane.role === 'todo');
 
       const toast = useToastStore.getState().addToast;
-      if (todoIndex !== 0) { toast({ message: 'To Do must remain the first column', variant: 'warning' }); return; }
+      if (todoIndex !== 0) { toast({ title: "Can't move To Do", message: 'To Do must stay the first column.', variant: 'warning' }); return; }
 
       await reorderSwimlanes(ordered.map((swimlane) => swimlane.id));
       return;
@@ -821,7 +822,8 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       clearDropGap();
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
-        message: `Drag failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        title: 'Drag failed',
+        message: asSentence(err instanceof Error ? err.message : 'Unknown error'),
         variant: 'error',
       });
     }

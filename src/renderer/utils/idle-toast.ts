@@ -29,10 +29,11 @@ export interface IdleToastInput {
 }
 
 export interface IdleToastResult {
+  title: string;
   message: string;
   variant: ToastVariant;
   /** False when the label came from `sessionIdShort`: there is no board row to
-   *  open, so the caller attaches no Open action. */
+   *  open, so the caller gives the card nothing to open. */
   hasTask: boolean;
 }
 
@@ -79,8 +80,8 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
   // A missing task row is NOT a reason to stay silent. The board's `tasks` only
   // reload on `loadBoard()`, so a task an agent or the MCP server created can
   // spawn, run, and go idle before this renderer has ever seen it. Fall back to a
-  // short session id the way the crash toast does, and let the caller drop the
-  // Open action since there is no row to open.
+  // short session id the way the crash toast does, and let the caller leave the
+  // card with nothing to open, since there is no row to open.
   // Quotes go around a real title only, matching the crash toast: a bare session
   // id fragment in quotes reads like a name the user should recognize.
   const label = taskTitle !== undefined ? `"${taskTitle}"` : sessionIdShort;
@@ -88,9 +89,9 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
   // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
   const needsPermission = state === 'permission';
 
-  return {
-    message: needsPermission ? `${label} needs permission` : `${label} finished its turn`,
-    variant: needsPermission ? 'warning' : 'info',
-    hasTask: taskTitle !== undefined,
-  };
+  const hasTask = taskTitle !== undefined;
+  if (needsPermission) {
+    return { title: 'Needs permission', message: `${label} is asking to run a tool.`, variant: 'warning', hasTask };
+  }
+  return { title: 'Agent finished', message: `${label} is waiting on you.`, variant: 'info', hasTask };
 }

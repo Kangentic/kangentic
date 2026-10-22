@@ -704,10 +704,9 @@ test.describe('Search Palette', () => {
           throw new Error(`Error invoking remote method 'project:open': Error: ${prefix}${id}`);
         };
         // The store's not-found branch refetches the list; keep the target
-        // project OUT of the refetched list so the toast reads "no longer
-        // available" rather than "out of sync" - either copy is a pass below,
-        // but pinning the fixture avoids an incidental double-match on the
-        // "Could not open" fallback string.
+        // project OUT of the refetched list so the toast's body reads "The
+        // list has been refreshed." rather than the out-of-sync form, which
+        // is the one the assertion below pins.
         window.electronAPI.projects.list = async function () {
           return [{
             id: currentId,
@@ -736,8 +735,9 @@ test.describe('Search Palette', () => {
       // The toast carries the store's own copy, never the raw IPC error text -
       // pre-fix, the palette's own catch interpolated `error.message`, which
       // would have leaked the PROJECT_NOT_FOUND: sentinel straight into the UI.
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|out of sync/ });
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Project not available' });
       await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-body')).toHaveText('The list has been refreshed.');
       // One-shot count, not toHaveCount(0) - see toastCountRightNow. The visible
       // assertion above is the positive signal that the failure path ran at all.
       expect(await toastCountRightNow(page, PROJECT_NOT_FOUND_PREFIX)).toBe(0);

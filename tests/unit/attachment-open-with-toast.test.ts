@@ -55,15 +55,16 @@ describe('openAttachmentWithToast', () => {
     expect(useToastStore.getState().toasts).toHaveLength(0);
   });
 
-  it('adds one warning toast naming the file, the error, and the reveal-fallback claim on a resolved error string', async () => {
+  it('adds one warning toast titled with the file whose body is the reveal-fallback claim on a resolved error string', async () => {
     await openAttachmentWithToast('archive.bin', async () => 'No application is registered for this file type');
 
     const { toasts } = useToastStore.getState();
     expect(toasts).toHaveLength(1);
     expect(toasts[0].variant).toBe('warning');
-    expect(toasts[0].message).toContain('archive.bin');
-    expect(toasts[0].message).toContain('No application is registered for this file type');
-    expect(toasts[0].message).toContain('Showing it in the file manager instead.');
+    expect(toasts[0].title).toBe('Couldn\'t open "archive.bin"');
+    // The fallback is the whole body: main has already revealed the file, and
+    // that is what the user acts on.
+    expect(toasts[0].message).toBe('Showing it in the file manager instead.');
   });
 
   it('adds one warning toast with the Error message and no reveal-fallback claim on a thrown Error', async () => {
@@ -74,8 +75,8 @@ describe('openAttachmentWithToast', () => {
     const { toasts } = useToastStore.getState();
     expect(toasts).toHaveLength(1);
     expect(toasts[0].variant).toBe('warning');
-    expect(toasts[0].message).toContain('notes.bin');
-    expect(toasts[0].message).toContain('Attachment not found');
+    expect(toasts[0].title).toBe('Couldn\'t open "notes.bin"');
+    expect(toasts[0].message).toBe('Attachment not found.');
     // Unlike the resolved-error-string branch, the open never got far enough
     // for the main process to have called shell.showItemInFolder, so this
     // path must not claim it did.
@@ -92,7 +93,7 @@ describe('openAttachmentWithToast', () => {
     const { toasts } = useToastStore.getState();
     expect(toasts).toHaveLength(1);
     expect(toasts[0].variant).toBe('warning');
-    expect(toasts[0].message).toContain('diagram.png');
+    expect(toasts[0].title).toBe('Couldn\'t open "diagram.png"');
     // String({ code: 'WEIRD_REJECTION' }) === '[object Object]' - distinct from
     // any .message access, which would have thrown or produced 'undefined'.
     expect(toasts[0].message).toContain('[object Object]');

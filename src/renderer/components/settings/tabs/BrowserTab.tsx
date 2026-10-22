@@ -6,6 +6,7 @@ import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useToastStore } from '../../../stores/toast-store';
+import { asSentence } from '../../../lib/ipc-error';
 
 type ClearState = 'idle' | 'confirming' | 'clearing';
 
@@ -21,12 +22,14 @@ export function BrowserTab({ config }: { config: AppConfig }) {
     try {
       await window.electronAPI.browser.clearStorage();
       useToastStore.getState().addToast({
-        message: 'Browser data cleared. Reload the browser pane to apply.',
+        title: 'Browser data cleared',
+        message: 'Reload the browser pane to apply.',
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to clear browser data: ${error instanceof Error ? error.message : String(error)}`,
+        title: "Couldn't clear browser data",
+        message: asSentence(error instanceof Error ? error.message : String(error)),
         variant: 'error',
       });
     } finally {

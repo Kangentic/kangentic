@@ -92,7 +92,9 @@ test.describe('Release notes modal', () => {
     await expect(page.getByTestId('release-notes-dialog')).toHaveCount(0);
     const toast = page.getByTestId('toast');
     await expect(toast).toBeVisible();
-    await expect(toast).toContainText('Version 9.9.9 is ready to install');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Update ready');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Version 9.9.9 is ready to install.');
+    await expect(toast.getByTestId('toast-action')).toHaveText('Restart to update');
     await expect(page.getByTestId('update-available-button')).toHaveCount(0);
   });
 

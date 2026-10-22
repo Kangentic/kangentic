@@ -302,9 +302,9 @@ test.describe('Changes panel: per-file diff pop-out', () => {
       .getByRole('button', { name: /database\.md/ });
     await rowButton.dblclick();
 
-    await expect(
-      page.locator('[data-testid="toast"]', { hasText: 'File diff window limit reached' }),
-    ).toBeVisible({ timeout: 8000 });
+    const limitToast = page.locator('[data-testid="toast"]', { hasText: 'Window limit reached' });
+    await expect(limitToast).toBeVisible({ timeout: 8000 });
+    await expect(limitToast.getByTestId('toast-body')).toHaveText('8 file diff windows are open. Close one to open another.');
 
     await page.evaluate(() => {
       (window as unknown as { __mockPopOut: { setOpenResult: (value: boolean) => void } }).__mockPopOut.setOpenResult(true);

@@ -12,9 +12,12 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
+
+/** How long to let a toast that should NOT exist have to show up. */
+const NEGATIVE_ASSERTION_BUDGET_MS = 300;
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 /**
@@ -215,9 +218,12 @@ test.describe('User-paused session behavior on column move', () => {
       const statusBar = codeReviewColumn.locator('[data-testid="status-bar"]');
       await expect(statusBar).toContainText('Paused');
 
-      // No "Agent started" or "Agent resumed" toast should appear
-      const agentToast = page.locator('text=/Agent (started|resumed)/');
-      await expect(agentToast).not.toBeVisible();
+      // No "Agent started" or "Agent resumed" toast should appear. A one-shot
+      // count after a short budget, not a retrying `not.toBeVisible()`, which a
+      // raised toast satisfies by auto-dismissing inside the retry window.
+      // (Intentional fixed wait: a non-occurrence cannot be polled for.)
+      await page.waitForTimeout(NEGATIVE_ASSERTION_BUDGET_MS);
+      expect(await toastCountRightNow(page, /Agent (started|resumed)/)).toBe(0);
     });
   });
 
@@ -247,9 +253,10 @@ test.describe('User-paused session behavior on column move', () => {
       const statusBar = codeReviewColumn.locator('[data-testid="status-bar"]');
       await expect(statusBar).toContainText('Paused');
 
-      // Verify no "Agent started" toast (which would indicate an unwanted auto-spawn)
-      const agentToast = page.locator('text=/Agent (started|resumed)/');
-      await expect(agentToast).not.toBeVisible();
+      // Verify no "Agent started" toast (which would indicate an unwanted auto-spawn).
+      // (Intentional fixed wait: a non-occurrence cannot be polled for.)
+      await page.waitForTimeout(NEGATIVE_ASSERTION_BUDGET_MS);
+      expect(await toastCountRightNow(page, /Agent (started|resumed)/)).toBe(0);
     });
   });
 });

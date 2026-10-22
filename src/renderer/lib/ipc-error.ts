@@ -29,3 +29,19 @@ export function describeIpcError(error: unknown, fallback = 'Unknown error'): st
   const withoutClass = withoutChannel.replace(ERROR_CLASS_PREFIX, '');
   return withoutClass.trim() || fallback;
 }
+
+/** A leading word of lowercase letters only, so `fatal:` is capitalized and `kangentic.json` is not. */
+const LOWERCASE_FIRST_WORD = /^[a-z]+(?=[\s,:;]|$)/;
+
+/**
+ * A reason as a toast body: one sentence that starts with a capital and ends in
+ * a stop. Error text arrives in every shape (git's `fatal: ...`, a message with
+ * no period, one that already ends in `?`), and a toast body reads as a
+ * sentence whichever it was. An empty reason gives `fallback`.
+ */
+export function asSentence(reason: string | null | undefined, fallback = 'No reason was given.'): string {
+  const trimmed = (reason ?? '').trim();
+  if (!trimmed) return fallback;
+  const capitalized = trimmed.replace(LOWERCASE_FIRST_WORD, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
+}

@@ -24,6 +24,7 @@ import { useSessionStore } from '../../renderer/stores/session-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { EMBEDDING_MODELS } from '../../shared/embedding-models';
+import { asSentence } from '../../renderer/lib/ipc-error';
 
 /** The app title bar's height (`top-10`). It is an OS drag region, so the panel
  *  must never be draggable into it - see handleDragPointerMove. */
@@ -139,6 +140,16 @@ function makeTestAttachments(): Array<{ filename: string; data: string; media_ty
   return attachments;
 }
 
+/** A failure toast's body: the error's own message, as one sentence. */
+function failureReason(error: unknown): string {
+  return asSentence(error instanceof Error ? error.message : 'Unknown error');
+}
+
+/** Pluralize a counted noun: `1 repo`, `2 repos`. */
+function counted(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
 export function TestHarness() {
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -194,7 +205,7 @@ export function TestHarness() {
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
     if (!todoSwimlane) {
-      useToastStore.getState().addToast({ message: 'No To Do column to create a test task in', variant: 'warning' });
+      useToastStore.getState().addToast({ title: 'No To Do column', message: 'Add one to create a test task in it.', variant: 'warning' });
       return;
     }
     setCreating(true);
@@ -207,10 +218,11 @@ export function TestHarness() {
         priority: randomInt(0, 4),
         pendingAttachments: makeTestAttachments(),
       });
-      useToastStore.getState().addToast({ message: `Created test task #${task.display_id}`, variant: 'success' });
+      useToastStore.getState().addToast({ title: 'Test task created', message: `#${task.display_id}`, variant: 'success' });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to create test task: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't create test task",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {
@@ -226,15 +238,16 @@ export function TestHarness() {
     try {
       const project = await window.electronAPI.dev?.createEphemeralProject();
       if (!project) {
-        useToastStore.getState().addToast({ message: 'Ephemeral projects are dev-preview only', variant: 'warning' });
+        useToastStore.getState().addToast({ title: 'Dev preview only', message: 'Ephemeral projects work only in the dev preview.', variant: 'warning' });
         return;
       }
       await useProjectStore.getState().loadProjects();
       await useProjectStore.getState().openProject(project.id);
-      useToastStore.getState().addToast({ message: `Created + opened ${project.name}`, variant: 'success' });
+      useToastStore.getState().addToast({ title: 'Project created', message: `"${project.name}" is open.`, variant: 'success' });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to create project: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't create project",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {
@@ -253,7 +266,7 @@ export function TestHarness() {
   const handleSeedChanges = async () => {
     const project = useProjectStore.getState().currentProject;
     if (!project) {
-      useToastStore.getState().addToast({ message: 'Open a project first to seed changes', variant: 'warning' });
+      useToastStore.getState().addToast({ title: 'No project open', message: 'Open a project first to seed changes.', variant: 'warning' });
       return;
     }
     const worktreePaths = useBoardStore.getState().tasks
@@ -264,16 +277,18 @@ export function TestHarness() {
     try {
       const result = await window.electronAPI.dev?.seedGitChanges(targets);
       if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding changes is dev-preview only', variant: 'warning' });
+        useToastStore.getState().addToast({ title: 'Dev preview only', message: 'Seeding changes works only in the dev preview.', variant: 'warning' });
         return;
       }
       useToastStore.getState().addToast({
-        message: `Seeded ${result.dir} into ${result.repos} repo${result.repos === 1 ? '' : 's'}: ${result.commits} commits, ${result.staged} staged, ${result.working} working`,
+        title: 'Changes seeded',
+        message: `${result.dir} in ${counted(result.repos, 'repo')}: ${result.commits} commits, ${result.staged} staged, ${result.working} working.`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed changes: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't seed changes",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {
@@ -290,24 +305,26 @@ export function TestHarness() {
   const handleSeedLargeConversation = async () => {
     const project = useProjectStore.getState().currentProject;
     if (!project) {
-      useToastStore.getState().addToast({ message: 'Open a project first to seed a large conversation', variant: 'warning' });
+      useToastStore.getState().addToast({ title: 'No project open', message: 'Open a project first to seed a large conversation.', variant: 'warning' });
       return;
     }
     setSeedingConversation(true);
     try {
       const result = await window.electronAPI.dev?.seedLargeConversation(LARGE_CONVERSATION_SEED_TURNS);
       if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding a large conversation is dev-preview only', variant: 'warning' });
+        useToastStore.getState().addToast({ title: 'Dev preview only', message: 'Seeding a large conversation works only in the dev preview.', variant: 'warning' });
         return;
       }
       useSessionStore.getState().setConversationSessionId(result.sessionId);
       useToastStore.getState().addToast({
-        message: `Seeded ${result.turnsAdded} turns (${result.totalTurns} total) into ${result.filePath}`,
+        title: 'Conversation seeded',
+        message: `Added ${result.turnsAdded} turns (${result.totalTurns} in all) to ${result.filePath}.`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed large conversation: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't seed large conversation",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {
@@ -326,17 +343,19 @@ export function TestHarness() {
     try {
       const result = await window.electronAPI.dev?.seedUsageData(USAGE_DATA_SEED_DAYS);
       if (!result) {
-        useToastStore.getState().addToast({ message: 'Seeding usage data is dev-preview only', variant: 'warning' });
+        useToastStore.getState().addToast({ title: 'Dev preview only', message: 'Seeding usage data works only in the dev preview.', variant: 'warning' });
         return;
       }
       void useUsageDashboardStore.getState().loadDashboardStats({ force: true });
       useToastStore.getState().addToast({
-        message: `Seeded ${result.sessions} sessions / ${result.turns} turns over ${result.days} days across ${result.projects} project${result.projects === 1 ? '' : 's'}`,
+        title: 'Usage data seeded',
+        message: `${result.sessions} sessions and ${result.turns} turns over ${result.days} days in ${counted(result.projects, 'project')}.`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed usage data: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't seed usage data",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {
@@ -354,7 +373,8 @@ export function TestHarness() {
       setSimulatingLowMemory(next);
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to simulate low memory: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't simulate low memory",
+        message: failureReason(error),
         variant: 'error',
       });
     }
@@ -369,7 +389,7 @@ export function TestHarness() {
   const handleSeedKnowledgeGraph = async () => {
     const dev = window.electronAPI.dev;
     if (!dev) {
-      useToastStore.getState().addToast({ message: 'Seeding the knowledge graph is dev-preview only', variant: 'warning' });
+      useToastStore.getState().addToast({ title: 'Dev preview only', message: 'Seeding the knowledge graph works only in the dev preview.', variant: 'warning' });
       return;
     }
     const pendingNote = (pendingChunks: number) => (pendingChunks > 0
@@ -392,23 +412,29 @@ export function TestHarness() {
         await searchWithSeededModel(mirrored.modelTag);
         await useBoardStore.getState().loadBoard();
         useToastStore.getState().addToast({
-          message: `Mirrored ${mirrored.documents} conversations / ${mirrored.chunks} chunks `
-            + `from "${mirrored.sourceProject}"${pendingNote(mirrored.pendingChunks)}`,
+          title: 'Knowledge graph seeded',
+          message: `Mirrored ${mirrored.documents} conversations and ${mirrored.chunks} chunks `
+            + `from "${mirrored.sourceProject}"${pendingNote(mirrored.pendingChunks)}.`,
           variant: 'success',
         });
         return;
       }
+      // Why the real index could not be mirrored goes to the log, so the toast
+      // stays one sentence.
+      console.info(`[test-harness] synthetic knowledge graph seed: ${mirrored.unavailable}`);
       const synthetic = await dev.seedKnowledgeGraph({ documentCount: KNOWLEDGE_GRAPH_SEED_DOCUMENTS });
       await searchWithSeededModel(synthetic.modelTag);
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
-        message: `${mirrored.unavailable}. Seeded ${synthetic.documents} synthetic conversations / `
-          + `${synthetic.chunks} chunks in ${synthetic.clusters} clusters instead${pendingNote(synthetic.pendingChunks)}`,
+        title: 'Synthetic knowledge graph seeded',
+        message: `${synthetic.documents} conversations and ${synthetic.chunks} chunks `
+          + `in ${synthetic.clusters} clusters${pendingNote(synthetic.pendingChunks)}.`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Failed to seed the knowledge graph: ${error instanceof Error ? error.message : 'unknown error'}`,
+        title: "Couldn't seed the knowledge graph",
+        message: failureReason(error),
         variant: 'error',
       });
     } finally {

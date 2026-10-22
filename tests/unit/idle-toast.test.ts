@@ -53,10 +53,11 @@ describe('resolveIdleToast', () => {
     });
   });
 
-  describe('message and variant', () => {
+  describe('title, message and variant', () => {
     it('names a finished turn for idle', () => {
       expect(resolveIdleToast(input({ state: 'idle' }))).toEqual({
-        message: '"Fix the drag ghost" finished its turn',
+        title: 'Agent finished',
+        message: '"Fix the drag ghost" is waiting on you.',
         variant: 'info',
         hasTask: true,
       });
@@ -64,7 +65,8 @@ describe('resolveIdleToast', () => {
 
     it('names the block for permission, and raises the variant', () => {
       expect(resolveIdleToast(input({ state: 'permission' }))).toEqual({
-        message: '"Fix the drag ghost" needs permission',
+        title: 'Needs permission',
+        message: '"Fix the drag ghost" is asking to run a tool.',
         variant: 'warning',
         hasTask: true,
       });
@@ -95,13 +97,14 @@ describe('resolveIdleToast', () => {
     // Staying silent there would drop a real notification.
     it('still fires, labelled with the short session id and no quotes around it', () => {
       expect(resolveIdleToast(input({ taskTitle: undefined }))).toEqual({
-        message: 'a1b2c3d4 finished its turn',
+        title: 'Agent finished',
+        message: 'a1b2c3d4 is waiting on you.',
         variant: 'info',
         hasTask: false,
       });
     });
 
-    it('reports hasTask false so the caller drops the Open action', () => {
+    it('reports hasTask false so the caller gives the card nothing to open', () => {
       expect(resolveIdleToast(input({ taskTitle: undefined }))?.hasTask).toBe(false);
       expect(resolveIdleToast(input())?.hasTask).toBe(true);
     });

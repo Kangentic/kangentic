@@ -2,8 +2,8 @@
  * UI tests for a workflow's tasks on the board (#732 boards 6, 7 and 8): the
  * workflow strip on a card, the To Do footer that says what a card waits for,
  * the card menu's workflow items and the rows the lock disables with their
- * reasons, a refused move (the toast with Open workflow, and the links
- * overlay), and New workflow from a To Do card.
+ * reasons, a refused move (the toast whose card opens the workflow, and the
+ * links overlay), and New workflow from a To Do card.
  *
  * Every reason asserted here is the sentence main refuses with
  * (`src/shared/workflow-refusals.ts`), asked through the same predicate
@@ -519,7 +519,7 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('a refused drag stays in its column, says why with Open workflow, and shows the card\'s links', async () => {
+  test('a refused drag stays in its column, says why in a toast that opens the workflow, and shows the card\'s links', async () => {
     // #414 waits in a human gate (Code Review starts no agent), so a person may
     // drag it on to Testing, the next column of its route, and nowhere else.
     const { browser, page } = await launch({ gateLanes: [3], lane414: 3 });
@@ -527,7 +527,11 @@ test.describe('Workflow tasks on the board', () => {
       await dragToColumn(page, 't414', 'Merge');
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: LOCKED });
       await expect(toast).toBeVisible();
-      await expect(toast.getByRole('button', { name: 'Open workflow' })).toBeVisible();
+      await expect(toast.getByTestId('toast-title')).toHaveText('Workflow controls this task');
+      await expect(toast.getByTestId('toast-body')).toHaveText(LOCKED);
+      // A timed toast has no button: the card itself opens the workflow, so it
+      // takes clicks. The click is the next test's; here the links stay up.
+      await expect(toast).toHaveCSS('cursor', 'pointer');
       await expect(page.locator('[data-swimlane-name="Code Review"] [data-task-id="t414"]')).toBeVisible();
 
       const overlay = byTestId(page, 'workflow-links-overlay');
@@ -551,7 +555,7 @@ test.describe('Workflow tasks on the board', () => {
     }
   });
 
-  test('main refusing a move the board allowed shows main\'s sentence, not a failure', async () => {
+  test('main refusing a move the board allowed shows main\'s sentence, not a failure, and the card opens the workflow', async () => {
     const { browser, page } = await launch({ state: 'paused' });
     try {
       // The workflow resumed in another window between the menu opening and the move.
@@ -560,8 +564,14 @@ test.describe('Workflow tasks on the board', () => {
       await byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]').filter({ hasText: 'Code Review' }).click();
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: LOCKED });
       await expect(toast).toBeVisible();
-      await expect(toast).not.toContainText('Failed to move task');
-      await expect(toast.getByRole('button', { name: 'Open workflow' })).toBeVisible();
+      await expect(toast.getByTestId('toast-title')).toHaveText('Workflow controls this task');
+      await expect(toast).toHaveAttribute('data-variant', 'info');
+      // Not the move-failure toast, whose title is "Couldn't move task".
+      expect(await toastCountRightNow(page, "Couldn't move task")).toBe(0);
+      // The card opens the workflow on this task.
+      await toast.click();
+      await expect(byTestId(page, 'workflows-view')).toBeVisible();
+      await expect(byTestId(page, 'workflow-inspector-title')).toContainText('Refuse to spawn past the hard cap');
     } finally {
       await browser.close();
     }

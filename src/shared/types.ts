@@ -4527,8 +4527,8 @@ export interface AppConfig {
    *  Retirable (with its migration block) once no supported install can still predate the
    *  release that introduced it, like `hasMigratedWindowLightDismissDefault` above. */
   hasPurgedSeededDiscoveredModels: boolean;
-  /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
-   *  dismissed suggestion does not reappear on the next app launch. Drained on task
+  /** Task IDs the automatic rename has already run for. Persisted so a restart never
+   *  renames a task twice. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
    *  size stays bounded by the live task count. */
   autoNameAskedTaskIds: string[];
@@ -7277,12 +7277,6 @@ export interface ElectronAPI {
     update: (input: TaskUpdateInput, projectId?: string | null) => Promise<Task>;
     delete: (id: string, projectId?: string | null) => Promise<void>;
     move: (input: TaskMoveInput, projectId?: string | null) => Promise<void>;
-    /**
-     * Cancel an in-flight spawn for a task (e.g. while it is parked in the
-     * git queue or fetching). Aborts the move's AbortController; the existing
-     * AbortError path clears spawn progress and rolls the move back.
-     */
-    cancelSpawn: (taskId: string) => Promise<void>;
     listArchived: () => Promise<Task[]>;
     /**
      * The newest `limit` archived tasks plus the total archived count. Cheap

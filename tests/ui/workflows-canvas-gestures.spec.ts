@@ -702,9 +702,10 @@ test.describe('Workflows canvas gestures', () => {
       for (let press = 0; press < 3; press += 1) await page.keyboard.press('ArrowRight');
 
       // The keys rest, the save goes out, and main refuses it: no change push follows.
-      const refusal = page.locator('[data-testid="toast"]').filter({ hasText: 'Could not save the layout' });
+      const refusal = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't save the layout" });
       await expect(refusal).toBeVisible();
-      await expect(refusal).toContainText('That workflow is no longer in this project.');
+      await expect(refusal.getByTestId('toast-title')).toHaveText("Couldn't save the layout");
+      await expect(refusal.getByTestId('toast-body')).toHaveText('That workflow is no longer in this project.');
 
       // The card was drawn where it was dropped, and is read back to where the workflow has it.
       const seen = await page.evaluate(() => (window as unknown as { __cardTransforms: string[] }).__cardTransforms);

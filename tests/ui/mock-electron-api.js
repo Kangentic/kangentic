@@ -1613,14 +1613,6 @@
           throw new Error(rejectAfterCommitMessage);
         }
       },
-      cancelSpawn: async function (taskId) {
-        // Record cancellations so UI tests can assert the stall toast's Cancel
-        // button wired through to the IPC layer.
-        if (typeof window !== 'undefined') {
-          if (!window.__mockCancelSpawnCalls) window.__mockCancelSpawnCalls = [];
-          window.__mockCancelSpawnCalls.push(taskId);
-        }
-      },
       listArchived: async function () {
         return withAttachmentCounts(visibleArchivedTasks());
       },

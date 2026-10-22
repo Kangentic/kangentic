@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeIpcError } from '../../src/renderer/lib/ipc-error';
+import { asSentence, describeIpcError } from '../../src/renderer/lib/ipc-error';
 
 /**
  * Observed live in a preview before this existed, on the branch-checkout guard:
@@ -42,5 +42,35 @@ describe('describeIpcError', () => {
     expect(describeIpcError(undefined)).toBe('Unknown error');
     expect(describeIpcError(new Error(''))).toBe('Unknown error');
     expect(describeIpcError(new Error("Error invoking remote method 'x': "), 'Move failed')).toBe('Move failed');
+  });
+});
+
+/** Every failure toast's body goes through this, so one rule holds for every caller. */
+describe('asSentence', () => {
+  it('ends a reason with a period once', () => {
+    expect(asSentence('Worktree setup failed')).toBe('Worktree setup failed.');
+    expect(asSentence('Worktree setup failed.')).toBe('Worktree setup failed.');
+  });
+
+  it('keeps a reason that already ends in a question or exclamation mark', () => {
+    expect(asSentence('Is the drive connected?')).toBe('Is the drive connected?');
+    expect(asSentence('Out of disk!')).toBe('Out of disk!');
+  });
+
+  it('capitalizes a plain lowercase first word', () => {
+    expect(asSentence('fatal: not a git repository')).toBe('Fatal: not a git repository.');
+    expect(asSentence('disk full')).toBe('Disk full.');
+  });
+
+  it('leaves a file or path at the start in its own case', () => {
+    expect(asSentence('kangentic.json is not valid JSON')).toBe('kangentic.json is not valid JSON.');
+    expect(asSentence('./scripts/setup.sh exited with code 1')).toBe('./scripts/setup.sh exited with code 1.');
+  });
+
+  it('trims, and falls back for an empty reason', () => {
+    expect(asSentence('  Worktree setup failed \n')).toBe('Worktree setup failed.');
+    expect(asSentence('')).toBe('No reason was given.');
+    expect(asSentence(null)).toBe('No reason was given.');
+    expect(asSentence('   ', 'Try again.')).toBe('Try again.');
   });
 });

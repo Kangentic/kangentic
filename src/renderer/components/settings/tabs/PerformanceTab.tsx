@@ -46,8 +46,11 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
       // shows the saved value for the moment the window is still up.
       void useConfigStore.getState().loadConfig();
     } catch (error) {
+      // The toast says what to do; the reason goes to the log.
+      console.error('Graphics acceleration restart failed:', error);
       useToastStore.getState().addToast({
-        message: `Kangentic could not restart: ${error instanceof Error ? error.message : String(error)}. Restart it to apply the change.`,
+        title: "Couldn't restart",
+        message: 'Restart Kangentic to apply the change.',
         variant: 'error',
       });
     } finally {

@@ -30,7 +30,6 @@ const ALLOWLIST_CHANNELS = new Set([
   'TASK_LIST_ARCHIVED',
   'TASK_LIST_ARCHIVED_PREVIEW',
   'TASK_GET_SPAWN_PROGRESS',
-  'TASK_CANCEL_SPAWN', // aborts a global per-task controller; no project lookup
   // Drains main's in-memory expired-conversation notice queue for the project it
   // names. It already takes the project explicitly and changes no task or DB row.
   'TASK_TAKE_CONVERSATION_EXPIRED',

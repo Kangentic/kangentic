@@ -123,9 +123,11 @@ test.describe('clicking a stale sidebar project', () => {
 
       await page.locator(`[data-testid="project-row-${PROJECT_B_ID}"]`).click();
 
-      // Positive signal the click actually drove the broken path.
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|Could not open/ }))
-        .toBeVisible({ timeout: 5000 });
+      // Positive signal the click actually drove the broken path: the
+      // not-found branch, whose refetch no longer lists the row.
+      const notAvailableToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Project not available' });
+      await expect(notAvailableToast).toBeVisible({ timeout: 5000 });
+      await expect(notAvailableToast.getByTestId('toast-body')).toHaveText('The list has been refreshed.');
 
       const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
       expect(openCalls).toEqual([PROJECT_B_ID]);
@@ -224,8 +226,9 @@ test.describe('clicking a stale sidebar project', () => {
 
       await page.locator(`[data-testid="rail-project-${PROJECT_B_ID}"]`).click();
 
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: /no longer available|Could not open/ }))
-        .toBeVisible({ timeout: 5000 });
+      const notAvailableToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Project not available' });
+      await expect(notAvailableToast).toBeVisible({ timeout: 5000 });
+      await expect(notAvailableToast.getByTestId('toast-body')).toHaveText('The list has been refreshed.');
 
       const openCalls = await page.evaluate(() => window.electronAPI.projects.__openCalls as string[]);
       expect(openCalls).toEqual([PROJECT_B_ID]);

@@ -6,8 +6,9 @@
  * at all for the human using the pane). Silently is the wrong default here:
  * an agent driving the pane can trigger a download the user never asked for,
  * so main pushes BROWSER_DOWNLOAD_DONE and this hook toasts it - a success
- * toast with a "Show in folder" action for a completed download, and a plain
- * warning naming the file for anything that didn't finish.
+ * toast whose card shows the file in its folder on a click for a completed
+ * download, and a plain warning naming the file for anything that didn't
+ * finish.
  *
  * The hook is mounted unconditionally in WindowLayer's BoardBridges (see
  * AppLayout.tsx: `<WindowLayer />` sits outside the `currentProject ?` branch),
@@ -34,7 +35,7 @@ test.afterAll(async () => {
 });
 
 test.describe('Browser pane download toast', () => {
-  test('toasts a completed download with a working "Show in folder" action', async () => {
+  test('toasts a completed download, and a click on the card shows it in its folder', async () => {
     await page.evaluate(() => {
       window.__mockBrowser?.emitDownloadDone({
         fileName: 'report.pdf',
@@ -43,10 +44,14 @@ test.describe('Browser pane download toast', () => {
       });
     });
 
-    const downloadToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Downloaded report.pdf' });
+    const downloadToast = page.locator('[data-testid="toast"]').filter({ hasText: 'report.pdf' });
     await expect(downloadToast).toBeVisible({ timeout: 5000 });
+    await expect(downloadToast.getByTestId('toast-title')).toHaveText('Downloaded');
+    await expect(downloadToast.getByTestId('toast-body')).toHaveText('report.pdf');
+    await expect(downloadToast).toHaveAttribute('data-variant', 'success');
 
-    await downloadToast.getByText('Show in folder').click();
+    // A timed toast has no button: the card itself opens the folder.
+    await downloadToast.click();
 
     await expect
       .poll(() =>
@@ -56,7 +61,7 @@ test.describe('Browser pane download toast', () => {
       .toContain('/mock/downloads/report.pdf');
   });
 
-  test('toasts an interrupted download as a warning naming the file, with no action', async () => {
+  test('toasts an interrupted download as a warning naming the file, with nothing to open', async () => {
     await page.evaluate(() => {
       window.__mockBrowser?.emitDownloadDone({
         fileName: 'archive.zip',
@@ -65,17 +70,22 @@ test.describe('Browser pane download toast', () => {
       });
     });
 
-    const warningToast = page.locator('[data-testid="toast"]')
-      .filter({ hasText: 'Download did not finish: archive.zip' });
+    const warningToast = page.locator('[data-testid="toast"]').filter({ hasText: 'archive.zip' });
     await expect(warningToast).toBeVisible({ timeout: 5000 });
+    await expect(warningToast.getByTestId('toast-title')).toHaveText("Download didn't finish");
+    await expect(warningToast.getByTestId('toast-body')).toHaveText('archive.zip');
+    await expect(warningToast).toHaveAttribute('data-variant', 'warning');
+    // A partial file has no folder to show, so the card opens nothing: it lets
+    // clicks through to what is under it rather than taking them.
+    await expect(warningToast).toHaveCSS('pointer-events', 'none');
     // One-shot count, not toHaveCount(0) - see toastCountRightNow in ./helpers.
-    // The trap reaches a CHILD too: if the action were wrongly rendered, the
+    // The trap reaches a CHILD too: if a button were wrongly rendered, the
     // whole toast would auto-dismiss inside the retry window and the child count
     // would reach 0 on its own.
-    expect(await warningToast.getByText('Show in folder').count()).toBe(0);
+    expect(await warningToast.getByTestId('toast-action').count()).toBe(0);
   });
 
-  test('a cancelled download also toasts as "did not finish"', async () => {
+  test('a cancelled download also toasts as "didn\'t finish"', async () => {
     // Same non-completed branch as 'interrupted' above (BrowserDownloadDone's
     // three-state union collapses to a binary completed/not-completed check
     // in the hook), but pinned separately since 'cancelled' is a real state
@@ -89,8 +99,9 @@ test.describe('Browser pane download toast', () => {
       });
     });
 
-    const warningToast = page.locator('[data-testid="toast"]')
-      .filter({ hasText: 'Download did not finish: draft.docx' });
+    const warningToast = page.locator('[data-testid="toast"]').filter({ hasText: 'draft.docx' });
     await expect(warningToast).toBeVisible({ timeout: 5000 });
+    await expect(warningToast.getByTestId('toast-title')).toHaveText("Download didn't finish");
+    await expect(warningToast).toHaveAttribute('data-variant', 'warning');
   });
 });

@@ -4,6 +4,7 @@ import { isActive, requiresUserInteraction } from '../../../shared/activity-stat
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { useProjectStore } from '../project-store';
 import { useToastStore } from '../toast-store';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import type { SessionStore } from './types';
 import { withoutSessionsIndexed } from './session-index';
 
@@ -425,13 +426,15 @@ export function createTransientSessionSlice(preserved: {
         const result = await window.electronAPI.sessions.injectSettings(input);
         if (!result.ok) {
           useToastStore.getState().addToast({
-            message: `Could not apply model/effort: ${result.reason}`,
+            title: "Couldn't apply model or effort",
+            message: asSentence(result.reason),
             variant: 'error',
           });
         }
       } catch (error) {
         useToastStore.getState().addToast({
-          message: `Could not apply model/effort: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          title: "Couldn't apply model or effort",
+          message: asSentence(describeIpcError(error, '')),
           variant: 'error',
         });
       }

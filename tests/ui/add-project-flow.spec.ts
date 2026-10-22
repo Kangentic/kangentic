@@ -71,9 +71,9 @@ test.describe('Add project flow', () => {
 
     await page.locator('[data-testid="welcome-open-project"]').click();
 
-    const errorToast = page.locator('[data-testid="toast"]')
-      .filter({ hasText: 'That folder could not be opened. It may have been moved or renamed.' });
+    const errorToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't open that folder" });
     await expect(errorToast).toBeVisible({ timeout: 5000 });
+    await expect(errorToast.getByTestId('toast-body')).toHaveText('It may have been moved or renamed.');
     await expect(errorToast).toHaveClass(/border-red-500/);
 
     const projectCount = (await page.evaluate(() => window.electronAPI.projects.list())).length;
@@ -97,10 +97,9 @@ test.describe('Add project flow', () => {
     // Failing to set up git must never block the open - the board must still load.
     await waitForBoard(page);
 
-    const warningToast = page.locator('[data-testid="toast"]').filter({
-      hasText: 'Could not set up git here. Tasks will share one working tree, and Kangentic cannot keep its own files out of your commits.',
-    });
+    const warningToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Git setup failed' });
     await expect(warningToast).toBeVisible({ timeout: 5000 });
+    await expect(warningToast.getByTestId('toast-body')).toHaveText('Tasks will share one working tree in this folder.');
     await expect(warningToast).toHaveClass(/border-yellow-500/);
 
     const projectCount = (await page.evaluate(() => window.electronAPI.projects.list())).length;
@@ -124,10 +123,9 @@ test.describe('Add project flow', () => {
     await page.locator('[data-testid="welcome-open-project"]').click();
     await waitForBoard(page);
 
-    const infoToast = page.locator('[data-testid="toast"]').filter({
-      hasText: 'Started a git repo in this folder. Make a first commit to give each task its own worktree; until then they share this one.',
-    });
+    const infoToast = page.locator('[data-testid="toast"]').filter({ hasText: 'Started a git repo' });
     await expect(infoToast).toBeVisible({ timeout: 5000 });
+    await expect(infoToast.getByTestId('toast-body')).toHaveText('Make a first commit so each task gets its own worktree.');
     await expect(infoToast).toHaveClass(/border-accent/);
 
     await dismissOnboardingChecklist(page);
@@ -185,12 +183,13 @@ test.describe('Add project flow', () => {
     // Positive signal the reopen actually ran and failed (openProject's own
     // toast), so the absence of the git toasts below is not just "nothing
     // ran yet".
-    await expect(
-      page.locator('[data-testid="toast"]').filter({ hasText: 'Could not open that project' }),
-    ).toBeVisible({ timeout: 5000 });
+    const reopenFailedToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't open project" });
+    await expect(reopenFailedToast).toBeVisible({ timeout: 5000 });
+    await expect(reopenFailedToast.getByTestId('toast-body')).toHaveText('Simulated reopen failure.');
 
-    // One-shot counts, not toHaveCount(0) - see toastCountRightNow.
-    expect(await toastCountRightNow(page, 'Started a git repo in this folder')).toBe(0);
-    expect(await toastCountRightNow(page, 'Could not set up git here')).toBe(0);
+    // One-shot counts, not toHaveCount(0) - see toastCountRightNow. They match the
+    // titles the two git toasts carry today, so they cannot pass on stale copy.
+    expect(await toastCountRightNow(page, 'Started a git repo')).toBe(0);
+    expect(await toastCountRightNow(page, 'Git setup failed')).toBe(0);
   });
 });

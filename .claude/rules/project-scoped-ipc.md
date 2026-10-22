@@ -39,7 +39,7 @@ The mutation set today: tasks `create`/`update`/`delete`/`move`/`unarchive`/`bul
 `bulkUnarchive`/`switchBranch`/`updateFromBase`/`setRuntimeOverride`/`resolvePr`/
 `setDetailViewState`; backlog `demote` (it deletes a board task, and the Agent Monitor demotes a
 task of a project the board is not on); sessions `spawn`/`suspend`/`resume`/`reset`/`reconcile`. Reads (`list`, `listArchived`, the `get*` probes) and
-by-session-id / project-agnostic channels (`kill`, `write`, `resize`, `cancelSpawn`, the transient
+by-session-id / project-agnostic channels (`kill`, `write`, `resize`, the transient
 session channels) are NOT stamped: a read against the wrong project shows stale data for a frame
 (reconciled by the warm cache), it does not corrupt the wrong project.
 

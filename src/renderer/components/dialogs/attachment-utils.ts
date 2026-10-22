@@ -1,6 +1,7 @@
 import { Image as ImageIcon, FileText, FileCode, File as FileIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useToastStore } from '../../stores/toast-store';
+import { asSentence } from '../../lib/ipc-error';
 
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
 
@@ -71,8 +72,9 @@ export function reserveNextPastedIndex(
  *
  * The main-process handler resolves '' on success and a non-empty error string
  * when it could not open the file, in which case it has ALREADY revealed the
- * file in the OS file manager - which is why only that branch says so. A
- * thrown error means the open never got that far, so it makes no such claim.
+ * file in the OS file manager - which is why only that branch says so, and
+ * that fallback is its whole body. A thrown error means the open never got
+ * that far, so it makes no such claim and its body is the reason.
  */
 export async function openAttachmentWithToast(
   filename: string,
@@ -82,14 +84,16 @@ export async function openAttachmentWithToast(
     const errorMessage = await invokeOpen();
     if (errorMessage) {
       useToastStore.getState().addToast({
-        message: `Couldn't open "${filename}": ${errorMessage}. Showing it in the file manager instead.`,
+        title: `Couldn't open "${filename}"`,
+        message: 'Showing it in the file manager instead.',
         variant: 'warning',
       });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     useToastStore.getState().addToast({
-      message: `Couldn't open "${filename}": ${message}`,
+      title: `Couldn't open "${filename}"`,
+      message: asSentence(message),
       variant: 'warning',
     });
   }

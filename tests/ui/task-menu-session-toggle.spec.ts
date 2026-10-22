@@ -50,7 +50,7 @@ import {
 
 test.describe.configure({ mode: 'parallel' });
 
-const DONE_REFUSAL = 'This task is complete. Move it out of Done to continue working on it.';
+const DONE_REFUSAL = 'The task is in Done.';
 
 /** Right-click a board card and wait for its menu. */
 async function openCardMenu(page: Page, lane: string, taskId: string): Promise<Locator> {
@@ -166,7 +166,8 @@ test.describe('Task menu session row on the board', () => {
       await resetIpcCallCounts(page);
       await menu.getByTestId('context-toggle-session').click();
 
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to suspend session' })).toContainText(failureReason);
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't pause session" });
+      await expect(toast.getByTestId('toast-body')).toHaveText(`${failureReason}.`);
       // The pause reached the mock before it threw, so the write did commit.
       expect(await suspendCalls(page)).toEqual([{ taskId, projectId: PROJECT_ID }]);
       await expect.poll(() => tasksListCalls(page)).toBeGreaterThan(0);

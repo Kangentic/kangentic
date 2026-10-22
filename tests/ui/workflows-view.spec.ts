@@ -907,8 +907,9 @@ test.describe('Workflows inspector', () => {
       await expect(byTestId(page, 'workflow-card-menu')).toBeVisible();
       await byTestId(page, 'workflow-card-menu').locator('[data-testid="context-delete-task"]').click();
 
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Failed to delete' });
-      await expect(toast).toHaveText('Failed to delete "Refuse to spawn past the hard cap": The session did not stop');
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't delete task" });
+      await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't delete task");
+      await expect(toast.getByTestId('toast-body')).toHaveText('"Refuse to spawn past the hard cap": The session did not stop.');
       // The refusal is the kill the delete asked for, and the delete went no further.
       expect(await page.evaluate(() => (window as unknown as { __killCalls: string[] }).__killCalls)).toEqual(['sess-t414']);
       expect(await page.evaluate(() => (window as unknown as { __mockTaskDeleteCallCount?: Record<string, number> }).__mockTaskDeleteCallCount?.t414 ?? 0)).toBe(0);

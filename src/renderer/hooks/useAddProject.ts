@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { Project } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
+import { asSentence } from '../lib/ipc-error';
 
 /**
  * Pick a folder and open it as a project, in one step.
@@ -46,7 +47,8 @@ export function useAddProject() {
       probe = await probePath(selectedPath);
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Could not read that folder. ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't read that folder",
+        message: asSentence(error instanceof Error ? error.message : 'Unknown error'),
         variant: 'error',
       });
       return;
@@ -61,7 +63,8 @@ export function useAddProject() {
 
     if (!probe.exists || !probe.isDirectory) {
       useToastStore.getState().addToast({
-        message: 'That folder could not be opened. It may have been moved or renamed.',
+        title: "Couldn't open that folder",
+        message: 'It may have been moved or renamed.',
         variant: 'error',
       });
       return;
@@ -81,7 +84,8 @@ export function useAddProject() {
       added = await openProjectByPath(selectedPath, { name: probe.suggestedName });
     } catch (error) {
       useToastStore.getState().addToast({
-        message: `Could not add that project. ${error instanceof Error ? error.message : 'Unknown error'}`,
+        title: "Couldn't add project",
+        message: asSentence(error instanceof Error ? error.message : 'Unknown error'),
         variant: 'error',
       });
       return;
@@ -96,7 +100,8 @@ export function useAddProject() {
     // than over the folder picker they have already moved on from.
     if (!git.ok) {
       useToastStore.getState().addToast({
-        message: 'Could not set up git here. Tasks will share one working tree, and Kangentic cannot keep its own files out of your commits.',
+        title: 'Git setup failed',
+        message: 'Tasks will share one working tree in this folder.',
         variant: 'warning',
       });
       return;
@@ -105,7 +110,8 @@ export function useAddProject() {
     // so once, here, rather than letting the first task move be where they find out.
     if (git.created) {
       useToastStore.getState().addToast({
-        message: 'Started a git repo in this folder. Make a first commit to give each task its own worktree; until then they share this one.',
+        title: 'Started a git repo',
+        message: 'Make a first commit so each task gets its own worktree.',
         variant: 'info',
       });
     }

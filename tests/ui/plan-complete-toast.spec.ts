@@ -137,7 +137,9 @@ test.describe('Plan Complete toast', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast.first()).toBeVisible();
-      await expect(toast.first()).toContainText(`Plan complete. Moved "${TASK_TITLE}" to next column`);
+      await expect(toast.first().getByTestId('toast-title')).toHaveText('Plan complete');
+      // The board on screen is the move's own, so the body names the target column.
+      await expect(toast.first().getByTestId('toast-body')).toHaveText(`Moved "${TASK_TITLE}" to Executing.`);
     } finally {
       await browser.close();
     }

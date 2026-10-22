@@ -103,7 +103,6 @@ const api: ElectronAPI = {
     update: (input, projectId) => ipcRenderer.invoke(IPC.TASK_UPDATE, input, projectId),
     delete: (id, projectId) => ipcRenderer.invoke(IPC.TASK_DELETE, id, projectId),
     move: (input, projectId) => ipcRenderer.invoke(IPC.TASK_MOVE, input, projectId),
-    cancelSpawn: (taskId) => ipcRenderer.invoke(IPC.TASK_CANCEL_SPAWN, taskId),
     listArchived: () => ipcRenderer.invoke(IPC.TASK_LIST_ARCHIVED),
     listArchivedPreview: (limit) => ipcRenderer.invoke(IPC.TASK_LIST_ARCHIVED_PREVIEW, limit),
     unarchive: (input, projectId) => ipcRenderer.invoke(IPC.TASK_UNARCHIVE, input, projectId),

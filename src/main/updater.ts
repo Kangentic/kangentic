@@ -302,17 +302,16 @@ export function isPrereleaseWithNoMatchingRelease(
 }
 
 /**
- * The sentence the renderer toasts verbatim when the app cannot update because
- * of where it lives. Composed here rather than in the renderer for the reason
- * write-failure-notice.ts composes its own: the condition is main's to detect,
- * and the renderer has no channel through which to learn anything else about it.
+ * The body the renderer toasts verbatim when the app cannot update because of
+ * where it lives, under its own "Updates blocked" title. Composed here rather
+ * than in the renderer for the reason write-failure-notice.ts composes its own:
+ * the condition is main's to detect, and the renderer has no channel through
+ * which to learn anything else about it.
  *
  * Squirrel's own text names Downloads, macOS Sierra and a GitHub issue. Ours
  * names the folder that fixes it and stops.
  */
-const READ_ONLY_VOLUME_MESSAGE =
-  'Kangentic cannot install updates while it runs from a read-only volume. '
-  + 'Move Kangentic to your Applications folder to keep it up to date.';
+const READ_ONLY_VOLUME_MESSAGE = 'Move Kangentic to Applications to keep it updated.';
 
 /**
  * Tell the user, once per app run, that this install can never update itself.

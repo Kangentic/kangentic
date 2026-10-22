@@ -286,41 +286,51 @@ test.describe('Task detail kebab: Update from base', () => {
   test('maps each TaskUpdateFromBaseResult status to its own toast', async () => {
     const worktreeWindowId = await openDetailWindow(page, WORKTREE_TASK_ID);
 
-    const cases: Array<{ name: string; result: TaskUpdateFromBaseResult; expectedText: string }> = [
+    // Each body is distinct, so it picks out this case's toast from the ones
+    // earlier cases left on screen; the title is then checked on that card.
+    const cases: Array<{ name: string; result: TaskUpdateFromBaseResult; expectedTitle: string; expectedBody: string }> = [
       {
         name: 'updated, plural commit count',
         result: { status: 'updated', baseBranch: 'main', commitCount: 3 },
-        expectedText: 'Updated from main: fast-forwarded 3 commits.',
+        expectedTitle: 'Updated from main',
+        expectedBody: 'Fast-forwarded 3 commits.',
       },
       {
         name: 'updated, singular commit count',
         result: { status: 'updated', baseBranch: 'main', commitCount: 1 },
-        expectedText: 'Updated from main: fast-forwarded 1 commit.',
+        expectedTitle: 'Updated from main',
+        expectedBody: 'Fast-forwarded 1 commit.',
       },
       {
         name: 'already-up-to-date',
         result: { status: 'already-up-to-date', baseBranch: 'main' },
-        expectedText: 'Already up to date with main.',
+        expectedTitle: 'Already up to date',
+        expectedBody: 'Nothing new on main.',
       },
       {
         name: 'cannot-ff',
         result: { status: 'cannot-ff', baseBranch: 'main', ahead: 2, behind: 5 },
-        expectedText: 'Cannot fast-forward: this branch has its own commits (2 ahead, 5 behind main). Rebase or merge in the session instead.',
+        expectedTitle: "Can't fast-forward",
+        expectedBody: 'Rebase or merge it in the session instead.',
       },
       {
         name: 'dirty-tree',
         result: { status: 'dirty-tree', baseBranch: 'main' },
-        expectedText: 'Cannot update: the worktree has uncommitted changes.',
+        expectedTitle: "Can't update from main",
+        expectedBody: 'The worktree has uncommitted changes.',
       },
       {
         name: 'fetch-failed',
+        // Only the reason's first line reaches the toast, made a sentence.
         result: { status: 'fetch-failed', baseBranch: 'main', reason: 'network unreachable\nverbose git trailer' },
-        expectedText: 'Could not fetch main from origin. network unreachable',
+        expectedTitle: "Couldn't fetch main",
+        expectedBody: 'Network unreachable.',
       },
       {
         name: 'no-remote',
         result: { status: 'no-remote', baseBranch: 'main' },
-        expectedText: 'No origin remote to fetch main from.',
+        expectedTitle: 'No origin remote',
+        expectedBody: 'There is no remote to fetch main from.',
       },
     ];
 
@@ -334,8 +344,10 @@ test.describe('Task detail kebab: Update from base', () => {
       // handler), so no closeKebab call is needed here.
       await page.locator('[data-testid="update-from-base-btn"]').click();
 
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: testCase.expectedText });
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: testCase.expectedBody });
       await expect(toast, `toast for ${testCase.name}`).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-title'), `title for ${testCase.name}`).toHaveText(testCase.expectedTitle);
+      await expect(toast.getByTestId('toast-body'), `body for ${testCase.name}`).toHaveText(testCase.expectedBody);
     }
   });
 });

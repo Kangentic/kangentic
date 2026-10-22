@@ -28,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -3090,11 +3090,8 @@ test.describe('Command Terminal', () => {
         // closeWindow are consecutive synchronous statements in handleTerminate with no
         // await between them, so once the window is confirmed gone above, any toast
         // this Stop click was going to add has already committed to the DOM - a single
-        // synchronous count read is enough.
-        const failureToastCount = await page.getByTestId('toast').filter({
-          hasText: 'Could not stop the terminal. Its process may still be running.',
-        }).count();
-        expect(failureToastCount).toBe(0);
+        // synchronous count read is enough. The title is the failure toast's own words.
+        expect(await toastCountRightNow(page, "Couldn't stop the terminal")).toBe(0);
       } finally {
         await browser.close();
       }
@@ -3122,10 +3119,10 @@ test.describe('Command Terminal', () => {
         const stopButton = page.getByTestId('command-bar-terminate-button');
         await stopButton.click();
 
-        const errorToast = page.getByTestId('toast').filter({
-          hasText: 'Could not stop the terminal. Its process may still be running.',
-        });
+        const errorToast = page.getByTestId('toast').filter({ hasText: "Couldn't stop the terminal" });
         await expect(errorToast).toBeVisible({ timeout: 5000 });
+        await expect(errorToast.getByTestId('toast-title')).toHaveText("Couldn't stop the terminal");
+        await expect(errorToast.getByTestId('toast-body')).toHaveText('Its process may still be running.');
 
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
       } finally {
@@ -3990,9 +3987,10 @@ test.describe('Command Terminal', () => {
 
         await page.keyboard.press('Control+Shift+P');
 
-        // The filter only finds the toast; the exact match below is the assertion.
+        // The filter only finds the toast; the exact match on the body is the assertion.
         const refusalToast = page.getByTestId('toast').filter({ hasText: 'did not start' });
-        await expect(refusalToast).toHaveText(SHELL_REFUSAL_SENTENCE, { timeout: 3000 });
+        await expect(refusalToast.getByTestId('toast-body')).toHaveText(SHELL_REFUSAL_SENTENCE, { timeout: 3000 });
+        await expect(refusalToast.getByTestId('toast-title')).toHaveText("Couldn't start Command Terminal");
 
         // The toast proves the window's mount effect ran and its catch fired, so
         // a count of 0 here means the window closed rather than never opened.
@@ -4038,7 +4036,8 @@ test.describe('Command Terminal', () => {
         await developButton.click();
 
         const refusalToast = page.getByTestId('toast').filter({ hasText: 'is already in use' });
-        await expect(refusalToast).toHaveText(SLOT_REFUSAL_SENTENCE, { timeout: 3000 });
+        await expect(refusalToast.getByTestId('toast-body')).toHaveText(SLOT_REFUSAL_SENTENCE, { timeout: 3000 });
+        await expect(refusalToast.getByTestId('toast-title')).toHaveText("Couldn't switch branch");
       } finally {
         await browser.close();
       }

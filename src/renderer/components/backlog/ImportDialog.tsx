@@ -365,9 +365,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       });
 
       const parts: string[] = [];
-      parts.push(`Imported ${result.imported} item${result.imported !== 1 ? 's' : ''}`);
+      parts.push(`${result.imported} imported`);
       if (result.skippedDuplicates > 0) {
-        parts.push(`${result.skippedDuplicates} already imported`);
+        parts.push(`${result.skippedDuplicates} already in the backlog`);
       }
       if (result.skippedAttachments > 0) {
         parts.push(`${result.skippedAttachments} attachment${result.skippedAttachments !== 1 ? 's' : ''} skipped`);
@@ -375,7 +375,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       if (result.detailUnavailable) {
         parts.push(`comments unavailable for ${result.detailUnavailable} item${result.detailUnavailable !== 1 ? 's' : ''}`);
       }
-      addToast({ message: parts.join(', '), variant: 'success' });
+      addToast({ title: 'Issues imported', message: `${parts.join(', ')}.`, variant: 'success' });
       loadBacklog();
       onClose();
     } catch (importError: unknown) {

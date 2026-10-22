@@ -89,10 +89,12 @@ test.describe('Attachment open failure', () => {
     await expect(chip).toBeVisible({ timeout: 5000 });
     await chip.locator('[data-testid="attachment-open"]').click();
 
+    // The handler already revealed the file in the file manager, so that
+    // fallback is the whole body. The OS error string is not repeated.
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'archive.bin' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText("Couldn't open");
-    await expect(toast).toContainText('No application is registered for this file type');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Couldn\'t open "archive.bin"');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Showing it in the file manager instead.');
 
     await dialog.locator('[data-testid="task-detail-close"]').click();
     await expect(dialog).not.toBeVisible({ timeout: 5000 });
@@ -115,7 +117,8 @@ test.describe('Attachment open failure', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'notes.bin' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText('Attachment not found');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Couldn\'t open "notes.bin"');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Attachment not found.');
     await expect(toast).not.toContainText('file manager');
 
     await dialog.locator('[data-testid="task-detail-close"]').click();
@@ -221,9 +224,8 @@ test.describe('Backlog attachment open failure', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'design-spec.bin' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText("Couldn't open");
-    await expect(toast).toContainText('No application is registered for this file type');
-    await expect(toast).toContainText('Showing it in the file manager instead.');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Couldn\'t open "design-spec.bin"');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Showing it in the file manager instead.');
 
     await closeBacklogEditDialog();
   });
@@ -251,7 +253,8 @@ test.describe('Backlog attachment open failure', () => {
 
     const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'notes-backlog.bin' });
     await expect(toast).toBeVisible({ timeout: 5000 });
-    await expect(toast).toContainText('Attachment not found');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Couldn\'t open "notes-backlog.bin"');
+    await expect(toast.getByTestId('toast-body')).toHaveText('Attachment not found.');
     await expect(toast).not.toContainText('file manager');
 
     await closeBacklogEditDialog();

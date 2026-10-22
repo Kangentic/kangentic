@@ -1,6 +1,6 @@
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
-import { describeIpcError } from '../lib/ipc-error';
+import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { sessionLifecyclePhase } from './task-progress';
 import { resumeBlockMessage, sessionToggleOffer } from '../../shared/session-resume-eligibility';
 import type { Session, SessionDisplayState, Task } from '../../shared/types';
@@ -41,11 +41,13 @@ export function sessionToggleRowFor(
   };
 }
 
-/** Main throws a refusal's copy verbatim, so the reason reads as guidance. */
-export function sessionToggleFailureMessage(direction: SessionToggleDirection, error: unknown): string {
-  const verb = direction === 'pause' ? 'suspend' : 'resume';
-  const reason = describeIpcError(error, '');
-  return reason ? `Failed to ${verb} session: ${reason}` : `Failed to ${verb} session`;
+/**
+ * The toast for a pause or resume that failed. Main throws a refusal's copy
+ * verbatim, so the reason is the body and reads as guidance.
+ */
+export function sessionToggleFailureToast(direction: SessionToggleDirection, error: unknown): { title: string; message: string } {
+  const title = direction === 'pause' ? "Couldn't pause session" : "Couldn't resume session";
+  return { title, message: asSentence(describeIpcError(error, '')) };
 }
 
 /**
@@ -55,7 +57,7 @@ export function sessionToggleFailureMessage(direction: SessionToggleDirection, e
  */
 export function toastIfReconnectedResume(priorSessionId: string | null, returned: Session | null): void {
   if (returned === null || returned.status !== 'running' || priorSessionId !== returned.id) return;
-  useToastStore.getState().addToast({ message: 'Reconnected to running session', variant: 'info' });
+  useToastStore.getState().addToast({ title: 'Reconnected', message: 'The session was already running.', variant: 'info' });
 }
 
 /**
@@ -83,7 +85,7 @@ export async function runSessionToggle(input: {
   } catch (error) {
     console.error('Toggle session failed:', error);
     useToastStore.getState().addToast({
-      message: sessionToggleFailureMessage(input.direction, error),
+      ...sessionToggleFailureToast(input.direction, error),
       variant: 'warning',
     });
     return;

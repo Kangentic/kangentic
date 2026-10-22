@@ -180,7 +180,9 @@ test.describe('Project Move', () => {
     });
     await openMoveDialog('/mock/new-home');
     await page.getByRole('button', { name: 'Move Folder', exact: true }).click();
-    await expect(page.getByText('Destination already exists: /mock/new-home/Mover')).toBeVisible();
+    const errorToast = page.getByTestId('toast').filter({ hasText: "Couldn't move project" });
+    await expect(errorToast).toBeVisible();
+    await expect(errorToast.getByTestId('toast-body')).toHaveText('Destination already exists: /mock/new-home/Mover.');
     // Progress card must be hidden because isMoving reverts to false in finally.
     await expect(page.getByTestId('project-move-progress')).toBeHidden();
   });
@@ -196,7 +198,9 @@ test.describe('Project Move', () => {
     });
     await openMoveDialog('/mock/new-home');
     await page.getByRole('button', { name: 'Move Folder', exact: true }).click();
-    await expect(page.getByText('the original copy remains at /mock/projects/Mover')).toBeVisible();
+    const warningToast = page.getByTestId('toast').filter({ hasText: 'Old folder not removed' });
+    await expect(warningToast).toBeVisible();
+    await expect(warningToast.getByTestId('toast-body')).toHaveText('The original copy remains at /mock/projects/Mover.');
   });
 });
 

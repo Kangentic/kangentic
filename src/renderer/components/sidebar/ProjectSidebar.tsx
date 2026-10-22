@@ -148,7 +148,8 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     await deleteProject(projectToDelete.id);
     setProjectToDelete(null);
     useToastStore.getState().addToast({
-      message: `Deleted project "${name}"`,
+      title: 'Project deleted',
+      message: `"${name}"`,
       variant: 'info',
     });
 

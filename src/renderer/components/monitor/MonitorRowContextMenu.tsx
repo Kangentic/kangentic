@@ -37,9 +37,10 @@ import { requestMonitorDetail } from './MonitorDetailLayer';
 import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
-import { describeIpcError } from '../../lib/ipc-error';
+import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
+import { openTaskFromNotification } from '../../utils/open-task-from-notification';
 
 interface MonitorRowContextMenuProps {
   row: MonitorSessionRow;
@@ -84,30 +85,33 @@ export function MonitorRowContextMenu({
    *  not be the open one - which also means they do not inherit the board slice's
    *  rollback-and-toast handling, so each one reports for itself. Without this the
    *  rejection reaches only the global `unhandledrejection` listener and the user
-   *  sees an unchanged row with no explanation. */
-  const reportActionFailure = (action: string, error: unknown): void => {
+   *  sees an unchanged row with no explanation. The title names the action
+   *  ("Couldn't move task"); a click on the card opens the task. */
+  const reportActionFailure = (failureTitle: string, error: unknown): void => {
     useToastStore.getState().addToast({
-      message: `Failed to ${action} "${row.taskTitle}": ${describeIpcError(error)}`,
+      title: failureTitle,
+      message: `"${row.taskTitle}": ${asSentence(describeIpcError(error))}`,
       variant: 'warning',
+      onOpen: () => openTaskFromNotification(row.projectId, row.taskId),
     });
   };
 
   /** Run one write, then refresh the rows and bring the board up to date. The
    *  resync runs however the write settles: a move can commit and then fail,
    *  and the board must still learn the committed half. */
-  const runWrite = (action: string, write: Promise<unknown>): void => {
+  const runWrite = (failureTitle: string, write: Promise<unknown>): void => {
     void write
       .then(refreshRows)
-      .catch((error) => reportActionFailure(action, error))
+      .catch((error) => reportActionFailure(failureTitle, error))
       .finally(() => resyncBoardAfterMonitorWrite(row.projectId));
   };
 
   const deleteTask = (): void => {
-    runWrite('delete', window.electronAPI.tasks.delete(row.taskId, row.projectId));
+    runWrite("Couldn't delete task", window.electronAPI.tasks.delete(row.taskId, row.projectId));
   };
 
   const sendToBacklog = (): void => {
-    runWrite('send to backlog', window.electronAPI.backlog.demote({ taskId: row.taskId }, row.projectId));
+    runWrite("Couldn't send task to backlog", window.electronAPI.backlog.demote({ taskId: row.taskId }, row.projectId));
   };
 
   const askFirst = (confirm: PendingConfirm): void => {
@@ -217,6 +221,7 @@ export function MonitorRowContextMenu({
       onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
         const disable = !resolved.task.automations_disabled;
         const input = { id: row.taskId, automations_disabled: disable };
+        const failureTitle = disable ? "Couldn't turn off automations" : "Couldn't turn on automations";
         // A row of the open project writes through the board store, so the card
         // under this overlay gains or loses its strip without a board reload. A
         // row of another project writes to the IPC, and the resync drops that
@@ -225,10 +230,10 @@ export function MonitorRowContextMenu({
         if (row.projectId === useProjectStore.getState().currentProject?.id) {
           void useBoardStore.getState().updateTask(input)
             .then(refreshRows)
-            .catch((error) => reportActionFailure(disable ? 'disable automations for' : 'enable automations for', error));
+            .catch((error) => reportActionFailure(failureTitle, error));
           return;
         }
-        runWrite(disable ? 'disable automations for' : 'enable automations for', window.electronAPI.tasks.update(input, row.projectId));
+        runWrite(failureTitle, window.electronAPI.tasks.update(input, row.projectId));
       } : undefined}
       // Opens the detail HERE, in edit mode - the same destination a plain row
       // click uses, so the menu never teleports the user somewhere else.
@@ -240,7 +245,7 @@ export function MonitorRowContextMenu({
         requestMonitorDetail(row.projectId, row.taskId);
       }}
       onMoveTo={(targetSwimlaneId) => {
-        runWrite('move', window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId));
+        runWrite("Couldn't move task", window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId));
       }}
       // The board card's rule: ask unless the task holds nothing to clean up or
       // the user turned the question off.
@@ -255,7 +260,7 @@ export function MonitorRowContextMenu({
       onArchive={() => {
         const doneLane = resolved.swimlanes.find((lane) => lane.role === 'done');
         if (!doneLane) return;
-        runWrite('archive', window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId));
+        runWrite("Couldn't archive task", window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId));
       }}
       onDelete={() => {
         if (useConfigStore.getState().config.skipDeleteConfirm) {

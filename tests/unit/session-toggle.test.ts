@@ -1,7 +1,7 @@
 /**
  * The card menu's Pause session / Resume session row: which row a task gets
  * (`sessionToggleRowFor`), the copy a failed toggle toasts
- * (`sessionToggleFailureMessage`), the "Reconnected" toast
+ * (`sessionToggleFailureToast`), the "Reconnected" toast
  * (`toastIfReconnectedResume`), and the click handler that ties them to the
  * session store (`runSessionToggle`).
  *
@@ -62,7 +62,7 @@ const reconcileIpc: Mock = vi.fn();
 // Import after the global stub so the store modules see the mocked window.
 import {
   runSessionToggle,
-  sessionToggleFailureMessage,
+  sessionToggleFailureToast,
   sessionToggleRowFor,
   toastIfReconnectedResume,
   type SessionToggleRow,
@@ -171,31 +171,37 @@ describe('sessionToggleRowFor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// sessionToggleFailureMessage
+// sessionToggleFailureToast
 // ---------------------------------------------------------------------------
 
-describe('sessionToggleFailureMessage', () => {
-  it('names the reason after a failed pause', () => {
-    expect(sessionToggleFailureMessage('pause', new Error('reason'))).toBe('Failed to suspend session: reason');
+describe('sessionToggleFailureToast', () => {
+  it('titles a failed pause and makes the reason its one-sentence body', () => {
+    expect(sessionToggleFailureToast('pause', new Error('reason'))).toEqual({
+      title: "Couldn't pause session",
+      message: 'Reason.',
+    });
   });
 
-  it('names the reason after a failed resume', () => {
-    expect(sessionToggleFailureMessage('resume', new Error('reason'))).toBe('Failed to resume session: reason');
+  it('titles a failed resume and keeps a reason that is already a sentence', () => {
+    expect(sessionToggleFailureToast('resume', new Error('The task is in Done.'))).toEqual({
+      title: "Couldn't resume session",
+      message: 'The task is in Done.',
+    });
   });
 
   it('drops the channel and class main decorates a rejection with', () => {
     const decorated = new Error("Error invoking remote method 'session:suspend': Error: PTY refused to stop");
-    expect(sessionToggleFailureMessage('pause', decorated)).toBe('Failed to suspend session: PTY refused to stop');
+    expect(sessionToggleFailureToast('pause', decorated).message).toBe('PTY refused to stop.');
   });
 
-  it('says only what failed when the error carries no message', () => {
-    expect(sessionToggleFailureMessage('pause', new Error(''))).toBe('Failed to suspend session');
-    expect(sessionToggleFailureMessage('resume', new Error(''))).toBe('Failed to resume session');
+  it('says no reason was given when the error carries no message', () => {
+    expect(sessionToggleFailureToast('pause', new Error(''))).toEqual({ title: "Couldn't pause session", message: 'No reason was given.' });
+    expect(sessionToggleFailureToast('resume', new Error(''))).toEqual({ title: "Couldn't resume session", message: 'No reason was given.' });
   });
 
-  it('says only what failed for a rejection that is not an Error', () => {
-    expect(sessionToggleFailureMessage('pause', 'refused')).toBe('Failed to suspend session');
-    expect(sessionToggleFailureMessage('resume', undefined)).toBe('Failed to resume session');
+  it('says no reason was given for a rejection that is not an Error', () => {
+    expect(sessionToggleFailureToast('pause', 'refused').message).toBe('No reason was given.');
+    expect(sessionToggleFailureToast('resume', undefined).message).toBe('No reason was given.');
   });
 });
 
@@ -232,8 +238,11 @@ function heldSession(): Session | undefined {
   return useSessionStore.getState()._sessionByTaskId.get(TASK_ID);
 }
 
-function toastMessages(): Array<{ message: string; variant: string }> {
-  return useToastStore.getState().toasts.map((toast) => ({ message: toast.message, variant: toast.variant }));
+const RECONNECTED_TOAST = { title: 'Reconnected', message: 'The session was already running.', variant: 'info' };
+const PAUSE_REFUSED_TOAST = { title: "Couldn't pause session", message: 'PTY refused to stop.', variant: 'warning' };
+
+function toastMessages(): Array<{ title: string | null; message: string; variant: string }> {
+  return useToastStore.getState().toasts.map((toast) => ({ title: toast.title, message: toast.message, variant: toast.variant }));
 }
 
 beforeEach(() => {
@@ -256,7 +265,7 @@ afterEach(() => {
 describe('toastIfReconnectedResume', () => {
   it('raises an info toast when main hands back the session already shown, running', () => {
     toastIfReconnectedResume(SESSION_ID, makeSession({ status: 'running' }));
-    expect(toastMessages()).toEqual([{ message: 'Reconnected to running session', variant: 'info' }]);
+    expect(toastMessages()).toEqual([RECONNECTED_TOAST]);
   });
 
   it('stays silent when the resume started a different session', () => {
@@ -307,7 +316,7 @@ describe('runSessionToggle: pause', () => {
 
       await runSessionToggle({ taskId: TASK_ID, direction: 'pause', projectId: PROJECT_ID, onSucceeded });
 
-      expect(toastMessages()).toEqual([{ message: 'Failed to suspend session: PTY refused to stop', variant: 'warning' }]);
+      expect(toastMessages()).toEqual([PAUSE_REFUSED_TOAST]);
       expect(onSucceeded).not.toHaveBeenCalled();
     });
 
@@ -326,7 +335,7 @@ describe('runSessionToggle: pause', () => {
 
       await runSessionToggle({ taskId: TASK_ID, direction: 'pause', projectId: PROJECT_ID });
 
-      expect(toastMessages()).toEqual([{ message: 'Failed to suspend session: PTY refused to stop', variant: 'warning' }]);
+      expect(toastMessages()).toEqual([PAUSE_REFUSED_TOAST]);
     });
 
     it('leaves the row paused when main has no live session to report', async () => {
@@ -361,7 +370,7 @@ describe('runSessionToggle: resume', () => {
 
     await runSessionToggle({ taskId: TASK_ID, direction: 'resume', projectId: PROJECT_ID });
 
-    expect(toastMessages()).toEqual([{ message: 'Reconnected to running session', variant: 'info' }]);
+    expect(toastMessages()).toEqual([RECONNECTED_TOAST]);
   });
 
   it('toasts the reason as a warning and does not tell the host when the resume fails', async () => {
@@ -371,7 +380,7 @@ describe('runSessionToggle: resume', () => {
 
     await runSessionToggle({ taskId: TASK_ID, direction: 'resume', projectId: PROJECT_ID, onSucceeded });
 
-    expect(toastMessages()).toEqual([{ message: 'Failed to resume session: Session could not be revived', variant: 'warning' }]);
+    expect(toastMessages()).toEqual([{ title: "Couldn't resume session", message: 'Session could not be revived.', variant: 'warning' }]);
     expect(onSucceeded).not.toHaveBeenCalled();
     expect(heldSession()?.status).toBe('suspended');
   });

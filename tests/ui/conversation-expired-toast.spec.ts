@@ -18,7 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -96,8 +96,12 @@ test.describe('task:conversationExpired push', () => {
 
       const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Fix login redirect' });
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText('started a new conversation because the one from');
-      await expect(toast).toContainText('expired.');
+      await expect(toast.getByTestId('toast-title')).toHaveText('New conversation');
+      // The date is formatted for the runner's locale and zone, so only the
+      // fixed parts of the sentence are pinned.
+      const body = toast.getByTestId('toast-body');
+      await expect(body).toContainText('"Fix login redirect" started fresh because its conversation from ');
+      await expect(body).toContainText(' expired.');
       await expect(toast).not.toContainText('pending message');
     } finally {
       await browser.close();
@@ -117,7 +121,7 @@ test.describe('task:conversationExpired push', () => {
       });
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Foreground Task' }))
         .toBeVisible({ timeout: 5000 });
-      await expect(page.locator('text=/Background Task/')).toHaveCount(0);
+      expect(await toastCountRightNow(page, 'Background Task')).toBe(0);
     } finally {
       await browser.close();
     }
@@ -134,7 +138,7 @@ test.describe('task:conversationExpired push', () => {
       });
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Barrier Task' }))
         .toBeVisible({ timeout: 5000 });
-      await expect(page.locator('text=/Held Task/')).toHaveCount(0);
+      expect(await toastCountRightNow(page, 'Held Task')).toBe(0);
 
       // The launch-time auto-open path: the project becomes current after its
       // recovery already reported the start-over.
@@ -189,7 +193,8 @@ test.describe('task:conversationExpired push', () => {
           .toHaveCount(1, { timeout: 5000 });
       }
       await expect(page.locator('[data-testid="toast"]')).toHaveCount(3);
-      await expect(page.locator('text=/3 tasks started/')).toHaveCount(0);
+      // No summary card: all three are the per-task toast.
+      await expect(page.getByTestId('toast-title')).toHaveText(['New conversation', 'New conversation', 'New conversation']);
     } finally {
       await browser.close();
     }
