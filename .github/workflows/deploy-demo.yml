@@ -97,8 +97,10 @@ jobs:
 
       # The smoke runs against dist/demo as built above, so it exercises the
       # exact bytes at the exact base path that ship, not a separate dev build.
+      # --fail-on-flaky-tests: a test that passes only on its CI retry fails the
+      # smoke, as in ci.yml (see the note above ci.yml's UI shards run step).
       - name: Smoke-test the built demo
-        run: npm run test:demo
+        run: npm run test:demo -- --fail-on-flaky-tests
 
       # configure-pages is the first step to notice that Pages is not enabled
       # for the repository, and it fails the run there. See the deploy job
