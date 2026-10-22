@@ -24,7 +24,7 @@ const { mockHandle, mockOn } = vi.hoisted(() => ({
 }));
 vi.mock('electron', () => ({ ipcMain: { handle: mockHandle, on: mockOn } }));
 
-vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
+vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 
 const { mockDiffServiceConstructor, mockGetFileContent, mockGetImageContent } = vi.hoisted(() => ({
   mockDiffServiceConstructor: vi.fn(),

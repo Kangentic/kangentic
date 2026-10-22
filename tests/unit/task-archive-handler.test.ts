@@ -80,7 +80,6 @@ vi.mock('electron', () => ({
 
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({})),
-  default: vi.fn(() => ({})),
 }));
 
 // DB layer - not exercised directly (getProjectRepos is mocked)

@@ -47,7 +47,7 @@ const WORKTREE_PATH = '/project/.kangentic/worktrees/7';
 
 vi.mock('simple-git', () => {
   const gitFactory = vi.fn((cwd: string) => (cwd === WORKTREE_PATH ? mockWorktreeGit : mockProjectGit));
-  return { simpleGit: gitFactory, default: gitFactory };
+  return { simpleGit: gitFactory };
 });
 
 // The worktree's merge runs through gitAt, so its hooks never get Crashpad's
@@ -307,8 +307,9 @@ describe('TASK_UPDATE_FROM_BASE', () => {
   it('opens the worktree through gitAt, never simple-git, so the merge\'s hooks get no Crashpad pipe name', async () => {
     // Both factories answer with the same per-path mock objects, so the
     // assertions above cannot tell which one the handler used. A merge started
-    // through simple-git inherits main's environment whole, and the hooks and
-    // merge drivers it runs would carry Chromium's handler pipe (child-env.ts);
+    // through simple-git inherits main's environment minus the git keys it
+    // guards, and the hooks and merge drivers it runs would carry Chromium's
+    // handler pipe (child-env.ts);
     // gitAt gives them an environment without it. This pins the factory.
     const context = makeContext();
     mockWorktreeGit.raw.mockImplementation(async (args: string[]) => (args[0] === 'rev-list' ? '3\t0\n' : ''));

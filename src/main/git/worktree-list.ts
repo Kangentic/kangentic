@@ -1,5 +1,5 @@
 import * as fs from 'node:fs';
-import simpleGit, { type SimpleGit } from 'simple-git';
+import { simpleGit, type SimpleGit } from 'simple-git';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { isSamePath } from '../../shared/paths';
 import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';

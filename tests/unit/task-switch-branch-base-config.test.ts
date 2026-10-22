@@ -56,7 +56,7 @@ vi.mock('electron', () => ({
 
 vi.mock('simple-git', () => {
   const gitFactory = vi.fn((cwd: string) => (cwd === worktreeLocation.path ? mockWorktreeGit : mockProjectGit));
-  return { simpleGit: gitFactory, default: gitFactory };
+  return { simpleGit: gitFactory };
 });
 
 // Path B carries uncommitted changes through gitAt (task-branch.ts), so the same

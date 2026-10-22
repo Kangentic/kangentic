@@ -12,7 +12,7 @@ const mockGit = {
 };
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 // The squash signal calls the PR connector registry; mock it so no `gh` spawns.

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { replacePathPrefix } from '../../shared/paths';
 
 const DEBOUNCE_MS = 500;

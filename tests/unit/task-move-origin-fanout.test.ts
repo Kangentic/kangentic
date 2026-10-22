@@ -52,7 +52,6 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({
     diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })),
   })),
-  default: vi.fn(() => ({})),
 }));
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }));

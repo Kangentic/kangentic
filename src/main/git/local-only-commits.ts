@@ -1,4 +1,4 @@
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { resolvePRByNumber } from '../pr/pr-registry';
 import type { PRState } from '../../shared/types';
 

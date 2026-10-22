@@ -22,7 +22,7 @@ const { mockGit } = vi.hoisted(() => {
 });
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 import { getFileHistory, parseFileHistoryLog } from '../../src/main/git/file-history';
@@ -118,7 +118,7 @@ describe('getFileHistory', () => {
 
   it('prefers worktreePath over projectPath as the working directory', async () => {
     mockGit.raw.mockResolvedValue('');
-    const simpleGit = (await import('simple-git')).default;
+    const simpleGit = (await import('simple-git')).simpleGit;
 
     await getFileHistory({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 

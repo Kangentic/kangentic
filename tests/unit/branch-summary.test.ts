@@ -37,7 +37,7 @@ const { mockGit, mockReadWorktreeHead } = vi.hoisted(() => {
 // Mock simple-git so no real git process is spawned.  The mock object is
 // shared and configured per-test via mockReturnValue / mockRejectedValue.
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 // Mock readWorktreeHeadUnqueued so we can drive currentBranch independently of
@@ -323,7 +323,7 @@ describe('getBranchSummary', () => {
 
     it('returns the all-empty summary when simpleGit itself throws synchronously', async () => {
       // simpleGit() constructor can throw if the path is badly formed on some platforms.
-      const { default: simpleGit } = await import('simple-git');
+      const { simpleGit } = await import('simple-git');
       vi.mocked(simpleGit).mockImplementationOnce(() => {
         throw new Error('not a git repository');
       });

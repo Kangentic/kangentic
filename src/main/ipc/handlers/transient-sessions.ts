@@ -361,7 +361,7 @@ export async function startCommandTerminal(
  * The checkout and merge run repository hooks, so git starts through `gitAt`
  * (`execFileAsync`), whose env never carries Crashpad's pipe name
  * (child-env.ts). simple-git can only be given an env through `.env()`, which
- * refuses one carrying `EDITOR` or `GIT_EDITOR`.
+ * refuses one carrying `EDITOR`, `VISUAL`, `PAGER` or any `GIT_*` key.
  */
 async function checkOutStartBranch(
   context: IpcContext,

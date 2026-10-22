@@ -80,7 +80,7 @@ vi.mock('../../src/main/git/node-modules-link', () => ({
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
-vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
+vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
 import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';

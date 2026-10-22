@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
