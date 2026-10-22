@@ -1,0 +1,50 @@
+[
+  {
+    "id": "codex-permission-flags",
+    "group": "pilot",
+    "question": "Which command-line flags does Kangentic pass to Codex CLI for the default permission mode, and why does every Codex launch carry check_for_update_on_startup=false?",
+    "expect": ["workspace-write", "on-request", "update"]
+  },
+  {
+    "id": "qwen-hook-mapping",
+    "group": "pilot",
+    "question": "In Kangentic's Qwen Code integration, which Kangentic event does Qwen's StopFailure hook map to, and which Qwen hook reports a tool call that ended in an error?",
+    "expect": ["turn_failed", "PostToolUseFailure"]
+  },
+  {
+    "id": "kimi-session-history",
+    "group": "pilot",
+    "question": "Where on disk does Kimi Code write the session history file that Kangentic reads, and how is the directory hash in that path computed?",
+    "expect": ["wire\\.jsonl", "\\.kimi[\\\\/]sessions", "md5"]
+  },
+  {
+    "id": "claude-json-writes",
+    "group": "pilot",
+    "question": "Before each Claude Code spawn, what does Kangentic change in the user's ~/.claude.json, and what serializes those writes?",
+    "expect": ["hasTrustDialogAccepted", "enabledMcpjsonServers", "diffSidebarOpen", "withClaudeJsonLock|\\.claude\\.json\\.lock"]
+  },
+  {
+    "id": "suspended-by-column",
+    "group": "control",
+    "question": "What does the suspended_by column on Kangentic's sessions table record, and which of its values does session recovery skip on relaunch?",
+    "expect": ["\\buser\\b", "\\bauto\\b", "\\bsystem\\b"]
+  },
+  {
+    "id": "move-task-to-project-params",
+    "group": "control",
+    "question": "What parameters does the kangentic_move_task_to_project MCP tool accept, and which of them are required?",
+    "expect": ["taskId", "targetProject", "\\bcolumn\\b", "required"]
+  },
+  {
+    "id": "resume-refused-states",
+    "group": "control",
+    "question": "For which task states does Kangentic refuse an in-place session resume, and what is the supported way to resume a completed task?",
+    "expect": ["to ?do|\\btodo\\b", "\\bdone\\b", "archived"]
+  },
+  {
+    "id": "idle-timeout-default",
+    "group": "control",
+    "question": "What is the default value of Kangentic's agent.idleTimeoutMinutes setting, and what happens to an agent that has waited that long?",
+    "expect": ["\\b30\\b", "paus"]
+  }
+]
