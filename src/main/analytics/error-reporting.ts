@@ -357,6 +357,12 @@ export function initErrorReporting(): void {
       // Every field spelled out and off: Sentry 8 collects whatever is left
       // out (src/shared/sentry-data-collection.ts).
       dataCollection: SENTRY_DATA_COLLECTION,
+      // Sentry 8 turned this on by default. The SDK's own childProcessIntegration
+      // reports every GPU and renderer exit through captureMessage, and a
+      // synthetic stack on those groups them by the SDK's handler instead of by
+      // their message, so distinct exit reasons would fold into one issue and
+      // every existing process-exit issue would start over under a new one.
+      attachStacktrace: false,
       integrations: (defaultIntegrations) =>
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
