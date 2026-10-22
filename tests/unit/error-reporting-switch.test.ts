@@ -350,6 +350,7 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(mocks.sentryMock.init).toHaveBeenCalledTimes(1);
       const options = mocks.sentryMock.init.mock.calls[0][0] as {
         dataCollection: unknown;
+        attachStacktrace: unknown;
         integrations: (defaultIntegrations: Array<{ name: string }>) => Array<{ name: string }>;
         ignoreErrors: Array<string | RegExp>;
       };
@@ -371,6 +372,9 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       });
       // The v7 switch is gone in Sentry 8; passing it would only read as a guard.
       expect(options).not.toHaveProperty('sendDefaultPii');
+      // Sentry 8 defaults this to true. The SDK's own process-exit messages
+      // would then group by its handler's stack instead of by their message.
+      expect(options.attachStacktrace).toBe(false);
       expect(options.ignoreErrors).toContain('write EAGAIN');
       expect(options.ignoreErrors).toContain('write EPIPE');
 
