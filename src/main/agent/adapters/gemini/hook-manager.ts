@@ -72,9 +72,13 @@ export const GEMINI_HOOK_SHELL: HookShell = 'sh-or-powershell';
  * to the background with Ctrl+B, answers `tool_response.llmContent`
  * "<untrusted_context>\nCommand moved to background (PID: N). ...". N is the
  * `pwsh.exe` (Windows) or shell running the command, inside Gemini's tree, so
- * the watcher sees it exit. The pattern is anchored at the start, where a
+ * the watcher sees it exit. The id sources are anchored at the start, where a
  * foreground command's result has "Output:", so output that quotes the phrase
- * never reads as a launch. Gemini has no stop tool. Gemini adds an AfterTool
+ * never reads as a launch. The first matches the wrapper with the single
+ * newline the capture shows (on Windows too); the second covers a result
+ * without the `<untrusted_context>` wrapper. N is read as id characters, not
+ * digits only: the anchored phrase is Gemini's own text, which only ever holds
+ * a PID there. Gemini has no stop tool. Gemini adds an AfterTool
  * `hookSpecificOutput.additionalContext` to the tool response inside
  * `<hook_context>`. Its payloads carry no tool id.
  */
@@ -84,10 +88,10 @@ export const GEMINI_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
     tools: ['run_shell_command'],
     when: [],
     unless: [],
-    idSources: [{
-      path: ['tool_response', 'llmContent'],
-      pattern: '^(?:<untrusted_context>\\s*)?Command moved to background \\(PID: (\\d+)\\)',
-    }],
+    idSources: [
+      { path: ['tool_response', 'llmContent'], before: '<untrusted_context>\nCommand moved to background (PID: ', after: ')', atStart: true },
+      { path: ['tool_response', 'llmContent'], before: 'Command moved to background (PID: ', after: ')', atStart: true },
+    ],
     commandPath: ['tool_input', 'command'],
   },
   hintReply: {
