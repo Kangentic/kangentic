@@ -2,12 +2,28 @@ import React, { useCallback } from 'react';
 import { CirclePause, Check, GitBranch } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
-import type { MonitorSessionRow } from '../../../shared/types';
-import { LabelPills, Pill } from '../Pill';
+import type { AppConfig, MonitorSessionRow } from '../../../shared/types';
+import { LabelPills } from '../Pill';
 import { Tooltip } from '../Tooltip';
 import { PrLink } from '../PrLink';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
+import { CardStrip, cardStripBleedClass } from '../board/CardStrip';
+import {
+  AUTOMATIONS_DISABLED_LABEL,
+  AUTOMATIONS_DISABLED_TIP,
+  AutomationsDisabledCardStrip,
+  AutomationsDisabledGlyph,
+} from '../board/AutomationsDisabledStrip';
+import {
+  BrowserAliveGlobe,
+  NoModelFooter,
+  PendingFooter,
+  TicketNumber,
+  taskCardFrameClass,
+  useLiveTelemetryUnsupported,
+} from '../board/task-card-view';
+import { ProjectStripLabel, WorkflowGlyph, WorkflowStepTrack, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import {
   CardMessageTrail,
   EXCERPT_CLAMP_CLASS,
@@ -17,37 +33,34 @@ import {
   trailModeFor,
   type ExcerptLines,
 } from '../board/CardMessageTrail';
-import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
+import { activityReasonIcon, formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
-import { bucketOf, formatMonitorStatus, monitorSlotKind, needsUser } from './monitor-view-model';
+import { bucketOf, formatMonitorStatus, monitorActivityMark, monitorSlotKind, needsUser } from './monitor-view-model';
 
 /**
  * One agent session, rendered as the board's task card.
  *
- * Deliberately close to TaskCard's anatomy - same title row (state glyph, bold
- * title, monospace ticket number), same PrLink, same LabelPills, and the SAME
- * footer component (ContextUsageFooter, shared with TaskCard so they cannot
- * drift). A user arriving here should recognise the object immediately rather
- * than learn a second card.
+ * The board card's anatomy, piece for piece: the same title row (state mark with
+ * its reason as the tip, bold title, monospace ticket number, the browser globe),
+ * the same PrLink, the same slot, the same LabelPills, the same frame (the dimmed,
+ * pulsing border while the agent waits on you) and the same footer components
+ * (`ContextUsageFooter`, `PendingFooter`), so a user arriving here recognises the
+ * object rather than learning a second card. The board card and this one are one
+ * design: do not change one without the other.
  *
- * Everything between the title row and the footer is now IDENTICAL to the board
- * card: the same slot, the same well, the same fixed heights off the same
- * `cardDensity`, the same live condition. Seven things used to differ for no
- * reason anyone could name (row count driven by label presence rather than
- * density, `mt-2` against `mt-1`, a fixed-height description, a looser
- * description test, a 15px glyph, no footer divider, density-blind padding) and
- * each has been moved onto the board card's value. Do not reintroduce one here
- * without changing the board card too: these are one design on two surfaces.
+ * What the board card never needs, because the lane it sits in answers it, rides
+ * in the strip across the top, the way the Workflows canvas card carries it: the
+ * project on the left (with the workflow, or a Command Terminal's branch), and the
+ * step track on the right, whose current step is the column's own marker. A held
+ * task stacks the board's "Automations disabled" strip above it. Nothing new gets
+ * a row of its own; that is what the eyebrow and its activity pill used to be.
  *
- * Three departures remain, each earning its place:
- *   - an eyebrow line naming the owning project and column (the cross-project bit)
- *   - the live activity line ("Idle for 5m - Claude is waiting for your input")
- *     as a right-aligned eyebrow pill, which is what this view exists to surface
- *   - a live OUTPUT PEEK as a THIRD slot source, which the board has no data for.
- *     `monitorSlotKind` owns the choice between the three; see it for the
- *     ordering and why a live row never falls back to its description.
+ * One departure remains, earning its place: a live OUTPUT PEEK as a third slot
+ * source, which the board has no data for. `monitorSlotKind` owns the choice
+ * between the three; see it for the ordering and why a live row never falls back
+ * to its description.
  */
 
 interface MonitorCardProps {
@@ -58,76 +71,83 @@ interface MonitorCardProps {
   onOpen: (row: MonitorSessionRow) => void;
   /** Right-click: the explicit "put it on the board" override and row utilities. */
   onContextMenu?: (row: MonitorSessionRow, position: { x: number; y: number }) => void;
-  /** Drop the project from the eyebrow when the SECTION already names it, so the
-   *  card does not repeat its own header. Mirrors MonitorTable's
-   *  `hideProjectColumn`, so both layouts make the same call. */
+  /** Drop the project from the list row when the SECTION already names it, so the
+   *  row does not repeat its own header. Mirrors MonitorTable's
+   *  `hideProjectColumn`. The full card keeps it in its strip regardless, as the
+   *  Workflows canvas card does, so every card has one shape. */
   hideProject?: boolean;
 }
 
 /**
- * The state glyph, matching TaskCard's vocabulary exactly.
+ * The state glyph's content, matching TaskCard's vocabulary exactly.
  *
- * One `IconSlot` wraps whatever the branching produces. The card is a `role="button"`
- * carrying other interactive children, so the glyph cannot be protected by neutralizing the
- * card's children wholesale - the slot scopes that to the glyph itself, which is exactly the
- * case it exists for. Wrapping once rather than per branch is what stops a future branch
- * from silently opting out.
+ * Switch on the BUCKET, not a second derivation. `bucketOf` already decides
+ * which section and summary count this row lands in, and re-deriving the glyph
+ * from `isWorking` disagreed with it: a running session that has not reported
+ * activity yet buckets as `working` but fails `isActive`, so it was counted
+ * under Active while its own card drew the paused glyph.
  *
- * The slot is 16 in every state, matching the board card's mark exactly and staying wider
- * than the two lucide branches draw at, so the glyph column no longer jitters as a session
- * finishes.
+ * The two ACTIVITY states use the shared branding marks, the same vocabulary a
+ * board card shows. A paused or queued session draws nothing on the card, as on
+ * the board, whose footer says so instead; the list row, which has no footer,
+ * keeps the lucide pause glyph. A finished session keeps its check, a state only
+ * the monitor shows.
  */
-function StateGlyph({ row }: { row: MonitorSessionRow }) {
-  return <IconSlot size={16} className="shrink-0">{stateGlyphContent(row)}</IconSlot>;
-}
-
-function stateGlyphContent(row: MonitorSessionRow) {
-  const title = row.activityReason ? formatActivityReasonText(row.activityReason) : undefined;
+function stateGlyphContent(
+  row: MonitorSessionRow,
+  variant: 'card' | 'row',
+  reasonText: string,
+): { glyph: React.ReactNode; name: string } | null {
   const bucket = bucketOf(row);
-
-  // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
-  // which section and summary count this row lands in, and re-deriving the glyph
-  // from `isWorking` disagreed with it: a running session that has not reported
-  // activity yet buckets as `working` but fails `isActive`, so it was counted
-  // under Active while its own card drew the paused glyph.
-  // The two ACTIVITY states use the shared branding marks, the same vocabulary a
-  // board card shows; only the non-activity states (finished, paused) stay lucide.
   if (bucket === 'needs-you' || bucket === 'working') {
     const needsYou = bucket === 'needs-you';
-    // A Command Terminal speaks the terminal marks, the identity it already wears
-    // in the title bar and the sidebar. That is now the ONLY thing separating it
-    // from a task agent in this card's body, since both show live terminal text;
-    // it replaces (rather than joins) the lucide SquareTerminal that used to sit
-    // beside the title, because one glyph carrying state AND identity beats two.
-    // Safe to swap: the terminal marks share the agent marks' 18-wide indicator
-    // keyline and 12px floor, so the title's x position does not move.
-    const mark = row.isCommandTerminal
-      ? (needsYou ? 'terminal-idle' : 'terminal-working')
-      : (needsYou ? 'agent-idle' : 'agent-working');
+    const mark = monitorActivityMark(row, needsYou);
+    const name = reasonText !== '' ? reasonText : (needsYou ? 'Needs you' : 'Working');
     // ONE render site with a computed `mark`, never a conditional pair of
     // siblings: React reconciles siblings positionally, so an idle/working flip
     // would unmount one and mount the other, restarting the march from zero
     // (the lesson pinned for TaskCard in tests/unit/activity-mark.test.ts).
-    // Labelled with aria-label and given no Tooltip: inside an IconSlot the mark's own
-    // <svg> root is not hit-testable, so a tip on it would never open (see IconSlot).
-    return (
-      <ActivityMark
-        mark={mark}
-        size={16}
-        className={needsYou ? 'text-attention' : 'text-active'}
-        aria-label={title ?? (needsYou ? 'Needs you' : 'Working')}
-      />
-    );
+    // Labelled with aria-label: inside an IconSlot the mark's own <svg> root is
+    // not hit-testable, so its tip goes on the slot (see IconSlot).
+    return {
+      glyph: <ActivityMark mark={mark} size={16} className={needsYou ? 'text-attention' : 'text-active'} aria-label={name} />,
+      name,
+    };
   }
   if (bucket === 'finished') {
-    return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
+    return { glyph: <Check size={14} className="text-fg-disabled" aria-label="Finished" />, name: 'Finished' };
   }
+  if (variant === 'card') return null;
+  const name = row.status === 'queued' ? 'Waiting to start' : 'Paused';
+  return { glyph: <CirclePause size={14} className="text-fg-faint" aria-label={name} />, name };
+}
+
+/**
+ * The state glyph in one `IconSlot`, wrapped once around whatever the branching
+ * produced. The card is a `role="button"` carrying other interactive children, so
+ * the glyph cannot be protected by neutralizing the card's children wholesale - the
+ * slot scopes that to the glyph itself, which is exactly the case it exists for.
+ * The slot is 16 in every state, matching the board card's mark exactly.
+ *
+ * On the card the slot carries the board's tip: the engine's reason, led by the
+ * reason's own glyph, or for a finished session when it finished. The list row
+ * prints that line beside the glyph, so it needs no tip.
+ */
+function StateGlyph({ row, variant }: { row: MonitorSessionRow; variant: 'card' | 'row' }) {
+  const reasonText = row.activityReason ? formatActivityReasonText(row.activityReason) : '';
+  const content = stateGlyphContent(row, variant, reasonText);
+  if (!content) return null;
+  const slot = <IconSlot size={16} className="shrink-0">{content.glyph}</IconSlot>;
+  if (variant === 'row') return slot;
+  const tip = row.activityReason ? reasonText : formatMonitorStatus(row);
   return (
-    <CirclePause
-      size={14}
-      className="text-fg-faint"
-      aria-label={row.status === 'queued' ? 'Waiting to start' : 'Paused'}
-    />
+    <Tooltip
+      label={tip}
+      icon={row.activityReason ? activityReasonIcon(row.activityReason) : undefined}
+      describe={tip !== content.name}
+    >
+      {slot}
+    </Tooltip>
   );
 }
 
@@ -222,14 +242,105 @@ function useCardContextMenu(row: MonitorSessionRow, onContextMenu: MonitorCardPr
   };
 }
 
+/** A workflow's icon in the workflow's own color and its name, as the board card's strip draws it. No pause glyph, paused or not. */
+function WorkflowLabel({ row, testId, className }: { row: MonitorSessionRow; testId: string; className: string }) {
+  if (!row.workflow) return null;
+  return (
+    <WorkflowStripLabel
+      icon={<WorkflowGlyph colorSlot={row.workflow.colorSlot} />}
+      label={row.workflow.title}
+      className={className}
+      testId={testId}
+    />
+  );
+}
+
+/**
+ * The card's strips: the board's "Automations disabled" strip on a held task,
+ * then the strip every card wears. One bleed wrapper around both, so they stack
+ * flush and the pair still meets the card's rounded top corners.
+ *
+ * The strip's left side says where the session works, as the Workflows canvas
+ * card does: the project, then the workflow for a workflow task, or the branch for
+ * a Command Terminal (which has no column). Its right side is the step track,
+ * whose current step is the column's own marker, so no column name is needed.
+ */
+function MonitorCardStrips({ row, density }: { row: MonitorSessionRow; density: AppConfig['cardDensity'] }) {
+  return (
+    <div className={cardStripBleedClass(density)}>
+      {row.automationsDisabled && <AutomationsDisabledCardStrip testId="monitor-card-automations-disabled" />}
+      <CardStrip data-testid="monitor-card-strip">
+        <span className="flex items-center gap-2.5 min-w-0">
+          {row.isCommandTerminal ? (
+            <span className="inline-flex items-center gap-1.5 min-w-0">
+              <ProjectStripLabel name={row.projectName} testId="monitor-card-project" />
+              {row.commandTerminalBranch && (
+                <>
+                  <span className="text-xs text-fg-disabled shrink-0">/</span>
+                  <WorkflowStripLabel
+                    icon={<GitBranch size={11} aria-hidden />}
+                    label={row.commandTerminalBranch}
+                    className="gap-1 text-fg-muted"
+                    testId="monitor-card-branch"
+                  />
+                </>
+              )}
+            </span>
+          ) : (
+            <>
+              <ProjectStripLabel name={row.projectName} testId="monitor-card-project" />
+              <WorkflowLabel row={row} testId="monitor-card-workflow" className="gap-[5px] text-fg-muted" />
+            </>
+          )}
+        </span>
+        {row.track && <WorkflowStepTrack {...row.track} currentStep="marker" />}
+      </CardStrip>
+    </div>
+  );
+}
+
+/**
+ * The list row's slice: what the full card's strip carries, turned on its side
+ * and closing the row at its right edge. The strip's shell, so it reads as the
+ * same object: a held task's "Automations disabled", or a workflow task's name and
+ * track. Nothing for any other row, which keeps the row as it is today.
+ */
+function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
+  const shell = 'shrink-0 flex items-center px-2.5 border-l border-edge bg-surface/30 text-xs text-fg-muted whitespace-nowrap';
+  if (row.automationsDisabled) {
+    return (
+      <Tooltip label={AUTOMATIONS_DISABLED_TIP}>
+        <span className={`${shell} gap-[5px]`} data-testid="monitor-row-automations-disabled">
+          <AutomationsDisabledGlyph />
+          <span>{AUTOMATIONS_DISABLED_LABEL}</span>
+        </span>
+      </Tooltip>
+    );
+  }
+  if (row.workflow) {
+    return (
+      <span className={`${shell} gap-2.5`} data-testid="monitor-row-workflow">
+        <WorkflowLabel row={row} testId="monitor-row-workflow-name" className="gap-[5px] text-fg-muted max-w-[22ch]" />
+        {row.track && <WorkflowStepTrack {...row.track} currentStep="marker" />}
+      </span>
+    );
+  }
+  return null;
+}
+
 /**
  * The compact list layout: one scannable line per session, no slot. Its own
  * component so a list of a hundred rows subscribes to nothing the slot needs;
  * the full card below is the only reader of the Card Preview setting and the
  * session's message trail.
+ *
+ * Every item is centered on the row, as the card's title row is. The one pair
+ * that sits on a shared baseline is the activity line and the elapsed time: an
+ * 11px time centered beside 12px text rode visibly above it.
  */
 function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: MonitorCardProps) {
   const activityLine = formatMonitorStatus(row);
+  const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
   return (
     <Tooltip label={`Open ${row.taskTitle}`}>
@@ -239,28 +350,66 @@ function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: M
         onClick={() => onOpen(row)}
         onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
         onContextMenu={handleContextMenu}
-        className="border border-edge rounded-md bg-surface-raised px-2.5 py-1.5 min-w-0 flex items-center gap-2 hover:border-edge-input transition-colors cursor-pointer select-none text-left"
+        className="border border-edge rounded-md bg-surface-raised min-w-0 flex items-stretch overflow-hidden hover:border-edge-input transition-colors cursor-pointer select-none text-left"
         data-testid="monitor-card"
         data-dense="true"
         data-session-id={row.sessionId}
         data-project-id={row.projectId}
       >
-        <StateGlyph row={row} />
-        {!hideProject && (
-          <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
-        )}
-        <span className="text-sm text-fg font-medium truncate min-w-0 flex-1">{row.taskTitle}</span>
-        <span className="shrink-0 font-mono text-xs text-fg-muted select-text">
-          {row.displayId === null ? '' : `#${row.displayId}`}
-        </span>
-        <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
-          {activityLine}
-        </span>
-        {row.status !== 'exited' && (
-          <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
-        )}
+        <div className="flex-1 min-w-0 px-2.5 py-1.5 flex items-center gap-2">
+          <StateGlyph row={row} variant="row" />
+          {!hideProject && (
+            <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
+          )}
+          {/* The ticket sits right after the title, as on the card's title row. */}
+          <span className="text-sm text-fg font-medium truncate min-w-0">{row.taskTitle}</span>
+          {showTaskNumbers && row.displayId !== null && (
+            <TicketNumber displayId={row.displayId} testId="monitor-row-display-id" className="select-text" />
+          )}
+          <span className="flex-1" />
+          <span className="inline-flex items-baseline gap-2 min-w-0" data-testid="monitor-row-activity">
+            <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
+              {activityLine}
+            </span>
+            {row.status !== 'exited' && (
+              <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
+            )}
+          </span>
+        </div>
+        <MonitorRowSlice row={row} />
       </div>
     </Tooltip>
+  );
+}
+
+/**
+ * The board card's footer states. `modelReported` is compared strictly with
+ * `false` so a row from a source that predates the field keeps the model footer
+ * rather than reading as a session still starting. An agent with no telemetry
+ * channel never reports a model, so it gets its adapter's label instead of a
+ * spinner that would never end, as on the board card.
+ */
+function MonitorCardFooter({ row, divider }: { row: MonitorSessionRow; divider: boolean }) {
+  const liveTelemetryUnsupported = useLiveTelemetryUnsupported(row.agentName);
+  if (row.status === 'queued') return <PendingFooter state="queued" divider={divider} testId="monitor-card-status" />;
+  if (row.status === 'suspended') return <PendingFooter state="paused" divider={divider} testId="monitor-card-status" />;
+  if (row.status === 'running' && row.modelReported === false) {
+    return (
+      <NoModelFooter liveTelemetryUnsupported={liveTelemetryUnsupported} resuming={false} divider={divider} testId="monitor-card-usage" />
+    );
+  }
+  // `'-'` on an unresolved model, matching MonitorTable's Model column for the
+  // same null. This slot names the MODEL; the table surfaces the agent in a
+  // separate Agent column, which the card has no room for.
+  return (
+    <ContextUsageFooter
+      modelName={row.modelDisplayName ?? '-'}
+      percent={row.contextPercent ?? 0}
+      windowKnown={row.contextPercent !== null}
+      unknownLabel="-"
+      testId="monitor-card-usage"
+      divider={divider}
+    />
   );
 }
 
@@ -269,9 +418,7 @@ function MonitorFullCard({
   labelColors,
   onOpen,
   onContextMenu,
-  hideProject = false,
 }: MonitorCardProps) {
-  const activityLine = formatMonitorStatus(row);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
 
   // The slot's content follows the Task tab's Card Preview, exactly as the board
@@ -280,6 +427,7 @@ function MonitorFullCard({
   // line does not re-render this card.
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
+  const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const messageTrail = useSessionStore(
     useCallback(
       (state: ReturnType<typeof useSessionStore.getState>) => state.sessionMessageTrails[row.sessionId],
@@ -287,13 +435,15 @@ function MonitorFullCard({
     ),
   );
   // The board card's clamp, off the same setting and through the same helper,
-  // rather than a row count this card decided for itself. See the note on
-  // `MonitorFullCard` above.
-  const isComfortable = cardDensity === 'comfortable';
+  // rather than a row count this card decided for itself.
+  const isCompact = cardDensity === 'compact';
   const slotRows = excerptLinesFor(cardDensity);
   const trailMode = trailModeFor(cardPreview);
   const hasTrail = Boolean(messageTrail && messageTrail.length > 0);
   const slotKind = monitorSlotKind(row, trailMode, hasTrail);
+  // The board card's rule: the agent's well closes its own edge, so the footer's
+  // rule goes when the trail sits right above it with no labels between.
+  const footerDivider = !(slotKind === 'trail' && row.labels.length === 0);
 
   return (
     <Tooltip label={`Open ${row.taskTitle}`}>
@@ -303,68 +453,30 @@ function MonitorFullCard({
         onClick={() => onOpen(row)}
         onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
         onContextMenu={handleContextMenu}
-        className={`border border-edge rounded-md bg-surface-raised ${isComfortable ? 'p-3' : 'p-2.5'} min-w-0 flex flex-col cursor-pointer select-none transition-colors hover:border-edge-input text-left`}
+        // The board card's frame: its padding by density, and while the agent
+        // waits on you, its dimmed border and slow pulse.
+        className={`${taskCardFrameClass({ isHighlighted: false, isIdle: needsUser(row) }, cardDensity)} min-w-0 flex flex-col cursor-pointer select-none transition-colors text-left`}
         data-testid="monitor-card"
         data-session-id={row.sessionId}
         data-project-id={row.projectId}
       >
-        {/* Eyebrow: the cross-project identity the board card never needs, plus the
-            live status as a right-aligned pill. The status sits up here rather than
-            at the card's foot so it lands on a consistent line across a grid of
-            cards with different description lengths - you scan one column of pills
-            instead of hunting the bottom edge of each card. */}
-        <div className="flex items-center gap-1.5 min-w-0 text-[11px] text-fg-muted mb-1" data-testid="monitor-card-origin">
-          {!hideProject && <span className="truncate min-w-0">{row.projectName}</span>}
-          {/* One slot, one question: where is this session working? A task answers
-              with its column; a Command Terminal has none, so it answers with its
-              branch. Leaving it blank put the terminal's title under an empty row,
-              which read as a rendering fault next to its neighbours. The glyph is
-              what keeps a branch called "main" from being mistaken for a column
-              called "main". */}
-          {row.isCommandTerminal ? row.commandTerminalBranch && (
-            <>
-              {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
-              <GitBranch size={11} className="shrink-0" aria-hidden />
-              <span className="truncate min-w-0" data-testid="monitor-card-branch">{row.commandTerminalBranch}</span>
-            </>
-          ) : row.columnName && (
-            <>
-              {!hideProject && <span className="text-fg-disabled shrink-0">/</span>}
-              <span className="truncate min-w-0">{row.columnName}</span>
-            </>
-          )}
-          {activityLine && (
-            // The whole line on hover: the pill cuts it at 22 characters.
-            <Tooltip label={activityLine} describe={false}>
-              <Pill
-                size="xs"
-                className={`ml-auto shrink-0 max-w-[22ch] ${needsUser(row)
-                  ? 'bg-attention/10 text-attention'
-                  : 'bg-surface-hover/60 text-fg-muted'}`}
-                data-testid="monitor-card-activity"
-              >
-                <span className="truncate select-text">{activityLine}</span>
-              </Pill>
-            </Tooltip>
-          )}
-        </div>
+        <MonitorCardStrips row={row} density={cardDensity} />
 
         {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
             its numbered name stands in for a title + ticket, and its terminal-shaped
             state glyph is what marks it as not-a-task. */}
         <div className="flex items-center gap-1.5">
-          <StateGlyph row={row} />
+          <StateGlyph row={row} variant="card" />
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="monitor-card-title">
             {row.taskTitle}
           </div>
-          {row.displayId !== null && (
-            <span className="shrink-0 font-mono text-xs text-fg-muted select-text" data-testid="monitor-card-display-id">
-              #{row.displayId}
-            </span>
+          {showTaskNumbers && row.displayId !== null && (
+            <TicketNumber displayId={row.displayId} testId="monitor-card-display-id" className="select-text" />
           )}
+          {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" />}
         </div>
 
-        {row.prUrl && (
+        {!isCompact && row.prUrl && (
           <div className="flex items-center gap-2 mt-1.5">
             <PrLink
               prUrl={row.prUrl}
@@ -412,30 +524,15 @@ function MonitorFullCard({
           </div>
         )}
 
-        {/* Every element above is a fixed height (titles and the eyebrow truncate
-            rather than wrap, and the peek no longer grows), so this absorbs only the
-            small residual between a labelled card and an unlabelled one and keeps
-            the footers on one line across the row. */}
+        {/* Every element above is a fixed height (titles truncate rather than wrap,
+            and the peek does not grow), so this absorbs only the residual between a
+            labelled card and an unlabelled one, or a held card's extra strip, and
+            keeps the footers on one line across the row. */}
         <div className="flex-1" />
 
-        {/* The board card's own footer component, not a copy of it, and now with
-            its rule on for the same reason the board card has one. It used to be
-            off here on the grounds that the peek's well already closed the content
-            region, which stopped being a reason the moment a card could show a
-            description instead and land with nothing between its text and the
-            model line. */}
-        {/* `'-'` on an unresolved model, matching MonitorTable's Model column for the
-            same null. This slot names the MODEL; the table surfaces the agent in a
-            separate Agent column, which the card has no room for. If agent identity
-            is ever wanted here, the helper documented for a model-slot fallback is
-            `agentShortName` ("Claude"), not `agentDisplayName` ("Claude Code"). */}
-        <ContextUsageFooter
-          modelName={row.modelDisplayName ?? '-'}
-          percent={row.contextPercent ?? 0}
-          windowKnown={row.contextPercent !== null}
-          unknownLabel="-"
-          testId="monitor-card-usage"
-        />
+        {/* The board card's footer states, through the board's own components.
+            Compact density drops the footer, as the board card does. */}
+        {!isCompact && <MonitorCardFooter row={row} divider={footerDivider} />}
       </div>
     </Tooltip>
   );

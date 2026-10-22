@@ -1,14 +1,12 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Pause, Workflow as WorkflowIcon } from 'lucide-react';
 import type { AppConfig, Task } from '../../../shared/types';
 import { boardEnds, routeSteps, taskPlace } from '../../../shared/workflow-route';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { boardWaiting, boardWorkflowSource, toBoardWorkflow, type BoardWorkflow } from '../../utils/board-workflow';
-import { workflowColor } from '../workflows/workflow-graph';
-import { WorkflowCardStrip, WorkflowStripLabel } from '../workflows/WorkflowStrip';
+import { WorkflowCardStrip, WorkflowGlyph, WorkflowStripLabel } from '../workflows/WorkflowStrip';
 import { TaskCardBody, WorkflowWaitingBar, type TaskCardViewModel } from './task-card-view';
 import { useCardLinksPreview } from './card-links-preview';
 import { cardStripBleedClass } from './CardStrip';
@@ -73,13 +71,13 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
       ref={stripRef}
     >
       <WorkflowCardStrip
+        // No pause glyph for a paused workflow (2026-10-21): at 11px it read as
+        // stray bars, and the Agent Monitor's strip draws none. A paused task in
+        // To Do still says "Paused" in its footer.
         leading={(
           <WorkflowStripLabel
-            icon={<WorkflowIcon size={12} strokeWidth={2} style={{ color: workflowColor(workflow.colorSlot) }} />}
+            icon={<WorkflowGlyph colorSlot={workflow.colorSlot} />}
             label={workflow.title}
-            labelTrailing={workflow.state === 'paused'
-              ? <Pause size={11} className="text-fg-faint" aria-label="Paused" data-testid="workflow-card-paused" />
-              : null}
             className="gap-[5px] text-fg-muted"
           />
         )}

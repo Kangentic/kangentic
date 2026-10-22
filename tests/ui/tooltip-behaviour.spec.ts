@@ -824,24 +824,28 @@ const MONITOR_PRE_CONFIG = `
   ];
 `;
 
-test('the Monitor card activity pill stays a plain span under its tip', async () => {
+test("the Monitor card's state mark carries the status line as its tip, on the slot that takes the pointer", async () => {
+  // The card's activity pill is gone: as on the board card, the line rides the
+  // mark's tip. The mark sits in an IconSlot, whose children take no pointer, so
+  // the Tooltip must wrap the slot. A tip on the mark itself would never open.
   const { browser, page } = await launchPage({
     beforeLoad: async (target) => { await target.addInitScript(MONITOR_PRE_CONFIG); },
   });
   try {
     await page.locator('[data-testid="agent-monitor-button"]').click();
     await page.locator('[data-testid="monitor-grid"]').waitFor({ state: 'visible', timeout: 10000 });
-    const pill = page.locator('[data-testid="monitor-card-activity"]');
-    await expect(pill).toHaveText(/^Finished/);
-    expect((await readPill(pill)).tagName).toBe('SPAN');
-    // The card around it is clickable, so the cursor is inherited and says nothing: Pill adds
-    // its own `cursor-pointer` class only when it renders as a button.
-    await expect(pill).not.toHaveClass(/cursor-pointer/);
+    const card = page.locator('[data-testid="monitor-card"][data-session-id="sess-tip-monitor"]');
+    await expect(card.locator('[data-testid="monitor-card-activity"]')).toHaveCount(0);
 
-    // It still has its tip: the whole line the pill cuts short.
+    // A finished session has no activity reason, so its tip is the status line.
+    const mark = card.getByLabel('Finished', { exact: true });
+    await expect(mark).toBeVisible();
+    const slot = mark.locator('xpath=..');
+    await expect(slot).toHaveAccessibleDescription(/^Finished /);
+
     await installTipLog(page);
-    await pill.hover();
-    await expect(page.locator(TIP)).toHaveText((await pill.textContent()) ?? '');
+    await slot.hover();
+    await expect(page.locator(TIP)).toHaveText(/^Finished /);
   } finally {
     await browser.close();
   }

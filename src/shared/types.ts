@@ -3183,8 +3183,12 @@ export const DEFAULT_PERMISSIONS: AgentPermissionEntry[] = [
   { mode: 'bypassPermissions', label: 'Bypass (Unsafe)' },
 ];
 
-/** Get label for a mode from a permissions list. */
-export function getPermissionLabel(permissions: AgentPermissionEntry[], mode: PermissionMode): string {
+/**
+ * Get label for a mode from a permissions list. Takes any string, since a stored
+ * mode can predate the list or belong to another agent; an unknown one reads back
+ * as itself.
+ */
+export function getPermissionLabel(permissions: AgentPermissionEntry[], mode: string): string {
   return permissions.find((entry) => entry.mode === mode)?.label ?? mode;
 }
 
@@ -3626,6 +3630,20 @@ export interface MonitorLastEvent {
   detail: string | null;
 }
 
+/** A monitor row's workflow: what the strip and the Workflow column draw. */
+export interface MonitorRowWorkflow {
+  id: string;
+  title: string;
+  colorSlot: number;
+}
+
+/** A monitor row's step track, the inputs `WorkflowStepTrack` draws from. */
+export interface MonitorRowTrack {
+  steps: WorkflowRouteStep[];
+  ends: WorkflowBoardEnds | null;
+  place: WorkflowTaskPlace;
+}
+
 export interface MonitorSessionRow {
   sessionId: string;
   projectId: string;
@@ -3659,22 +3677,43 @@ export interface MonitorSessionRow {
   /** The task's #N ticket number; null when the task row could not be resolved. */
   displayId: number | null;
   /** Swimlane (column) name the task currently sits in. Empty for a Command
-   *  Terminal, which is not on the board at all. */
+   *  Terminal, which is not on the board at all. The table's Column cell and the
+   *  sort read it; a card names the column through `track`'s current step. */
   columnName: string;
   /**
    * Branch a Command Terminal is working on. Null for a task agent.
    *
-   * The card's eyebrow is a breadcrumb answering "where is this session
-   * working". For a task that is its column; a terminal has none, which left the
-   * slot blank and the title sitting under a gap. The branch is the honest
-   * analogue: it is a location rather than a label, and it is what the Command
-   * Terminal's own window header shows via its branch picker.
+   * A card's strip says where the session works: a task through its step track,
+   * a terminal (which has no column) through its branch, the location the
+   * Command Terminal's own window header shows via its branch picker.
    *
    * Deliberately NOT populated for task agents even though a worktree-backed task
-   * has a branch too. Its column is the more useful breadcrumb there, and the
-   * eyebrow only has room for one.
+   * has a branch too. Its track is the more useful answer there.
    */
   commandTerminalBranch: string | null;
+  /**
+   * The task's column automations are disabled, as `canTaskRunAutomations`
+   * answers, so the card and the row wear the board's "Automations disabled"
+   * mark. Always false for a Command Terminal, which has no task, and for a
+   * workflow task, whose workflow's Pause holds it instead.
+   */
+  automationsDisabled: boolean;
+  /** The task's workflow, for the strip and the table's Workflow column. Null outside a workflow, for a finished workflow, and for a Command Terminal. */
+  workflow: MonitorRowWorkflow | null;
+  /**
+   * The step track a card draws: a workflow task's route, or for any other task
+   * its board's columns in order (`routeSteps` over the board). Null for a
+   * Command Terminal. Plain data, so main computes it once per snapshot.
+   */
+  track: MonitorRowTrack | null;
+  /**
+   * The agent has reported its model. False while `modelDisplayName` is only the
+   * spawn-time `applied_model` fallback (a raw id) or absent, which is when the
+   * board card's footer says "Starting agent..." instead of a model name.
+   */
+  modelReported: boolean;
+  /** A browser is running for this task in any state (showing, hidden, parked, popped out, or offscreen), for the card's globe. */
+  browserRunning: boolean;
   labels: string[];
   prUrl: string | null;
   prNumber: number | null;

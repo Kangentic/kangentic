@@ -18,6 +18,9 @@
  *   writing to the ROW's project, not the open board's. A row of the OPEN project
  *   writes through the board store, so the card under the overlay gains its strip
  *   too. A row of a workflow task is offered no switch.
+ * - The Agent Monitor marks a held task in all three of its layouts: the board's
+ *   strip on the card, a slice closing the list row, and a Disabled chip in the
+ *   table's Automations column. A Command Terminal has no task and carries none.
  * - A write the desktop rejects reaches the user as a toast with the plain
  *   sentence main wrote, not Electron's "Error invoking remote method" wrapper, from
  *   the card menu and from the monitor menu alike. The card is left as it was.
@@ -743,6 +746,124 @@ test.describe('per-task automations switch: the Agent Monitor row menu', () => {
       const toggle = cardMenu.getByTestId('context-toggle-automations');
       await expect(toggle).toHaveText('Enable automations');
       await expect(toggle).toHaveAttribute('data-automations-disabled', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('per-task automations switch: the Agent Monitor marks a held task', () => {
+  const HELD_SESSION = 'sess-ad-held';
+  const ORDINARY_SESSION = 'sess-ad-ordinary';
+  const TERMINAL_SESSION = 'sess-ad-terminal';
+
+  /** One held task, one ordinary task, and a Command Terminal, which has no automations to hold. */
+  function monitorRowsScript(): string {
+    const base = {
+      projectId: PROJECT_ID, projectName: PROJECT_NAME, outputPeek: [],
+      columnName: 'Executing', commandTerminalBranch: null, labels: [], prUrl: null, prNumber: null, prState: null,
+      agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'medium', permissionMode: 'auto',
+      startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
+      status: 'running', activity: 'thinking', activityReason: null,
+      lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false,
+      workflow: null, track: null, modelReported: true, browserRunning: false,
+    };
+    const rows = [
+      { ...base, sessionId: HELD_SESSION, taskId: 'task-ad-held', taskTitle: 'Held task', displayId: 21, automationsDisabled: true },
+      { ...base, sessionId: ORDINARY_SESSION, taskId: 'task-ad-ordinary', taskTitle: 'Ordinary task', displayId: 22, automationsDisabled: false },
+      {
+        ...base, sessionId: TERMINAL_SESSION, taskId: 'transient-ad-1', taskTitle: 'Command Terminal 1', displayId: null,
+        columnName: '', commandTerminalBranch: 'main', isCommandTerminal: true, automationsDisabled: false,
+      },
+    ];
+    return `window.__mockMonitorRows = ${JSON.stringify(rows)};`;
+  }
+
+  async function openMonitor(page: Page): Promise<void> {
+    await byTestId(page, 'agent-monitor-button').click();
+    await byTestId(page, 'monitor-grid').waitFor({ state: 'visible', timeout: 10000 });
+  }
+
+  /** Main's push after a toggle: the same rows, with the held task's flag set to `held`. */
+  async function pushHeld(page: Page, held: boolean): Promise<void> {
+    await page.evaluate(({ sessionId, value }) => {
+      const handle = window as unknown as {
+        __mockMonitorRows?: Array<Record<string, unknown>>;
+        __mockFireMonitorChanged?: (rows: Array<Record<string, unknown>>) => void;
+      };
+      handle.__mockFireMonitorChanged?.((handle.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === sessionId ? { ...row, automationsDisabled: value } : row
+      )));
+    }, { sessionId: HELD_SESSION, value: held });
+  }
+
+  const sessionCard = (page: Page, sessionId: string): Locator => page.locator(`[data-testid="monitor-card"][data-session-id="${sessionId}"]`);
+
+  test('the card wears the board\'s strip on its own row above the location strip, with its tip', async () => {
+    const { browser, page } = await launch({ tasks: [] }, monitorRowsScript());
+    try {
+      await openMonitor(page);
+      const held = sessionCard(page, HELD_SESSION);
+      const strip = held.getByTestId('monitor-card-automations-disabled');
+      await expect(strip).toHaveText('Automations disabled');
+      await expect(strip).toHaveAccessibleDescription(STRIP_TIP);
+      // Its own row, first, ahead of the strip every card wears.
+      const order = await held.evaluate((card) => Array.from(card.querySelectorAll('[data-testid="monitor-card-automations-disabled"], [data-testid="monitor-card-strip"]'))
+        .map((element) => element.getAttribute('data-testid')));
+      expect(order).toEqual(['monitor-card-automations-disabled', 'monitor-card-strip']);
+
+      await expect(sessionCard(page, ORDINARY_SESSION).getByTestId('monitor-card-automations-disabled')).toHaveCount(0);
+      await expect(sessionCard(page, TERMINAL_SESSION).getByTestId('monitor-card-automations-disabled')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the list row closes with the slice, and the table names it in its Automations column', async () => {
+    const { browser, page } = await launch({ tasks: [] }, monitorRowsScript());
+    try {
+      await openMonitor(page);
+
+      await byTestId(page, 'monitor-layout-list').click();
+      await expect(sessionCard(page, HELD_SESSION)).toHaveAttribute('data-dense', 'true');
+      const slice = sessionCard(page, HELD_SESSION).getByTestId('monitor-row-automations-disabled');
+      await expect(slice).toHaveText('Automations disabled');
+      await expect(slice).toHaveAccessibleDescription(STRIP_TIP);
+      await expect(page.getByTestId('monitor-row-automations-disabled')).toHaveCount(1);
+
+      await byTestId(page, 'monitor-layout-table').click();
+      const rowOf = (title: string): Locator => page.locator('[data-testid="monitor-table-row"]', { hasText: title });
+      await expect(rowOf('Held task').getByTestId('monitor-table-automations-disabled')).toHaveText('Disabled');
+      await expect(rowOf('Ordinary task')).toContainText('Enabled');
+      await expect(rowOf('Ordinary task').getByTestId('monitor-table-automations-disabled')).toHaveCount(0);
+      // A Command Terminal has no task, so no automations either way.
+      await expect(rowOf('Command Terminal 1')).not.toContainText('Enabled');
+      await expect(rowOf('Command Terminal 1').getByTestId('monitor-table-automations-disabled')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a pushed toggle takes the mark off and puts it back in every layout', async () => {
+    const { browser, page } = await launch({ tasks: [] }, monitorRowsScript());
+    try {
+      await openMonitor(page);
+      const held = sessionCard(page, HELD_SESSION);
+      await expect(held.getByTestId('monitor-card-automations-disabled')).toBeVisible();
+
+      await pushHeld(page, false);
+      await expect(held.getByTestId('monitor-card-automations-disabled')).toHaveCount(0);
+      await byTestId(page, 'monitor-layout-list').click();
+      await expect(page.getByTestId('monitor-row-automations-disabled')).toHaveCount(0);
+      await byTestId(page, 'monitor-layout-table').click();
+      await expect(page.getByTestId('monitor-table-automations-disabled')).toHaveCount(0);
+
+      await pushHeld(page, true);
+      await expect(page.getByTestId('monitor-table-automations-disabled')).toHaveCount(1);
+      await byTestId(page, 'monitor-layout-list').click();
+      await expect(page.getByTestId('monitor-row-automations-disabled')).toHaveCount(1);
+      await byTestId(page, 'monitor-layout-cards').click();
+      await expect(held.getByTestId('monitor-card-automations-disabled')).toBeVisible();
     } finally {
       await browser.close();
     }

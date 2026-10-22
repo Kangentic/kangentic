@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react';
-import { Folder } from 'lucide-react';
 import type { Task, WorkflowBoardEnds, WorkflowViewTask } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { findBoardTask } from '../../utils/board-task-index';
 import { TaskCardBody, TaskCardCompactBody, WorkflowWaitingBar, taskCardFrameClass, useTaskCardViewModel } from '../board/task-card-view';
-import { WorkflowCardStrip, WorkflowStripLabel } from './WorkflowStrip';
+import { ProjectStripLabel, WorkflowCardStrip } from './WorkflowStrip';
 
 /**
  * A workflow task's card on the canvas: the board's own card content
@@ -21,24 +20,6 @@ import { WorkflowCardStrip, WorkflowStripLabel } from './WorkflowStrip';
  * which it feeds (WorkflowEdge.tsx).
  */
 const SELECTED_BORDER_CLASS = '!border-accent';
-
-/**
- * The card's project, in the strip's left side (board 17, folded into the
- * strip as the phone draws it): on every card, on one board or several, so a
- * card has one shape whatever the workflow spans and none changes when a task
- * on another board joins (sign-off 4b). It costs no height: the strip's left
- * side is otherwise empty on the canvas.
- */
-function ProjectLabel({ name }: { name: string }) {
-  return (
-    <WorkflowStripLabel
-      icon={<Folder size={12} className="text-fg-muted" />}
-      label={name}
-      className="gap-1.5 text-fg-tertiary"
-      testId="workflow-card-project"
-    />
-  );
-}
 
 /** A planned task drawn as the To Do card it will become. It has no number and no session. */
 export function plannedAsTask(viewTask: WorkflowViewTask): Task {
@@ -135,10 +116,12 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
   const planned = viewTask.place === 'planned';
 
   // The column is the track's own marker, so the strip names no column; its
-  // left side holds the task's project.
+  // left side holds the task's project, on every card, on one board or
+  // several, so a card has one shape whatever the workflow spans and none
+  // changes when a task on another board joins (sign-off 4b).
   const strip = (
     <WorkflowCardStrip
-      leading={<ProjectLabel name={projectName} />}
+      leading={<ProjectStripLabel name={projectName} testId="workflow-card-project" />}
       steps={viewTask.steps}
       ends={ends}
       place={viewTask.place}

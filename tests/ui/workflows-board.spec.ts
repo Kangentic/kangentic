@@ -388,8 +388,10 @@ test.describe('Workflow tasks on the board', () => {
     const { browser, page } = await launch({ state: 'paused' });
     try {
       await expect(boardCard(page, 't419').locator('[data-testid="workflow-status-bar"]')).toHaveText('Paused');
-      // The strip says so after the workflow's name (board 7).
-      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-strip"] [data-testid="workflow-card-paused"]')).toHaveCount(1);
+      // The strip draws no pause glyph (sign-off 2026-10-21): at 11px it read as
+      // stray bars. The To Do card's footer above is what says Paused.
+      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]')).toBeVisible();
+      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-paused"]')).toHaveCount(0);
       await openMenu(page, 't414');
       const menu = byTestId(page, 'task-context-menu');
       await expect(menu.locator('[data-testid="context-move-to"]').filter({ hasText: 'To Do' }))

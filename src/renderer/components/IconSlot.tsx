@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
 
-interface IconSlotProps {
+interface IconSlotProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className' | 'style' | 'children' | 'title'> {
   /** Box width and height in px. ONE value for the whole icon, not one per branch:
    *  see the `size` note below for why a constant box is the point. */
   size: number;
@@ -52,13 +52,16 @@ interface IconSlotProps {
  * that component's `<svg>` root - the very node `ActivityMark` documents as having to
  * stay hit-testable, because a `Tooltip` around it opens only while the element itself
  * can receive the pointer (see `TaskCard`, which relies on exactly that). A mark inside a
- * slot must therefore label itself with `aria-label`, and its tip goes on the slot's
- * button, not the mark; a Tooltip around the mark there would be silently inert, with no
- * test to catch it.
+ * slot must therefore label itself with `aria-label`, and its tip goes on the SLOT, not
+ * the mark: the slot forwards the pointer, focus and `aria-description` props a
+ * `Tooltip` clones onto its child, so `<Tooltip><IconSlot>...</IconSlot></Tooltip>` opens
+ * on the span that does take the pointer (the Agent Monitor's card does this). A Tooltip
+ * around the mark itself would be silently inert, with no test to catch it.
  */
-export function IconSlot({ size, className, children }: IconSlotProps) {
+export function IconSlot({ size, className, children, ...rest }: IconSlotProps) {
   return (
     <span
+      {...rest}
       className={`grid place-items-center [&>*]:pointer-events-none ${className ?? ''}`}
       style={{ width: size, height: size }}
     >

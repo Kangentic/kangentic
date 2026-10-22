@@ -30,6 +30,11 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // cross-project counts), which is exactly what a cross-project host needs.
     void useSessionStore.getState().syncSessions();
 
+    // The table's Agent, Model and Permission cells read each agent's own
+    // labels from the installed agents list, and nothing else in this window
+    // loads it. Without it every agent's permission read in Claude's wording.
+    void useConfigStore.getState().loadAgentList();
+
     // Live activity is patched onto rows without a refetch, exactly as in the main
     // window. SESSION_ACTIVITY is declared in this surface's `channels`, so main
     // fans it out to this window directly.
@@ -97,6 +102,7 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // set, and a surface can sit unchanged across the whole session, so the
     // push alone leaves a hosted pill dark after a Fast Refresh.
     void useSessionStore.getState().loadBrowserOffscreenTasks();
+    void useConfigStore.getState().loadAgentList();
   },
 
   inAppSurface: 'monitor-overlay',

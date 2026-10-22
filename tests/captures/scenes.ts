@@ -1691,7 +1691,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'monitor',
     reach: 'boot',
     description: 'The Agent Monitor over all three projects, every session in its live state. The open flag is not persisted, so it is one click.',
-    alt: 'The Agent Monitor over all three projects: summary tiles for idle, active, and paused sessions, then a card per session grouped by project, each with its column, its latest output, and its model and context use.',
+    alt: 'The Agent Monitor over all three projects: summary tiles for idle, active, and paused sessions, then a card per session grouped by project, each with a strip naming its project and its column on a step track, its latest output, and its model and context use.',
     ready: '[data-testid="monitor-card"]',
     steps: [{ click: '[data-testid="agent-monitor-button"]', waitFor: '[data-testid="monitor-page"]' }],
     // A filter typed, which narrows the cards to the sessions it matches, and those regrouped by
@@ -1713,7 +1713,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'monitor-table',
     reach: 'boot',
     description: 'The Agent Monitor in its table layout. The layout IS persisted (config.monitor.layout), so it is config plus the same open click.',
-    alt: 'The Agent Monitor in table layout: summary tiles for idle, active, and paused sessions, then one row per session grouped by project, with columns for task, column, agent, model, effort, permission, runtime, and context.',
+    alt: 'The Agent Monitor in table layout: summary tiles for idle, active, and paused sessions, then one row per session grouped by project, with columns for task, column, workflow, automations, agent, model, effort, permission, runtime, and context.',
     // Spelled whole, because a scene's nested config block REPLACES the default rather than
     // merging into it. `layout` is the only field this scene is changing; the other six were
     // undefined here until the registry test started checking the shape.

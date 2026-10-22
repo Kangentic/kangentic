@@ -25,10 +25,17 @@ import type { IpcContext } from '../../src/main/ipc/ipc-context';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockHandle, mockBroadcast, mockBuildSnapshot } = vi.hoisted(() => ({
+const { mockHandle, mockBroadcast, mockBuildSnapshot, mockOnWorkflowChanged } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockBroadcast: vi.fn(),
   mockBuildSnapshot: vi.fn(),
+  mockOnWorkflowChanged: vi.fn(),
+}));
+
+// Captured rather than real, so a test drives the listener of the ONE
+// registration it made: the module set outlives each test's handlers.
+vi.mock('../../src/main/workflows/workflow-changed', () => ({
+  onWorkflowChanged: mockOnWorkflowChanged,
 }));
 
 vi.mock('electron', () => ({
@@ -48,6 +55,7 @@ vi.mock('../../src/main/monitor/task-detail-bundle', () => ({
 }));
 
 import { registerMonitorHandlers } from '../../src/main/ipc/handlers/monitor';
+import { browserPaneRegistry } from '../../src/main/browser/browser-pane-registry';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -146,6 +154,72 @@ describe('monitor push gate', () => {
 
     expect(mockBroadcast).toHaveBeenCalledTimes(1);
     expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
+  });
+
+  it('a workflow change schedules a push, since a rename, a pause or the finish never reaches the board bus', async () => {
+    // The row carries the workflow's title, color and route, and drops it once
+    // the workflow is done. Those writes announce only the workflow push.
+    const { context } = makeContext();
+    registerMonitorHandlers(context);
+    getHandler(IPC.MONITOR_SUBSCRIBE)({ sender: new FakeWebContents(7) });
+    mockBroadcast.mockClear();
+
+    const listener = mockOnWorkflowChanged.mock.calls.at(-1)?.[0] as (() => void) | undefined;
+    expect(listener).toBeTypeOf('function');
+    listener?.();
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
+
+    expect(mockBroadcast).toHaveBeenCalledTimes(1);
+    expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
+  });
+
+  it('a browser surface opening or closing schedules a push, for the card\'s globe', async () => {
+    const membershipSpy = vi.spyOn(browserPaneRegistry, 'onMembershipChange');
+    const taskIdsSpy = vi.spyOn(browserPaneRegistry, 'taskIds').mockReturnValue(new Set());
+    const { context } = makeContext();
+    registerMonitorHandlers(context);
+    getHandler(IPC.MONITOR_SUBSCRIBE)({ sender: new FakeWebContents(7) });
+    mockBroadcast.mockClear();
+
+    const listener = membershipSpy.mock.calls.at(-1)?.[0];
+    membershipSpy.mockRestore();
+    expect(listener).toBeTypeOf('function');
+    // A task gains its first browser: the set of tasks with one changed.
+    taskIdsSpy.mockReturnValue(new Set(['task-a']));
+    listener?.();
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
+
+    expect(mockBroadcast).toHaveBeenCalledTimes(1);
+    expect(mockBroadcast.mock.calls[0][1]).toBe(IPC.MONITOR_CHANGED);
+
+    // The last one closes: the set changed back, so it pushes again.
+    taskIdsSpy.mockReturnValue(new Set());
+    listener?.();
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
+    expect(mockBroadcast).toHaveBeenCalledTimes(2);
+    taskIdsSpy.mockRestore();
+  });
+
+  it('a membership change that leaves the set of tasks with a browser alone builds nothing', async () => {
+    // A rebind of the same task's guest, or a second surface for a task that
+    // already has one, cannot change any row's globe.
+    const membershipSpy = vi.spyOn(browserPaneRegistry, 'onMembershipChange');
+    const taskIdsSpy = vi.spyOn(browserPaneRegistry, 'taskIds').mockReturnValue(new Set(['task-a']));
+    const { context } = makeContext();
+    registerMonitorHandlers(context);
+    getHandler(IPC.MONITOR_SUBSCRIBE)({ sender: new FakeWebContents(7) });
+    mockBuildSnapshot.mockClear();
+    mockBroadcast.mockClear();
+
+    const listener = membershipSpy.mock.calls.at(-1)?.[0];
+    membershipSpy.mockRestore();
+    expect(listener).toBeTypeOf('function');
+    listener?.();
+    await vi.advanceTimersByTimeAsync(MONITOR_PUSH_DEBOUNCE_MS + 50);
+
+    expect(mockBuildSnapshot).not.toHaveBeenCalled();
+    expect(mockBroadcast).not.toHaveBeenCalled();
+    taskIdsSpy.mockRestore();
   });
 
   it('unsubscribe turns the pipeline back off', async () => {

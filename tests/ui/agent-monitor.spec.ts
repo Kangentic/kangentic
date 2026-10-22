@@ -13,7 +13,7 @@
  * Each test launches its own browser (no cross-test state).
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
@@ -130,7 +130,17 @@ function monitorPreConfig(): string {
         agentName: 'claude', modelDisplayName: 'Opus 5', effort: 'xhigh', permissionMode: 'plan',
         startedAt: '2026-01-01T00:00:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
-        lastEvent: null, contextPercent: 62, isolated: false, isCommandTerminal: false
+        lastEvent: null, contextPercent: 62, isolated: false, isCommandTerminal: false,
+        // The step track the card's strip draws, on an existing row for the
+        // reason the label is: a new row would shift every count in this file.
+        track: {
+          steps: [
+            { swimlaneId: 'lane-monitor-1', name: 'Planning', color: '#8b5cf6', icon: 'map', state: 'done', finishedAt: null },
+            { swimlaneId: 'lane-monitor-4', name: 'Testing', color: '#06b6d4', icon: 'flask-conical', state: 'current', finishedAt: null },
+            { swimlaneId: 'lane-monitor-5', name: 'Merge', color: '#f97316', icon: 'merge', state: 'ahead', finishedAt: null }
+          ],
+          ends: null, place: 'working'
+        }
       },
       {
         sessionId: 'sess-other-project', projectId: '${PROJECT_B}', projectName: 'Monitor Beta',
@@ -139,7 +149,9 @@ function monitorPreConfig(): string {
         agentName: 'claude', modelDisplayName: 'Sonnet 5', effort: 'medium', permissionMode: 'auto',
         startedAt: '2026-01-01T00:02:00.000Z', exitedAt: null,
         status: 'running', activity: 'thinking', activityReason: null,
-        lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false
+        lastEvent: null, contextPercent: null, isolated: false, isCommandTerminal: false,
+        // A workflow task, for the strip's workflow label and the table's Workflow column.
+        workflow: { id: 'wf-monitor', title: 'Launch week', colorSlot: 2 }
       },
       {
         sessionId: 'sess-paused', projectId: '${PROJECT_A}', projectName: 'Monitor Alpha',
@@ -268,10 +280,10 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 }
 
 /** Write a global config field through the real path the settings controls use. */
-async function setConfig(page: Page, partial: Record<string, string>): Promise<void> {
+async function setConfig(page: Page, partial: Record<string, string | boolean>): Promise<void> {
   await page.evaluate((value) => {
     const stores = (window as unknown as {
-      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, string>) => Promise<void> } } };
+      __zustandStores?: { config: { getState: () => { updateConfig: (partial: Record<string, string | boolean>) => Promise<void> } } };
     }).__zustandStores;
     return stores?.config.getState().updateConfig(value);
   }, partial);
@@ -295,14 +307,14 @@ test.describe('agent monitor', () => {
 
       // The whole point: a session owned by the project that is NOT open. Its
       // project is named by the SECTION (grouping defaults to project), and the
-      // card's own eyebrow drops it rather than repeating its header - so the
-      // card shows only the column.
+      // card's strip names it too, as the Workflows canvas card does on every
+      // card, so a card has one shape in every grouping.
       await expect(page.locator('[data-session-id="sess-other-project"]')).toBeVisible();
       await expect(page.locator('[data-testid="monitor-group-header"]', { hasText: 'Monitor Beta' }))
         .toBeVisible();
       await expect(
-        page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-origin"]'),
-      ).toContainText('Doing');
+        page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-project"]'),
+      ).toContainText('Monitor Beta');
 
       // Command Terminals appear here and ONLY here: they have no task, so no
       // board card, and the Command Terminal layer only shows the open project.
@@ -344,22 +356,183 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('a Command Terminal names its branch where a task names its column', async () => {
-    // The eyebrow answers one question on both card kinds: where is this session
-    // working. Leaving it blank for a terminal put the title under an empty row,
-    // which reads as a rendering fault beside a task card that fills it.
+  test('the strip names the project, then the workflow or a Command Terminal\'s branch, with the column as the track\'s marker', async () => {
+    // The strip answers "where is this session working" on every card kind, as
+    // the board and Workflows canvas cards do: the project on the left, the
+    // column as the step track's own marker on the right. A Command Terminal has
+    // no column, so its branch stands in for it.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
-      const terminalOrigin = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-origin"]');
-      await expect(terminalOrigin.locator('[data-testid="monitor-card-branch"]')).toHaveText('main');
+      const taskStrip = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-strip"]');
+      await expect(taskStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Alpha');
+      const marker = taskStrip.locator('[data-testid="workflow-step-marker"]');
+      await expect(marker).toHaveAttribute('data-step-state', 'current');
+      await expect(marker).toHaveAccessibleName('Testing: now');
+      // A plain task grows neither a workflow nor a branch.
+      await expect(taskStrip.locator('[data-testid="monitor-card-workflow"]')).toHaveCount(0);
+      await expect(taskStrip.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
 
-      // A task agent keeps its column and grows no branch, so the slot never
-      // shows two different things on one card.
-      const taskOrigin = page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-origin"]');
-      await expect(taskOrigin).toContainText('Testing');
-      await expect(taskOrigin.locator('[data-testid="monitor-card-branch"]')).toHaveCount(0);
+      const workflowStrip = page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-strip"]');
+      await expect(workflowStrip.locator('[data-testid="monitor-card-workflow"]')).toContainText('Launch week');
+
+      const terminalStrip = page.locator('[data-session-id="sess-command-terminal"] [data-testid="monitor-card-strip"]');
+      await expect(terminalStrip.locator('[data-testid="monitor-card-project"]')).toContainText('Monitor Beta');
+      await expect(terminalStrip.locator('[data-testid="monitor-card-branch"]')).toContainText('main');
+      await expect(terminalStrip.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+
+      // The eyebrow row and its activity pill are gone; the strip replaced them.
+      await expect(page.locator('[data-testid="monitor-card-origin"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="monitor-card-activity"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the state mark carries the engine\'s reason as its tip, on the slot that takes the pointer', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-working'
+          ? Object.assign({}, row, { activity: 'permission', activityReason: { kind: 'permission', since: Date.now() - 60000 } })
+          : row
+      ))));
+
+      const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+      // The slot, not the mark: the mark inside an IconSlot takes no pointer.
+      const slot = mark.locator('xpath=..');
+      await expect(slot).toHaveCSS('pointer-events', 'auto');
+      await expect(mark).toHaveCSS('pointer-events', 'none');
+      // The mark names itself with the reason, so the tip adds no description
+      // that would read the same words twice.
+      await expect(mark).toHaveAccessibleName(/^Awaiting permission for /);
+      await expect(slot).toHaveAccessibleDescription('');
+      await slot.hover();
+      await expect(page.getByRole('tooltip').filter({ hasText: 'Awaiting permission for' })).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the footer says Starting, Queued or Paused as the board card does, and a parked card draws no mark', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+
+      // sess-paused is suspended: no state mark, as the board card draws none,
+      // and its footer says Paused rather than a model it is not running.
+      const parked = page.locator('[data-session-id="sess-paused"]');
+      await expect(parked.locator('[data-testid="monitor-card-status"]')).toHaveText('Paused');
+      await expect(parked.getByLabel('Paused', { exact: true })).toHaveCount(0);
+      await expect(parked.locator('[data-testid="monitor-card-usage"]')).toHaveCount(0);
+
+      // A running agent that has not named its model yet is still starting, and
+      // a queued session is waiting for a slot.
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => {
+        if (row.sessionId === 'sess-other-project') return Object.assign({}, row, { modelReported: false });
+        if (row.sessionId === 'sess-paused') return Object.assign({}, row, { status: 'queued' });
+        return row;
+      })));
+      await expect(page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-usage"]'))
+        .toHaveText('Starting agent...');
+      await expect(parked.locator('[data-testid="monitor-card-status"]')).toHaveText('Queued...');
+      // A row that has reported keeps its model line.
+      await expect(page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-usage-model"]'))
+        .toHaveText('Opus 5');
+
+      // An agent with no telemetry channel never reports a model, so its card
+      // says so in its adapter's words rather than starting forever.
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-other-project' ? Object.assign({}, row, { agentName: 'droid', modelReported: false }) : row
+      ))));
+      const droidFooter = page.locator('[data-session-id="sess-other-project"] [data-testid="monitor-card-usage"]');
+      await expect(droidFooter).toContainText('Telemetry: TUI only');
+      await expect(droidFooter).not.toContainText('Starting agent...');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the card follows compact density, the Ticket Numbers setting and the browser globe, as the board card does', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-working'
+          ? Object.assign({}, row, { prUrl: 'https://github.com/owner/repo/pull/7', prNumber: 7, prState: 'open', browserRunning: true })
+          : row
+      ))));
+      // The UI mock starts with Ticket Numbers off; the app's default is on.
+      await setConfig(page, { showTaskNumbers: true });
+      const card = page.locator('[data-session-id="sess-working"]');
+      await expect(card.locator('[data-testid="monitor-card-display-id"]')).toHaveText('#142');
+      await expect(card.locator('[data-testid="monitor-card-browser-alive"]')).toBeVisible();
+      await expect(card.locator('[data-testid="monitor-card-pr-link"]')).toBeVisible();
+      await expect(card.locator('[data-testid="monitor-card-usage"]')).toBeVisible();
+      // Only the row whose task has a browser running wears the globe.
+      await expect(page.locator('[data-testid="monitor-card-browser-alive"]')).toHaveCount(1);
+
+      await setConfig(page, { cardDensity: 'compact' });
+      await expect(card.locator('[data-testid="monitor-card-usage"]')).toHaveCount(0);
+      await expect(card.locator('[data-testid="monitor-card-pr-link"]')).toHaveCount(0);
+
+      await setConfig(page, { showTaskNumbers: false });
+      await expect(card.locator('[data-testid="monitor-card-display-id"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the table names the workflow and the automations, and speaks the Column Manager\'s labels', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused' ? Object.assign({}, row, { automationsDisabled: true }) : row
+      ))));
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+      await expect(page.locator('[data-testid="monitor-table-row"]')).toHaveCount(4);
+      await expect(page.locator('th', { hasText: 'Workflow' }).first()).toBeVisible();
+      await expect(page.locator('th', { hasText: 'Automations' }).first()).toBeVisible();
+
+      const rowOf = (taskTitle: string) => page.locator('[data-testid="monitor-table-row"]', { hasText: taskTitle });
+      await expect(rowOf('Landing copy pass').locator('[data-testid="monitor-table-workflow"]')).toHaveText('Launch week');
+      await expect(rowOf('Fix PTY capture race').locator('[data-testid="monitor-table-workflow"]')).toHaveCount(0);
+      // Disabled, the non-default value, is the chip; Enabled is plain text.
+      await expect(rowOf('Paused work').locator('[data-testid="monitor-table-automations-disabled"]')).toHaveText('Disabled');
+      await expect(rowOf('Fix PTY capture race')).toContainText('Enabled');
+      // The agent's own words, not the raw ids.
+      await expect(rowOf('Fix PTY capture race')).toContainText('Claude Code');
+      await expect(rowOf('Fix PTY capture race')).toContainText('Plan (Read-Only)');
+      await expect(rowOf('Landing copy pass')).toContainText('Auto (Classifier)');
+      // Unset reads as the agent's own default.
+      await expect(rowOf('Paused work')).toContainText('Default');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the detached monitor loads the agent list, so its table speaks each agent\'s own labels', async () => {
+    // A pop-out is a renderer of its own, and nothing else in it loads the
+    // installed agents. The label below exists only in the agent's own list, so
+    // a table reading the built-in fallback cannot pass.
+    await waitForViteReady(VITE_URL);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+      const page = await context.newPage();
+      await page.addInitScript({ path: MOCK_SCRIPT });
+      await page.addInitScript(`${monitorPreConfig()}
+        window.__mockAgentListOverrides = { claude: { permissions: [{ mode: 'plan', label: 'Plan (agent wording)' }] } };
+        window.__mockPreConfigure(function (state) { state.config.monitor.layout = 'table'; });
+        window.electronAPI.popOut.descriptor = { kind: 'monitor', params: {} };`);
+      await gotoVite(page, VITE_URL);
+
+      const workingRow = page.locator('[data-testid="monitor-table-row"]', { hasText: 'Fix PTY capture race' });
+      await expect(workingRow).toContainText('Plan (agent wording)', { timeout: 10000 });
     } finally {
       await browser.close();
     }
@@ -614,8 +787,8 @@ test.describe('agent monitor', () => {
 
   test('a paused row keeps its trail in the store but the card falls back to its description', async () => {
     // The monitor half of the board card's live gate. A trail outlives its
-    // session, so without this a paused card printed agent prose under a
-    // CirclePause glyph with no activity mark and no filling bar to say so.
+    // session, so without this a paused card printed agent prose with no
+    // activity mark and no filling bar to say so.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
@@ -681,23 +854,23 @@ test.describe('agent monitor', () => {
   });
 
   test('an unknown context window reads "-", never a fabricated 0%', async () => {
-    // sess-other-project, sess-paused, and sess-command-terminal all carry
-    // contextPercent: null (no status.json has arrived for them yet). Before
-    // this fix MonitorCard passed `percent={row.contextPercent ?? 0}` straight
-    // through, so ContextUsageFooter printed a confident "0%" for a value it
-    // never actually had - indistinguishable from a session that is genuinely
-    // empty. sess-working's known, nonzero window (62%) proves the known path
-    // is untouched.
+    // sess-other-project and sess-command-terminal both carry contextPercent:
+    // null (no status.json has arrived for them yet). Before this fix
+    // MonitorCard passed `percent={row.contextPercent ?? 0}` straight through,
+    // so ContextUsageFooter printed a confident "0%" for a value it never
+    // actually had - indistinguishable from a session that is genuinely empty.
+    // sess-working's known, nonzero window (62%) proves the known path is
+    // untouched. (sess-paused draws the board's Paused footer instead.)
     //
     // Scoped to the percent span (`monitor-card-usage-percent`), not the whole
-    // footer: the model-name span can independently render "-" (sess-paused
-    // has no modelDisplayName), so an assertion against the footer as a whole
-    // is satisfied by either half and does not actually pin the percent label.
+    // footer: the model-name span can independently render "-", so an
+    // assertion against the footer as a whole is satisfied by either half and
+    // does not actually pin the percent label.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
 
-      const unknownIds = ['sess-other-project', 'sess-paused', 'sess-command-terminal'];
+      const unknownIds = ['sess-other-project', 'sess-command-terminal'];
       for (const id of unknownIds) {
         const footer = page.locator(`[data-session-id="${id}"] [data-testid="monitor-card-usage"]`);
         const percentLabel = footer.locator('[data-testid="monitor-card-usage-percent"]');
@@ -715,20 +888,26 @@ test.describe('agent monitor', () => {
 
   test('the footer model name falls back to a bare "-", never a derived agent display name', async () => {
     // Guard against `modelName={row.modelDisplayName ?? agentDisplayName(row.agentName)}`
-    // returning: sess-paused has modelDisplayName: null and agentName: 'claude', so that
-    // older fallback rendered "Claude Code" (agent-display-name.ts) instead of the flat "-"
-    // MonitorCard now passes for an unresolved model. sess-working's known model name
-    // ("Opus 5") is asserted alongside it so the test cannot pass vacuously against an
-    // always-"-" implementation.
+    // returning: a finished session with modelDisplayName: null and agentName: 'claude'
+    // rendered "Claude Code" (agent-display-name.ts) under that older fallback instead of
+    // the flat "-" MonitorCard now passes for an unresolved model. A finished card is the
+    // one that keeps a model footer with no model to name (a paused card says Paused). sess-working's
+    // known model name ("Opus 5") is asserted alongside it so the test cannot pass
+    // vacuously against an always-"-" implementation.
     const { browser, page } = await launchWithState(monitorPreConfig());
     try {
       await openMonitor(page);
+      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
+        row.sessionId === 'sess-paused'
+          ? Object.assign({}, row, { status: 'exited', exitedAt: new Date().toISOString() })
+          : row
+      ))));
 
-      const pausedModel = page.locator(
+      const finishedModel = page.locator(
         '[data-session-id="sess-paused"] [data-testid="monitor-card-usage-model"]',
       );
-      await expect(pausedModel).toHaveText('-');
-      await expect(pausedModel).not.toHaveText('Claude Code');
+      await expect(finishedModel).toHaveText('-');
+      await expect(finishedModel).not.toHaveText('Claude Code');
 
       const workingModel = page.locator(
         '[data-session-id="sess-working"] [data-testid="monitor-card-usage-model"]',
@@ -1872,6 +2051,289 @@ test.describe('agent monitor', () => {
           message: 'the Active tile stopped rotating while agents were working',
         })
         .toBe('kng-activity-spin');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+/**
+ * The compact list row's slice and the table's columns, on the default fixture with a
+ * field or two patched onto a row. The fixture already holds a workflow row
+ * (`sess-other-project`, no track), a row with a track and no workflow
+ * (`sess-working`), a plain paused row and a Command Terminal, so a patch is the
+ * smallest change that gives each case its row.
+ *
+ * Assertions read testids, attributes and text, never geometry. The mock seeds Ticket
+ * Numbers OFF although the app's default is on, so every case that needs a number
+ * turns the setting on itself.
+ */
+
+/** A copy of the track `sess-working` carries in the fixture: a done step, the current step the marker names, and one ahead. */
+const WORKFLOW_ROW_TRACK = {
+  steps: [
+    { swimlaneId: 'lane-monitor-1', name: 'Planning', color: '#8b5cf6', icon: 'map', state: 'done', finishedAt: null },
+    { swimlaneId: 'lane-monitor-4', name: 'Testing', color: '#06b6d4', icon: 'flask-conical', state: 'current', finishedAt: null },
+    { swimlaneId: 'lane-monitor-5', name: 'Merge', color: '#f97316', icon: 'merge', state: 'ahead', finishedAt: null },
+  ],
+  ends: null,
+  place: 'working',
+};
+
+/** An init script, run after the fixture's, that merges `patches` into the rows the fixture seeded, by session id. */
+function patchMonitorRowsScript(patches: Record<string, Record<string, unknown>>): string {
+  return `
+    (function () {
+      var patches = ${JSON.stringify(patches)};
+      window.__mockMonitorRows = (window.__mockMonitorRows || []).map(function (row) {
+        return patches[row.sessionId] ? Object.assign({}, row, patches[row.sessionId]) : row;
+      });
+    })();
+  `;
+}
+
+const monitorCardOf = (page: Page, sessionId: string): Locator => page.locator(`[data-testid="monitor-card"][data-session-id="${sessionId}"]`);
+
+/**
+ * One cell of a table row, found by the column's key from the row's OWN table headers.
+ * The index is read, not written down, because the Project column is dropped under
+ * project grouping and an index would shift with it.
+ */
+async function tableCellOf(page: Page, sessionId: string, columnKey: string): Promise<Locator> {
+  const row = page.locator(`[data-testid="monitor-table-row"][data-row-id="${sessionId}"]`);
+  await row.waitFor({ state: 'visible', timeout: 10000 });
+  const columnIndex = await row.evaluate((rowElement, key) => {
+    const headers = Array.from(rowElement.closest('table')?.querySelectorAll('th[data-column-key]') ?? []);
+    return headers.findIndex((header) => header.getAttribute('data-column-key') === key);
+  }, columnKey);
+  expect(columnIndex, `no "${columnKey}" column in the table`).toBeGreaterThanOrEqual(0);
+  return row.locator('td').nth(columnIndex);
+}
+
+test.describe('agent monitor: the list row slice', () => {
+  test('a workflow row in the list closes with its workflow name and a step track', async () => {
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({ 'sess-other-project': { track: WORKFLOW_ROW_TRACK } })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-list"]').click();
+
+      // The dense row, not the full card: the card's strip uses other testids, so
+      // without this every check below could be reading the wrong layout.
+      const row = monitorCardOf(page, 'sess-other-project');
+      await expect(row).toHaveAttribute('data-dense', 'true');
+
+      const slice = row.locator('[data-testid="monitor-row-workflow"]');
+      await expect(slice).toBeVisible();
+      await expect(slice.locator('[data-testid="monitor-row-workflow-name"]')).toHaveText('Launch week');
+      // The track is inside the slice, and its current step is the column's own marker.
+      await expect(slice.locator('[data-testid="workflow-step-track"]')).toBeVisible();
+      await expect(slice.locator('[data-testid="workflow-step-marker"]')).toHaveAttribute('aria-label', 'Testing: now');
+      // A workflow row is not a held one.
+      await expect(row.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a plain row in the list closes with no slice, even one that carries a track', async () => {
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({ 'sess-other-project': { track: WORKFLOW_ROW_TRACK } })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-list"]').click();
+
+      // The control: in this same list a workflow row DOES close with its slice, so
+      // the absences below cannot be a list that never drew one.
+      await expect(monitorCardOf(page, 'sess-other-project')).toHaveAttribute('data-dense', 'true');
+      await expect(monitorCardOf(page, 'sess-other-project').locator('[data-testid="monitor-row-workflow"]')).toBeVisible();
+
+      // `sess-working` has a track, no workflow and its automations on; `sess-paused`
+      // has none of the three. A track alone is not a slice.
+      for (const sessionId of ['sess-working', 'sess-paused']) {
+        const row = monitorCardOf(page, sessionId);
+        await expect(row).toHaveAttribute('data-dense', 'true');
+        await expect(row.locator('[data-testid="monitor-row-workflow"]')).toHaveCount(0);
+        await expect(row.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
+        await expect(row.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the list row shows its ticket number only while the Ticket Numbers setting is on', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-list"]').click();
+      await expect(monitorCardOf(page, 'sess-working')).toHaveAttribute('data-dense', 'true');
+
+      const displayIds = page.locator('[data-testid="monitor-row-display-id"]');
+      await setConfig(page, { showTaskNumbers: false });
+      await expect(displayIds).toHaveCount(0);
+
+      await setConfig(page, { showTaskNumbers: true });
+      await expect(monitorCardOf(page, 'sess-working').locator('[data-testid="monitor-row-display-id"]')).toHaveText('#142');
+      // Three of the fixture's four rows have a ticket; the Command Terminal has none to show.
+      await expect(displayIds).toHaveCount(3);
+      await expect(monitorCardOf(page, 'sess-command-terminal').locator('[data-testid="monitor-row-display-id"]')).toHaveCount(0);
+
+      await setConfig(page, { showTaskNumbers: false });
+      await expect(displayIds).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('agent monitor: the table columns', () => {
+  test('the table Task cell shows its ticket number only while the Ticket Numbers setting is on', async () => {
+    const { browser, page } = await launchWithState(monitorPreConfig());
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+      await expect(page.locator('[data-testid="monitor-table-row"]')).toHaveCount(4);
+
+      const displayIds = page.locator('[data-testid="monitor-table-display-id"]');
+      await setConfig(page, { showTaskNumbers: false });
+      await expect(displayIds).toHaveCount(0);
+
+      await setConfig(page, { showTaskNumbers: true });
+      const taskCell = await tableCellOf(page, 'sess-working', 'task');
+      await expect(taskCell.locator('[data-testid="monitor-table-display-id"]')).toHaveText('#142');
+      // Three of the fixture's four rows have a ticket; the Command Terminal has none to show.
+      await expect(displayIds).toHaveCount(3);
+      const terminalCell = await tableCellOf(page, 'sess-command-terminal', 'task');
+      await expect(terminalCell.locator('[data-testid="monitor-table-display-id"]')).toHaveCount(0);
+
+      await setConfig(page, { showTaskNumbers: false });
+      await expect(displayIds).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the table Model column maps a raw id through its own agent display names and leaves any other raw', async () => {
+    const mappedId = 'claude-test-model-x';
+    const unmappedId = 'claude-test-model-y';
+    // The override replaces `capabilities` whole, so it carries the fixture's
+    // other fields too. Ids carry no dated suffix, which would append a date.
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      window.__mockAgentListOverrides = {
+        claude: {
+          capabilities: {
+            effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            supportsModelOverride: true,
+            models: ['opus', 'sonnet', 'haiku'],
+            modelDisplayNames: { '${mappedId}': 'Test Model X' },
+          },
+        },
+      };
+      ${patchMonitorRowsScript({
+        // Mapped by its own agent.
+        'sess-working': { modelDisplayName: mappedId },
+        // The same raw id under an agent that maps nothing: another agent's names do not apply.
+        'sess-other-project': { agentName: 'gemini', modelDisplayName: mappedId },
+        // The mapped agent, an id it does not map: shown as it came.
+        'sess-command-terminal': { modelDisplayName: unmappedId },
+      })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+
+      await expect(await tableCellOf(page, 'sess-working', 'model')).toHaveText('Test Model X');
+      await expect(await tableCellOf(page, 'sess-other-project', 'model')).toHaveText(mappedId);
+      await expect(await tableCellOf(page, 'sess-command-terminal', 'model')).toHaveText(unmappedId);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('agent monitor: held tasks in the list and the table', () => {
+  test('a held workflow row in the list shows only the held slice, and a workflow row that is not held shows its own', async () => {
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({
+        // Both flags on one row: the held slice has to win over the workflow slice.
+        'sess-other-project': { automationsDisabled: true, track: WORKFLOW_ROW_TRACK },
+        // The control: the same shape with automations on.
+        'sess-working': { workflow: { id: 'wf-control', title: 'Control flow', colorSlot: 3 } },
+      })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-list"]').click();
+
+      const control = monitorCardOf(page, 'sess-working');
+      await expect(control).toHaveAttribute('data-dense', 'true');
+      await expect(control.locator('[data-testid="monitor-row-workflow-name"]')).toHaveText('Control flow');
+      await expect(control.locator('[data-testid="workflow-step-track"]')).toBeVisible();
+      await expect(control.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveCount(0);
+
+      const held = monitorCardOf(page, 'sess-other-project');
+      await expect(held).toHaveAttribute('data-dense', 'true');
+      await expect(held.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveText('Automations disabled');
+      await expect(held.locator('[data-testid="monitor-row-workflow"]')).toHaveCount(0);
+      await expect(held.locator('[data-testid="monitor-row-workflow-name"]')).toHaveCount(0);
+      await expect(held.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Automations header sorts held tasks first and keeps the Command Terminal last in both directions', async () => {
+    // One project, so the table is ONE table with ONE sort state. The monitor lists
+    // oldest first, so these start times open the table as [terminal, working,
+    // other, paused]: an order the sort has to change, which an order that already
+    // matched would not prove.
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({
+        'sess-command-terminal': { projectId: PROJECT_A, projectName: 'Monitor Alpha', startedAt: '2026-01-01T00:00:00.000Z' },
+        'sess-working': { startedAt: '2026-01-01T00:01:00.000Z', automationsDisabled: false },
+        'sess-other-project': { projectId: PROJECT_A, projectName: 'Monitor Alpha', startedAt: '2026-01-01T00:02:00.000Z', automationsDisabled: false },
+        'sess-paused': { startedAt: '2026-01-01T00:03:00.000Z', automationsDisabled: true },
+      })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+
+      const rowOrder = () => page.locator('[data-testid="monitor-table-row"]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-row-id')));
+      await expect.poll(rowOrder).toEqual(['sess-command-terminal', 'sess-working', 'sess-other-project', 'sess-paused']);
+
+      // First click: ascending. The held task leads, the two enabled tasks keep their
+      // order behind it, and the terminal, which has no automations to be held, is last.
+      const header = page.locator('th[data-column-key="automations"]');
+      await header.click();
+      await expect(header).toHaveAttribute('aria-sort', 'ascending');
+      await expect.poll(rowOrder).toEqual(['sess-paused', 'sess-working', 'sess-other-project', 'sess-command-terminal']);
+
+      // Second click: descending. Enabled tasks lead and the held one follows, but the
+      // terminal is still last, which only holds when it has no sort value at all
+      // rather than one that happens to rank last going up.
+      await header.click();
+      await expect(header).toHaveAttribute('aria-sort', 'descending');
+      await expect.poll(rowOrder).toEqual(['sess-working', 'sess-other-project', 'sess-paused', 'sess-command-terminal']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the table Automations cell reads Enabled, a Disabled chip and a bare dash for a Command Terminal', async () => {
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({ 'sess-paused': { automationsDisabled: true } })}`);
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+
+      await expect(await tableCellOf(page, 'sess-working', 'automations')).toHaveText('Enabled');
+      const heldCell = await tableCellOf(page, 'sess-paused', 'automations');
+      await expect(heldCell).toHaveText('Disabled');
+      await expect(heldCell.locator('[data-testid="monitor-table-automations-disabled"]')).toBeVisible();
+      // Exact: not "Enabled", which would claim automations run for a task that does not exist.
+      const terminalCell = await tableCellOf(page, 'sess-command-terminal', 'automations');
+      await expect(terminalCell).toHaveText('-');
+      await expect(terminalCell.locator('[data-testid="monitor-table-automations-disabled"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
