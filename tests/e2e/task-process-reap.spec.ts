@@ -373,15 +373,17 @@ test.describe('Task process reap', () => {
     }
     survivorKnownDead = true;
 
-    // 5. The user is told: one toast for the move, counts only, and Review lists
-    // the survivor by pid as stopped. This is the whole report path for real:
-    // the host's plan and label, main's burst collector, the push, the toast.
-    // Checked before the worktree poll below: a report of stopped processes only
-    // is a timed toast, and the removal can outlast its default 4 s.
+    // 5. The user is told: one toast for the move, counts only, and its list
+    // shows the survivor by pid as stopped. This is the whole report path for
+    // real: the host's plan and label, main's burst collector, the push, the
+    // toast. Checked before the worktree poll below: a report of stopped
+    // processes only is a timed toast, and the removal can outlast its default
+    // 4 s. A timed toast has no button; a click on the card opens the list.
     const toast = page.locator('[data-testid="toast"]', { hasText: new RegExp(`leftover process(es)? from "${title}"`) });
     await expect(toast).toBeVisible({ timeout: 10_000 });
+    await expect(toast.getByTestId('toast-title')).toHaveText('Leftover processes stopped');
     await expect(toast).toContainText(/Stopped \d+ leftover process(es)? from/);
-    await toast.getByRole('button', { name: 'Review' }).click();
+    await toast.click();
     const survivorRow = page.locator('[data-testid="leftover-processes-stopped"] [data-testid="leftover-process-row"]', {
       hasText: `PID ${record.survivorPid}`,
     });
