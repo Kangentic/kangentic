@@ -4,11 +4,11 @@
  * what was written. Decrypting anything without the prefix throws, as the real
  * API does for ciphertext it did not produce.
  *
- * It covers both API families: the synchronous floor (`isEncryptionAvailable`,
- * `encryptString`, `decryptString`) and the async API the credential and
- * identity stores read through (`isAsyncEncryptionAvailable`,
- * `encryptStringAsync`, `decryptStringAsync`, which reports
- * `shouldReEncrypt: false`), plus `getSelectedStorageBackend`.
+ * It covers the async API the credential and identity stores read through
+ * (`isAsyncEncryptionAvailable`, `encryptStringAsync`, `decryptStringAsync`,
+ * which reports `shouldReEncrypt: false`). The synchronous trio is left out:
+ * Electron 45 deprecates it, 46 removes it, and a call to it fails here as a
+ * TypeError.
  *
  * This is the single place to change when safeStorage's contract changes.
  *
@@ -30,18 +30,12 @@
 const CIPHERTEXT_PREFIX = 'encrypted:';
 
 export interface FakeSafeStorage {
-  isEncryptionAvailable: () => boolean;
-  encryptString: (plaintext: string) => Buffer;
-  decryptString: (ciphertext: Buffer) => string;
   isAsyncEncryptionAvailable: () => Promise<boolean>;
   encryptStringAsync: (plaintext: string) => Promise<Buffer>;
   decryptStringAsync: (ciphertext: Buffer) => Promise<{ result: string; shouldReEncrypt: boolean }>;
-  getSelectedStorageBackend: () => string;
 }
 
 export interface FakeSafeStorageOptions {
-  /** What the synchronous `isEncryptionAvailable()` reports. Defaults to always true. */
-  isEncryptionAvailable?: () => boolean;
   /** What `isAsyncEncryptionAvailable()` resolves to. Defaults to always true. */
   isAsyncEncryptionAvailable?: () => boolean;
 }
@@ -50,25 +44,20 @@ function encrypt(plaintext: string): Buffer {
   return Buffer.from(`${CIPHERTEXT_PREFIX}${plaintext}`, 'utf8');
 }
 
-function decrypt(ciphertext: Buffer, apiName: string): string {
+function decrypt(ciphertext: Buffer): string {
   const raw = ciphertext.toString('utf8');
   if (raw.startsWith(CIPHERTEXT_PREFIX)) return raw.slice(CIPHERTEXT_PREFIX.length);
-  throw new Error(`safeStorage.${apiName}: invalid ciphertext`);
+  throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
 }
 
 export function createFakeSafeStorage(options: FakeSafeStorageOptions = {}): FakeSafeStorage {
-  const isEncryptionAvailable = options.isEncryptionAvailable ?? (() => true);
   const isAsyncEncryptionAvailable = options.isAsyncEncryptionAvailable ?? (() => true);
   return {
-    isEncryptionAvailable: () => isEncryptionAvailable(),
-    encryptString: (plaintext) => encrypt(plaintext),
-    decryptString: (ciphertext) => decrypt(ciphertext, 'decryptString'),
     isAsyncEncryptionAvailable: async () => isAsyncEncryptionAvailable(),
     encryptStringAsync: async (plaintext) => encrypt(plaintext),
     decryptStringAsync: async (ciphertext) => ({
-      result: decrypt(ciphertext, 'decryptStringAsync'),
+      result: decrypt(ciphertext),
       shouldReEncrypt: false,
     }),
-    getSelectedStorageBackend: () => 'keychain',
   };
 }

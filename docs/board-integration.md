@@ -73,33 +73,34 @@ Opaque per-adapter credential bag (`Record<string, string>`). Each adapter's `au
 
 ### `safeStorage` semantics
 
-Credential helpers in `shared/auth.ts` use Electron's `safeStorage` through its ASYNC API
+Credential helpers in `shared/auth.ts` use Electron's `safeStorage` through its ASYNC API only
 (`encryptStringAsync` / `decryptStringAsync` / `isAsyncEncryptionAvailable`), so all three
-helpers return promises. The sync API is deprecated in Electron 45 and removed in 46.
+helpers return promises. The sync API is deprecated in Electron 45 and removed in 46, and nothing
+under `src/` calls it; `tests/unit/boards-auth.test.ts` fails if anything does.
 
 - All helpers must be called **after** `app.whenReady()` resolves.
 - macOS: Keychain Access (per-app key).
 - Windows: DPAPI (per-user protection).
-- Linux: the async API asks the Secret portal or the Secret Service (gnome-keyring, KeePassXC),
-  on any desktop. The sync API searched only Chromium's fixed desktop list, so on sway, i3 or WSLg
-  it reported `basic_text` even with a keyring running. With no secret store at all, the async API
-  still encrypts, under a hardcoded fallback key that protects nothing. `getSelectedStorageBackend()`
-  describes only the sync API and cannot see this, so the async half of
-  `isGenuineEncryptionAvailable()` reads Chromium's tag on a probe ciphertext instead: `v10` is the
-  fallback key, `v11` the Secret Service, `v12` the portal.
-- The sync API stays as a floor while Electron ships it. `isGenuineEncryptionAvailable()` is true
-  when either API genuinely encrypts: the async one by the tag above, the sync one when
-  `isEncryptionAvailable()` holds and, on Linux, its backend is not `basic_text`. Where only the
-  sync API reaches a real key (KDE with KWallet, which the async providers may not reach; macOS,
-  not measured), `encryptSecret` writes through it and the bridge keeps its paired phones.
-  `encryptSecret` picks the async API's real key, then the sync API's, then the async fallback
-  key, then plaintext.
+- Linux: the async API asks the Secret portal, or the Secret Service (gnome-keyring, KeePassXC) or
+  KWallet on KDE, on any desktop. The sync API searched only Chromium's fixed desktop list, so on
+  sway, i3 or WSLg it reported `basic_text` even with a keyring running. With no secret store at
+  all, the async API still encrypts, under a hardcoded fallback key that protects nothing.
+  The sync API's `getSelectedStorageBackend()`, which no code calls now, described only the sync
+  backend and could not see this, so `isGenuineEncryptionAvailable()` reads Chromium's tag on a probe ciphertext instead: `v10` is the
+  fallback key, `v11` the Secret Service or KWallet, `v12` the portal. `encryptSecret` picks a real
+  key, then the fallback key, then plaintext.
+- The async API reads what the sync API wrote. Electron 45's breaking-changes entry says the two
+  use the same per-platform key stores. Windows was measured: on 44.5.1 and again on 45.0.0 a
+  sync-written blob decrypted through the async API. macOS and KDE were not measured. For them the
+  evidence is Electron's `CreateOSCryptAsync` with Chromium 156: the macOS Keychain provider is on
+  by default and reads the sync API's Keychain item and `v10` key, and on KDE the Freedesktop
+  provider opens the sync API's KWallet folder and entry under `v11`. Earlier builds kept the sync
+  API as a fallback for macOS and KWallet; it was removed with the move to Electron 45. A mobile
+  bridge identity that still fails to read is moved aside by the next pairing, never overwritten.
 - The stored format did not change: `'e'` + base64 for encrypted, `'p'` + base64 for plaintext (only
-  when no encryption is available). Sync and async share one ciphertext format wherever both work,
-  so credentials written before the migration still read. `decryptSecret` reports when a blob
-  should be written again: a key rotation; a legacy blob only the sync API could read, but only
-  when the async API genuinely encrypts, since a rewrite through the floor would repeat on every
-  load; or plaintext once genuine encryption exists.
+  when no encryption is available). Credentials older builds wrote through the sync API read
+  through the async one. `decryptSecret` reports when a blob should be written again: a key
+  rotation, or plaintext once genuine encryption exists.
 - The Asana store and the mobile bridge identity both store their secret through
   `shared/encrypted-secret-file.ts` (`readEncryptedSecretFile`, `writeEncryptedSecretFile`,
   `rewriteEncryptedSecretFile`). The read reports `shouldRewrite`, and each store calls the rewrite

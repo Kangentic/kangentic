@@ -4,7 +4,9 @@
  * The app window is trusted UI, not arbitrary web content, so it is granted the
  * handful of web-platform permissions it actually uses:
  *
- *  - `media`: getUserMedia microphone access for voice-to-text dictation.
+ *  - `media`: getUserMedia microphone access for voice-to-text dictation. Since
+ *    Electron 45 it no longer covers screen, window or tab capture, which
+ *    arrive as `display-capture` and stay denied: the app never captures one.
  *  - `clipboard-read` / `clipboard-sanitized-write`: the async Clipboard API used
  *    by terminal copy/paste and the various "copy to clipboard" affordances
  *    (copy task id, copy login command, copy session id, copy file path, ...).
