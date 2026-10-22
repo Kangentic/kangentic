@@ -24,15 +24,21 @@
 import type { IpcContext } from '../ipc/ipc-context';
 import type {
   MonitorLastEvent,
+  MonitorRowWorkflow,
   MonitorSessionRow,
   MonitorSnapshot,
   SessionEvent,
   SessionUsage,
+  Swimlane,
+  WorkflowBoardEnds,
 } from '../../shared/types';
 import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
+import { boardEnds, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import type { MonitorSnapshotSources } from './monitor-snapshot-sources';
 
 /**
  * How long an exited session stays visible as "recently finished". Exited entries
@@ -57,6 +63,10 @@ interface ProjectLookup {
   projectName: string;
   tasks: ReturnType<typeof getProjectRepos>['tasks'];
   swimlaneNames: Map<string, string>;
+  /** The board's columns, which a card's step track is drawn from. */
+  swimlanes: Swimlane[];
+  /** The board's To Do and Done columns, the track's two ends. */
+  boardEnds: WorkflowBoardEnds;
   sessions: SessionRepository;
 }
 
@@ -79,14 +89,17 @@ function resolveProject(
     const project = context.projectRepo.getById(projectId);
     if (project) {
       const repos = getProjectRepos(context, projectId);
+      const swimlanes = repos.swimlanes.list();
       const swimlaneNames = new Map<string, string>();
-      for (const swimlane of repos.swimlanes.list()) {
+      for (const swimlane of swimlanes) {
         swimlaneNames.set(swimlane.id, swimlane.name);
       }
       resolved = {
         projectName: project.name,
         tasks: repos.tasks,
         swimlaneNames,
+        swimlanes,
+        boardEnds: boardEnds(swimlanes),
         sessions: new SessionRepository(getProjectDb(projectId)),
       };
     }
@@ -136,9 +149,30 @@ function lastEventOf(events: SessionEvent[] | undefined): MonitorLastEvent | nul
  * in-memory caches and indexed lookups against already-open DB handles, so no
  * await splits them against a concurrent board mutation. Only the output peeks
  * are awaited, after: they are read from the pty host, which holds the grids.
+ *
+ * `sources` carries the two reads outside the registry and the project repos
+ * (`monitorSnapshotSources` in production; fakes in the unit tests).
  */
-export async function buildMonitorSnapshot(context: IpcContext): Promise<MonitorSnapshot> {
+export async function buildMonitorSnapshot(context: IpcContext, sources: MonitorSnapshotSources): Promise<MonitorSnapshot> {
   const { sessionManager } = context;
+  // Read once: a set lookup per row instead of a registry scan per row.
+  const browserTaskIds = sources.browserTaskIds();
+  // Several tasks of one workflow share a lookup, keyed by home project and id.
+  const workflowCache = new Map<string, MonitorRowWorkflow | null>();
+  const readWorkflow = (homeProjectId: string, workflowId: string): MonitorRowWorkflow | null => {
+    const key = `${homeProjectId}:${workflowId}`;
+    const cached = workflowCache.get(key);
+    if (cached !== undefined) return cached;
+    let workflow: MonitorRowWorkflow | null = null;
+    try {
+      workflow = sources.readWorkflow(homeProjectId, workflowId);
+    } catch (error) {
+      // A home database that fails to open costs the row its workflow, never the row.
+      console.error(`[monitor] Failed to read workflow ${workflowId} from project ${homeProjectId}:`, error);
+    }
+    workflowCache.set(key, workflow);
+    return workflow;
+  };
   const activityCache = sessionManager.getActivityCache();
   const reasonCache = sessionManager.getActivityReasonsCache();
   // Both caches below are unscoped by design. `getUsageCache()` is safe to read
@@ -207,6 +241,22 @@ export async function buildMonitorSnapshot(context: IpcContext): Promise<Monitor
       displayId: task?.display_id ?? null,
       columnName: task ? project.swimlaneNames.get(task.swimlane_id) ?? '' : '',
       commandTerminalBranch: managed.commandTerminalBranch,
+      // The shared gate, so the card and the engine never disagree. A workflow
+      // task never carries the flag: joining a workflow clears it.
+      automationsDisabled: task ? !canTaskRunAutomations(task).ok : false,
+      workflow: task?.workflow_id
+        ? readWorkflow(task.workflow_project_id ?? managed.projectId, task.workflow_id)
+        : null,
+      // A workflow task's route, or for any other task every on-board column
+      // between its To Do and Done: `routeSteps` reads a null route as the
+      // whole board.
+      track: task
+        ? { steps: routeSteps(project.swimlanes, task), ends: project.boardEnds, place: taskPlace(project.swimlanes, task) }
+        : null,
+      // Distinct from `modelDisplayName`, which falls back to the spawn-time
+      // `applied_model` id: the card says "Starting agent..." until this is true.
+      modelReported: Boolean(usage?.model.displayName),
+      browserRunning: !isCommandTerminal && browserTaskIds.has(managed.taskId),
       labels: task?.labels ?? [],
       prUrl: task?.pr_url ?? null,
       prNumber: task?.pr_number ?? null,

@@ -27,22 +27,33 @@
  *     of count, and a null-exitedAt exited row sorts as newest so it is not
  *     the one culled
  *   - generatedAt is a UTC ISO 8601 timestamp captured at call time
+ *   - the board card's facts: automations held, the workflow (read from its
+ *     home project, once per workflow, and a failed read costs only the
+ *     workflow), the step track, whether the model has reported, and whether a
+ *     browser is running
+ *
+ * The two reads outside the registry and the repos (`MonitorSnapshotSources`)
+ * are passed in, so they are fakes here rather than module mocks.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type {
   ActivityReason,
   ActivityState,
+  MonitorRowWorkflow,
   MonitorSessionRow,
   Project,
   SessionEvent,
   SessionStatus,
   SessionUsage,
+  SwimlaneRole,
   Task,
 } from '../../src/shared/types';
 import { EventType } from '../../src/shared/types';
 import type { ManagedSessionSummary } from '../../src/main/pty/session-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import type { MonitorSnapshotSources } from '../../src/main/monitor/monitor-snapshot-sources';
+import type { StepColumn } from '../../src/shared/workflow-route';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -108,7 +119,8 @@ import {
 
 interface FakeProjectRepos {
   tasks: { getById: (id: string) => Task | undefined };
-  swimlanes: { list: () => Array<{ id: string; name: string }> };
+  /** The fields the row reads: the column name, and the step track's columns. */
+  swimlanes: { list: () => StepColumn[] };
   actions: object;
   attachments: object;
 }
@@ -217,10 +229,39 @@ function makeManagedSummary(overrides: {
   };
 }
 
+function makeColumn(id: string, name: string, position: number, role: SwimlaneRole | null = null): StepColumn {
+  return { id, name, position, role, color: '#3b82f6', icon: null, is_archived: false, is_ghost: false };
+}
+
+/** A stock board: To Do, three working columns, and Done. */
+const STOCK_BOARD: StepColumn[] = [
+  makeColumn('swimlane-todo', 'To Do', 0, 'todo'),
+  makeColumn('swimlane-planning', 'Planning', 1),
+  makeColumn('swimlane-executing', 'Executing', 2),
+  makeColumn('swimlane-review', 'Code Review', 3),
+  makeColumn('swimlane-done', 'Done', 4, 'done'),
+];
+
+/**
+ * The two reads the aggregator takes as an argument. No browser running and no
+ * workflow by default; a test passes the ones it exercises.
+ */
+function makeSources(options: {
+  browserTaskIds?: string[];
+  workflows?: Record<string, MonitorRowWorkflow | null>;
+  readWorkflow?: MonitorSnapshotSources['readWorkflow'];
+} = {}): MonitorSnapshotSources & { readWorkflow: ReturnType<typeof vi.fn> } {
+  const workflows = options.workflows ?? {};
+  return {
+    browserTaskIds: () => new Set(options.browserTaskIds ?? []),
+    readWorkflow: vi.fn(options.readWorkflow ?? ((homeProjectId: string, workflowId: string) => workflows[`${homeProjectId}:${workflowId}`] ?? null)),
+  };
+}
+
 /** Registers a project row AND its repos, i.e. a project whose DB opens fine. */
 function registerHealthyProject(
   projectId: string,
-  options: { tasksById?: Map<string, Task>; swimlanes?: Array<{ id: string; name: string }> } = {},
+  options: { tasksById?: Map<string, Task>; swimlanes?: StepColumn[] } = {},
 ): { tasksGetById: ReturnType<typeof vi.fn>; swimlanesList: ReturnType<typeof vi.fn> } {
   const tasksById = options.tasksById ?? new Map<string, Task>();
   const swimlanes = options.swimlanes ?? [];
@@ -360,7 +401,7 @@ describe('buildMonitorSnapshot', () => {
 
     let snapshot: Awaited<ReturnType<typeof buildMonitorSnapshot>> | undefined;
     await expect((async () => {
-      snapshot = await buildMonitorSnapshot(context);
+      snapshot = await buildMonitorSnapshot(context, makeSources());
     })()).resolves.toBeUndefined();
 
     // Only the healthy project's session survives.
@@ -396,7 +437,7 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
 
     expect(tasksGetById).not.toHaveBeenCalled();
 
@@ -411,10 +452,16 @@ describe('buildMonitorSnapshot', () => {
     // were previously both "Command Terminal" here and in the window.
     expect(row.taskTitle).toBe('Command Terminal 2');
     expect(row.displayId).toBeNull();
-    // No column (it is not on the board); the branch is the eyebrow's answer to
+    // No column (it is not on the board); the branch is the strip's answer to
     // "where is this session working" instead.
     expect(row.columnName).toBe('');
     expect(row.commandTerminalBranch).toBe('feature/peek');
+    // No task, so none of the board card's facts: no automations to hold, no
+    // workflow, no track, and no task browser.
+    expect(row.automationsDisabled).toBe(false);
+    expect(row.workflow).toBeNull();
+    expect(row.track).toBeNull();
+    expect(row.browserRunning).toBe(false);
     expect(row.labels).toEqual([]);
     expect(row.prUrl).toBeNull();
     expect(row.prNumber).toBeNull();
@@ -439,7 +486,7 @@ describe('buildMonitorSnapshot', () => {
       }),
     ]);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
 
     expect(snapshot.rows[0].taskTitle).toBe('Command Terminal');
   });
@@ -458,7 +505,7 @@ describe('buildMonitorSnapshot', () => {
       }),
     ]);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
 
     expect(snapshot.rows[0].taskTitle).toBe('Audit Unused Feature Flags');
   });
@@ -479,7 +526,7 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
 
     expect(snapshot.rows).toHaveLength(0);
   });
@@ -520,7 +567,7 @@ describe('buildMonitorSnapshot', () => {
     ];
     const context = makeContext(summaries);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
     const sessionIds = snapshot.rows.map((row) => row.sessionId);
 
     expect(sessionIds).not.toContain('session-old');
@@ -581,7 +628,7 @@ describe('buildMonitorSnapshot', () => {
     registerHealthyProject('project-a', { tasksById });
     const context = makeContext(summaries);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
     const sessionIds = new Set(snapshot.rows.map((row) => row.sessionId));
 
     // Every live row survives no matter how many exited rows compete for the cap.
@@ -611,7 +658,7 @@ describe('buildMonitorSnapshot', () => {
     const context = makeContext([]);
 
     const before = Date.now();
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
     const after = Date.now();
 
     expect(snapshot.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
@@ -637,7 +684,7 @@ describe('buildMonitorSnapshot', () => {
       makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
     ]);
 
-    const snapshot = await buildMonitorSnapshot(context);
+    const snapshot = await buildMonitorSnapshot(context, makeSources());
 
     expect(snapshot.rows[0]).toMatchObject({
       prUrl: 'https://github.com/owner/repo/pull/7',
@@ -664,7 +711,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
     });
@@ -687,7 +734,7 @@ describe('buildMonitorSnapshot', () => {
         { 'session-a': makeSessionUsage({ model: { displayName: '' } }) },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].modelDisplayName).toBe('claude-opus-4-8');
     });
@@ -706,7 +753,7 @@ describe('buildMonitorSnapshot', () => {
         { 'session-a': makeSessionUsage({ model: { displayName: 'Haiku 4.5' } }) },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].modelDisplayName).toBe('Haiku 4.5');
     });
@@ -717,7 +764,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].modelDisplayName).toBeNull();
     });
@@ -734,7 +781,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' }),
       ]);
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBeNull();
     });
@@ -751,7 +798,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBeNull();
     });
@@ -771,7 +818,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBe(0);
     });
@@ -788,7 +835,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBe(62);
     });
@@ -810,7 +857,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBe(100);
     });
@@ -827,7 +874,7 @@ describe('buildMonitorSnapshot', () => {
         },
       );
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].contextPercent).toBe(0);
     });
@@ -858,7 +905,7 @@ describe('buildMonitorSnapshot', () => {
       (context.sessionManager.getOutputPeek as unknown as ReturnType<typeof vi.fn>)
         .mockImplementation((sessionId: string) => peeksBySession[sessionId] ?? []);
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
       expect(rowsById.get('session-1')?.outputPeek).toEqual(['running tests', 'all green']);
@@ -873,20 +920,20 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].outputPeek).toEqual([]);
     });
 
     it('leaves commandTerminalBranch null for a task agent', async () => {
-      // A worktree-backed task has a branch too, but its COLUMN is the more
-      // useful breadcrumb and the eyebrow only has room for one.
+      // A worktree-backed task has a branch too, but its step track already
+      // says where it is, and the strip only has room for one.
       registerHealthyProject('project-a', { tasksById: new Map([['task-1', makeTask('task-1')]]) });
       const context = makeContext([
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect((await buildMonitorSnapshot(context)).rows[0].commandTerminalBranch).toBeNull();
+      expect((await buildMonitorSnapshot(context, makeSources())).rows[0].commandTerminalBranch).toBeNull();
     });
   });
 
@@ -903,7 +950,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect((await buildMonitorSnapshot(context)).rows[0].description).toBe('Fix the PTY capture race.');
+      expect((await buildMonitorSnapshot(context, makeSources())).rows[0].description).toBe('Fix the PTY capture race.');
     });
 
     it('is null when the task has no description, not an empty string', async () => {
@@ -914,7 +961,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      expect((await buildMonitorSnapshot(context)).rows[0].description).toBeNull();
+      expect((await buildMonitorSnapshot(context, makeSources())).rows[0].description).toBeNull();
     });
 
     it('truncates a description longer than MONITOR_ROW_DESCRIPTION_MAX_CHARS', async () => {
@@ -928,7 +975,7 @@ describe('buildMonitorSnapshot', () => {
         makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
       ]);
 
-      const row = (await buildMonitorSnapshot(context)).rows[0];
+      const row = (await buildMonitorSnapshot(context, makeSources())).rows[0];
       expect(row.description).toHaveLength(MONITOR_ROW_DESCRIPTION_MAX_CHARS);
       expect(row.description).toBe(longDescription.slice(0, MONITOR_ROW_DESCRIPTION_MAX_CHARS));
     });
@@ -949,7 +996,7 @@ describe('buildMonitorSnapshot', () => {
       const fullEvent = makeFullSessionEvent({ type: EventType.ToolStart, detail: 'Reading file.ts' });
       const context = makeContext(summaries, { 'session-a': [fullEvent] });
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       const lastEvent = snapshot.rows[0].lastEvent;
       expect(lastEvent).not.toBeNull();
@@ -975,7 +1022,7 @@ describe('buildMonitorSnapshot', () => {
         ],
       });
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.ToolEnd, detail: 'Read file.ts' });
     });
@@ -995,7 +1042,7 @@ describe('buildMonitorSnapshot', () => {
       // session-empty-events is present with an explicit empty array.
       const context = makeContext(summaries, { 'session-empty-events': [] });
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       const rowsById = new Map(snapshot.rows.map((row) => [row.sessionId, row]));
       expect(rowsById.get('session-undefined-events')?.lastEvent).toBeNull();
@@ -1014,9 +1061,260 @@ describe('buildMonitorSnapshot', () => {
       const eventWithNoDetail = makeFullSessionEvent({ type: EventType.Idle });
       const context = makeContext(summaries, { 'session-a': [eventWithNoDetail] });
 
-      const snapshot = await buildMonitorSnapshot(context);
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
 
       expect(snapshot.rows[0].lastEvent).toEqual({ type: EventType.Idle, detail: null });
+    });
+  });
+
+  // =========================================================================
+  // The board card's facts: what the monitor's card, list row and table draw
+  // =========================================================================
+
+  describe('board card facts', () => {
+    it('marks a task whose automations are off, and leaves an ordinary task unmarked', async () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-held', makeTask('task-held', { automations_disabled: true })],
+          ['task-ordinary', makeTask('task-ordinary', { automations_disabled: false })],
+        ]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-held', projectId: 'project-a', taskId: 'task-held' }),
+        makeManagedSummary({ id: 'session-ordinary', projectId: 'project-a', taskId: 'task-ordinary' }),
+      ]);
+
+      const rowsById = new Map((await buildMonitorSnapshot(context, makeSources())).rows.map((row) => [row.sessionId, row]));
+
+      expect(rowsById.get('session-held')?.automationsDisabled).toBe(true);
+      expect(rowsById.get('session-ordinary')?.automationsDisabled).toBe(false);
+      for (const row of rowsById.values()) expectNoUndefinedFields(row);
+    });
+
+    it("reads a workflow task's workflow from its home project, once per workflow", async () => {
+      // Two tasks of one workflow on another board share one read, and the read
+      // names the workflow's HOME project, not the board the task sits on.
+      const workflow: MonitorRowWorkflow = { id: 'workflow-1', title: 'Harden the API', colorSlot: 3 };
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-1', makeTask('task-1', { workflow_id: 'workflow-1', workflow_project_id: 'project-home' })],
+          ['task-2', makeTask('task-2', { workflow_id: 'workflow-1', workflow_project_id: 'project-home' })],
+          ['task-plain', makeTask('task-plain')],
+        ]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
+        makeManagedSummary({ id: 'session-plain', projectId: 'project-a', taskId: 'task-plain' }),
+      ]);
+      const sources = makeSources({ workflows: { 'project-home:workflow-1': workflow } });
+
+      const rowsById = new Map((await buildMonitorSnapshot(context, sources)).rows.map((row) => [row.sessionId, row]));
+
+      expect(rowsById.get('session-1')?.workflow).toEqual(workflow);
+      expect(rowsById.get('session-2')?.workflow).toEqual(workflow);
+      expect(rowsById.get('session-plain')?.workflow).toBeNull();
+      expect(sources.readWorkflow).toHaveBeenCalledTimes(1);
+      expect(sources.readWorkflow).toHaveBeenCalledWith('project-home', 'workflow-1');
+    });
+
+    it('reads a workflow from the task\'s own project when the task names no home', async () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-1', makeTask('task-1', { workflow_id: 'workflow-1', workflow_project_id: null })]]),
+      });
+      const context = makeContext([makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' })]);
+      const sources = makeSources();
+
+      await buildMonitorSnapshot(context, sources);
+
+      expect(sources.readWorkflow).toHaveBeenCalledWith('project-a', 'workflow-1');
+    });
+
+    it('keeps the row with no workflow when the read finds none or throws', async () => {
+      // A finished workflow or a deleted home reads null; a home database that
+      // fails to open throws. Either costs the row its workflow, never the row.
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-done', makeTask('task-done', { workflow_id: 'workflow-done' })],
+          ['task-broken', makeTask('task-broken', { workflow_id: 'workflow-broken' })],
+        ]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-done', projectId: 'project-a', taskId: 'task-done' }),
+        makeManagedSummary({ id: 'session-broken', projectId: 'project-a', taskId: 'task-broken' }),
+      ]);
+      const sources = makeSources({
+        readWorkflow: (_homeProjectId, workflowId) => {
+          if (workflowId === 'workflow-broken') throw new Error('[test] simulated home DB failure');
+          return null;
+        },
+      });
+
+      const rows = (await buildMonitorSnapshot(context, sources)).rows;
+
+      expect(rows.map((row) => row.sessionId).sort()).toEqual(['session-broken', 'session-done']);
+      for (const row of rows) expect(row.workflow).toBeNull();
+      expect(console.error).toHaveBeenCalled();
+    });
+
+    it('caches a null workflow read too, so two tasks of one finished workflow cost one read', async () => {
+      // The per-snapshot cache must tell "read it, it was null" apart from "never
+      // read it". A truthiness check on the cached value would re-read a finished
+      // or deleted workflow once per task, which is exactly the repeat read the
+      // cache exists to prevent.
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-1', makeTask('task-1', { workflow_id: 'workflow-finished', workflow_project_id: 'project-home' })],
+          ['task-2', makeTask('task-2', { workflow_id: 'workflow-finished', workflow_project_id: 'project-home' })],
+        ]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
+      ]);
+      const sources = makeSources({ readWorkflow: () => null });
+
+      const rows = (await buildMonitorSnapshot(context, sources)).rows;
+
+      expect(rows.map((row) => row.sessionId).sort()).toEqual(['session-1', 'session-2']);
+      for (const row of rows) expect(row.workflow).toBeNull();
+      expect(sources.readWorkflow).toHaveBeenCalledTimes(1);
+      expect(sources.readWorkflow).toHaveBeenCalledWith('project-home', 'workflow-finished');
+    });
+
+    it('caches a failed workflow read, so two tasks of one workflow log and read once', async () => {
+      // A throwing read is cached as null as well: a home database that fails to
+      // open would otherwise be retried, and logged, once per task of the workflow.
+      registerHealthyProject('project-a', {
+        tasksById: new Map([
+          ['task-1', makeTask('task-1', { workflow_id: 'workflow-broken', workflow_project_id: 'project-home' })],
+          ['task-2', makeTask('task-2', { workflow_id: 'workflow-broken', workflow_project_id: 'project-home' })],
+        ]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' }),
+        makeManagedSummary({ id: 'session-2', projectId: 'project-a', taskId: 'task-2' }),
+      ]);
+      const sources = makeSources({
+        readWorkflow: () => {
+          throw new Error('[test] simulated home DB failure');
+        },
+      });
+
+      const rows = (await buildMonitorSnapshot(context, sources)).rows;
+
+      expect(rows.map((row) => row.sessionId).sort()).toEqual(['session-1', 'session-2']);
+      for (const row of rows) expect(row.workflow).toBeNull();
+      expect(sources.readWorkflow).toHaveBeenCalledTimes(1);
+      // beforeEach resets the spy's calls, so this counts only this snapshot's logs.
+      expect(console.error).toHaveBeenCalledTimes(1);
+    });
+
+    it("carries a plain task's track: every working column, the task's own as current", async () => {
+      registerHealthyProject('project-a', {
+        swimlanes: STOCK_BOARD,
+        tasksById: new Map([['task-1', makeTask('task-1', { swimlane_id: 'swimlane-executing' })]]),
+      });
+      const context = makeContext([makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' })]);
+
+      const track = (await buildMonitorSnapshot(context, makeSources())).rows[0].track;
+
+      expect(track?.place).toBe('working');
+      expect(track?.steps.map((step) => [step.swimlaneId, step.state])).toEqual([
+        ['swimlane-planning', 'done'],
+        ['swimlane-executing', 'current'],
+        ['swimlane-review', 'ahead'],
+      ]);
+      expect(track?.ends?.todo?.swimlaneId).toBe('swimlane-todo');
+      expect(track?.ends?.done?.swimlaneId).toBe('swimlane-done');
+    });
+
+    it("carries a workflow task's route: a column it skips reads skipped", async () => {
+      registerHealthyProject('project-a', {
+        swimlanes: STOCK_BOARD,
+        tasksById: new Map([['task-1', makeTask('task-1', {
+          swimlane_id: 'swimlane-executing',
+          workflow_id: 'workflow-1',
+          route_start_swimlane_id: 'swimlane-executing',
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [],
+        })]]),
+      });
+      const context = makeContext([makeManagedSummary({ id: 'session-1', projectId: 'project-a', taskId: 'task-1' })]);
+
+      const track = (await buildMonitorSnapshot(context, makeSources())).rows[0].track;
+
+      expect(track?.steps.map((step) => [step.swimlaneId, step.state])).toEqual([
+        ['swimlane-planning', 'skipped'],
+        ['swimlane-executing', 'current'],
+        ['swimlane-review', 'ahead'],
+      ]);
+    });
+
+    it('reports the model only once the agent has named it, not from the spawn-time model', async () => {
+      // `modelDisplayName` falls back to the applied model id before the agent
+      // reports, so it cannot tell the card the session is still starting.
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-starting', makeTask('task-starting')], ['task-reported', makeTask('task-reported')]]),
+      });
+      registerSessionRecord('project-a', 'session-starting', {
+        exited_at: null, applied_model: 'claude-opus-4-8', applied_effort: null, permission_mode: null,
+      });
+      const context = makeContext(
+        [
+          makeManagedSummary({ id: 'session-starting', projectId: 'project-a', taskId: 'task-starting' }),
+          makeManagedSummary({ id: 'session-reported', projectId: 'project-a', taskId: 'task-reported' }),
+        ],
+        {},
+        { 'session-reported': makeSessionUsage({ model: { displayName: 'Opus 4.8' } }) },
+      );
+
+      const rowsById = new Map((await buildMonitorSnapshot(context, makeSources())).rows.map((row) => [row.sessionId, row]));
+
+      expect(rowsById.get('session-starting')?.modelDisplayName).toBe('claude-opus-4-8');
+      expect(rowsById.get('session-starting')?.modelReported).toBe(false);
+      expect(rowsById.get('session-reported')?.modelReported).toBe(true);
+    });
+
+    it('does not report the model when usage is cached but its displayName is still empty', async () => {
+      // The usage cache seeds `displayName: ''` before the agent names its model,
+      // so a PRESENT usage entry says nothing about whether the model reported.
+      // Asserting the spawn-time fallback too proves the two fields are driven
+      // apart: the card shows the applied id but still says "Starting agent...".
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      registerSessionRecord('project-a', 'session-a', {
+        exited_at: null, applied_model: 'claude-opus-4-8', applied_effort: null, permission_mode: null,
+      });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        { 'session-a': makeSessionUsage({ model: { id: 'claude-opus-4-8', displayName: '' } }) },
+      );
+
+      const row = (await buildMonitorSnapshot(context, makeSources())).rows[0];
+
+      expect(row.modelReported).toBe(false);
+      expect(row.modelDisplayName).toBe('claude-opus-4-8');
+    });
+
+    it("marks the task whose browser is running, and never a Command Terminal", async () => {
+      registerHealthyProject('project-a', {
+        tasksById: new Map([['task-browsing', makeTask('task-browsing')], ['task-quiet', makeTask('task-quiet')]]),
+      });
+      const context = makeContext([
+        makeManagedSummary({ id: 'session-browsing', projectId: 'project-a', taskId: 'task-browsing' }),
+        makeManagedSummary({ id: 'session-quiet', projectId: 'project-a', taskId: 'task-quiet' }),
+        makeManagedSummary({
+          id: 'session-ct', projectId: 'project-a', taskId: 'command-terminal:project-a:slot-1', transient: true,
+        }),
+      ]);
+      const sources = makeSources({ browserTaskIds: ['task-browsing', 'command-terminal:project-a:slot-1'] });
+
+      const rowsById = new Map((await buildMonitorSnapshot(context, sources)).rows.map((row) => [row.sessionId, row]));
+
+      expect(rowsById.get('session-browsing')?.browserRunning).toBe(true);
+      expect(rowsById.get('session-quiet')?.browserRunning).toBe(false);
+      expect(rowsById.get('session-ct')?.browserRunning).toBe(false);
     });
   });
 });

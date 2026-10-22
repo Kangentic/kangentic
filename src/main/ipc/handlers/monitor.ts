@@ -9,7 +9,10 @@
  *   - This handler only re-pushes when the DB-resident half of a row can have
  *     changed: a session appeared / changed status / exited, or a task was
  *     written. An agent edit, a move and a desktop task write all announce on
- *     the BoardEventBus. The pushes are debounced, so a burst costs one rebuild.
+ *     the BoardEventBus. A change in which tasks have a browser surface also
+ *     re-pushes, for the card's globe, and so does any workflow change, since a
+ *     rename, a pause, a route edit or the finish reaches only that push. The
+ *     pushes are debounced, so a burst costs one rebuild.
  *   - There is no timer. Elapsed time ticks client-side.
  */
 import { ipcMain } from 'electron';
@@ -17,6 +20,9 @@ import type { WebContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { broadcast } from '../../pop-out/window-broadcast';
 import { buildMonitorSnapshot } from '../../monitor/monitor-aggregator';
+import { monitorSnapshotSources } from '../../monitor/monitor-snapshot-sources';
+import { browserPaneRegistry } from '../../browser/browser-pane-registry';
+import { onWorkflowChanged } from '../../workflows/workflow-changed';
 import { MonitorPeekTracker } from '../../monitor/monitor-peek-tracker';
 import { buildTaskDetailBundle } from '../../monitor/task-detail-bundle';
 import type { IpcContext } from '../ipc-context';
@@ -81,7 +87,7 @@ export function registerMonitorHandlers(context: IpcContext): void {
 
   const buildSnapshotSafe = async () => {
     try {
-      return await buildMonitorSnapshot(context);
+      return await buildMonitorSnapshot(context, monitorSnapshotSources);
     } catch (error) {
       // Same reasoning as the push path below: one project's DB hiccup must not
       // fail the whole cross-project fetch. `resolveProject` already guards the
@@ -152,7 +158,7 @@ export function registerMonitorHandlers(context: IpcContext): void {
       // A snapshot failure must never take down the session event pipeline it
       // is riding on.
       const build = ++pushBuildCount;
-      buildMonitorSnapshot(context).then((snapshot) => {
+      buildMonitorSnapshot(context, monitorSnapshotSources).then((snapshot) => {
         if (context.mainWindow.isDestroyed()) return;
         if (build < newestBroadcastBuild) return;
         newestBroadcastBuild = build;
@@ -175,6 +181,23 @@ export function registerMonitorHandlers(context: IpcContext): void {
   context.sessionManager.on('session-removed', schedulePush);
   context.sessionManager.on('exit', schedulePush);
   context.boardEvents.onBoardChanged(schedulePush);
+  // The card's browser globe: a pane or lane registering, or any removal
+  // (unmount, user close, destroyed guest, self-heal eviction). The globe reads
+  // only WHICH tasks have a browser, so a change that leaves that set alone (a
+  // rebind of the same task's guest, a second surface for a task that has one)
+  // costs no rebuild. The handler lives as long as the app, so the subscription
+  // is never released.
+  const browserTaskSetKey = (): string => [...browserPaneRegistry.taskIds()].sort().join('\n');
+  let lastBrowserTaskSetKey = browserTaskSetKey();
+  browserPaneRegistry.onMembershipChange(() => {
+    const nextKey = browserTaskSetKey();
+    if (nextKey === lastBrowserTaskSetKey) return;
+    lastBrowserTaskSetKey = nextKey;
+    schedulePush();
+  });
+  // A row's workflow title, color and route, and its strip dropping once the
+  // workflow is done. Many workflow writes never touch the board's bus.
+  onWorkflowChanged(schedulePush);
 
   /**
    * The live output peek. Broadcast (not `webContents.send`) for the same reason

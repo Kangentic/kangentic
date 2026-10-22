@@ -21,8 +21,9 @@ import { selectEngine } from '../../../src/main/transcription/engines/engine-sel
 import { DEFAULT_CONFIG } from '../../../src/shared/types';
 import type {
   KnowledgeGraphClustering, KnowledgeGraphCoverageSummary, KnowledgeGraphEdge, KnowledgeGraphGranularity,
-  KnowledgeGraphIndexSummary, KnowledgeGraphStatus, PerToolStat,
+  KnowledgeGraphIndexSummary, KnowledgeGraphStatus, MonitorRowTrack, PerToolStat,
 } from '../../../src/shared/types';
+import { boardEnds, routeSteps, taskPlace, type StepColumn } from '../../../src/shared/workflow-route';
 import { resolveEmbeddingModel } from '../../../src/shared/embedding-models';
 import { NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf } from '../../../src/shared/index-summary';
 import archivedRunsFixture from '../fixtures/demo/archived/runs.json';
@@ -296,6 +297,31 @@ export function demoLaneIds(): string[] {
   return Object.entries(DEMO_LANES_BY_PROJECT).flatMap(
     ([projectId, lanes]) => lanes.map((lane) => demoLaneId(projectId, lane.slug)),
   );
+}
+
+/**
+ * The step track a Monitor row carries for a plain task in each column, keyed by column id. Main's
+ * snapshot (monitor-aggregator.ts) computes it with these same three functions. A plain task's
+ * track depends only on its board and its column, so one per column covers every row the sample
+ * install seeds and every column a timeline moves a card into.
+ */
+export function demoMonitorTracksByLane(): Record<string, MonitorRowTrack> {
+  const tracks: Record<string, MonitorRowTrack> = {};
+  for (const [projectId, lanes] of Object.entries(DEMO_LANES_BY_PROJECT)) {
+    const columns: StepColumn[] = lanes.map((lane, index) => ({
+      id: demoLaneId(projectId, lane.slug), name: lane.name, color: lane.color, icon: lane.icon,
+      role: lane.role, position: index, is_archived: lane.is_archived, is_ghost: false,
+    }));
+    const ends = boardEnds(columns);
+    for (const column of columns) {
+      const plainTask = {
+        swimlane_id: column.id, archived_at: null,
+        route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+      };
+      tracks[column.id] = { steps: routeSteps(columns, plainTask), ends, place: taskPlace(columns, plainTask) };
+    }
+  }
+  return tracks;
 }
 
 /**
@@ -1104,6 +1130,9 @@ export function buildDemoPreConfig(options: {
       ]),
     ),
     tasks: DEMO_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
+    // Each column's Monitor step track, computed here for the reason the column ids are: the
+    // applier cannot import the route functions, and a copy written there would drift.
+    monitorTracksByLane: demoMonitorTracksByLane(),
     sessions: DEMO_SESSIONS,
     // Added only when a scene names them (`rows`), folded in below before anything is derived.
     sceneTasks: DEMO_SCENE_TASKS.map((task) => ({ ...task, swimlane_id: demoLaneId(task.projectId, task.lane) })),
@@ -1660,6 +1689,14 @@ export function buildDemoPreConfig(options: {
           status: session.status, activity: session.activity, activityReason: null,
           lastEvent: null, contextPercent: hasUsageYet(session) ? session.contextPercent : null, isolated: session.isolated || false,
           isCommandTerminal: session.transient || false,
+          // The sample install holds no task with its automations off and starts no workflow (a
+          // workflow is a scene seed, joined by a task patch after these rows are built, as a
+          // patched card's column is), so every row is a plain task's, on its column's track.
+          automationsDisabled: false, workflow: null,
+          track: task ? data.monitorTracksByLane[task.swimlane_id] || null : null,
+          modelReported: Boolean(session.model) && hasUsageYet(session),
+          // Main reads this from its live Browser panes, and the sample install opens none.
+          browserRunning: false,
         };
       });
 
@@ -3180,6 +3217,7 @@ export function buildDemoPreConfig(options: {
             delete heldUsageBySession[sessionId];
             patchMonitorRow(sessionId, {
               modelDisplayName: held.model ? held.model.displayName : null,
+              modelReported: Boolean(held.model && held.model.displayName),
               contextPercent: held.contextWindow ? held.contextWindow.usedPercentage : null,
             });
           }
@@ -3260,6 +3298,9 @@ export function buildDemoPreConfig(options: {
           agentName: agent, modelDisplayName: model ? model.displayName : null, effort: null, permissionMode: permissionMode,
           startedAt: row.startedAt, exitedAt: null, status: 'running', activity: mockState.activityCache[row.id], activityReason: null,
           lastEvent: null, contextPercent: 1, isolated: false, isCommandTerminal: !!row.transient,
+          automationsDisabled: !!(mockTask && mockTask.automations_disabled), workflow: null,
+          track: mockTask ? data.monitorTracksByLane[mockTask.swimlane_id] || null : null,
+          modelReported: !!model, browserRunning: false,
         }]);
         window.__mockMonitorRows = rows;
         if (window.__mockFireMonitorChanged) window.__mockFireMonitorChanged(rows);
@@ -3433,7 +3474,7 @@ export function buildDemoPreConfig(options: {
         patchMonitorRow(id, {
           outputPeek: previousMonitorRow ? previousMonitorRow.outputPeek : [],
           effort: previousMonitorRow ? previousMonitorRow.effort : null,
-          modelDisplayName: null, contextPercent: null,
+          modelDisplayName: null, modelReported: false, contextPercent: null,
         });
         return row;
       }
@@ -3522,7 +3563,7 @@ export function buildDemoPreConfig(options: {
         var toDone = (laneById(move.to) || {}).role === 'done';
         var targetPosition = mockState.tasks.filter(function (candidate) { return candidate.swimlane_id === move.to; }).length;
         window.electronAPI.tasks.move({ taskId: move.task, targetSwimlaneId: move.to, targetPosition: targetPosition }, projectId).then(function () {
-          if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(move.to) });
+          if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(move.to), track: data.monitorTracksByLane[move.to] || null });
           // Main suspends a task's session as it moves the task to Done, resumable on unarchive.
           // Only the row's status: the clock's own timers (the loop's restart) are left running.
           if (toDone && sessionId) setSessionStatus(sessionId, 'suspended');
@@ -3539,7 +3580,7 @@ export function buildDemoPreConfig(options: {
             ? window.electronAPI.tasks.unarchive({ id: move.task, targetSwimlaneId: from.laneId }, projectId).then(moveBack)
             : moveBack();
           restore.then(function () {
-            if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(from.laneId) });
+            if (sessionId) patchMonitorRow(sessionId, { columnName: laneNameOf(from.laneId), track: data.monitorTracksByLane[from.laneId] || null });
             if (window.__mockFireTaskChangedInOtherWindow) window.__mockFireTaskChangedInOtherWindow(projectId);
             if (window.__mockFireWorkflowChanged && task.workflow_id) window.__mockFireWorkflowChanged({ projectId: projectId, workflowId: task.workflow_id });
           });

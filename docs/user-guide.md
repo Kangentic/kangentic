@@ -125,7 +125,8 @@ conversation and sends the task once more.
 - **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
   - An idle icon (amber) when the agent is waiting for input
-  - "Initializing..." or "Resuming..." during session startup
+  - "Starting agent..." or "Resuming agent..." during session startup
+  - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see [agent-integration.md](agent-integration.md))
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
   - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which settings change it
@@ -568,7 +569,8 @@ any column, on enter, turn end or exit, and a drag into a column sends it no col
 Kangentic does not approve its plans either: in a column with **Plan approval** set to Automatic,
 the plan waits for you, and once you approve it the task moves on per **After Plan Mode** as usual.
 The column's agent settings, manual drags and **Run again** still work, and so does the task's own
-command. The card shows an **Automations disabled** strip across its top, and the run log records
+command. The card shows an **Automations disabled** strip across its top, and so does its card in
+the [Agent Monitor](#agent-monitor), whose list row and table mark it too. The run log records
 each skipped automation with "Automations are disabled for this task." Choose **Enable automations**
 to turn them back on; nothing that was skipped is replayed. Moving the task out of Done, restoring it
 from the archive, or adding it to a workflow enables them again. A task in a workflow has no such row: pause the workflow instead.
@@ -1550,11 +1552,13 @@ near a task, nothing is shown at all.
 
 Open the monitor from the activity icon in the title bar or with `Mod+Shift+M`. It answers "what are all my agents doing right now?" in one place, across **every** registered project rather than just the one whose board is open. The title-bar icon itself is the ambient signal: green while any agent anywhere is working, amber the moment one starts waiting on you.
 
-Each session shows its owning project and column, the task title and ticket number, live activity state, agent, model, effort and permission mode, how long it has been running, and what the agent is doing right now. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live. The tiles follow the Projects filter, so a scoped view counts only the projects in view.
+Each card is the board card, with one strip added across its top for what the board's lane would otherwise say. The strip names the project on the left, then the workflow for a workflow task, and on the right draws the task's step track with its current column as the column's own icon, as a Workflows canvas card does. A task whose automations are off adds the board's **Automations disabled** strip above it. Under the strip are the board card's title row (the activity mark, whose tooltip says what the agent is doing, the ticket number when Ticket Numbers is on, and the green globe while the task's browser is running), its PR link, labels and footer. The footer says **Starting agent...**, **Queued...** or **Paused** as the board card's does (or, for an agent that streams no live telemetry, says so in place of the spinner), and a card waiting on you dims and pulses like one. Four tiles across the top count what needs you, what is active, what is paused, and how many projects have something live. The tiles follow the Projects filter, so a scoped view counts only the projects in view.
+
+The list layout ends each row with the same facts turned sideways: **Automations disabled**, or the workflow's name and step track. The table adds a **Workflow** column and an **Automations** column, where Disabled is the one value marked, and names the agent, model and permission mode in the Column Manager's words. An unset model, effort or permission reads Default.
 
 The slot under each card's title follows the same Card Preview setting as the board card (Settings > Task), and renders it the same way. A session with an agent on it shows what that agent is doing, in a shaded terminal panel: its latest message wrapped, or its recent messages one line each. When it has not said anything yet, or it is a Command Terminal with no task, that same panel carries a **live output peek** instead, the last few rendered lines of the session's terminal. The peek updates in place as the agent works (at most twice a second, and only when the visible text actually changes), so you can see what a session is saying without opening it. A paused or finished session shows the task description instead, as does every card when Card Preview is set to the task description. A Command Terminal has no task to describe, so it keeps its last output peek in both of those cases. The terminal panel is a fixed height whichever of the two it carries, so a card never resizes as messages land.
 
-Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each starts as `Command Terminal N` (matching the number on its own window) and takes a name from its first prompt when an Automation agent is set up in Settings > Workflows, and keeps the number without one. It draws a terminal-shaped activity glyph rather than the agent one, and names the **branch** it is working on where a task card names its column.
+Command Terminals (`Mod+Shift+P`) appear here too. They are the one thing the board cannot show you - they belong to no task, so before now a Command Terminal left running in another project was invisible. Each starts as `Command Terminal N` (matching the number on its own window) and takes a name from its first prompt when an Automation agent is set up in Settings > Workflows, and keeps the number without one. It draws a terminal-shaped activity glyph rather than the agent one, and its strip names the **branch** it is working on in the slot where a workflow task names its workflow.
 
 You choose how it looks, and the choice is remembered (including across a restart):
 

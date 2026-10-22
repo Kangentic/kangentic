@@ -306,6 +306,84 @@ describe('BrowserPaneRegistry', () => {
     expect(registry.getByTaskId('task-1', 'proj-1')[0].sessionId).toBe('pane_aaaaaaaa');
   });
 
+  it('taskIds() names each task with a surface once, lanes included', () => {
+    // The Agent Monitor's browser globe reads this once per snapshot.
+    expect(registry.taskIds().size).toBe(0);
+    registry.register(REGISTER_A);
+    registry.register(OFFSCREEN_SURFACE); // the same task's offscreen lane
+    registry.register(REGISTER_C);
+    expect([...registry.taskIds()].sort()).toEqual(['task-1', 'task-3']);
+    registry.unregister('pane_cccccccc');
+    expect([...registry.taskIds()]).toEqual(['task-1']);
+  });
+
+  it('taskIds() skips a surface registered with an empty taskId', () => {
+    // An empty id names no task, so it must not put "" in the set the monitor
+    // matches rows against. A different guest id keeps this a second entry
+    // rather than a rebind of the first.
+    registry.register({ ...REGISTER_A, taskId: '' });
+    registry.register(REGISTER_B);
+
+    expect(registry.size).toBe(2);
+    expect([...registry.taskIds()]).toEqual(['task-2']);
+  });
+
+  it('onMembershipChange tells every subscriber on register and unregister, until each unsubscribes', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = registry.onMembershipChange(first);
+    registry.onMembershipChange(second);
+
+    registry.register(REGISTER_A);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+
+    unsubscribeFirst();
+    registry.unregister('pane_aaaaaaaa');
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(2);
+  });
+
+  it('onMembershipChange tells a subscriber when a registration rebinds the same guest', () => {
+    // A session rotation re-registers the same guest and can move a surface to a
+    // different task, so the set of tasks with a browser changes with no new
+    // entry. A subscriber that only heard about new entries would show a stale globe.
+    registry.register(REGISTER_A);
+    const listener = vi.fn();
+    registry.onMembershipChange(listener);
+
+    const rebound = registry.register({ ...REGISTER_A, handle: undefined, taskId: 'task-9', ownerSessionId: 'sess-a2' });
+
+    // Still one entry under the original handle: this was a rebind, not a new registration.
+    expect(rebound.sessionId).toBe('pane_aaaaaaaa');
+    expect(registry.size).toBe(1);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('onMembershipChange tells a subscriber when detachAll clears the registry', () => {
+    registry.register(REGISTER_A);
+    registry.register(REGISTER_B);
+    seedGuests(fakeGuest(11), fakeGuest(22));
+    const listener = vi.fn();
+    registry.onMembershipChange(listener);
+
+    registry.detachAll();
+
+    expect(registry.size).toBe(0);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it('onMembershipChange keeps notifying when one subscriber throws', () => {
+    const throwing = vi.fn(() => { throw new Error('[test] subscriber failure'); });
+    const after = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    registry.onMembershipChange(throwing);
+    registry.onMembershipChange(after);
+
+    expect(() => registry.register(REGISTER_A)).not.toThrow();
+    expect(after).toHaveBeenCalledTimes(1);
+  });
+
   it('list() enriches with alive + debuggerAttached', () => {
     registry.register(REGISTER_A);
     registry.register(REGISTER_B);

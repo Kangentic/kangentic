@@ -1,10 +1,11 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CirclePause, Paperclip, Globe, Ban } from 'lucide-react';
+import { Loader2, CirclePause, Paperclip, Globe } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useTaskProgress } from '../../utils/task-progress';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
@@ -13,10 +14,12 @@ import { ContextUsageFooter } from './ContextUsageFooter';
 import { CardMessageTrail, EXCERPT_CLAMP_CLASS, excerptLinesFor, trailModeFor } from './CardMessageTrail';
 import { LabelPills } from '../Pill';
 import { PrLink } from '../PrLink';
-import type { ActivityReason, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task } from '../../../shared/types';
+import type {
+  ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task,
+} from '../../../shared/types';
 import { activityReasonIcon, formatActivityReasonText } from './ActivityReasonTooltip';
 import { Tooltip } from '../Tooltip';
-import { CardStrip, cardStripBleedClass } from './CardStrip';
+import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 
 /**
@@ -102,6 +105,19 @@ export interface TaskCardViewModel {
   archivedRelativeTime: string | null;
   cardDensity: AppConfig['cardDensity'];
   showTaskNumbers: boolean;
+  /** Set when the task's agent streams no live telemetry, so its footer never waits on a model. */
+  liveTelemetryUnsupported: AgentLiveTelemetryUnsupported | undefined;
+}
+
+/**
+ * An agent's declared lack of live telemetry (`liveTelemetryUnsupported`, owned by
+ * its adapter), read from the installed agents list. A generic capability, so a
+ * card never branches on the agent's name.
+ */
+export function useLiveTelemetryUnsupported(agentName: string | null | undefined): AgentLiveTelemetryUnsupported | undefined {
+  return useConfigStore((state) => (agentName
+    ? state.agentList.find((agent) => agent.name === agentName)?.liveTelemetryUnsupported
+    : undefined));
 }
 
 /** The live state a card reads for one task: its session, activity, trail, and the card settings. */
@@ -155,6 +171,10 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const cardPreview = useConfigStore((state) => state.config.cardPreview);
+  // The task's agent, or the project's default when the task names none: the
+  // same resolution the task detail's context bar makes for the same question.
+  const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
+  const liveTelemetryUnsupported = useLiveTelemetryUnsupported(task.agent ?? projectDefaultAgent);
   // `messageTrail` (from the shared selector above) is the session's agent
   // message trail as main pushes it on change. NEVER fetched here: a board
   // renders every card at once, and a per-card transcript read is the one way
@@ -203,10 +223,12 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       archivedRelativeTime,
       cardDensity,
       showTaskNumbers,
+      liveTelemetryUnsupported,
     }),
     [
       sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
       shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity, showTaskNumbers,
+      liveTelemetryUnsupported,
     ],
   );
 }
@@ -214,9 +236,13 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
 /**
  * The full card's frame: padding by density and the border that carries its
  * state (highlighted, waiting on the user). The host adds its own cursor and
- * selection treatment.
+ * selection treatment. Reads only the two state flags, so a host with no
+ * `TaskCardViewModel` (the Agent Monitor's card) draws the same frame.
  */
-export function taskCardFrameClass(view: TaskCardViewModel, density: AppConfig['cardDensity']): string {
+export function taskCardFrameClass(
+  view: Pick<TaskCardViewModel, 'isHighlighted' | 'isIdle'>,
+  density: AppConfig['cardDensity'],
+): string {
   const padding = density === 'comfortable' ? 'p-3' : 'p-2.5';
   const border = view.isHighlighted
     ? 'border-[2px] border-fg-faint/60'
@@ -226,16 +252,119 @@ export function taskCardFrameClass(view: TaskCardViewModel, density: AppConfig['
 
 /**
  * Subtle, muted `#N` (display_id) matching the task-detail header format. Right-aligned
- * and shrink-0 so a long title truncates before the number; rendered only when the
- * board's Ticket Numbers setting is on.
+ * and shrink-0 so a long title truncates before the number. Shared with the Agent
+ * Monitor's card and list row; each host gates it on the Ticket Numbers setting.
  */
-function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardViewModel; hidden?: boolean }) {
-  if (!view.showTaskNumbers || hidden) return null;
+export function TicketNumber({ displayId, testId, className = '' }: { displayId: number; testId: string; className?: string }) {
   return (
-    <span className="shrink-0 font-mono text-xs text-fg-muted" data-testid="task-card-display-id">
-      #{task.display_id}
+    <span className={`shrink-0 font-mono text-xs text-fg-muted ${className}`} data-testid={testId}>
+      #{displayId}
     </span>
   );
+}
+
+/** The board's ticket number, rendered only when the board's Ticket Numbers setting is on. */
+function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardViewModel; hidden?: boolean }) {
+  if (!view.showTaskNumbers || hidden) return null;
+  return <TicketNumber displayId={task.display_id} testId="task-card-display-id" />;
+}
+
+/**
+ * A solid green globe at the far RIGHT of the title row, after the ticket number,
+ * at the badge's scale (12). Four cuts were compared side by side on a live board,
+ * and the two decisions that survived are:
+ *   - PLACEMENT: right cluster, not beside the activity mark. That slot is the
+ *     agent's state; a globe there competed with the activity ring and shifted
+ *     every title's start. Placement is also what makes green safe here - green
+ *     next to the ring's green lost its identity, but past the title and the
+ *     ticket number it reads as its own thing.
+ *   - NO running dot, unlike the pill: the pill is persistent chrome (always
+ *     rendered, so it needs a marker to say whether a guest is behind it), while
+ *     this globe renders ONLY while a guest is running - its presence IS the
+ *     signal, and at 12px the dot was a smudge on the glyph rather than a second
+ *     reading.
+ * Solid, not pulsing: a running guest is a steady fact, and a pulse on every such
+ * card is motion the board does not need. Whether the agent is DRIVING the page is
+ * shown in the pane. Not a click target: the card's own click opens the task,
+ * where the kebab's "Close browser" is. Shared with the Agent Monitor's card.
+ */
+export function BrowserAliveGlobe({ testId }: { testId: string }) {
+  return (
+    <Tooltip label="Browser running for the agent. Close it from the task menu to free memory.">
+      <span className="text-active shrink-0 flex" data-testid={testId}>
+        <Globe size={12} aria-label="Browser running" />
+      </span>
+    </Tooltip>
+  );
+}
+
+/** A card footer's state while there is no model and context to show yet, or no live agent. */
+export type PendingFooterState = 'starting' | 'resuming' | 'queued' | 'paused';
+
+/**
+ * The footer for a session that has no model to report: starting or resuming
+ * (spinning), queued (spinning), or paused. One home for the words, shared by the
+ * board card and the Agent Monitor's card, in the same skeleton as the running
+ * footer so the card keeps its height when one gives way to the other.
+ */
+export function PendingFooter({ state, divider, testId }: { state: PendingFooterState; divider: boolean; testId?: string }) {
+  if (state === 'paused') {
+    return (
+      <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
+        <CirclePause size={12} className="shrink-0" />
+        Paused
+      </CardStatusBar>
+    );
+  }
+  if (state === 'queued') {
+    return (
+      <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
+        <Loader2 size={12} className="animate-spin shrink-0" />
+        Queued...
+      </CardStatusBar>
+    );
+  }
+  return (
+    <CardStatusBar testId={testId ?? 'usage-bar'} divider={divider}>
+      <Loader2 size={12} className="animate-spin shrink-0" />
+      <span className="truncate">{state === 'resuming' ? 'Resuming agent...' : 'Starting agent...'}</span>
+    </CardStatusBar>
+  );
+}
+
+/**
+ * The footer for an agent whose CLI streams no live telemetry: its adapter's own
+ * label and tip in place of a "Starting agent..." spinner that would never end,
+ * as the task detail's context bar shows it.
+ */
+function TelemetryUnavailableFooter({ unsupported, divider, testId }: {
+  unsupported: AgentLiveTelemetryUnsupported;
+  divider: boolean;
+  testId?: string;
+}) {
+  return (
+    <CardStatusBar testId={testId ?? 'usage-bar'} tip={unsupported.unavailableTitle} divider={divider}>
+      <span className="truncate">{unsupported.unavailableLabel}</span>
+    </CardStatusBar>
+  );
+}
+
+/**
+ * The footer for a running session whose model is not known yet. An agent with
+ * no telemetry channel never reports one, so it gets its adapter's label; any
+ * other agent spins until the name arrives. Shared by the board card and the
+ * Agent Monitor's card, so the two make this call the same way.
+ */
+export function NoModelFooter({ liveTelemetryUnsupported, resuming, divider, testId }: {
+  liveTelemetryUnsupported: AgentLiveTelemetryUnsupported | undefined;
+  resuming: boolean;
+  divider: boolean;
+  testId?: string;
+}) {
+  if (liveTelemetryUnsupported) {
+    return <TelemetryUnavailableFooter unsupported={liveTelemetryUnsupported} divider={divider} testId={testId} />;
+  }
+  return <PendingFooter state={resuming ? 'resuming' : 'starting'} divider={divider} testId={testId} />;
 }
 
 interface TaskCardBodyProps {
@@ -266,27 +395,6 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
       {/* Bottom bar -- exhaustive switch on display state */}
       {density !== 'compact' && <TaskCardFooter view={view} idleFooter={idleFooter} divider={footerDivider} />}
     </>
-  );
-}
-
-/**
- * Across the top of a card whose column automations are disabled, at every
- * density: the workflow strip's own shell, with no hue, so it competes with
- * neither the activity mark nor a workflow's color. A workflow task never
- * wears it: its workflow's Pause is what holds it.
- */
-function AutomationsDisabledStrip({ density }: { density: AppConfig['cardDensity'] }) {
-  return (
-    <div className={cardStripBleedClass(density)}>
-      <Tooltip label="Column automations don't run for this task. Enable them from the card's menu.">
-        <CardStrip data-testid="task-card-automations-disabled">
-          <span className="inline-flex items-center gap-[5px] text-xs text-fg-muted min-w-0">
-            <Ban size={12} strokeWidth={2} className="shrink-0" aria-hidden="true" />
-            <span className="truncate">Automations disabled</span>
-          </span>
-        </CardStrip>
-      </Tooltip>
-    </div>
   );
 }
 
@@ -328,32 +436,8 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
         )}
         <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />
-        {/* A solid green globe at the far RIGHT, after the ticket number, at
-            the badge's scale (12). Four cuts were compared side by side on a
-            live board, and the two decisions that survived are:
-              - PLACEMENT: right cluster, not beside the activity mark. That
-                slot is the agent's state; a globe there competed with the
-                activity ring and shifted every title's start. Placement is
-                also what makes green safe here - green next to the ring's
-                green lost its identity, but past the title and the ticket
-                number it reads as its own thing.
-              - NO running dot, unlike the pill: the pill is persistent chrome
-                (always rendered, so it needs a marker to say whether a guest
-                is behind it), while this globe renders ONLY while a guest is
-                running - its presence IS the signal, and at 12px the dot was
-                a smudge on the glyph rather than a second reading.
-            Solid, not pulsing: a running guest is a steady fact, and a pulse
-            on every such card is motion the board does not need. Whether the
-            agent is DRIVING the page is shown in the pane. Not a click
-            target: the card's own click opens the task, where the kebab's
-            "Close browser" is. */}
-        {view.browserAlive && (
-          <Tooltip label="Browser running for the agent. Close it from the task menu to free memory.">
-            <span className="text-active shrink-0 flex" data-testid="task-card-browser-alive">
-              <Globe size={12} aria-label="Browser running" />
-            </span>
-          </Tooltip>
-        )}
+        {/* Placement and treatment are documented on `BrowserAliveGlobe`. */}
+        {view.browserAlive && <BrowserAliveGlobe testId="task-card-browser-alive" />}
       </div>
 
       {!isCompactDensity && task.pr_url && (
@@ -394,7 +478,7 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
 }
 
 function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel; idleFooter?: React.ReactNode; divider: boolean }) {
-  const { displayState, isResuming } = view;
+  const { displayState, isResuming, liveTelemetryUnsupported } = view;
   switch (displayState.kind) {
     case 'running': {
       // Footer model label is the human name (e.g. "Opus 4.8"). We
@@ -407,13 +491,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
       // plus the spawn-time model seed as an immediate placeholder.
       const resolvedModelName = displayState.usage?.model.displayName || null;
       if (!resolvedModelName) {
-        const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
-        return (
-          <CardStatusBar testId="usage-bar" divider={divider}>
-            <Loader2 size={12} className="animate-spin shrink-0" />
-            <span className="truncate">{spinnerLabel}</span>
-          </CardStatusBar>
-        );
+        return <NoModelFooter liveTelemetryUnsupported={liveTelemetryUnsupported} resuming={isResuming} divider={divider} />;
       }
       // Always render the full bar layout (model + percent + track) once
       // the model name is known, so the card height is STABLE - the bar
@@ -454,19 +532,9 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
         </CardStatusBar>
       );
     case 'queued':
-      return (
-        <CardStatusBar testId="status-bar" divider={divider}>
-          <Loader2 size={12} className="animate-spin shrink-0" />
-          Queued...
-        </CardStatusBar>
-      );
+      return <PendingFooter state="queued" divider={divider} />;
     case 'suspended':
-      return (
-        <CardStatusBar testId="status-bar" divider={divider}>
-          <CirclePause size={12} className="shrink-0" />
-          Paused
-        </CardStatusBar>
-      );
+      return <PendingFooter state="paused" divider={divider} />;
     case 'none':
     case 'exited':
     default:

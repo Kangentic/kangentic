@@ -335,9 +335,39 @@ export class BrowserPaneRegistry {
    */
   private readonly waiters = new Set<() => void>();
 
-  private notifyWaiters(): void {
+  /**
+   * Long-lived subscribers told about every membership change, any number of
+   * them. The single-slot setters below (`setPaneClosedHandler`,
+   * `setPaneRegisteredHandler`) each belong to one owner already; this is for a
+   * reader that only needs to know the set changed, such as the Agent Monitor's
+   * snapshot push, which shows a globe on every task with a browser running.
+   */
+  private readonly membershipListeners = new Set<() => void>();
+
+  /** Tell the one-shot waiters and the long-lived membership listeners that the set changed. */
+  private notifyMembershipChanged(): void {
     // Iterate a copy: a waiter that settles removes itself from the set.
     for (const waiter of [...this.waiters]) waiter();
+    for (const listener of [...this.membershipListeners]) {
+      // A listener is a bystander: its failure must not stop a register or a
+      // removal, nor the listeners after it.
+      try {
+        listener();
+      } catch (error) {
+        console.error('[browser-pane-registry] Membership listener threw:', error);
+      }
+    }
+  }
+
+  /**
+   * Call `listener` after every register, rebind and removal, lanes included.
+   * Returns the unsubscribe.
+   */
+  onMembershipChange(listener: () => void): () => void {
+    this.membershipListeners.add(listener);
+    return () => {
+      this.membershipListeners.delete(listener);
+    };
   }
 
   /**
@@ -396,7 +426,7 @@ export class BrowserPaneRegistry {
     } catch (error) {
       console.warn('[browser-pane] pane-registered handler failed:', error);
     }
-    this.notifyWaiters();
+    this.notifyMembershipChanged();
   }
 
   private findByWebContentsId(webContentsId: number): BrowserPaneEntry | undefined {
@@ -448,7 +478,7 @@ export class BrowserPaneRegistry {
         `task=${entry.taskId.slice(0, 8)} wc=${entry.webContentsId} project=${entry.projectId ?? 'none'} ` +
         `kind=${entry.kind} reason=${reason}${deliberate ? ' deliberate' : ''}`,
     );
-    this.notifyWaiters();
+    this.notifyMembershipChanged();
     // Injected rather than imported, so the registry stays free of any
     // dependency on the lane manager (which imports the registry, so a direct
     // import would be a cycle). Never allowed to break a deletion.
@@ -556,6 +586,20 @@ export class BrowserPaneRegistry {
 
   get(handle: string): BrowserPaneEntry | undefined {
     return this.panes.get(handle);
+  }
+
+  /**
+   * Every task with a browser surface registered, in any state (showing,
+   * hidden, parked, popped out, or an offscreen lane). One pass over the map,
+   * with none of `list()`'s per-entry webContents reads, so a caller building a
+   * cross-project snapshot reads it once instead of scanning per row.
+   */
+  taskIds(): Set<string> {
+    const taskIds = new Set<string>();
+    for (const entry of this.panes.values()) {
+      if (entry.taskId) taskIds.add(entry.taskId);
+    }
+    return taskIds;
   }
 
   getByTaskId(taskId: string, projectId?: string | null): BrowserPaneEntry[] {
@@ -975,7 +1019,7 @@ export class BrowserPaneRegistry {
     }
     this.panes.clear();
     this.deliberateCloses.clear();
-    this.notifyWaiters();
+    this.notifyMembershipChanged();
   }
 
   /** Test/diagnostic helper: number of registered panes. */

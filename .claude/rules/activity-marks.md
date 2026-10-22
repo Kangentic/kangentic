@@ -57,7 +57,9 @@ measurements, and the upstream geometry history live in
   share, so React reconciles the one span in place across the swap and the span absorbs the
   pointer. Wrap ONCE around the icon the branching produced, never per branch, so a future
   branch cannot silently opt out. A slot neutralizes the element it wraps, so a mark inside one
-  labels itself with `aria-label`, and its Tooltip goes on the slot's button, never on the mark.
+  labels itself with `aria-label`, and its Tooltip wraps the slot (or the slot's button), never
+  the mark. `IconSlot` forwards the props a Tooltip clones onto its child; `MonitorCard`'s
+  `StateGlyph` is the worked example.
 - **The OS reduced-motion preference never stops a mark in the desktop app.** Main appends
   Chromium's `force-prefers-no-reduced-motion` switch at module scope in `src/main/index.ts`,
   because a stale cached `reduce` once froze every mark until a relaunch. The only off switch is

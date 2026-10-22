@@ -1,7 +1,9 @@
 import React from 'react';
+import { Folder, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
+import { workflowColor } from './workflow-graph';
 import { Tooltip } from '../Tooltip';
 import { CardStrip } from '../board/CardStrip';
 
@@ -105,12 +107,19 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
   );
 });
 
-/** The strip's left side as an icon and a name that truncates, with an optional mark after it that never does. */
-export function WorkflowStripLabel({ icon, label, labelTrailing, className, testId }: {
+/**
+ * A workflow's glyph in the workflow's own color, which leads its name on the
+ * board card's strip, the Agent Monitor's card and list row, and the monitor
+ * table. Decorative: the name beside it names the workflow.
+ */
+export function WorkflowGlyph({ colorSlot }: { colorSlot: number }) {
+  return <WorkflowIcon size={12} strokeWidth={2} className="shrink-0" style={{ color: workflowColor(colorSlot) }} aria-hidden />;
+}
+
+/** The strip's left side as an icon and a name that truncates. */
+export function WorkflowStripLabel({ icon, label, className, testId }: {
   icon: React.ReactNode;
   label: string;
-  /** Drawn right after the label and never truncated with it (a paused workflow's pause glyph). */
-  labelTrailing?: React.ReactNode;
   /** The gap and text color: the workflow's name and a project's name read differently. */
   className: string;
   testId?: string;
@@ -121,8 +130,24 @@ export function WorkflowStripLabel({ icon, label, labelTrailing, className, test
       <Tooltip label={label}>
         <span className="truncate">{label}</span>
       </Tooltip>
-      {labelTrailing && <span className="inline-flex shrink-0">{labelTrailing}</span>}
     </span>
+  );
+}
+
+/**
+ * A card's project, on the strip's left side: the Workflows canvas card shows it
+ * on every card (board 17, folded into the strip as the phone draws it), and the
+ * Agent Monitor's card does the same, since both show tasks from more than one
+ * board. It costs no height: the strip's left side is otherwise empty.
+ */
+export function ProjectStripLabel({ name, testId }: { name: string; testId: string }) {
+  return (
+    <WorkflowStripLabel
+      icon={<Folder size={12} className="text-fg-muted" />}
+      label={name}
+      className="gap-1.5 text-fg-tertiary"
+      testId={testId}
+    />
   );
 }
 

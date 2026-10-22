@@ -21,6 +21,7 @@ const COALESCE_MS = 30;
 let windowGetter: (() => BrowserWindow | null) | null = null;
 const pending = new Map<string, WorkflowChangedEvent>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const mainListeners = new Set<() => void>();
 
 export function setWorkflowChangedWindow(getter: (() => BrowserWindow | null) | null): void {
   windowGetter = getter;
@@ -31,8 +32,20 @@ export function setWorkflowChangedWindow(getter: (() => BrowserWindow | null) | 
   }
 }
 
+/**
+ * Hear the same coalesced changes in main. The Agent Monitor's rows carry a
+ * workflow's title, color and route, and many workflow writes (a rename, a
+ * pause, a route edit, the finish) reach only this push, never the board's.
+ */
+export function onWorkflowChanged(listener: () => void): () => void {
+  mainListeners.add(listener);
+  return () => {
+    mainListeners.delete(listener);
+  };
+}
+
 export function notifyWorkflowChanged(projectId: string, workflowId: string): void {
-  if (!windowGetter) return;
+  if (!windowGetter && mainListeners.size === 0) return;
   pending.set(workflowId, { projectId, workflowId });
   if (flushTimer) return;
   flushTimer = setTimeout(flush, COALESCE_MS);
@@ -50,6 +63,14 @@ function flush(): void {
   const window = windowGetter?.() ?? null;
   const events = [...pending.values()];
   pending.clear();
+  for (const listener of [...mainListeners]) {
+    // A listener is a bystander: its failure must not stop the view's push.
+    try {
+      listener();
+    } catch (error) {
+      console.error('[workflow-changed] Main listener threw:', error);
+    }
+  }
   if (!window) return;
   for (const event of events) sendToRenderer(window, IPC.WORKFLOW_CHANGED, event);
 }

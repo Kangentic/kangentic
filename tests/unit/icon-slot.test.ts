@@ -4,8 +4,9 @@
  * (StopButtonIcon in CommandTerminalWindow.tsx, PauseButtonIcon in
  * TaskDetailHeader.tsx, StateGlyph in MonitorCard.tsx), but only StopButtonIcon's
  * adoption is exercised end-to-end (tests/ui/command-terminal.spec.ts, "Stop still
- * fires when the activity mark changes mid-press"). PauseButtonIcon's and
- * StateGlyph's adoptions would fail no test if reverted. This file asserts the
+ * fires when the activity mark changes mid-press"). StateGlyph's Tooltip sits on
+ * the slot, which tests/ui/agent-monitor.spec.ts and tooltip-behaviour.spec.ts hover;
+ * PauseButtonIcon's adoption would fail no test if reverted. This file asserts the
  * mechanism itself is intact, independent of any one call site.
  *
  * Same rationale and pattern as activity-mark-render.test.ts: this project's vitest
@@ -63,5 +64,26 @@ describe('IconSlot', () => {
     if (!isElementLike(output)) throw new Error('IconSlot did not return an element');
 
     expect(output.props.children).toBe(child);
+  });
+
+  it('forwards the pointer, focus and description props a Tooltip clones onto it, so the tip can sit on the slot', () => {
+    // The slot's children take no pointer, so a Tooltip around the mark never
+    // opens; it wraps the slot instead, and these must reach the span.
+    const onPointerEnter = () => {};
+    const onFocus = () => {};
+    const output = IconSlot({
+      size: 16,
+      onPointerEnter,
+      onFocus,
+      'aria-description': 'Finished 5m ago',
+      children: React.createElement('svg'),
+    });
+    if (!isElementLike(output)) throw new Error('IconSlot did not return an element');
+
+    expect(output.props.onPointerEnter).toBe(onPointerEnter);
+    expect(output.props.onFocus).toBe(onFocus);
+    expect(output.props['aria-description']).toBe('Finished 5m ago');
+    // Forwarding never displaces the slot's own box.
+    expect(output.props.style).toEqual({ width: 16, height: 16 });
   });
 });

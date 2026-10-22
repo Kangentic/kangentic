@@ -787,6 +787,25 @@ test.describe('Task Activity Indicators', () => {
         await browser.close();
       }
     });
+
+    test('the board card footer shows the same static label for droid, not a spinner that never ends', async () => {
+      // The card's footer waits on the model name the agent reports, and an
+      // agent with no telemetry channel never reports one, so it must read the
+      // same capability the context bar does.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false, noActivityCache: true, agent: 'droid' }),
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        const card = page.locator('[data-board-lanes] [data-task-id]').filter({ hasText: 'Test Initializing Task' }).first();
+        const footer = card.locator('[data-testid="usage-bar"]');
+        await expect(footer).toContainText('Telemetry: TUI only');
+        await expect(footer).not.toContainText('Starting agent...');
+        await expect(footer.locator('.lucide-loader-circle')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   // Group H: running session with no activity cache entry
