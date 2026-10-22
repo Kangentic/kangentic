@@ -29,11 +29,14 @@ function makeSessionManager() {
   };
 }
 
-function makeConfigManager(effective: Partial<AppConfig>) {
+/** `global` is the global file alone; it defaults to `effective` for a test with no project overrides. */
+function makeConfigManager(effective: Partial<AppConfig>, global: Partial<AppConfig> = effective) {
   return {
     getEffectiveConfig: vi.fn(() => effective as AppConfig),
+    load: vi.fn(() => global as AppConfig),
   } as unknown as ConfigManager & {
     getEffectiveConfig: ReturnType<typeof vi.fn>;
+    load: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -65,6 +68,19 @@ describe('applyRuntimeConfig', () => {
     applyRuntimeConfig(sessionManager, configManager, null);
 
     expect(sessionManager.setIdleTimeout).toHaveBeenCalledWith(0);
+  });
+
+  it('reads the idle timer from the global file, so a project file\'s old saved 0 cannot turn it off', () => {
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager(
+      // The merge carries a project override from before the switch existed.
+      { agent: { maxConcurrentSessions: 5, idleTimeoutEnabled: true, idleTimeoutMinutes: 0 }, terminal: { shell: null } } as Partial<AppConfig>,
+      { agent: { maxConcurrentSessions: 5, idleTimeoutEnabled: true, idleTimeoutMinutes: 45 }, terminal: { shell: null } } as Partial<AppConfig>,
+    );
+
+    applyRuntimeConfig(sessionManager, configManager, '/some/project');
+
+    expect(sessionManager.setIdleTimeout).toHaveBeenCalledWith(45);
   });
 
   it('falls back to global effective config when projectPath is null', () => {

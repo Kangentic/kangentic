@@ -22,7 +22,7 @@ import { browserPartitionForTask } from '../../../shared/browser-partition';
 import type { BrowserPaneVisibility, BrowserPickedElement, BrowserViewportOverride } from '../../../shared/types';
 import { ALLOW_POPUPS_ATTRIBUTE, type WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
-import { asSentence } from '../../lib/ipc-error';
+import { asSentence, describeIpcError } from '../../lib/ipc-error';
 
 // Side-pane in the task-detail window that hosts an Electron <webview>, a
 // free-draw annotation overlay, and a "Send to agent" button which composites
@@ -469,7 +469,7 @@ function BrowserPaneActive({
     } catch (caught) {
       useToastStore.getState().addToast({
         title: "Couldn't save URL",
-        message: asSentence(caught instanceof Error ? caught.message : 'Unknown error'),
+        message: asSentence(describeIpcError(caught)),
         variant: 'error',
       });
     } finally {

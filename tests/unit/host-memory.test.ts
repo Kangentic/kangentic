@@ -1,4 +1,13 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// The macOS pressure level is read through `sysctl` off the main thread. Only
+// the sampler's wiring test reaches it; every other test here stubs a platform
+// that never reads, or injects its own reader.
+const mocks = vi.hoisted(() => ({
+  execFileAsync: vi.fn(),
+}));
+vi.mock('../../src/main/utility-process/off-main-exec', () => ({ execFileAsync: mocks.execFileAsync }));
+
 import {
   createHostMemoryPressureState,
   createPressureLevelReader,
@@ -530,6 +539,11 @@ describe('startHostMemorySampler', () => {
     (process as unknown as { getSystemMemoryInfo: () => typeof info }).getSystemMemoryInfo = () => info;
   }
 
+  beforeEach(() => {
+    // Calls from a darwin test must not leak into a later test's count.
+    mocks.execFileAsync.mockReset();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     Object.defineProperty(process, 'platform', originalPlatformDescriptor);
@@ -735,5 +749,118 @@ describe('startHostMemorySampler', () => {
     expect(sample?.commitRemainingBytes).toBe(50_000_000 * 1024);
 
     dispose();
+  });
+
+  describe('macOS pressure level', () => {
+    const SYSCTL_ARGUMENTS = ['-n', 'kern.memorystatus_vm_pressure_level'];
+
+    function startOnDarwin(onSample: (sample: HostMemorySample) => void): () => void {
+      vi.useFakeTimers();
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+      stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 0, swapFree: 0 });
+      return startHostMemorySampler({
+        getActiveAgentCount: () => 0,
+        onPressure: vi.fn(),
+        onRecovery: vi.fn(),
+        onSample,
+        intervalMs: 1000,
+      });
+    }
+
+    function levelOf(onSample: ReturnType<typeof vi.fn>, tickIndex: number): number | null | undefined {
+      return (onSample.mock.calls[tickIndex][0] as HostMemorySample).memoryPressureLevel;
+    }
+
+    it('reads once at start, then hands each tick the level the run before it cached', async () => {
+      mocks.execFileAsync
+        .mockResolvedValueOnce({ stdout: '1\n', stderr: '' })
+        .mockResolvedValueOnce({ stdout: '4\n', stderr: '' });
+      const onSample = vi.fn();
+
+      const dispose = startOnDarwin(onSample);
+
+      // The first level is read ahead of the first tick, off the main thread.
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(1);
+      expect(mocks.execFileAsync).toHaveBeenCalledWith('/usr/sbin/sysctl', SYSCTL_ARGUMENTS, expect.anything());
+
+      // The first tick already carries the start-up read, and starts the next.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(levelOf(onSample, 0)).toBe(1);
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(2);
+
+      // The second tick carries what the first tick's run read.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(levelOf(onSample, 1)).toBe(4);
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(3);
+
+      dispose();
+    });
+
+    it('counts a level older than two intervals as unknown, and not before', async () => {
+      // The start-up read lands; every later run hangs, so the cache only ages.
+      mocks.execFileAsync
+        .mockResolvedValueOnce({ stdout: '4\n', stderr: '' })
+        .mockImplementation(() => new Promise<never>(() => {}));
+      const onSample = vi.fn();
+
+      const dispose = startOnDarwin(onSample);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(levelOf(onSample, 0)).toBe(4);
+      // Exactly two intervals old still counts.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(levelOf(onSample, 1)).toBe(4);
+      // Past two intervals it is unknown rather than a stale verdict.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(levelOf(onSample, 2)).toBeNull();
+
+      dispose();
+    });
+
+    // The reader's own dispose() is not observable through the sampler: the
+    // cleared interval is the only caller of its refresh() and current(). The
+    // reader's dispose behavior is pinned in createPressureLevelReader's tests.
+    it('stops reading and sampling once the stop function has run', async () => {
+      mocks.execFileAsync.mockResolvedValue({ stdout: '1\n', stderr: '' });
+      const onSample = vi.fn();
+
+      const dispose = startOnDarwin(onSample);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(onSample).toHaveBeenCalledTimes(2);
+      const readsBeforeStop = mocks.execFileAsync.mock.calls.length;
+      expect(readsBeforeStop).toBeGreaterThan(0);
+
+      dispose();
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // Neither a tick nor a read follows the stop.
+      expect(mocks.execFileAsync).toHaveBeenCalledTimes(readsBeforeStop);
+      expect(onSample).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['win32', 'linux'] as const)('never creates a reader on %s: no sysctl run, no level in the sample', async (platform) => {
+      vi.useFakeTimers();
+      Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+      stubMemoryInfo({ total: 1000, free: 1000, swapTotal: 0, swapFree: 0 });
+      mocks.execFileAsync.mockResolvedValue({ stdout: '4\n', stderr: '' });
+      const onSample = vi.fn();
+
+      const dispose = startHostMemorySampler({
+        getActiveAgentCount: () => 0,
+        onPressure: vi.fn(),
+        onRecovery: vi.fn(),
+        onSample,
+        intervalMs: 1000,
+      });
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(onSample).toHaveBeenCalledTimes(3);
+      expect(mocks.execFileAsync).not.toHaveBeenCalled();
+      for (let tickIndex = 0; tickIndex < 3; tickIndex++) {
+        expect(levelOf(onSample, tickIndex)).toBeNull();
+      }
+
+      dispose();
+    });
   });
 });

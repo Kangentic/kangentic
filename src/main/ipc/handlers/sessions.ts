@@ -552,7 +552,12 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     }
   });
 
+  // The sweep fires every minute while the agent stays idle and its row stays
+  // running, and a task's row stays running until its pause reaches the PTY.
+  // A pause still waiting on the task lock is not queued a second time.
+  const idlePausesInFlight = new Set<string>();
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
+    if (idlePausesInFlight.has(sessionId)) return;
     const session = context.sessionManager.getSession(sessionId);
     // A workflow's own agent is no task: there is no task row to write and no
     // card to toast for. Its pane shows it paused, and its own lifecycle
@@ -578,13 +583,17 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     // resumes it. The record is written before the PTY goes down: the sweep
     // used to suspend the registry first and write the row later, so a quit
     // in between left the record `running` for the next launch to resume.
+    idlePausesInFlight.add(sessionId);
     void pauseTaskSession(context, taskId, {
       projectId,
       suspendedBy: 'auto',
       // The agent may have started working, or been moved or resumed onto a
-      // new session, while this waited for the task lock.
+      // new session, while this waited for the task lock. Text the user is
+      // typing into its prompt also holds the pause off, as it does the
+      // low-memory pause: the next sweep tries again once the prompt is empty.
       stillEligible: (liveSession) => liveSession.id === sessionId
-        && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId]),
+        && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId])
+        && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === '',
       onAccepted: () => {
         context.terminalSubmitScheduler.cancel(taskId);
         // A pasted message is not the scheduler's, so it is stopped on its
@@ -598,7 +607,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       (error: unknown) => {
         console.error('[idle-timeout] pause failed:', error);
       },
-    );
+    ).finally(() => {
+      idlePausesInFlight.delete(sessionId);
+    });
   });
 
   // Stale session ID recovery: when a resuming session reports a different

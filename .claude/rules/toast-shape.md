@@ -14,8 +14,10 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
 
 - **Every toast has a `title` and a body (`message`).** The title says what happened in a few
   words; the body gives the task, the place or the detail, as one sentence that fits one line at
-  the card's 380px width. Only a task or file name may make it wrap. A failure's title reads
-  "Couldn't ..." and its body is the reason.
+  the card's 380px width. Only a task or file name may make it wrap. A reason main or the error
+  wrote may follow as a second sentence (`asSentence`). A failure's title says what did not
+  happen, most often "Couldn't ..." ("Couldn't resume session", "Automation failed"), and its body
+  is the reason.
 - **A timed toast carries no button.** It closes on its own (`durationMs`, the Notifications
   setting by default), and a button on it can leave while the user reaches for it. When the toast
   is about one thing, give it `onOpen`: the card opens that thing (a task through

@@ -993,22 +993,14 @@ export function App() {
         // Stays while something is still running or could not be stopped, so
         // the list stays reachable; the leftover store closes it once every
         // such process has stopped.
+        const fields = { title: toast.title, message: toast.message, variant: toast.variant, since: toast.since };
         const toastId = toast.sticky
           ? useToastStore.getState().addToast({
-            title: toast.title,
-            message: toast.message,
-            variant: toast.variant,
-            since: toast.since,
+            ...fields,
             persistent: true,
             action: { label: 'Review', icon: 'review', onClick: openList },
           })
-          : useToastStore.getState().addToast({
-            title: toast.title,
-            message: toast.message,
-            variant: toast.variant,
-            since: toast.since,
-            onOpen: openList,
-          });
+          : useToastStore.getState().addToast({ ...fields, onOpen: openList });
         // A toast whose report the store no longer keeps opens nothing, so it
         // closes with its report.
         for (const evictedToastId of useLeftoverProcessesStore.getState().addReport(report, toastId)) {
@@ -1236,15 +1228,9 @@ export function App() {
               ? `The task of "${completed.title}" is in Done.`
               : `All ${completed.taskCount} tasks of "${completed.title}" are in Done.`,
             variant: 'success',
-            // Opens the workflow the way a task's Workflow panel does: the
-            // overlays the Workflows view would sit under make way first.
-            onOpen: () => {
-              if (useMonitorStore.getState().monitorOpen) useMonitorStore.getState().close();
-              if (useKnowledgeGraphStore.getState().graphOpen) useKnowledgeGraphStore.getState().close();
-              if (useUsageDashboardStore.getState().statsOpen) useUsageDashboardStore.getState().close();
-              useBoardStore.getState().setActiveView('workflows');
-              useWorkflowStore.getState().openWorkflow(completed.projectId, completed.workflowId);
-            },
+            // No `onOpen`: a finished workflow leaves every list, so there is
+            // nothing for the card to open. A task's Workflow panel disables
+            // its Open for a finished workflow for the same reason.
           });
         }
         if (notifyConfig.desktop.onWorkflowComplete) {

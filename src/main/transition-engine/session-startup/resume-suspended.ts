@@ -380,7 +380,7 @@ export async function resumeSuspendedSessions(
   if (toProcess.length === 0) {
     if (skipped > 0) {
       console.log(
-        `[SESSION_RECOVERY] Skipped ${skipped} of ${toRecover.length} task(s) -- non-auto-spawn columns, deleted, user-paused, or auto-resume disabled`,
+        `[SESSION_RECOVERY] Skipped ${skipped} of ${toRecover.length} task(s) -- non-auto-spawn columns, deleted, held paused, or auto-resume disabled`,
       );
     }
     done(0);

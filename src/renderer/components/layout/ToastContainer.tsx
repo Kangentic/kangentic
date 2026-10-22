@@ -87,7 +87,10 @@ export function ToastContainer({ bottomOffsetPx = MAIN_WINDOW_BOTTOM_OFFSET_PX }
   // toast takes a click: the stack sits over a centred dialog's footer.
   const overlayOpen = useAnyOverlayOpen();
   const containerRef = useRef<HTMLDivElement>(null);
-  useHoverHold(containerRef, toasts.length > 0, toasts.length);
+  // Only a timed toast has a countdown to hold, so a stack of persistent
+  // toasts leaves the window's pointer alone.
+  const hasTimedToast = toasts.some((toast) => !toast.persistent);
+  useHoverHold(containerRef, hasTimedToast, toasts.length);
 
   if (toasts.length === 0) return null;
 

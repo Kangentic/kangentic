@@ -120,7 +120,9 @@ test.describe('toast behavior', () => {
   test('hovering a click-through toast holds its countdown until the pointer leaves', async () => {
     const { browser, page } = await launchPage();
     try {
-      const id = await raiseToast(page, { title: 'Saved', message: 'Column order saved.', durationMs: 1500 });
+      // Long enough that a starved CI worker still reaches the card before the
+      // countdown ends; the hold has to land on a toast that is still up.
+      const id = await raiseToast(page, { title: 'Saved', message: 'Column order saved.', durationMs: 4000 });
       await expect(page.getByTestId('toast')).toHaveCount(1);
       const centre = await cardCentre(page);
 
@@ -131,11 +133,11 @@ test.describe('toast behavior', () => {
       // Longer than the whole countdown: a toast whose hold did not take would
       // be gone by now. A fixed wait, because what is asserted is that nothing
       // happens.
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(4500);
       expect(await toastCountRightNow(page)).toBe(1);
 
       await page.mouse.move(5, 5);
-      await expect.poll(() => toastCountRightNow(page), { timeout: 5000 }).toBe(0);
+      await expect.poll(() => toastCountRightNow(page), { timeout: 8000 }).toBe(0);
     } finally {
       await browser.close();
     }

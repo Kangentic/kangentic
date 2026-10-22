@@ -590,7 +590,9 @@ export const IPC = {
   HOST_MEMORY_RECOVERED: 'hostMemory:recovered',
   // Low memory paused an agent that was waiting on the user, one push per
   // agent (src/main/diagnostics/idle-agent-pause.ts). Every platform, unlike
-  // the two above, which carry the Windows-only warning.
+  // the two above, which carry the Windows-only warning. Main window only,
+  // like CONFIG_WRITE_FAILED: the paused toast and its Review list report one
+  // app-wide condition, and a broadcast would raise them in every open window.
   HOST_MEMORY_AGENT_PAUSED: 'hostMemory:agentPaused',
 
   // How this launch is rendering, and whether the user still needs telling

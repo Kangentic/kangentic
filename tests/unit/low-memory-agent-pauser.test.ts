@@ -117,6 +117,19 @@ describe('collectIdleAgentFacts', () => {
     expect(collectIdleAgentFacts(context as never)[0].hasDraft).toBe(false);
   });
 
+  it('measures the wait on a permission prompt from the moment the agent parked', () => {
+    const context = makeContext();
+    // Distinct from PARKED_AT, so the value can only come from this reason.
+    const promptedAt = PARKED_AT - 5_000;
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-1': 'permission' });
+    context.sessionManager.getActivityReasonsCache.mockReturnValue({ 'sess-1': { kind: 'permission', since: promptedAt } });
+
+    const [facts] = collectIdleAgentFacts(context as never);
+
+    expect(facts.waitingSince).toBe(promptedAt);
+    expect(facts.activity).toBe('permission');
+  });
+
   it('has no wait for a working agent', () => {
     const context = makeContext();
     context.sessionManager.getActivityReasonsCache.mockReturnValue({ 'sess-1': { kind: 'thinking' } });

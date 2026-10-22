@@ -463,7 +463,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
             : undefined,
         });
       } else if (isColumnChange && targetLane?.auto_spawn) {
-        // No new session was spawned (e.g. user-paused task moved to auto_spawn column,
+        // No new session was spawned (e.g. a held-paused task moved to an auto_spawn column,
         // or auto_spawn column without auto_command). Clear the optimistic progress
         // indicators to prevent stuck "Initializing..." state on the card.
         useSessionStore.getState().clearPendingCommandLabel(input.taskId);

@@ -3740,8 +3740,8 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Register a suspended placeholder session for a task that was user-paused
-   * before app restart. The placeholder has no PTY but makes the renderer
+   * Register a suspended placeholder session for a task whose pause was held
+   * (the user's or Kangentic's, `isHeldPause`) before app restart. The placeholder has no PTY but makes the renderer
    * show "Paused" state and the "Resume session" button.
    *
    * Idempotent per task: returns null, inserting and emitting nothing, when

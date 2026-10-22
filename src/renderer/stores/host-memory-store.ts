@@ -28,6 +28,12 @@ import { useToastStore } from './toast-store';
  * unprotected id would come back null, leaving a toast on screen with no id
  * left to dismiss or update it. The ids, and what they describe, are preserved
  * together.
+ *
+ * Pattern E applies too: the instance is pinned. The paused toast's Review
+ * button closes over `useHostMemoryStore`, and the toast store keeps that
+ * closure across a reload. Without the pin a re-evaluated module would build a
+ * second store, the dialog would read the new one, and Review would open the
+ * old one, so it would do nothing.
  */
 
 /** @see the Pattern A note above. Production has no `import.meta.hot`, so
@@ -83,7 +89,7 @@ function openBehaviorSettings(): void {
   configStore.setSettingsOpen(true);
 }
 
-export const useHostMemoryStore = create<HostMemoryState>((set, get) => ({
+const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
   lastEvent: initialLastEvent,
   pressureToastId: initialPressureToastId,
   pausedAgents: initialPausedAgents,
@@ -145,8 +151,7 @@ export const useHostMemoryStore = create<HostMemoryState>((set, get) => ({
     const copy = pausedToastCopy(pausedAgents.length);
     const toastStore = useToastStore.getState();
     const existingToastId = get().pausedToastId;
-    const toastIsUp = existingToastId !== null && toastStore.toasts.some((toast) => toast.id === existingToastId);
-    if (toastIsUp && existingToastId !== null) {
+    if (existingToastId !== null && toastStore.toasts.some((toast) => toast.id === existingToastId)) {
       toastStore.updateToast(existingToastId, { ...copy, since: event.pausedAt });
       set({ pausedAgents });
       return;
@@ -164,6 +169,12 @@ export const useHostMemoryStore = create<HostMemoryState>((set, get) => ({
   openReview: () => set({ reviewOpen: true }),
   closeReview: () => set({ reviewOpen: false }),
 }));
+
+/** @see the Pattern E note above. */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedHostMemoryStore: ReturnType<typeof createHostMemoryStore> | undefined = import.meta.hot?.data?.hostMemoryStore;
+
+export const useHostMemoryStore = preservedHostMemoryStore ?? createHostMemoryStore();
 
 /**
  * Dismissing the paused toast clears the list it stands for. The toast store
@@ -188,4 +199,10 @@ if (import.meta.hot) {
     data.hostMemoryPausedToastId = pausedToastId;
     data.hostMemoryReviewOpen = reviewOpen;
   });
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.hostMemoryStore = useHostMemoryStore;
+  // An edit to this module's own code would leave the pinned instance running
+  // stale closures, so it hands the update on instead.
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
 }

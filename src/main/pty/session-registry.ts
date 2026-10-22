@@ -564,8 +564,8 @@ export class SessionRegistry {
   }
 
   /**
-   * Register a suspended placeholder for a task that was user-paused
-   * before app restart. The placeholder has no PTY but gives the
+   * Register a suspended placeholder for a task whose pause was held (the
+   * user's or Kangentic's, `isHeldPause`) before app restart. The placeholder has no PTY but gives the
    * renderer a "Paused" state and exposes the "Resume session" button.
    *
    * Idempotent per task, returning null when it inserts nothing:

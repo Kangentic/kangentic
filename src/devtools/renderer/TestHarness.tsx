@@ -24,7 +24,7 @@ import { useSessionStore } from '../../renderer/stores/session-store';
 import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
 import { useConfigStore } from '../../renderer/stores/config-store';
 import { EMBEDDING_MODELS } from '../../shared/embedding-models';
-import { asSentence } from '../../renderer/lib/ipc-error';
+import { asSentence, describeIpcError } from '../../renderer/lib/ipc-error';
 
 /** The app title bar's height (`top-10`). It is an OS drag region, so the panel
  *  must never be draggable into it - see handleDragPointerMove. */
@@ -142,7 +142,7 @@ function makeTestAttachments(): Array<{ filename: string; data: string; media_ty
 
 /** A failure toast's body: the error's own message, as one sentence. */
 function failureReason(error: unknown): string {
-  return asSentence(error instanceof Error ? error.message : 'Unknown error');
+  return asSentence(describeIpcError(error));
 }
 
 /** Pluralize a counted noun: `1 repo`, `2 repos`. */
