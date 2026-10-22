@@ -113,6 +113,15 @@ test.describe('Claude Agent -- No False Resume on New Tasks', () => {
     const sessionBefore = await readRunningSessionId();
     expect(sessionBefore).toBeTruthy();
 
+    // Wait for mock Claude's own marker before the reopen. A running row only
+    // means the shell started: mock Claude is a grandchild of the PTY and can
+    // take a second or more to print under CI load, so a single read after the
+    // reopen found an empty scrollback on a session that was alive.
+    const readScrollback = () => page.evaluate(async (sid) => {
+      return window.electronAPI.sessions.getScrollback(sid);
+    }, sessionBefore!);
+    await expect.poll(readScrollback, { timeout: 15000 }).toContain('MOCK_CLAUDE_SESSION:');
+
     // Simulate what Vite hot-reload does: call PROJECT_OPEN again for the
     // same project. This should be a no-op for recovery.
     await page.evaluate(async () => {
@@ -136,10 +145,9 @@ test.describe('Claude Agent -- No False Resume on New Tasks', () => {
 
     expect(sessionAfter).toBe(sessionBefore);
 
-    // Verify the session is actually alive (mock Claude is still producing output)
-    const scrollback = await page.evaluate(async (sid) => {
-      return window.electronAPI.sessions.getScrollback(sid);
-    }, sessionBefore!);
-    expect(scrollback.length).toBeGreaterThan(0);
+    // The reopen must leave the live session's output alone. The default mock
+    // Claude branch prints no screen clear after its marker, so a missing
+    // marker here means the reopen reset the buffer, not a slow start.
+    expect(await readScrollback()).toContain('MOCK_CLAUDE_SESSION:');
   });
 });
