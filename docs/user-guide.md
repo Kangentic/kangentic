@@ -313,7 +313,7 @@ Keyboard shortcuts are scoped to the browser pane: they fire when the mouse is o
 
 ## Backlog
 
-The Backlog is a staging area for tasks before they reach the board. Switch between **Board** and **Backlog** views using the tabs at the top.
+The Backlog is a staging area for tasks before they reach the board. Switch between **Board** and **Backlog** views using the tabs at the top. The Backlog tab shows how many items the backlog holds, and no count when it is empty.
 
 Both views share one toolbar row, and it adapts to the space it has. As the window narrows or the
 sidebar widens, its controls drop their text and become icons in the same positions, keeping the
