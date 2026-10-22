@@ -14,6 +14,7 @@ import {
   type NativeCrashContext,
 } from './native-crash-event';
 import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
+import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
 import { redactEventHomeDirectory } from './redact-event-paths';
 import { rendererNameForReporting } from './renderer-classification';
 
@@ -290,7 +291,9 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * SCRUBBING is mostly Sentry's job, not ours: the SDK's default
  * normalizePathsIntegration rewrites stack-frame paths and URLs relative to
  * the app root (so the user's home directory never reaches Sentry through an
- * app stack frame), sendDefaultPii stays false, and Sentry's server-side data
+ * app stack frame), `dataCollection` turns off everything the SDK would collect
+ * on its own (src/shared/sentry-data-collection.ts: IP address, cookies, HTTP
+ * headers and bodies, local variables), and Sentry's server-side data
  * scrubbing is on by default. Further rules belong in the Sentry UI (Advanced
  * Data Scrubbing), with one exception here: `beforeSendEvent` rewrites this
  * machine's home directory to `~` in every event string
@@ -351,7 +354,9 @@ export function initErrorReporting(): void {
   try {
     Sentry.init({
       dsn: SENTRY_DSN,
-      sendDefaultPii: false,
+      // Every field spelled out and off: Sentry 8 collects whatever is left
+      // out (src/shared/sentry-data-collection.ts).
+      dataCollection: SENTRY_DATA_COLLECTION,
       integrations: (defaultIntegrations) =>
         defaultIntegrations.filter(
           (integration) => integration.name !== 'MainProcessSession'
