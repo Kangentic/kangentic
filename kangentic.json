@@ -17,6 +17,7 @@
       "permissionMode": "plan",
       "modelOverride": "opus",
       "effortOverride": "xhigh",
+      "planApproval": "automatic",
       "planExitTarget": "Executing"
     },
     {
