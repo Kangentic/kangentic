@@ -312,6 +312,16 @@ describe('a launch needs the CLI to say it launched, not text that quotes the ph
     });
   }
 
+  // The second Gemini id source covers a result without the <untrusted_context> wrapper.
+  it('Gemini: a result that opens with the phrase and no wrapper is a launch', () => {
+    const adapter = ADAPTERS.gemini;
+    const payload = geminiPayload(true, 'Command moved to background (PID: 123). Output hidden.');
+    const lines = runPostTool(adapter, payload);
+    expect(typesOf(lines)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+    expect(lines[0]).toMatchObject({ detail: '123' });
+    expect(runHint(adapter, payload)).not.toBe('');
+  });
+
   // Qwen's launch needs tool_input.is_background to be exactly true. A foreground
   // command can still print an "id: bg_..." line (here, in its own output).
   const QWEN_FOREGROUND_ID_LINE = 'Command: echo ready\nDirectory: (root)\nOutput: ready\nid: bg_abcd1234\nError: (none)\nExit Code: 0\nSignal: (none)\nProcess Group PGID: (none)';
@@ -333,6 +343,43 @@ describe('a launch needs the CLI to say it launched, not text that quotes the ph
     const foreground = qwenPayload(isBackground);
     expect(typesOf(runPostTool(adapter, foreground))).toEqual([EventType.ToolEnd]);
     expect(runHint(adapter, foreground)).toBe('');
+  });
+});
+
+describe('an id is read only where the CLI frames it', () => {
+  it('Qwen: a "pid:" line is not read as the shell id', () => {
+    const adapter = ADAPTERS.qwen;
+    // Control: the real launch, whose "id:" line opens its own line, reports bg_bc67cecc for the hold and the hint.
+    const launched = fixture(adapter, 'qwen-0.25.3-post-tool-use-background-launch.json');
+    const launchedLines = runPostTool(adapter, launched);
+    expect(typesOf(launchedLines)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+    expect(launchedLines[0]).toMatchObject({ detail: 'bg_bc67cecc' });
+    expect(runHint(adapter, launched)).not.toBe('');
+
+    // Same flag, but the only "id: " in the text is the end of "pid: ", which is not the start of a line.
+    const pidOnly = withNested(launched, 'tool_response', { llmContent: 'Background shell started.\npid: 123' });
+    expect(pidOnly).toMatchObject({ tool_input: { is_background: true } });
+    expect(typesOf(runPostTool(adapter, pidOnly))).toEqual([EventType.ToolEnd]);
+    expect(runHint(adapter, pidOnly)).toBe('');
+  });
+
+  it.each([
+    ['an async launch whose id is not directly followed by ">"', 'copilot-1.0.100-post-tool-use-async-launch.json', '<command started in background with shellId: probe-server (pending)>', 'probe-server'],
+    ['a sync result for a command that completed, not one still running', 'copilot-1.0.100-post-tool-use-sync-still-running.json', '<command with shellId: 5 completed>', '0'],
+  ])('Copilot: %s is not a launch', (_description, file, textResultForLlm, controlId) => {
+    const adapter = ADAPTERS.copilot;
+    // Control: the real payload reports its own id for the hold and the hint.
+    const launched = fixture(adapter, file);
+    const launchedLines = runPostTool(adapter, launched);
+    expect(typesOf(launchedLines)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+    expect(launchedLines[0]).toMatchObject({ detail: controlId });
+    expect(runHint(adapter, launched)).not.toBe('');
+
+    // Same payload with only the result text changed; resultType stays success and toolArgs.detach stays unset.
+    const altered = withNested(launched, 'toolResult', { textResultForLlm });
+    expect(altered).toMatchObject({ toolResult: { resultType: 'success' } });
+    expect(typesOf(runPostTool(adapter, altered))).toEqual([EventType.ToolEnd]);
+    expect(runHint(adapter, altered)).toBe('');
   });
 });
 
@@ -556,6 +603,162 @@ describe('appendBackgroundStop in the real bridge', () => {
       const lines = runBridge(EventType.ToolEnd, directives, stopPayload('srv-1'));
       expect(typesOf(lines)).toEqual([EventType.BackgroundShellEnd, EventType.ToolEnd]);
       expect(lines[0]).toMatchObject({ detail: 'srv-1', tool: 'stop_shell' });
+    });
+  });
+});
+
+// An id source that frames its id with text is read by plain string search in both bridges, never
+// compiled as a regex (CodeQL js/regex-injection #28 and #30). The framing below holds the regex
+// metacharacters ., *, (, [ and \, so a bridge that compiled it would read an id from text that
+// only a regex reading accepts.
+describe('an id read out of result text is matched literally', () => {
+  const BEFORE = 'job (a.b*) [1] \\ id: ';
+  const AFTER = '.';
+  const TEXT_LAUNCH: BackgroundLaunchDirective = {
+    toolField: 'tool_name',
+    tools: ['run_shell'],
+    when: [],
+    unless: [],
+    idSources: [{ path: ['result', 'text'], before: BEFORE, after: AFTER }],
+    commandPath: ['input', 'command'],
+    optOutFlag: NO_ACTIVITY_HOLD_FLAG,
+  };
+  const HINT_REPLY = { additionalContext: 'shell {{shellId}}' };
+
+  /** The framing text exactly as written, around the id srv-1. */
+  const LITERAL_TEXT = `${BEFORE}srv-1${AFTER} ready`;
+  /**
+   * Text the framing matches only when read as a regex: "a.b*" as a, any character, then b
+   * repeated; "[1]" as a class holding 1; "\ " as a space; the trailing "." as any character.
+   */
+  const REGEX_READING_TEXT = 'job axbbb 1  id: srv-1! ready';
+  /** The framing text with something other than `after` directly behind the id. */
+  const WRONG_AFTER_TEXT = `${BEFORE}srv-1 ready`;
+
+  function textPayload(text: string): Record<string, unknown> {
+    return { tool_name: 'run_shell', input: { command: 'node server.js' }, result: { text } };
+  }
+
+  const OWN_EVENT = [extractTool('tool_name')];
+
+  it('the regex-reading text matches the framing read as a regex but does not contain it', () => {
+    // Read as a regex, "(a.b*)" is a group of its own, so the id is the last group.
+    expect(new RegExp(`${BEFORE}([\\w-]+)${AFTER}`).exec(REGEX_READING_TEXT)?.at(-1)).toBe('srv-1');
+    expect(REGEX_READING_TEXT).not.toContain(BEFORE);
+  });
+
+  it('event-bridge.js reports the id only where the framing text appears exactly', () => {
+    const directives = [...OWN_EVENT, appendBackgroundLaunch(TEXT_LAUNCH)];
+    const literal = runBridge(EventType.ToolEnd, directives, textPayload(LITERAL_TEXT));
+    expect(typesOf(literal)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+    expect(literal[0]).toMatchObject({ detail: 'srv-1', tool: 'run_shell' });
+
+    expect(typesOf(runBridge(EventType.ToolEnd, directives, textPayload(REGEX_READING_TEXT)))).toEqual([EventType.ToolEnd]);
+    expect(typesOf(runBridge(EventType.ToolEnd, directives, textPayload(WRONG_AFTER_TEXT)))).toEqual([EventType.ToolEnd]);
+  });
+
+  it('background-shell-hint-bridge.js answers only where the framing text appears exactly', () => {
+    const hintSpec = { launch: TEXT_LAUNCH, reply: HINT_REPLY };
+    expect(JSON.parse(runHintSpec(hintSpec, textPayload(LITERAL_TEXT)))).toEqual({ additionalContext: 'shell srv-1' });
+
+    expect(runHintSpec(hintSpec, textPayload(REGEX_READING_TEXT))).toBe('');
+    expect(runHintSpec(hintSpec, textPayload(WRONG_AFTER_TEXT))).toBe('');
+  });
+
+  // How the search walks the text, whatever the framing says. Each case runs through both bridges.
+  describe('the search over the result text', () => {
+    /** TEXT_LAUNCH with its one id source replaced by a text source carrying `source`. */
+    function launchReading(source: { before: string; after?: string; atStart?: boolean }): BackgroundLaunchDirective {
+      return { ...TEXT_LAUNCH, idSources: [{ path: ['result', 'text'], ...source }] };
+    }
+
+    /** Both bridges read `id` out of `text` under `launch`: a start with that detail, and a hint naming it. */
+    function expectBothBridgesReport(launch: BackgroundLaunchDirective, text: string, id: string): void {
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, appendBackgroundLaunch(launch)], textPayload(text));
+      expect(typesOf(lines)).toEqual([EventType.BackgroundShellStart, EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ detail: id, tool: 'run_shell' });
+      expect(JSON.parse(runHintSpec({ launch, reply: HINT_REPLY }, textPayload(text)))).toEqual({ additionalContext: `shell ${id}` });
+    }
+
+    /** Neither bridge reads an id out of `text` under `launch`: only the hook's own event, and no hint. */
+    function expectBothBridgesReportNothing(launch: BackgroundLaunchDirective, text: string): void {
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, appendBackgroundLaunch(launch)], textPayload(text));
+      expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ tool: 'run_shell' });
+      expect(runHintSpec({ launch, reply: HINT_REPLY }, textPayload(text))).toBe('');
+    }
+
+    it('moves on to a later copy of the framing when the first copy has the wrong text after its id', () => {
+      // Control: the first copy is read when its id has the right text after it.
+      expectBothBridgesReport(TEXT_LAUNCH, `${BEFORE}srv-0${AFTER} ${BEFORE}srv-1${AFTER}`, 'srv-0');
+
+      // The first copy's id is followed by a space, not `after`, so the second copy supplies the id.
+      expectBothBridgesReport(TEXT_LAUNCH, `${BEFORE}srv-0 ${BEFORE}srv-1${AFTER}`, 'srv-1');
+    });
+
+    describe('a source that must open the text', () => {
+      const AT_START_LAUNCH = launchReading({ before: BEFORE, after: AFTER, atStart: true });
+
+      it('reads the id when the framing opens the text', () => {
+        expectBothBridgesReport(AT_START_LAUNCH, `${BEFORE}srv-1${AFTER}`, 'srv-1');
+      });
+
+      it.each([
+        ['the framing opens the text but has no id run, and a later copy has one', `${BEFORE}! ${BEFORE}srv-1${AFTER}`],
+        ['the framing does not open the text', `x${BEFORE}srv-1${AFTER}`],
+      ])('never reads a later copy when %s', (_description, text) => {
+        // Control: without the start anchor the same text does report srv-1, so only the anchor rejects it.
+        expectBothBridgesReport(TEXT_LAUNCH, text, 'srv-1');
+
+        expectBothBridgesReportNothing(AT_START_LAUNCH, text);
+      });
+    });
+
+    describe('a source with no text after the id', () => {
+      const NO_AFTER_LAUNCH = launchReading({ before: BEFORE });
+
+      it('reads an id run of 64 characters', () => {
+        const id = 'a'.repeat(64);
+        expectBothBridgesReport(NO_AFTER_LAUNCH, `${BEFORE}${id} ready`, id);
+      });
+
+      it('reads nothing from an id run of 65 characters', () => {
+        // The run is read one character past the id bound, so a longer run reads as too long instead of being cut to fit.
+        expectBothBridgesReportNothing(NO_AFTER_LAUNCH, `${BEFORE}${'a'.repeat(65)} ready`);
+      });
+    });
+
+    it('reads nothing from a source whose text before the id is empty', () => {
+      // Without the guard, the empty text would match at index 0 and the run there would read srv-1.
+      expectBothBridgesReportNothing(launchReading({ before: '' }), 'srv-1 ready');
+    });
+  });
+
+  // Settings written before id sources became literal text can still send a `pattern`. Neither
+  // bridge compiles it, and the source reads nothing. It never falls back to reading the whole
+  // text as the id, so an id-shaped text reports nothing either.
+  describe('a source that still carries a pattern', () => {
+    const STALE_PATTERN = 'id: ([\\w-]+)';
+    const STALE_TEXT = 'id: srv-1';
+    /** A whole text that passes the id shape, so only the skip keeps it from reading as the id. */
+    const ID_SHAPED_TEXT = 'srv-1';
+    const STALE_LAUNCH = {
+      ...TEXT_LAUNCH,
+      idSources: [{ path: ['result', 'text'], pattern: STALE_PATTERN }],
+    } as unknown as BackgroundLaunchDirective;
+
+    it('would read srv-1 if the pattern were compiled', () => {
+      expect(new RegExp(STALE_PATTERN).exec(STALE_TEXT)?.[1]).toBe('srv-1');
+    });
+
+    it.each([STALE_TEXT, ID_SHAPED_TEXT])('event-bridge.js reports no id from %j', (text) => {
+      const lines = runBridge(EventType.ToolEnd, [...OWN_EVENT, appendBackgroundLaunch(STALE_LAUNCH)], textPayload(text));
+      expect(typesOf(lines)).toEqual([EventType.ToolEnd]);
+      expect(lines[0]).toMatchObject({ tool: 'run_shell' });
+    });
+
+    it.each([STALE_TEXT, ID_SHAPED_TEXT])('background-shell-hint-bridge.js prints nothing for %j', (text) => {
+      expect(runHintSpec({ launch: STALE_LAUNCH, reply: HINT_REPLY }, textPayload(text))).toBe('');
     });
   });
 });

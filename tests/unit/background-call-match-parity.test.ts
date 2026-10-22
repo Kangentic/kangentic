@@ -47,18 +47,24 @@ describe('background call matcher parity', () => {
 
 describe('regexes the bridges build at run time', () => {
   // Every regex a bridge builds at run time comes from its argv, which CodeQL
-  // reports as js/regex-injection. The ones kept are patterns an adapter sends:
-  // an id source's pattern in the shared block, and the event bridge's detail
-  // match directives. They are adapter data that has to travel, so each site
-  // stays and its alert is won't-fix. CodeQL runs only after a merge to main, so
-  // this list is what stops another one, such as the id shape the block used to
-  // read from its payload, from landing unflagged. It sees only an explicit
-  // RegExp call, not a string handed to `.match` or `.search`.
+  // reports as js/regex-injection. The only ones left are the event bridge's
+  // three detail match directives, whose alerts are won't-fix. The shared block
+  // builds none: an id source frames its id with literal text, found by plain
+  // string search (alerts #28 and #30, fixed). CodeQL runs only after a merge to
+  // main, so this list is what stops another one from landing unflagged.
   it.each([
-    ['event-bridge.js', ['new RegExp(source.pattern)', 'new RegExp(payload.pattern)', 'new RegExp(payload.pattern)', 'new RegExp(payload.pattern)']],
-    ['background-shell-hint-bridge.js', ['new RegExp(source.pattern)']],
-  ])('%s builds a regex only from a pattern an adapter sends', (file, expectedCalls) => {
-    expect(bridgeSourceOf(file).match(/(?:\bnew\s+)?\bRegExp\s*\([^)]*\)/g)).toEqual(expectedCalls);
+    ['event-bridge.js', ['new RegExp(payload.pattern)', 'new RegExp(payload.pattern)', 'new RegExp(payload.pattern)']],
+    ['background-shell-hint-bridge.js', []],
+  ])('%s builds a regex only from a detail pattern an adapter sends', (file, expectedCalls) => {
+    expect(bridgeSourceOf(file).match(/(?:\bnew\s+)?\bRegExp\s*\([^)]*\)/g) ?? []).toEqual(expectedCalls);
+  });
+
+  // The scan above sees only an explicit RegExp call. A string handed to
+  // `.match`, `.matchAll` or `.search` is compiled as a regex too, so the shared
+  // block, which both bridges run over hook payloads, calls none of them.
+  it('the background-call-match block hands nothing to a regex API', () => {
+    const block = matcherBlockOf('event-bridge.js');
+    expect(block).not.toMatch(/\bRegExp\s*\(|\.(?:match|matchAll|search)\s*\(/);
   });
 });
 
@@ -72,5 +78,15 @@ describe('shell id pattern parity', () => {
     const literal = /^const SHELL_ID_PATTERN = \/(.+)\/;$/m.exec(block);
     expect(literal, 'the background-call-match block has no `const SHELL_ID_PATTERN = /.../;` literal').not.toBeNull();
     expect(literal?.[1]).toBe(SHELL_ID_PATTERN_SOURCE);
+  });
+
+  // An id inside result text is read as a run of at most ID_RUN_SCAN_LENGTH characters. One past
+  // the longest id lets a run that is too long fail the pattern instead of being cut to fit it.
+  it('reads an id run one character past the longest id SHELL_ID_PATTERN_SOURCE allows', () => {
+    const longestId = /\{1,(\d+)\}/.exec(SHELL_ID_PATTERN_SOURCE);
+    expect(longestId, 'SHELL_ID_PATTERN_SOURCE has no {1,N} length bound').not.toBeNull();
+    const scanLength = /^const ID_RUN_SCAN_LENGTH = (\d+);$/m.exec(matcherBlockOf('event-bridge.js'));
+    expect(scanLength, 'the background-call-match block has no `const ID_RUN_SCAN_LENGTH = N;` literal').not.toBeNull();
+    expect(Number(scanLength?.[1])).toBe(Number(longestId?.[1]) + 1);
   });
 });

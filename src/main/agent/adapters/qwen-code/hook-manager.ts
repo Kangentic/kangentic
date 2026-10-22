@@ -82,7 +82,9 @@ export const QWEN_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
     tools: ['run_shell_command'],
     when: [{ path: ['tool_input', 'is_background'], equals: true }],
     unless: [],
-    idSources: [{ path: ['tool_response', 'llmContent'], pattern: '\\bid: (bg_[0-9a-f]+)\\b' }],
+    // The id opens its own line; the newline keeps the "pid:" line from reading as it. It is
+    // read as id characters, not the bg_<hex> shape: is_background already says it is a launch.
+    idSources: [{ path: ['tool_response', 'llmContent'], before: '\nid: ' }],
     commandPath: ['tool_input', 'command'],
   },
   stop: {

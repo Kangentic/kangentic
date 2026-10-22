@@ -170,6 +170,11 @@ const BACKGROUND_MATCH_SCAN_CAP = 64 * 1024;
 // Mirrors `looksLikeShellId` (src/main/activity-engine/background-shell/looks-like-shell-id.ts).
 // A literal, so no id regex is built from argv; the parity test pins it to SHELL_ID_PATTERN_SOURCE.
 const SHELL_ID_PATTERN = /^[\w-]{1,64}$/;
+// The characters SHELL_ID_PATTERN allows, read as one run after an id source's `before` text.
+const ID_RUN = /^[\w-]+/;
+// One past SHELL_ID_PATTERN's longest id, so a run that is too long still reads as too long.
+// The parity test pins it to SHELL_ID_PATTERN_SOURCE.
+const ID_RUN_SCAN_LENGTH = 65;
 
 function valueAtPath(root, pathSegments) {
   if (!Array.isArray(pathSegments) || pathSegments.length === 0) return undefined;
@@ -184,20 +189,43 @@ function conditionHolds(root, condition) {
   return Boolean(condition) && valueAtPath(root, condition.path) === condition.equals;
 }
 
+/** The id run that starts at `idStart` in `text`, when the literal `after` follows it directly. */
+function idRunAt(text, idStart, after) {
+  const run = ID_RUN.exec(text.slice(idStart, idStart + ID_RUN_SCAN_LENGTH));
+  return run && text.startsWith(after, idStart + run[0].length) ? run[0] : null;
+}
+
+/**
+ * The id `source` frames in `text`: the run of id characters right after the
+ * literal `source.before`, with the literal `source.after` directly behind it.
+ * With `source.atStart`, only a `before` that opens the text counts. Plain
+ * string search, so no part of a source is ever read as a pattern.
+ */
+function idInText(text, source) {
+  const before = source.before;
+  if (before.length === 0) return null;
+  const after = typeof source.after === 'string' ? source.after : '';
+  const scanned = text.slice(0, BACKGROUND_MATCH_SCAN_CAP);
+  if (source.atStart === true) return scanned.startsWith(before) ? idRunAt(scanned, before.length, after) : null;
+  for (let index = scanned.indexOf(before); index >= 0; index = scanned.indexOf(before, index + 1)) {
+    const id = idRunAt(scanned, index + before.length, after);
+    if (id) return id;
+  }
+  return null;
+}
+
 function idFromSources(root, sources) {
   if (!Array.isArray(sources)) return null;
   for (const source of sources) {
     if (!source) continue;
     const value = valueAtPath(root, source.path);
     let candidate = null;
-    if (typeof source.pattern === 'string') {
-      if (typeof value !== 'string') continue;
-      try {
-        const match = value.slice(0, BACKGROUND_MATCH_SCAN_CAP).match(new RegExp(source.pattern));
-        if (match && typeof match[1] === 'string') candidate = match[1];
-      } catch {
-        continue;
-      }
+    if (typeof source.before === 'string') {
+      if (typeof value === 'string') candidate = idInText(value, source);
+    } else if (typeof source.pattern === 'string') {
+      // Settings written before ids were framed by literal text can still send a regex. It is
+      // never compiled, and the source reads nothing, not the whole text as the id.
+      continue;
     } else if (typeof value === 'string' || typeof value === 'number') {
       candidate = String(value);
     }

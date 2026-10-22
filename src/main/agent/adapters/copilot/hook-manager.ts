@@ -52,8 +52,8 @@ export const COPILOT_BACKGROUND_COMMAND_SPEC: BackgroundCommandSpec = {
     when: [],
     unless: [{ path: ['toolArgs', 'detach'], equals: true }],
     idSources: [
-      { path: ['toolResult', 'textResultForLlm'], pattern: '<command started in background with shellId: ([\\w-]+)>' },
-      { path: ['toolResult', 'textResultForLlm'], pattern: '<command with shellId: ([\\w-]+) is still running' },
+      { path: ['toolResult', 'textResultForLlm'], before: '<command started in background with shellId: ', after: '>' },
+      { path: ['toolResult', 'textResultForLlm'], before: '<command with shellId: ', after: ' is still running' },
     ],
     commandPath: ['toolArgs', 'command'],
   },

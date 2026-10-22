@@ -28,14 +28,36 @@ export interface PayloadCondition {
 }
 
 /**
- * Where a background command's id can be read. Without `pattern` the value at
- * `path` is the id (a string or a number). With it, `pattern`'s first capture
- * group is read out of the string at `path` (Gemini and Qwen put the id in the
- * tool's result text).
+ * Where a background command's id can be read. Without `before` the value at
+ * `path` is the id (a string or a number). With it, the id is read out of the
+ * string at `path` (Copilot, Gemini and Qwen put it in the tool's result text):
+ * the run of id characters right after `before`. The bridges find it by plain
+ * string search, so no part of a source is ever compiled as a regex. `after`
+ * and `atStart` frame a `before`, so a source without one cannot carry them.
  */
-export interface BackgroundIdSource {
+export type BackgroundIdSource = BackgroundIdValueSource | BackgroundIdTextSource;
+
+/** The value at `path` is the id. */
+export interface BackgroundIdValueSource {
   path: PayloadPath;
-  pattern?: string;
+  before?: never;
+  after?: never;
+  atStart?: never;
+}
+
+/** The id is read out of the string at `path`. */
+export interface BackgroundIdTextSource {
+  path: PayloadPath;
+  /** Literal text right before the id. */
+  before: string;
+  /**
+   * Literal text that must follow the id directly. Absent: the id ends where the id characters
+   * end. The id is read as the whole run of id characters, so `after` must open with some other
+   * character or it never matches.
+   */
+  after?: string;
+  /** `before` must open the string (Gemini: a foreground result opens "Output:"). */
+  atStart?: boolean;
 }
 
 /** One kind of tool call: which tools, under which conditions, and where its id sits. */
