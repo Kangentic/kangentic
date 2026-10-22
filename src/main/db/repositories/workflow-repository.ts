@@ -72,7 +72,8 @@ export class WorkflowRepository {
   constructor(private db: Database.Database) {}
 
   getById(id: string): Workflow | undefined {
-    const row = this.db.prepare('SELECT * FROM workflows WHERE id = ?').get(id) as WorkflowRow | undefined;
+    // Cached: the Agent Monitor reads a row's workflow on every snapshot push.
+    const row = cachedStatement(this.db, 'SELECT * FROM workflows WHERE id = ?').get(id) as WorkflowRow | undefined;
     return row ? mapRow(row) : undefined;
   }
 

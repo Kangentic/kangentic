@@ -11,6 +11,7 @@
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
 import { formatRelativeTime } from '../../lib/datetime';
+import type { ActivityMarkName } from '../ActivityMark';
 import type {
   ActivityReason,
   MonitorSessionRow,
@@ -57,6 +58,18 @@ export function bucketOf(row: MonitorSessionRow): MonitorStateBucket {
   if (row.status === 'exited') return 'finished';
   if (row.status === 'suspended' || row.status === 'queued') return 'idle';
   return requiresUserInteraction(row.activity ?? undefined) ? 'needs-you' : 'working';
+}
+
+/**
+ * The activity mark a live row wears, shared by the card's glyph and the table's
+ * state cell. A Command Terminal speaks the terminal marks, the identity it wears
+ * in the title bar and the sidebar; a task agent speaks the agent marks. The two
+ * families share the 18-wide indicator keyline, so swapping one for the other
+ * never moves the title.
+ */
+export function monitorActivityMark(row: MonitorSessionRow, needsYou: boolean): ActivityMarkName {
+  if (row.isCommandTerminal) return needsYou ? 'terminal-idle' : 'terminal-working';
+  return needsYou ? 'agent-idle' : 'agent-working';
 }
 
 /**

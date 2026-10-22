@@ -22,7 +22,11 @@
  * so a new field on `MonitorSessionRow` is covered the moment it is added instead of
  * silently defeating the reuse. Depth is bounded because the row's own nesting is
  * shallow by construction: `labels` is a string array, `activityReason` is a flat
- * union whose only non-scalar member is `ids`, and `lastEvent` is flat.
+ * union whose only non-scalar member is `ids`, `lastEvent` and `workflow` are flat,
+ * and `track` is the deepest. Its step and column-end fields (`track.steps[n].name`,
+ * `track.ends.todo.name`) are scalars at exactly `MAX_COMPARE_DEPTH`, so they still
+ * compare through the `Object.is` fast path. A field nested one level deeper than
+ * that would compare unequal on every push and quietly defeat the reuse.
  */
 import type { MonitorSessionRow } from '../../shared/types';
 
