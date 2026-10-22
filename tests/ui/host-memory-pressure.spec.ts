@@ -6,17 +6,16 @@
  * `receiveRecovery`, which is what puts a persistent warning toast on
  * screen and clears it again.
  *
- * The store's own formatting (headroom in GB, singular/plural agent count,
- * "unknown" on a platform with no commit reading) and dismiss/replace logic
- * are already pinned at the unit tier in tests/unit/host-memory-store.test.ts
- * against `receivePressureEvent` / `receiveRecovery` directly. Re-deriving
- * every one of those cases here through a real page would duplicate that
- * coverage at UI-tier cost for no extra confidence. This file's only job is
- * the wiring the unit tier cannot see: that App.tsx's optional-chained
- * subscriptions are actually registered and actually forward to the store.
- * One assertion on a stable substring plus the computed headroom is enough
- * to prove both the subscription fired and the store's formatter ran; it
- * does not re-pin the whole sentence.
+ * The store's own formatting (headroom in GB, the fallback with no commit
+ * reading) and dismiss/replace logic are already pinned at the unit tier in
+ * tests/unit/host-memory-store.test.ts against `receivePressureEvent` /
+ * `receiveRecovery` directly. Re-deriving every one of those cases here
+ * through a real page would duplicate that coverage at UI-tier cost for no
+ * extra confidence. This file's only job is the wiring the unit tier cannot
+ * see: that App.tsx's optional-chained subscriptions are actually registered
+ * and actually forward to the store. The title plus the body with its
+ * computed headroom is enough to prove both the subscription fired and the
+ * store's formatter ran.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage } from './helpers';
@@ -69,9 +68,9 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast).toBeVisible();
-      await expect(toast).toContainText('memory reservations');
-      await expect(toast).toContainText('1.5 GB');
-      await expect(toast).toContainText('2 agents');
+      await expect(toast).toHaveAttribute('data-persistent', 'true');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Low on memory');
+      await expect(toast.getByTestId('toast-body')).toHaveText('1.5 GB of memory reservations left.');
     } finally {
       await browser.close();
     }
@@ -90,13 +89,13 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
       await firePressure(page, makePressureEvent());
 
       const toast = page.getByTestId('toast');
-      await expect(toast).toContainText('page file');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Low on memory');
       await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'closed');
 
       // Closed, the panel is out of the way and the button opens it on Behavior.
       await page.keyboard.press('Escape');
       await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'open');
-      await toast.getByRole('button', { name: 'Behavior settings' }).click();
+      await toast.getByRole('button', { name: 'Settings', exact: true }).click();
 
       await expect(page.getByTestId('settings-tab-behavior')).toHaveClass(/font-medium/);
       await expect(page.getByTestId('setting-row-agent.maxConcurrentSessions')).toBeVisible();

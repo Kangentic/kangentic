@@ -1,37 +1,39 @@
 /**
- * Unit tests for the host memory pressure store
- * (`src/renderer/stores/host-memory-store.ts`, Sentry DESKTOP-16).
+ * Unit tests for the host memory store (`src/renderer/stores/host-memory-store.ts`):
+ * the Windows low-memory warning (Sentry DESKTOP-16) and the list of agents
+ * low memory paused, with the toast that counts them.
  *
- * `useToastStore` is vi.mock'd, mirroring updater-store.test.ts, so this file
- * asserts on the exact toast call the store makes without depending on
- * toast-store's own internals.
+ * The REAL toast store runs here (only the config store is stubbed), because
+ * the paused list follows its toast: an update in place, and a dismissal that
+ * clears the list, are both observed through the toast store itself.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { HostMemoryPressureEvent, HostMemorySample } from '../../src/shared/types';
+import type { HostMemoryAgentPausedEvent, HostMemoryPressureEvent, HostMemorySample } from '../../src/shared/types';
 
 const mocks = vi.hoisted(() => ({
-  useToastStore: { getState: vi.fn() },
   setLastSettingsTab: vi.fn(),
   setSettingsOpen: vi.fn(),
 }));
 
-vi.mock('../../src/renderer/stores/toast-store', () => ({ useToastStore: mocks.useToastStore }));
 vi.mock('../../src/renderer/stores/config-store', () => ({
   useConfigStore: {
-    getState: () => ({ setLastSettingsTab: mocks.setLastSettingsTab, setSettingsOpen: mocks.setSettingsOpen }),
+    getState: () => ({
+      config: { notifications: { toasts: { durationSeconds: 4, maxCount: 5 } } },
+      setLastSettingsTab: mocks.setLastSettingsTab,
+      setSettingsOpen: mocks.setSettingsOpen,
+    }),
   },
 }));
 
-const { useToastStore } = mocks;
-
-import { useHostMemoryStore } from '../../src/renderer/stores/host-memory-store';
+import { pausedToastCopy, useHostMemoryStore } from '../../src/renderer/stores/host-memory-store';
+import { useToastStore } from '../../src/renderer/stores/toast-store';
 
 function makeSample(overrides: Partial<HostMemorySample> = {}): HostMemorySample {
   return {
     ts: '2026-09-16T14:24:24.000Z',
     platform: 'win32',
     commitLimitBytes: 96_432_717_824,
-    commitRemainingBytes: 2_256_896,
+    commitRemainingBytes: 1.6 * 1024 * 1024 * 1024,
     physicalTotalBytes: 34_060_931_072,
     physicalFreeBytes: 5_005_045_760,
     physicalAvailableBytes: null,
@@ -40,86 +42,58 @@ function makeSample(overrides: Partial<HostMemorySample> = {}): HostMemorySample
 }
 
 function makeEvent(overrides: Partial<HostMemoryPressureEvent> = {}): HostMemoryPressureEvent {
+  return { sample: makeSample(), activeAgentCount: 3, ...overrides };
+}
+
+function makePaused(taskId: string, overrides: Partial<HostMemoryAgentPausedEvent> = {}): HostMemoryAgentPausedEvent {
   return {
-    sample: makeSample(),
-    activeAgentCount: 3,
+    pausedAt: '2026-10-21T12:00:00.000Z',
+    taskId,
+    projectId: 'proj-1',
+    taskTitle: `Task ${taskId}`,
+    projectName: 'kangentic',
+    waitedMs: 20 * 60_000,
     ...overrides,
   };
 }
 
-let addToastMock: ReturnType<typeof vi.fn>;
-let dismissToastMock: ReturnType<typeof vi.fn>;
-let nextToastId: number;
+function toastById(id: string | null) {
+  return useToastStore.getState().toasts.find((toast) => toast.id === id);
+}
 
 beforeEach(() => {
-  useHostMemoryStore.setState({ lastEvent: null, pressureToastId: null });
-  nextToastId = 0;
-  addToastMock = vi.fn(() => `toast-${++nextToastId}`);
-  dismissToastMock = vi.fn();
-  useToastStore.getState.mockReturnValue({ addToast: addToastMock, dismissToast: dismissToastMock });
+  for (const toast of useToastStore.getState().toasts) useToastStore.getState().dismissToast(toast.id);
+  useHostMemoryStore.setState({ lastEvent: null, pressureToastId: null, pausedAgents: [], pausedToastId: null, reviewOpen: false });
+  mocks.setLastSettingsTab.mockClear();
+  mocks.setSettingsOpen.mockClear();
 });
 
-describe('useHostMemoryStore.receivePressureEvent', () => {
-  it('stores the event and raises a persistent warning toast', () => {
-    const event = makeEvent();
-    useHostMemoryStore.getState().receivePressureEvent(event);
-
-    expect(useHostMemoryStore.getState().lastEvent).toEqual(event);
-    expect(addToastMock).toHaveBeenCalledTimes(1);
-    const toast = addToastMock.mock.calls[0][0];
-    expect(toast.variant).toBe('warning');
-    // Persistent: a machine about to run out of memory must not have its
-    // warning vanish on its own after a few seconds.
-    expect(toast.duration).toBe(0);
-  });
-
-  it('reports the headroom in gigabytes and the agent count in the message', () => {
-    useHostMemoryStore.getState().receivePressureEvent(
-      makeEvent({ sample: makeSample({ commitRemainingBytes: 2 * 1024 * 1024 * 1024 }), activeAgentCount: 5 })
-    );
-    const message = addToastMock.mock.calls[0][0].message as string;
-    expect(message).toContain('2.0 GB');
-    expect(message).toContain('5 agents');
-  });
-
-  it('uses singular phrasing for exactly one agent', () => {
-    useHostMemoryStore.getState().receivePressureEvent(makeEvent({ activeAgentCount: 1 }));
-    const message = addToastMock.mock.calls[0][0].message as string;
-    expect(message).toContain('1 agent is');
-    expect(message).not.toContain('1 agents');
-  });
-
-  it('reports unknown headroom rather than a wrong number when the platform has no commit reading', () => {
-    useHostMemoryStore.getState().receivePressureEvent(
-      makeEvent({ sample: makeSample({ platform: 'darwin', commitRemainingBytes: null }) })
-    );
-    const message = addToastMock.mock.calls[0][0].message as string;
-    expect(message).toContain('unknown');
-  });
-
-  it('names both levers and carries no per-agent figure', () => {
+describe('the low-memory warning', () => {
+  it('raises a persistent warning titled Low on memory, with the headroom as its body', () => {
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
-    const message = addToastMock.mock.calls[0][0].message as string;
-    expect(message).toContain('page file');
-    expect(message).toContain('run fewer agents');
-    // The cost of one agent depends on the CLI, its version and the user's
-    // MCP servers, so the toast quotes only what was measured on this machine.
-    expect(message).not.toMatch(/each agent/i);
+
+    const toast = toastById(useHostMemoryStore.getState().pressureToastId);
+    expect(toast?.title).toBe('Low on memory');
+    expect(toast?.message).toBe('1.6 GB of memory reservations left.');
+    expect(toast?.variant).toBe('warning');
+    // A machine about to run out of memory must not have its warning vanish on its own.
+    expect(toast?.persistent).toBe(true);
+    expect(toast?.since).toBe('2026-09-16T14:24:24.000Z');
   });
 
-  it('stamps the toast with the sample time so a toast left up reads its age', () => {
-    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
-    expect(addToastMock.mock.calls[0][0].since).toBe('2026-09-16T14:24:24.000Z');
+  it('says how little is left without a wrong number when there is no commit reading', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent({ sample: makeSample({ commitRemainingBytes: null }) }));
+
+    expect(toastById(useHostMemoryStore.getState().pressureToastId)?.message).toBe('Almost no memory reservations left.');
   });
 
-  it('offers an action that opens Settings on the Behavior tab, where Max concurrent sessions lives', () => {
-    mocks.setLastSettingsTab.mockClear();
-    mocks.setSettingsOpen.mockClear();
+  it('carries a Settings button that opens Settings on the Behavior tab, where Max concurrent sessions lives', () => {
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
-    const action = addToastMock.mock.calls[0][0].action as { label: string; onClick: () => void };
-    expect(action.label).toBe('Behavior settings');
+    const action = toastById(useHostMemoryStore.getState().pressureToastId)?.action;
+    expect(action?.label).toBe('Settings');
+    expect(action?.icon).toBe('settings');
 
-    action.onClick();
+    action?.onClick();
 
     expect(mocks.setLastSettingsTab).toHaveBeenCalledWith('behavior');
     expect(mocks.setSettingsOpen).toHaveBeenCalledWith(true);
@@ -128,61 +102,106 @@ describe('useHostMemoryStore.receivePressureEvent', () => {
       .toBeLessThan(mocks.setSettingsOpen.mock.invocationCallOrder[0]);
   });
 
-  it('stores the returned toast id so a later recovery can dismiss it', () => {
-    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
-    expect(useHostMemoryStore.getState().pressureToastId).toBe('toast-1');
-  });
-
-  it('replaces rather than stacks: a second pressure event dismisses the first toast before adding a second', () => {
+  it('replaces rather than stacks on a second pressure event', () => {
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
     const firstToastId = useHostMemoryStore.getState().pressureToastId;
-    expect(firstToastId).not.toBeNull();
 
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
 
-    // Order matters: dismiss-before-add, not add-then-dismiss, because
-    // addToast trims to a configurable maxCount that can be as low as 1 - an
-    // add-then-dismiss ordering could evict the new toast and then dismiss
-    // the stale one, leaving nothing on screen.
-    expect(dismissToastMock).toHaveBeenCalledTimes(1);
-    expect(dismissToastMock).toHaveBeenCalledWith(firstToastId);
-    const dismissOrder = dismissToastMock.mock.invocationCallOrder[0];
-    const secondAddOrder = addToastMock.mock.invocationCallOrder[1];
-    expect(dismissOrder).toBeLessThan(secondAddOrder);
-
-    expect(addToastMock).toHaveBeenCalledTimes(2);
-    expect(useHostMemoryStore.getState().pressureToastId).toBe('toast-2');
+    expect(toastById(firstToastId)).toBeUndefined();
+    expect(useToastStore.getState().toasts.filter((toast) => toast.title === 'Low on memory')).toHaveLength(1);
   });
-});
 
-describe('useHostMemoryStore.receiveRecovery', () => {
-  it('dismisses exactly the toast id raised by the pressure event, and clears state', () => {
+  it('is dismissed on recovery, and the store clears', () => {
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
     const toastId = useHostMemoryStore.getState().pressureToastId;
 
     useHostMemoryStore.getState().receiveRecovery();
 
-    expect(dismissToastMock).toHaveBeenCalledTimes(1);
-    expect(dismissToastMock).toHaveBeenCalledWith(toastId);
+    expect(toastById(toastId)).toBeUndefined();
     expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
     expect(useHostMemoryStore.getState().lastEvent).toBeNull();
   });
 
-  it('does not call dismissToast and does not throw when no toast was ever raised', () => {
+  it('nulls a stale warning id on recovery even when nothing on screen matches', () => {
+    useHostMemoryStore.setState({ pressureToastId: 'stale-toast-id' });
     expect(() => useHostMemoryStore.getState().receiveRecovery()).not.toThrow();
-    expect(dismissToastMock).not.toHaveBeenCalled();
     expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
   });
+});
 
-  it('nulls a stale pressureToastId even when the dismiss matches nothing on screen', () => {
-    // Simulates the toast having already been evicted by maxCount or
-    // dismissed by hand: the id in the store is stale, but the store's own
-    // invariant must self-repair rather than drift from what is on screen.
-    useHostMemoryStore.setState({ pressureToastId: 'stale-toast-id' });
+describe('the paused list and its toast', () => {
+  it('raises one persistent info toast for the first pause, with a Review button and the pause time', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+
+    const toast = toastById(useHostMemoryStore.getState().pausedToastId);
+    expect(toast?.title).toBe('Idle agent paused');
+    expect(toast?.message).toBe('Kangentic paused it to free memory.');
+    expect(toast?.variant).toBe('info');
+    expect(toast?.persistent).toBe(true);
+    expect(toast?.since).toBe('2026-10-21T12:00:00.000Z');
+    expect(toast?.action?.label).toBe('Review');
+    expect(toast?.action?.icon).toBe('review');
+  });
+
+  it('updates the same toast in place as more agents are paused, rather than stacking', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    const toastId = useHostMemoryStore.getState().pausedToastId;
+
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-2', { pausedAt: '2026-10-21T12:01:00.000Z' }));
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-3', { pausedAt: '2026-10-21T12:02:00.000Z' }));
+
+    expect(useHostMemoryStore.getState().pausedToastId).toBe(toastId);
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+    const toast = toastById(toastId);
+    expect(toast?.title).toBe('3 idle agents paused');
+    expect(toast?.message).toBe('Kangentic paused them to free memory.');
+    // The age follows the latest pause.
+    expect(toast?.since).toBe('2026-10-21T12:02:00.000Z');
+    expect(useHostMemoryStore.getState().pausedAgents.map((entry) => entry.taskId)).toEqual(['task-1', 'task-2', 'task-3']);
+  });
+
+  it('keeps one row per task when a task is paused again', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1', { waitedMs: 5 * 60_000 }));
+
+    expect(useHostMemoryStore.getState().pausedAgents).toHaveLength(1);
+    expect(toastById(useHostMemoryStore.getState().pausedToastId)?.title).toBe('Idle agent paused');
+  });
+
+  it('opens the Review list from the toast button', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    toastById(useHostMemoryStore.getState().pausedToastId)?.action?.onClick();
+    expect(useHostMemoryStore.getState().reviewOpen).toBe(true);
+  });
+
+  it('clears the list when the toast is dismissed, so the next pause starts again at 1', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-2'));
+    const toastId = useHostMemoryStore.getState().pausedToastId;
+
+    useToastStore.getState().dismissToast(toastId ?? '');
+
+    expect(useHostMemoryStore.getState().pausedAgents).toEqual([]);
+    expect(useHostMemoryStore.getState().pausedToastId).toBeNull();
+
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-3'));
+    expect(toastById(useHostMemoryStore.getState().pausedToastId)?.title).toBe('Idle agent paused');
+  });
+
+  it('leaves the paused toast up when memory recovers: the agents stay paused', () => {
+    useHostMemoryStore.getState().receivePressureEvent(makeEvent());
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    const pausedToastId = useHostMemoryStore.getState().pausedToastId;
 
     useHostMemoryStore.getState().receiveRecovery();
 
-    expect(dismissToastMock).toHaveBeenCalledWith('stale-toast-id');
-    expect(useHostMemoryStore.getState().pressureToastId).toBeNull();
+    expect(toastById(pausedToastId)?.title).toBe('Idle agent paused');
+    expect(useHostMemoryStore.getState().pausedAgents).toHaveLength(1);
+  });
+
+  it('words the copy for one agent and for several', () => {
+    expect(pausedToastCopy(1)).toEqual({ title: 'Idle agent paused', message: 'Kangentic paused it to free memory.' });
+    expect(pausedToastCopy(2)).toEqual({ title: '2 idle agents paused', message: 'Kangentic paused them to free memory.' });
   });
 });
