@@ -157,9 +157,10 @@ test.describe('a toast does not eat clicks on what is under it', () => {
 
       const probe = await page.evaluate(() => {
         const card = document.querySelector('[data-testid="toast"]')!;
-        const message = card.querySelector('span')!;
+        const message = card.querySelector('[data-testid="toast-body"]')!;
         const dismiss = card.querySelector('[data-testid="toast-dismiss"]')!;
-        const stripe = card.firstElementChild!;
+        // The countdown line along the bottom edge, the card's other full-width strip.
+        const countdown = card.querySelector('[data-testid="toast-countdown"]')!;
         const at = (element: Element) => {
           const box = element.getBoundingClientRect();
           return document.elementFromPoint(
@@ -168,19 +169,19 @@ test.describe('a toast does not eat clicks on what is under it', () => {
           );
         };
         const overMessage = at(message);
-        const overStripe = at(stripe);
+        const overCountdown = at(countdown);
         const overDismiss = at(dismiss);
         return {
           messageFallsThrough: !!overMessage && !card.contains(overMessage),
-          stripeFallsThrough: !!overStripe && !card.contains(overStripe),
+          countdownFallsThrough: !!overCountdown && !card.contains(overCountdown),
           dismissIsHitTestable: !!overDismiss && dismiss.contains(overDismiss),
           // Named so a failure says WHAT was on top, not just that it was wrong.
           overMessageTag: overMessage?.tagName ?? null,
         };
       });
 
-      expect(probe.messageFallsThrough, `the message span ate the click (${probe.overMessageTag} on top)`).toBe(true);
-      expect(probe.stripeFallsThrough, 'the accent stripe ate the click').toBe(true);
+      expect(probe.messageFallsThrough, `the message ate the click (${probe.overMessageTag} on top)`).toBe(true);
+      expect(probe.countdownFallsThrough, 'the countdown line ate the click').toBe(true);
       expect(probe.dismissIsHitTestable, 'the dismiss X is no longer clickable').toBe(true);
     } finally {
       await browser.close();
@@ -261,7 +262,8 @@ test.describe('a toast does not eat clicks on what is under it', () => {
   // exercised toast.action. Seed one directly through the same dev-only
   // escape hatch the info toast above uses. __zustandStores is installed at
   // App.tsx module eval, well before launchPage's `text=Kangentic` wait, so
-  // no readiness wait is needed here.
+  // no readiness wait is needed here. Persistent: only a toast that stays
+  // carries a button.
   test('the action button opts back in to pointer events and its onClick still fires', async () => {
     const { browser, page } = await launchPage();
     try {
@@ -271,8 +273,10 @@ test.describe('a toast does not eat clicks on what is under it', () => {
             toast: {
               getState: () => {
                 addToast: (input: {
+                  title: string;
                   message: string;
                   variant: string;
+                  persistent: true;
                   action: { label: string; onClick: () => void };
                 }) => void;
               };
@@ -280,8 +284,10 @@ test.describe('a toast does not eat clicks on what is under it', () => {
           };
         }).__zustandStores.toast;
         store.getState().addToast({
+          title: 'Action needed',
           message: 'A background task needs your attention',
           variant: 'info',
+          persistent: true,
           action: {
             label: 'Retry',
             onClick: () => {

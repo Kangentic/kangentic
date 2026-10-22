@@ -77,11 +77,12 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
     }
   });
 
-  test('the action opens Settings on the Behavior tab, also from a panel already open on another tab', async () => {
+  test('the action opens Settings on the Behavior tab, and is out of reach while the panel is open', async () => {
     const { browser, page } = await launchPage();
     try {
-      // Open Settings on Terminal first. The panel picks its tab at mount, so
-      // this is the case that needs the panel to follow the store's tab.
+      // Open Settings on Terminal first. While any panel or dialog is open, no
+      // toast takes a click (the stack sits over a dialog's footer), so the
+      // button cannot be reached from here.
       await page.locator('[data-testid="settings-button"]').click();
       await page.getByTestId('settings-tab-terminal').click();
       await expect(page.getByTestId('settings-tab-terminal')).toHaveClass(/font-medium/);
@@ -90,6 +91,11 @@ test.describe('Host memory pressure toast (Sentry DESKTOP-16)', () => {
 
       const toast = page.getByTestId('toast');
       await expect(toast).toContainText('page file');
+      await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'closed');
+
+      // Closed, the panel is out of the way and the button opens it on Behavior.
+      await page.keyboard.press('Escape');
+      await expect(page.locator('[data-toast-gate]')).toHaveAttribute('data-toast-gate', 'open');
       await toast.getByRole('button', { name: 'Behavior settings' }).click();
 
       await expect(page.getByTestId('settings-tab-behavior')).toHaveClass(/font-medium/);
