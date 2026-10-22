@@ -22,7 +22,7 @@ type HeadlessTerminalAddon = ITerminalAddon;
  * cannot appear there; `IBuffer` exposes cursor and viewport geometry only. The
  * margins do live on the internal `Buffer` (`InputHandler.setScrollRegion`
  * writes them), unmangled in the shipped bundle, and `_core` is the same private
- * door `src/renderer/addons/fit-addon.ts` already goes through. The public
+ * door `src/renderer/utils/terminal-grid-registry.ts` goes through. The public
  * alternative is a DECRQSS round trip (`\x1bP$qr\x1b\\`, answered on `onData`),
  * which would turn a synchronous property read into an async protocol exchange
  * over the PTY's own data channel. Narrowly typed rather than cast to `any` so
@@ -110,9 +110,10 @@ export class HeadlessFrameBuffer {
    * Cut every alt-screen line back to the grid width after a column shrink.
    *
    * xterm trims lines on a shrink only inside `Buffer.resize`'s reflow branch,
-   * gated on `_hasScrollback && !windowsMode`. The alt buffer has no scrollback,
-   * so a shrink while the alt screen is up leaves its lines at the old width for
-   * the rest of the session. The agent's frames and EL touch only the first
+   * gated on `_isReflowEnabled`, which needs `_hasScrollback` (and a ConPTY
+   * build of 21376 or later when `windowsPty` names one). The alt buffer has no
+   * scrollback, so a shrink while the alt screen is up leaves its lines at the
+   * old width for the rest of the session. The agent's frames and EL touch only the first
    * `cols` cells, so the cells past them keep whatever the wider frame drew. The
    * serialize addon walks `line.length`, not `terminal.cols`, so it emits those
    * off-grid cells. Where a row ends in null cells above a wrapped row it also
@@ -121,8 +122,8 @@ export class HeadlessFrameBuffer {
    * into the Agent Monitor peek.
    *
    * The normal buffer needs none of this. It reflows, because this parser sets
-   * neither `windowsMode` nor `windowsPty`, and xterm trims it after the reflow.
-   * While the normal buffer is active the loop finds nothing to trim, because
+   * no `windowsPty`, and xterm trims it after the reflow. While the normal
+   * buffer is active the loop finds nothing to trim, because
    * `activateNormalBuffer` clears the alt lines and `fillViewportRows` rebuilds
    * them at the current width on the next switch.
    *
@@ -220,10 +221,11 @@ export class HeadlessFrameBuffer {
    * the right screen with the right input modes without any extra prefix -
    * but the switch is not a leading marker; never `startsWith` on it.
    *
-   * What the addon CANNOT carry is the DECSTBM scroll region, so
-   * `scrollRegionSuffix` appends it (and the cursor restore DECSTBM would
-   * otherwise clobber). That suffix is the frame's TAIL by construction; do not
-   * append anything after it that assumes a home cursor.
+   * Since 6.1 the addon also emits the DECSTBM scroll region, as its very last
+   * sequence, with no cursor restore after it, and DECSTBM homes the cursor. So
+   * `scrollRegionSuffix` follows it with the region again and the cursor
+   * restore. That suffix is the frame's TAIL by construction; do not append
+   * anything after it that assumes a home cursor.
    *
    * `scrollbackLines` is how many history rows above the grid the frame
    * carries (default SERIALIZED_SCROLLBACK_LINES, which is also what the
@@ -268,38 +270,30 @@ export class HeadlessFrameBuffer {
   }
 
   /**
-   * Re-assert the scroll region a replay would otherwise silently drop, and put
-   * the cursor back where the frame left it.
+   * Re-assert the scroll region, and put the cursor back where the frame left
+   * it.
    *
-   * The serialize addon builds its mode prefix from `terminal.modes`, which
-   * carries no margin data, so a replayed frame always lands in a terminal whose
-   * region spans the full viewport. Without this, a TUI that sets a region ends
-   * up believing in margins the terminal no longer has, and each later
-   * region-relative op acts on the wrong rows.
+   * Up to xterm 6.0 the serialize addon carried no margins at all, so a replayed
+   * frame landed in a terminal whose region spanned the full viewport, and a TUI
+   * that set a region went on believing in margins the terminal no longer had.
+   * Since 6.1 (xtermjs/xterm.js#5547) the addon emits the region itself, last,
+   * read through the same private `_core` door, and stops there. So the region
+   * now arrives twice, which is harmless: DECSTBM is idempotent. Re-asserting it
+   * keeps the frame whole even if the addon's read breaks, and the CUP after it
+   * is still the only cursor repair.
    *
-   * Currently DORMANT for Claude Code, and deliberately kept anyway. Its binary
-   * ships a DECSTBM capability gate alongside SD/IL emission, but the gate is
-   * shut under xterm.js: measured 2026-08-06 with `claude --debug`, which logs
-   * `XTVERSION: no reply (terminal ignored query)` and then
-   * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset TERM=unset)`.
-   * xterm registers `CSI > c` but no `CSI > q`, so it never answers XTVERSION.
-   * Re-measured 2026-08-16 (claude 2.1.233) after buildSpawnEnv began
-   * defaulting TERM=xterm-256color into every PTY child: still
-   * `DECSTBM: gated (TMUX=unset ZELLIJ=unset TERM_PROGRAM=unset
-   * TERM=xterm-256color)` behind the same XTVERSION no-reply, so the gate keys
-   * on the handshake, not on TERM alone. Re-measured 2026-08-28 (claude
-   * 2.1.250): identical gate line. It can still reopen on any upgrade,
-   * silently, and the resulting bug is expensive to re-diagnose - hence the
-   * guard. The origin-mode branch below is NOT dormant.
-   *
-   * The same missing XTVERSION reply also makes the CLI log
-   * `DECRQM(2026): skipped (no XTVERSION reply) -> sync unsupported`, even
-   * though xterm 6.x implements DEC 2026 and the CLI emits balanced
-   * `?2026h/l` wrappers regardless (measured 2026-08-28, ~25 pairs per 256KB
-   * of live stream). Do NOT "fix" this by registering a CSI > q handler that
-   * answers XTVERSION on xterm's behalf: the one handshake gates BOTH
-   * behaviors, so unlocking sync-awareness would simultaneously ungate
-   * DECSTBM and make the replay scroll-region gap live.
+   * The region half is currently DORMANT for Claude Code, and deliberately kept
+   * anyway. Its binary ships a DECSTBM capability gate alongside SD/IL emission,
+   * and the gate stays shut while the terminal sends no XTVERSION reply:
+   * measured with `claude --debug` up to 2.1.250, it logs
+   * `XTVERSION: no reply (terminal ignored query)` and then `DECSTBM: gated`,
+   * with or without TERM=xterm-256color, so the gate keys on the handshake.
+   * xterm 6.1 answers XTVERSION by default (xtermjs/xterm.js#5502); the renderer
+   * swallows the query (`swallowXtversionQuery`,
+   * `src/renderer/utils/terminal-query-replies.ts`), which keeps the gate shut.
+   * It can still reopen on a Claude upgrade, silently, and the resulting bug is
+   * expensive to re-diagnose - hence the guard. The origin-mode branch below is
+   * NOT dormant.
    *
    * Order is load-bearing, twice over:
    *
@@ -307,7 +301,8 @@ export class HeadlessFrameBuffer {
    *   writes would scroll against it and reflow the replay.
    * - The region must be followed by an absolute CUP. DECSTBM homes the cursor
    *   (`InputHandler.setScrollRegion` ends in `_setCursor(0, 0)`), which would
-   *   otherwise discard the position the addon's relative moves just built.
+   *   otherwise discard the position the addon's relative moves just built. The
+   *   addon's own trailing DECSTBM has exactly that effect.
    *
    * The CUP is also emitted for a full-screen region when origin mode is on,
    * because the addon appends its own `\x1b[?6h` AFTER its cursor restore and

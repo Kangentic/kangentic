@@ -20,7 +20,7 @@
  *
  * The container never moved (hostWidth is byte-identical across all three), so
  * this is a CELL METRIC change, not a layout one. FitAddon derives columns from
- * `_renderService.dimensions.css.cell.width`, and parking a terminal disposes
+ * `terminal.dimensions.css.cell.width`, and parking a terminal disposes
  * its WebGL addon for the GPU budget; the DOM renderer it falls back to measures
  * a wider cell, so the same box proposes fewer columns. The reveal's fit ran on
  * a renderer the terminal was about to stop using.

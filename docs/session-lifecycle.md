@@ -1240,7 +1240,7 @@ phone needs and reads the rest by request.
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
 - **Fit only on the renderer the terminal keeps.** The container is not the fit's only input: the
   cell metric is, and that comes from whichever renderer is attached
-  (`_renderService.dimensions.css.cell.width`). Parking a terminal disposes its WebGL addon for the
+  (`terminal.dimensions.css.cell.width`). Parking a terminal disposes its WebGL addon for the
   GPU budget, and the DOM renderer it falls back to measures a WIDER cell, so an unchanged container
   proposes ~10% FEWER columns while suspended (measured: 210 attached, 191 suspended, at
   hostWidth 1483). `useFocusedSessionsSync` therefore applies the WebGL attachment plan BEFORE it
@@ -1581,20 +1581,24 @@ phone needs and reads the rest by request.
   serves (both routes); without
   it, a same-grid remount left xterm reporting legacy X10 mouse bytes that an SGR-expecting TUI
   ignores, and wheel scroll went dead until the TUI happened to re-assert its own modes.
-  A SECOND thing the addon cannot emit is the DECSTBM scroll region: it builds its prefix from
-  `terminal.modes`, and a region is two integers of buffer state rather than a mode flag, so
-  `IModes` has no member for it. `HeadlessFrameBuffer.serialize` therefore appends the region
-  itself plus an absolute cursor restore. Order is load-bearing twice over: the region must FOLLOW
-  the frame (set before it, the frame's own row writes would scroll against it), and it must be
-  followed by the CUP, because DECSTBM homes the cursor and would otherwise discard the position
-  the addon's relative moves just rebuilt. The suffix is empty only when the region already spans
-  the grid AND origin mode is off, which is the common case: with DECOM on it still emits a bare
-  CUP, because the addon appends its own `\x1b[?6h` after its cursor restore and DECSET 6 homes
-  the cursor too. Claude Code gates its own DECSTBM use on a terminal-capability probe and
-  currently leaves it off under xterm.js (measured with `claude --debug`: `XTVERSION: no reply`
-  then `DECSTBM: gated`, because xterm registers `CSI > c` but no `CSI > q`), so the REGION half
-  guards against that gate reopening rather than repairing a live break. The origin-mode half
-  repairs a live one.
+  The DECSTBM scroll region is two integers of buffer state rather than a mode flag, so `IModes`
+  has no member for it. Up to xterm 6.0 the addon dropped it. Since 6.1 (xtermjs/xterm.js#5547)
+  it emits a non-full region as its last sequence, with no cursor restore after it, and DECSTBM
+  homes the cursor. `HeadlessFrameBuffer.serialize` therefore appends the region again plus an
+  absolute cursor restore; the repeated region is harmless, since DECSTBM is idempotent. Order is
+  load-bearing twice over: the region must FOLLOW the frame (set before it, the frame's own row
+  writes would scroll against it), and it must be followed by the CUP, because DECSTBM homes the
+  cursor and would otherwise discard the position the addon's relative moves just rebuilt. The
+  suffix is empty only when the region already spans the grid AND origin mode is off, which is the
+  common case: with DECOM on it still emits a bare CUP, because the addon appends its own
+  `\x1b[?6h` after its cursor restore and DECSET 6 homes the cursor too. Claude Code gates its own
+  DECSTBM use on a terminal-capability probe and left it off under xterm.js in the last
+  measurement (Claude Code 2.1.250 on xterm 6.0, with `claude --debug`: `XTVERSION: no reply` then
+  `DECSTBM: gated`). xterm 6.1 answers
+  XTVERSION by default (#5502), so the renderer swallows the query before its first write
+  (`swallowXtversionQuery`, see `.claude/rules/xterm-query-replies.md`). The REGION half
+  therefore guards against that gate reopening rather than repairing a live break. The
+  origin-mode half repairs a live one.
   The parser can also hold cells the grid no longer has. xterm trims lines on a column shrink only
   inside its reflow branch, and the alt buffer has no scrollback, so it never reflows. A shrink
   while the alt screen is up left every alt line at the old width for the rest of the session. The

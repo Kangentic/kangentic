@@ -182,13 +182,11 @@ export class FitAddon implements ITerminalAddon {
       return { applied: false, reason: 'no-element' };
     }
 
-    // xterm 6.0 doesn't expose terminal.dimensions publicly.
-    // Access cell dimensions via the same private API the official addon uses.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const core = (this._terminal as any)._core;
-    const renderDimensions = core._renderService.dimensions;
-    const cellWidth: number = renderDimensions.css.cell.width;
-    const cellHeight: number = renderDimensions.css.cell.height;
+    // The render service's cell, through the public API since xterm 6.1. It is
+    // undefined until open() has built a render service.
+    const cell = this._terminal.dimensions?.css.cell;
+    const cellWidth = cell?.width ?? 0;
+    const cellHeight = cell?.height ?? 0;
 
     if (cellWidth === 0 || cellHeight === 0) {
       return { applied: false, reason: 'zero-cell' };

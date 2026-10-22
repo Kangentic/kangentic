@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
-import { releaseMouseTracking } from '../utils/terminal-dispose';
+import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
@@ -1291,12 +1291,16 @@ export function useTerminal(options: UseTerminalOptions) {
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
       linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),
+      // No color-scheme, kitty keyboard, or win32-input replies into the PTY.
+      vtExtensions: TERMINAL_VT_EXTENSIONS,
     });
 
     // Unicode 11 widths, in lockstep with main's headless parser: the mount
     // replay writes a frame main serialized under its width table, so a
     // mismatch here would drift the replay against the live view.
     activateUnicode11(terminal);
+    // Before any write: the mount replay re-parses the agent's boot query.
+    swallowXtversionQuery(terminal);
 
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
@@ -1887,15 +1891,10 @@ export function useTerminal(options: UseTerminalOptions) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      // Runs first, so no step below can throw and skip it. It drops the
-      // document mouse listeners xterm parks while mouse reporting is on, or
-      // the next click anywhere throws into the disposed terminal (DESKTOP-1G).
-      // If a future xterm renames the private mouse service, the reset()
-      // fallback clears the buffer before the scroll position below is saved,
-      // so a Fast Refresh may lose that position. That is dev-only and cosmetic.
-      // The unit tripwire for the rename runs on @xterm/headless, so it cannot
-      // see a rename in the browser bundle alone.
-      if (xtermRef.current) releaseMouseTracking(xtermRef.current);
+      // No mouse release before the dispose: since xterm 6.1 (#5591) the
+      // document mouse listeners a press arms are disposables of the terminal,
+      // so dispose() removes them (DESKTOP-1G). The guard is
+      // tests/ui/terminal-dispose-mouse-tracking.spec.ts.
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
       // Flush any pending batched writes synchronously so keystrokes queued

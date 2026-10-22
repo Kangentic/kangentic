@@ -281,7 +281,14 @@ async function main() {
       cleanup(throwawayCwd, opts.keep);
       process.exit(3);
     }
-    headlessTerm = new HeadlessTerminal({ cols: 120, rows: 30, scrollback: 0, allowProposedApi: true });
+    // Answer no XTVERSION and no optional VT query, as the app's renderer does
+    // (TERMINAL_VT_EXTENSIONS and swallowXtversionQuery in
+    // src/renderer/utils/terminal-query-replies.ts). xterm 6.1 replies by default.
+    headlessTerm = new HeadlessTerminal({
+      cols: 120, rows: 30, scrollback: 0, allowProposedApi: true,
+      vtExtensions: { kittyKeyboard: false, win32InputMode: false, colorSchemeQuery: false },
+    });
+    headlessTerm.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
     headlessTerm.onData((reply) => {
       record('in', reply);
       try { ptyProcess.write(reply); } catch { /* pty gone */ }
