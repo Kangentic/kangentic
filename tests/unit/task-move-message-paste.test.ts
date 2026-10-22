@@ -763,9 +763,9 @@ describe('On task enter, warm move: a task with its automations disabled is sent
 
   // The warm move decides from a FRESH read of the stored row, not from the task
   // object it was handed: the user can throw the switch between the move's first
-  // read and the injection (or a move out of Done can clear it), and the enter
-  // group's engine gate reads fresh too, so a stale decision here would type a
-  // message the group then records as skipped, or hold one the group sent. In
+  // read and the injection, and the enter group's engine gate reads fresh too,
+  // so a stale decision here would type a message the group then records as
+  // skipped, or hold one the group sent. In
   // both cases below the move's own task says one thing and the stored row the
   // other.
   describe('the decision reads the stored row, not the task the move holds', () => {

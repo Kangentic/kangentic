@@ -1958,8 +1958,8 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // Migration: a per-task switch that disables every column automation for the
   // task (#827). 0 for every existing task, which is today's behavior, so a
-  // single statement with no backfill. Moving out of Done and joining a
-  // workflow clear it (TaskRepository).
+  // single statement with no backfill. Joining a workflow clears it
+  // (TaskRepository.setWorkflowMembership).
   const hasTaskAutomationsDisabled = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((column) => column.name === 'automations_disabled');
   if (!hasTaskAutomationsDisabled) {

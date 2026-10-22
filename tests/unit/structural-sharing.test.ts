@@ -161,9 +161,9 @@ describe('applyStructuralSharing', () => {
     expect(result[0]).toBe(next);
   });
 
-  // The card's automations strip and its menu row read the switch, and the move
-  // out of Done clears it without bumping anything else the card shows. Without
-  // this comparison the card would keep the stale strip until an unrelated field
+  // The card's automations strip and its menu row read the switch, so a write
+  // that changes only the switch still has to reach the card. Without this
+  // comparison the card would keep the stale strip until an unrelated field
   // changed too.
   it('uses next reference when automations_disabled changed and nothing else did', () => {
     const previous = makeTask({ automations_disabled: false });
