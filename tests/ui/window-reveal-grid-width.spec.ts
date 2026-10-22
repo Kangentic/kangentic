@@ -6,7 +6,7 @@
  * Board round trip rendering its agent frame hard-wrapped, and never recovered.
  * Parking a terminal disposes its WebGL addon for the GPU budget; the DOM
  * renderer it falls back to measures a WIDER cell, so FitAddon (which divides
- * the container by `_renderService.dimensions.css.cell.width`) proposes FEWER
+ * the container by `terminal.dimensions.css.cell.width`) proposes FEWER
  * columns for a container that never moved. The reveal used to fit in that
  * window and write main's full-width frame into the narrower grid, and the refit
  * afterwards widened the grid back without reflowing it - xterm reflows the

@@ -185,7 +185,14 @@ async function main() {
 
   // Same headless parser production uses (HeadlessFrameBuffer wraps exactly this
   // Terminal at the same geometry), doubling as the capability-query responder.
-  const term = new HeadlessTerminal({ cols: COLS, rows: ROWS, scrollback: 500, allowProposedApi: true });
+  // Answer no XTVERSION and no optional VT query, as the app's renderer does
+  // (TERMINAL_VT_EXTENSIONS and swallowXtversionQuery in
+  // src/renderer/utils/terminal-query-replies.ts). xterm 6.1 replies by default.
+  const term = new HeadlessTerminal({
+    cols: COLS, rows: ROWS, scrollback: 500, allowProposedApi: true,
+    vtExtensions: { kittyKeyboard: false, win32InputMode: false, colorSchemeQuery: false },
+  });
+  term.parser.registerCsiHandler({ prefix: '>', final: 'q' }, () => true);
 
   const env = buildSpawnEnv();
   let ptyProcess;

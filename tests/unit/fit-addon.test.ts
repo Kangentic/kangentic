@@ -25,7 +25,7 @@
  *
  * proposeDimensions() touches:
  *   _terminal.element / .parentElement / .querySelector('.xterm-viewport')
- *   _terminal._core._renderService.dimensions.css.cell  (private xterm API)
+ *   _terminal.dimensions.css.cell  (public since xterm 6.1)
  *   window.getComputedStyle  (mocked via vi.stubGlobal; jsdom not required)
  *
  * Geometry used across all cases:
@@ -65,8 +65,8 @@ function makeElements(viewport: ViewportStub | null = { offsetWidth: 800, client
   return { parentEl, elementEl };
 }
 
-/** Build a minimal Terminal-shaped stub. The private _core path uses `as any`
- *  in the source, so a plain object satisfies it without type gymnastics.
+/** Build a minimal Terminal-shaped stub, cast through `unknown` because it
+ *  carries only the members the addon reads.
  *  `cell` defaults to the file's standard 8x16 fixture cell; the
  *  proposeFontSizeForGrid / proposeDimensionsForCell tests below override it
  *  to reach specific scale ratios. */
@@ -80,11 +80,7 @@ function makeTerminalStub(
     element: elementEl,
     options: { scrollback },
     buffer: { active: { type: bufferType } },
-    _core: {
-      _renderService: {
-        dimensions: { css: { cell: { width: cell.width, height: cell.height } } },
-      },
-    },
+    dimensions: { css: { cell: { width: cell.width, height: cell.height } } },
   } as unknown as Terminal;
 }
 
@@ -403,9 +399,16 @@ describe('FitAddon.fit - reports what it did, and why it declined', () => {
     // or a font not yet applied. THE state behind the reveal-width incident's
     // sibling failure mode: a fit taken here silently keeps the old grid.
     vi.stubGlobal('window', makeWindowStub(parentEl));
+    fitAddon.activate(makeTerminalStub(elementEl, 'normal', 1000, { width: 0, height: 0 }));
+    expect(fitAddon.fit()).toEqual({ applied: false, reason: 'zero-cell' });
+  });
+
+  it('names a terminal with no render dimensions yet as zero-cell', () => {
+    // xterm's public `dimensions` is undefined until open() builds a render
+    // service. The fit must bail, not throw on the missing cell.
+    vi.stubGlobal('window', makeWindowStub(parentEl));
     const terminal = makeTerminalStub(elementEl);
-    (terminal as unknown as { _core: { _renderService: { dimensions: { css: { cell: { width: number; height: number } } } } } })
-      ._core._renderService.dimensions.css.cell = { width: 0, height: 0 };
+    (terminal as unknown as { dimensions: undefined }).dimensions = undefined;
     fitAddon.activate(terminal);
     expect(fitAddon.fit()).toEqual({ applied: false, reason: 'zero-cell' });
   });

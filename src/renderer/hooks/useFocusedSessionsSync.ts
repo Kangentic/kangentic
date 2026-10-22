@@ -213,11 +213,12 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     // replay fits itself synchronously and a fit is only valid on the renderer
     // the terminal is going to KEEP.
     //
-    // FitAddon derives columns from `_renderService.dimensions.css.cell.width`,
-    // and that service is swapped wholesale when the WebGL addon attaches or is
-    // disposed. A terminal parked off the board has its addon disposed
-    // (`webgl-suspend`, the GPU budget), and the DOM fallback it lands on
-    // measures a WIDER cell, so the same container proposes fewer columns.
+    // FitAddon derives columns from `terminal.dimensions.css.cell.width`, which
+    // the attached renderer supplies, and that renderer is swapped wholesale
+    // when the WebGL addon attaches or is disposed. A terminal parked off the
+    // board has its addon disposed (`webgl-suspend`, the GPU budget), and the
+    // DOM fallback it lands on measures a WIDER cell, so the same container
+    // proposes fewer columns.
     // Measured on a 1483px task-detail window: 210 columns attached, 191
     // suspended, with a byte-identical hostWidth.
     //

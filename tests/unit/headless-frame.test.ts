@@ -157,12 +157,13 @@ describe('HeadlessFrameBuffer', () => {
   });
 
   /**
-   * The DECSTBM scroll region is the one piece of TUI state a serialized frame
-   * cannot carry on its own: @xterm/addon-serialize builds its mode prefix from
-   * `terminal.modes`, which is a bag of mode FLAGS with no margin members. So
-   * every replay used to land in a terminal whose region spanned the full
-   * viewport while the agent still believed its own margins were set, leaving
-   * each later region-relative op (SD, IL) acting on the wrong rows.
+   * The DECSTBM scroll region is TUI state that `terminal.modes` cannot hold:
+   * it is a bag of mode FLAGS with no margin members. Up to xterm 6.0 the
+   * serialize addon therefore dropped it, and every replay landed in a terminal
+   * whose region spanned the full viewport while the agent still believed its
+   * own margins were set, leaving each later region-relative op (SD, IL) acting
+   * on the wrong rows. Since 6.1 the addon emits the region last, with no
+   * cursor restore after it, so the frame's own suffix still owns the cursor.
    *
    * Claude Code's own DECSTBM use is currently gated OFF under xterm.js
    * (measured with `claude --debug`; see `scrollRegionSuffix`), so the region
@@ -289,6 +290,49 @@ describe('HeadlessFrameBuffer', () => {
       const replayed = await replayIntoFreshTerminal(frame);
 
       expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 23 });
+
+      buffer.dispose();
+      replayed.dispose();
+    });
+
+    it('restores the region from the frame suffix alone when the addon emits none', async () => {
+      // Pins the suffix's own DECSTBM re-assert (`regionSequence` in
+      // scrollRegionSuffix). Since the serialize addon 0.15 beta (xterm 6.1) the
+      // addon emits the region as its last sequence, so every other case in this
+      // block stays green with the suffix's copy deleted: the addon's region
+      // reaches the replay anyway, and its trailing region plus the suffix's bare
+      // CUP has the same tail as the suffix's region plus CUP. Stripping the
+      // addon's region reproduces the 6.0 addon, so only the suffix can restore it.
+      const buffer = new HeadlessFrameBuffer(80, 24);
+      interface SerializerAccessor {
+        serializer: { serialize: (...args: unknown[]) => string };
+      }
+      const serializer = (buffer as unknown as SerializerAccessor).serializer;
+      const realSerialize = serializer.serialize.bind(serializer);
+      let addonOutput = '';
+      serializer.serialize = (...args: unknown[]) => {
+        addonOutput = realSerialize(...args).replace(/\x1b\[\d+;\d+r$/, '');
+        return addonOutput;
+      };
+
+      buffer.write('\x1b[?1049h');   // alt screen, as a fullscreen TUI uses
+      buffer.write('\x1b[5;20r');    // DECSTBM rows 5..20 => 0-based 4..19
+      buffer.write('\x1b[8;3Hhello');
+
+      const frame = await buffer.serialize();
+
+      // Guards against a vacuous pass: the stub ran, the grid reached it, and the
+      // addon's output carries no DECSTBM anywhere, so the only region left in
+      // the frame is the suffix's.
+      expect(addonOutput).toContain('hello');
+      expect(addonOutput).not.toMatch(/\x1b\[\d+;\d+r/);
+
+      const replayed = await replayIntoFreshTerminal(frame);
+
+      expect(readScrollRegion(replayed)).toEqual({ top: 4, bottom: 19 });
+      // `\x1b[8;3H` then 5 printed cells: row 7, column 7 (both 0-based).
+      expect(replayed.buffer.active.cursorY).toBe(7);
+      expect(replayed.buffer.active.cursorX).toBe(7);
 
       buffer.dispose();
       replayed.dispose();
