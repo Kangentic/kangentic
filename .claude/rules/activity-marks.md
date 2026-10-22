@@ -105,8 +105,10 @@ measurements, and the upstream geometry history live in
 ## Scope
 
 Renderer code that renders an activity mark. `IconSlot` has been adopted at `StopButtonIcon`,
-`PauseButtonIcon`, and `MonitorCard`'s `StateGlyph`. That is what has been ADOPTED, not where the
-hazard exists: `MonitorTable`'s `StateCell` (inside `DataTable`'s clickable `<tr>`) and
-`TerminalPanel`'s session-tab glyph have the same element-type swap and are still unwrapped.
+`PauseButtonIcon`, `MonitorCard`'s `StateGlyph`, and `ViewToggle`'s Workflows tab, which swaps its
+count pill for the working mark and passes `grow` so a 2-digit pill can widen the slot. That is
+what has been ADOPTED, not where the hazard exists: `MonitorTable`'s `StateCell` (inside
+`DataTable`'s clickable `<tr>`) and `TerminalPanel`'s session-tab glyph have the same
+element-type swap and are still unwrapped.
 `TaskCard` is a mark flip only, with its reason in a Tooltip around the mark, so it is
 deliberately not a slot candidate. Does not govern lucide icons, which stay everywhere else.

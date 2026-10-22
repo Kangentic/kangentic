@@ -72,7 +72,9 @@ chrome unless these are stated.
   `SegmentedControl` each match that fill deliberately and say so in a comment, so a one-off
   `bg-*` on a new control breaks a family that is being held together by hand.
 - **Numeric counts:** use the shared `CountBadge` (`src/renderer/components/CountBadge.tsx`)
-  with its `muted` / `accent` / `solid` variants. Do not inline badge styles.
+  with its `muted` / `accent` / `solid` variants. Do not inline badge styles. A count inside a
+  control whose text tone it should follow (the board toolbar's view tabs) is `variant="tinted"
+  size="pill"`, which also centers the digits on their own ink.
 - **Confirmations:** use `ConfirmDialog` for all yes/no prompts; set `showDontAskAgain` when the
   confirmation should be suppressible. Never build a one-off modal for a simple confirmation.
 - **Dialog dismissal:** all dialogs use a global `useEffect` Escape key listener.

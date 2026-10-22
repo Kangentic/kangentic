@@ -56,17 +56,23 @@
  *   after step 3         298       342           -
  *
  * Add 140, plus 26 for the count badge the Workflows segment carried when these
- * were measured, and round up, and you get the thresholds below. The badge is
- * now the 16px working mark a project with a running workflow shows, 22px with
- * its gap, so the thresholds keep 4px of slack. Workflows has no step
- * 3: its dividers are the last thing to give, and they hold down to the floor.
- * Sharing one set would mean using the backlog's, which collapses the board's
- * filter labels about 120px of window earlier than it needs to.
+ * were measured, and round up, and you get the thresholds below. The Workflows
+ * segment now carries one 18px slot: its count pill at rest, or the 16px working
+ * mark in the pill's place while a workflow runs, never both. With its gap that
+ * is 20px to 24px, so the thresholds keep their slack. The Backlog pill grew
+ * about 2px over the 20px circle it replaced at two digits. Workflows has no
+ * step 3: its dividers are the last thing to give, and they hold down to the
+ * floor. Sharing one set would mean using the backlog's, which collapses the
+ * board's filter labels about 120px of window earlier than it needs to.
  *
  * At the absolute floor (495px, a 400px sidebar at a 900px window, 463px of
- * content) the backlog search is at its narrowest with the Backlog count and the
- * Workflows mark showing; `toolbar-narrow-window.spec.ts` seeds both and holds
- * it to its floor.
+ * content) the backlog search is at its narrowest with both counts showing:
+ * 117.5px with a 21-item backlog, 119.5px with the mark in the count's place.
+ * `toolbar-narrow-window.spec.ts` seeds both counts and holds it to its floor.
+ * A 1000+ item backlog keeps all four digits there and leaves the search 105px.
+ * That is a decision, not an oversight. Shortening the count to "1.2k" at that
+ * one step would hide the number the pill exists to show. The spec holds that
+ * case to its own, lower bound.
  * There is nothing left to give there; that is the width the dividers turn into
  * gaps, and the switcher's options tighten, to claw back for.
  *
@@ -119,10 +125,10 @@ export interface ToolbarCollapseClasses {
   /**
    * The switcher's option padding and gap, on the same query as its label:
    * 12px a side around a word, 4px around an icon alone (the control's own
-   * `tight` value), with 2px before a count badge or mark instead of 6. The
-   * three icon-only options, the Backlog count and the Workflows mark gave back
-   * 44px when measured with two counts, which at the floor is the difference
-   * between a backlog search field and a slot.
+   * `tight` value), with 2px before a count pill or mark instead of 6. The
+   * three icon-only options and the two counts gave back 44px when measured,
+   * which at the floor is the difference between a backlog search field and a
+   * slot.
    */
   viewSwitcherSpacing: string;
   /** Add column, or New Task. Last to give: a primary action's word is worth most. */
