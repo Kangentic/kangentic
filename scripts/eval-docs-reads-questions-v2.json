@@ -1,0 +1,117 @@
+{
+  "promptPrefix": "Answer from this repository's documentation. Its index is docs/README.md. Name the exact identifiers, flags and values you find.\n\n",
+  "questions": [
+    {
+      "id": "codex-update-offer",
+      "group": "paraphrase",
+      "question": "When Kangentic starts the OpenAI coding agent, what does it pass so the agent never stops to offer installing a newer version of itself, and why does that offer matter?",
+      "expect": ["check_for_update_on_startup"],
+      "gold": ["docs/integrations/agents/codex-cli.md"]
+    },
+    {
+      "id": "codex-no-quotes",
+      "group": "paraphrase",
+      "question": "Why must the per-launch MCP settings Kangentic hands the OpenAI coding agent contain no quote characters?",
+      "expect": ["windows", "quot"],
+      "gold": ["docs/integrations/agents/codex-cli.md"]
+    },
+    {
+      "id": "trust-record-cleanup",
+      "group": "paraphrase",
+      "question": "What happens to the per-folder trust record Kangentic adds to the OpenAI coding agent's config when a task's checkout is deleted, and why does that matter?",
+      "expect": ["onWorktreeRemoved|removeWorktreeTrust|remov", "473|accumulat|grow|dead"],
+      "gold": ["docs/integrations/agents/codex-cli.md"]
+    },
+    {
+      "id": "hashed-history-folder",
+      "group": "paraphrase",
+      "question": "One agent files its session history under a folder named from a hash of the working directory. Which agent, which hash, and what is the file called?",
+      "expect": ["kimi", "md5", "wire\\.jsonl"],
+      "gold": ["docs/integrations/agents/kimi-code.md"]
+    },
+    {
+      "id": "claude-side-panel",
+      "group": "paraphrase",
+      "question": "How does Kangentic keep Claude Code's built-in side panel of file changes from opening next to the conversation?",
+      "expect": ["diffSidebarOpen", "false"],
+      "gold": ["docs/integrations/agents/claude-code.md"]
+    },
+    {
+      "id": "logged-out-check",
+      "group": "paraphrase",
+      "question": "Which agents can Kangentic check for a logged-out state before a session starts, and how does each one check?",
+      "expect": ["kimi", "grok", "credentials|kimi login", "grok models"],
+      "gold": ["docs/integrations/agents/kimi-code.md", "docs/integrations/agents/grok-build.md", "docs/integrations/agents/adapter-interface.md"]
+    },
+    {
+      "id": "moved-project-folder",
+      "group": "paraphrase",
+      "question": "When a user moves a project folder to a new place on disk, how do the agents' own records of the old path get updated?",
+      "expect": ["onProjectRelocated"],
+      "gold": ["docs/integrations/agents/project-relocation.md"]
+    },
+    {
+      "id": "which-agent-starts",
+      "group": "paraphrase",
+      "question": "When a task lands in a column, in what order does Kangentic decide which agent to start, and why is the agent that last ran the task left out of that decision?",
+      "expect": ["override", "column", "project"],
+      "gold": ["docs/integrations/agents/adapter-interface.md"]
+    },
+    {
+      "id": "agent-on-a-server",
+      "group": "paraphrase",
+      "question": "Which agent can run against a server somewhere else instead of on the user's machine, and how does Kangentic check that the server is reachable?",
+      "expect": ["opencode", "health|probe"],
+      "gold": ["docs/integrations/agents/opencode.md"]
+    },
+    {
+      "id": "suggested-title",
+      "group": "paraphrase",
+      "question": "Which agent does Kangentic use to suggest a short title for a new task, and at what moment is an automatic rename applied?",
+      "expect": ["automation agent", "idle"],
+      "gold": ["docs/integrations/agents/auto-name.md"]
+    },
+    {
+      "id": "self-splitting-hooks",
+      "group": "paraphrase",
+      "question": "Which agent splits its hook commands into arguments itself instead of handing them to a shell, and how does Kangentic write those commands as a result?",
+      "expect": ["antigravity", "unquoted|no quot|without quot|literal"],
+      "gold": ["docs/integrations/agents/antigravity.md", "docs/integrations/agents/claude-code.md"]
+    },
+    {
+      "id": "busy-while-building",
+      "group": "paraphrase",
+      "question": "How does Kangentic keep a task from looking idle while a build or test run that the agent started in the background is still going, and how can a long-lived dev server be let out of that?",
+      "expect": ["kangentic_mark_background_service|no-activity-hold"],
+      "gold": ["docs/integrations/agents/background-commands.md"]
+    },
+    {
+      "id": "mcp-delivery-compared",
+      "group": "broad",
+      "question": "Compare how Kangentic gets its own MCP server into the OpenAI coding agent, Google's Gemini CLI and Factory's Droid.",
+      "expect": ["mcp_servers|-c ", "mcpServers|settings\\.json", "\\.factory"],
+      "gold": ["docs/integrations/agents/codex-cli.md", "docs/integrations/agents/gemini-cli.md", "docs/integrations/agents/droid.md"]
+    },
+    {
+      "id": "folder-trust-compared",
+      "group": "broad",
+      "question": "Which agents need a folder marked as trusted before they load hooks or MCP servers, and how does Kangentic handle that for each?",
+      "expect": ["codex", "gemini", "qwen"],
+      "gold": ["docs/integrations/agents/codex-cli.md", "docs/integrations/agents/gemini-cli.md", "docs/integrations/agents/qwen-code.md"]
+    },
+    {
+      "id": "agents-without-hooks",
+      "group": "broad",
+      "question": "Which agents give Kangentic no hook events at all, and how does it tell when they are working or waiting?",
+      "expect": ["aider", "ollama", "pty|silence|prompt"],
+      "gold": ["docs/integrations/agents/adapter-interface.md", "docs/integrations/agents/aider.md", "docs/integrations/agents/ollama.md"]
+    },
+    {
+      "id": "shell-rewritten-paths",
+      "group": "broad",
+      "question": "What goes wrong when a path in an agent's hook command contains characters a shell would rewrite, and how does Kangentic quote paths for each agent's shell?",
+      "expect": ["quoteBridgePath|sh-or-powershell|bare-tokens", "\\$"],
+      "gold": ["docs/integrations/agents/claude-code.md"]
+    }
+  ]
+}
