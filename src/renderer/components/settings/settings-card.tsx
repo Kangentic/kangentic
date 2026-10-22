@@ -689,6 +689,19 @@ export function CardChoiceRow<T extends string>({
   );
 }
 
+/**
+ * A value that belongs to a toggle row's switch (When idle's Minutes idle):
+ * its own line in the same tile, under a hairline, with its control at the
+ * switches' right edge. The caller passes it only while the switch is on.
+ */
+export interface CardAttachedLine {
+  label: string;
+  /** Registry id, so a search hit on the value keeps the row; its line carries `setting-row-<id>`. */
+  searchId?: string;
+  /** The control at the right edge, e.g. a `NumberStepper`. */
+  control: React.ReactNode;
+}
+
 interface CardToggleRowProps {
   label: string;
   description: string;
@@ -702,27 +715,28 @@ interface CardToggleRowProps {
   disabled?: boolean;
   /** Rendered after the label, e.g. a `SettingTag`. */
   labelTrailing?: React.ReactNode;
+  /** A value that belongs to this switch, on a second line of the tile. Pass it only while it should show. */
+  attached?: CardAttachedLine;
 }
 
 /**
  * An on/off setting inside a card, in its own tile: label on the left, switch
  * on the right. The whole tile is the click target, and the hover tint fills
  * it, so the edge of the target is the edge of the tile.
+ *
+ * With `attached`, the tile holds two lines divided by a hairline, the way a
+ * `CardSourceList` divides its sources. Only the switch's line is the click
+ * target, and the hover tint fills only it: a click on the value's line must
+ * never flip the switch above it.
  */
 export function CardToggleRow({
-  label, description, searchId, checked, onChange, inlineDescription, nested, disabled, labelTrailing,
+  label, description, searchId, checked, onChange, inlineDescription, nested, disabled, labelTrailing, attached,
 }: CardToggleRowProps) {
-  const visible = useSettingVisible(searchId);
+  const visible = useAnySettingVisible([...(searchId ? [searchId] : []), ...(attached?.searchId ? [attached.searchId] : [])]);
   if (!visible) return null;
   const toggle = disabled ? undefined : () => onChange(!checked);
-  return (
-    <div
-      onClick={rowClickToggle(toggle)}
-      style={nested ? { ...TILE_STYLE, marginLeft: NESTED_TILE_INDENT_PX } : TILE_STYLE}
-      className={`flex items-center gap-3 ${TILE_CLASS} ${
-        toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/70' : ''
-      }`}
-    >
+  const toggleLine = (
+    <>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className={SETTING_LABEL_CLASS}>{label}</span>
@@ -739,6 +753,40 @@ export function CardToggleRow({
         // `setting-row-<id>` on the switch itself, as on the card header's.
         testId={searchId ? `setting-row-${searchId}` : undefined}
       />
+    </>
+  );
+  const clickTargetClass = toggle ? 'cursor-pointer select-none transition-colors hover:bg-surface-hover/70' : '';
+
+  if (!attached) {
+    return (
+      <div
+        onClick={rowClickToggle(toggle)}
+        style={nested ? { ...TILE_STYLE, marginLeft: NESTED_TILE_INDENT_PX } : TILE_STYLE}
+        className={`flex items-center gap-3 ${TILE_CLASS} ${clickTargetClass}`}
+      >
+        {toggleLine}
+      </div>
+    );
+  }
+
+  return (
+    <div className={TILE_FILL_CLASS} style={nested ? { marginLeft: NESTED_TILE_INDENT_PX } : undefined}>
+      <div
+        onClick={rowClickToggle(toggle)}
+        style={TILE_STYLE}
+        className={`flex items-center gap-3 rounded-t-md py-3 ${clickTargetClass}`}
+      >
+        {toggleLine}
+      </div>
+      <div style={TILE_STYLE}>
+        <div
+          className="flex items-center gap-3 border-t border-edge/60 py-3"
+          data-testid={attached.searchId ? `setting-row-${attached.searchId}` : undefined}
+        >
+          <span className="min-w-0 flex-1 text-sm font-medium text-fg-secondary">{attached.label}</span>
+          {attached.control}
+        </div>
+      </div>
     </div>
   );
 }

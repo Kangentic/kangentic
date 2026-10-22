@@ -141,7 +141,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max concurrent sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit', 'queue', 'memory'] },
   { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-focus idle sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
   { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-resume agents on restart', description: 'Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
-  { id: 'agent.idleTimeoutMinutes', tabId: 'behavior', label: 'Idle timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', section: 'Sessions', keywords: ['suspend', 'minutes'] },
   { id: 'stopLeftoverProcesses', tabId: 'behavior', label: 'Stop leftover processes', description: 'Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends.', scope: 'global', section: 'Sessions', keywords: ['kill', 'background', 'dev server', 'port', 'orphan', 'reap', 'process', 'done', 'cleanup'] },
 
   // ── Performance ──
@@ -153,6 +152,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // Moved here from Board > Window: it toggles `.no-motion` on <html>
   // (config-store.ts), so it was never board chrome.
   { id: 'animationsEnabled', tabId: 'performance', label: 'Animations', description: 'Transition and motion effects.', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility', 'animation', 'performance'] },
+
+  // ── Performance > Pausing agents ──
+  // The labels finish the card's sentence ("Pause agents that are waiting on
+  // you... when memory runs low / when idle"). The info tips stay true on every
+  // platform: Windows, Linux and macOS each read their own memory signal.
+  { id: 'agent.pauseIdleAgentsOnLowMemory', tabId: 'performance', label: 'When memory runs low', description: 'When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room.', scope: 'global', section: 'Pausing agents', keywords: ['memory', 'low', 'pause', 'suspend', 'idle', 'agents', 'ram', 'swap', 'commit', 'pressure', 'out of memory'] },
+  { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: 'When idle', description: 'Pause any agent that has waited on you this many minutes.', scope: 'global', section: 'Pausing agents', keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
+  { id: 'agent.idleTimeoutMinutes', tabId: 'performance', label: 'Minutes idle', description: 'How long an agent waits on you before the idle timer pauses it.', scope: 'global', section: 'Pausing agents', keywords: ['idle timeout', 'minutes', 'pause', 'suspend', 'timeout'] },
 
   // ── Behavior > Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on outside click', description: 'Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task.', scope: 'global', section: 'Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },

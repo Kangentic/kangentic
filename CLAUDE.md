@@ -129,7 +129,8 @@ and the column's On agent turn end automations never run.
   and Terminal stays pure terminal cosmetics. The Performance tab holds app-wide rendering:
   Graphics acceleration (Chromium hardware rendering, which the GPU recovery path in
   `src/main/index.ts` turns off after a run the GPU killed) and Animations, which moved from
-  Board because it toggles `.no-motion` on `<html>` and was never board chrome. The Knowledge
+  Board because it toggles `.no-motion` on `<html>` and was never board chrome. It also holds
+  Pausing agents (low memory, and the idle timer that left Behavior). The Knowledge
   Graph tab's own hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
   speed-versus-accuracy decision, and the rename is what keeps it distinct from Graphics
   acceleration. Terminal (shell, font, cursor style,

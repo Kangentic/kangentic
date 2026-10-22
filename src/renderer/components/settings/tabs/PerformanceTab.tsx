@@ -1,15 +1,18 @@
 import { useRef, useState } from 'react';
-import { Gauge, RotateCw, TriangleAlert } from 'lucide-react';
+import { CirclePause, Gauge, RotateCw, TriangleAlert } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { NumberStepper } from '../../NumberStepper';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useToastStore } from '../../../stores/toast-store';
 import { useConfigStore } from '../../../stores/config-store';
 
 /**
- * Chromium rendering and app-wide motion.
+ * Chromium rendering and app-wide motion, and when Kangentic pauses agents
+ * that are waiting on the user (low memory, the idle timer): both are about
+ * what the app costs the machine.
  *
  * Both rows arrived here rather than being invented here. Animations toggles
  * `.no-motion` on <html> but sat under Board > Window; graphics acceleration
@@ -95,6 +98,45 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
           {...settingProps('animationsEnabled')}
           checked={globalConfig.animationsEnabled}
           onChange={(value) => updateGlobal({ animationsEnabled: value })}
+        />
+      </SettingsCard>
+
+      {/* Both pauses hold: a paused agent stays paused, across a restart too,
+          until the user resumes it. Every platform: each reads its own memory
+          signal (src/main/diagnostics/host-memory.ts), so the copy names none.
+          The minutes are When idle's own value, so they share its tile on a
+          second line rather than a row of their own, and show only while it
+          is on. */}
+      <SettingsCard
+        icon={<CirclePause size={16} />}
+        label="Pausing agents"
+        description="When Kangentic pauses agents that are waiting on you."
+        searchIds={['agent.pauseIdleAgentsOnLowMemory', 'agent.idleTimeoutEnabled', 'agent.idleTimeoutMinutes']}
+        testId="settings-card-pausing-agents"
+      >
+        <CardToggleRow
+          {...settingProps('agent.pauseIdleAgentsOnLowMemory')}
+          checked={globalConfig.agent.pauseIdleAgentsOnLowMemory}
+          onChange={(value) => updateGlobal({ agent: { pauseIdleAgentsOnLowMemory: value } })}
+        />
+        <CardToggleRow
+          {...settingProps('agent.idleTimeoutEnabled')}
+          checked={globalConfig.agent.idleTimeoutEnabled}
+          onChange={(value) => updateGlobal({ agent: { idleTimeoutEnabled: value } })}
+          attached={globalConfig.agent.idleTimeoutEnabled ? {
+            label: settingProps('agent.idleTimeoutMinutes').label,
+            searchId: 'agent.idleTimeoutMinutes',
+            control: (
+              <NumberStepper
+                value={globalConfig.agent.idleTimeoutMinutes}
+                onChange={(value) => updateGlobal({ agent: { idleTimeoutMinutes: value } })}
+                min={1}
+                max={240}
+                ariaLabel={settingProps('agent.idleTimeoutMinutes').label}
+                testId="idle-timeout-minutes"
+              />
+            ),
+          } : undefined}
         />
       </SettingsCard>
 
