@@ -36,6 +36,9 @@
  * calls `context.mainWindow.webContents.send` directly), so those assertions
  * stay on the fake `webContents.send`, matching the real code path exactly.
  *
+ * The same file also pins the sibling `first-output` forwarder (see the last
+ * describe block), which shares this harness and the mocked broadcast().
+ *
  * Mock strategy for everything else mirrors
  * session-usage-event-focus-buffering.test.ts: electron, the DB helpers,
  * repositories, and the transition-engine chain are stubbed so
@@ -189,6 +192,7 @@ function createMockContext() {
       getSessionProjectId: vi.fn(() => 'proj-1' as string | null | undefined),
       getSessionAgentName: vi.fn(() => 'claude'),
       getFocusedSessions: vi.fn(() => new Set<string>()),
+      getRenderersFocusedOn: vi.fn(() => [] as number[]),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
         const handlers = capturedSessionEventHandlers.get(event) ?? [];
         handlers.push(handler);
@@ -239,6 +243,12 @@ function fireSessionRemoved(sessionId: string, session: Session): void {
   const handlers = capturedSessionEventHandlers.get('session-removed');
   if (!handlers || handlers.length === 0) throw new Error('session-removed handler was not registered');
   for (const handler of handlers) handler(sessionId, session);
+}
+
+function fireFirstOutput(sessionId: string): void {
+  const handlers = capturedSessionEventHandlers.get('first-output');
+  if (!handlers || handlers.length === 0) throw new Error('first-output handler was not registered');
+  for (const handler of handlers) handler(sessionId);
 }
 
 describe('sessions.ts session-removed listener', () => {
@@ -367,5 +377,76 @@ describe('sessions.ts session-removed listener', () => {
 
       expect(mockBroadcast).not.toHaveBeenCalled();
     });
+  });
+});
+
+/**
+ * The 'first-output' listener is the only thing that lifts a terminal's launch
+ * overlay, and it fires once per session, so it must reach the main window and
+ * every pop-out that declares SESSION_FIRST_OUTPUT regardless of which
+ * renderer the per-renderer focus map says is looking at the session. The old
+ * handler routed through the focus-routed sender, so a window that was not
+ * focused on the session when its agent came up kept the overlay until a
+ * resync. `getRenderersFocusedOn` is varied below to prove the push no longer
+ * consults it.
+ *
+ * Like the forwarder above, this asserts against the mocked broadcast():
+ * broadcast() re-checks isDestroyed() itself, so the real one would hide a
+ * missing call-site guard.
+ */
+describe('sessions.ts first-output listener', () => {
+  let context: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedSessionEventHandlers.clear();
+    vi.useFakeTimers();
+    context = createMockContext();
+    registerSessionHandlers(context as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { focusLayout: 'no renderer focused on the session', focusedRendererIds: [] as number[] },
+    { focusLayout: 'only a different renderer focused on the session', focusedRendererIds: [42] },
+    { focusLayout: 'several renderers focused on the session', focusedRendererIds: [7, 9] },
+  ])('broadcasts SESSION_FIRST_OUTPUT with the sessionId and projectId when $focusLayout', ({ focusedRendererIds }) => {
+    context.sessionManager.getRenderersFocusedOn.mockReturnValue(focusedRendererIds);
+
+    fireFirstOutput('sess-1');
+
+    expect(mockBroadcast).toHaveBeenCalledTimes(1);
+    expect(mockBroadcast).toHaveBeenCalledWith(
+      context.mainWindow,
+      IPC.SESSION_FIRST_OUTPUT,
+      'sess-1',
+      'proj-1',
+    );
+  });
+
+  it('stamps the push with the project of the session that produced output, not the ambient project', () => {
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-2');
+
+    fireFirstOutput('sess-2');
+
+    expect(context.sessionManager.getSessionProjectId).toHaveBeenCalledWith('sess-2');
+    expect(mockBroadcast).toHaveBeenCalledWith(
+      context.mainWindow,
+      IPC.SESSION_FIRST_OUTPUT,
+      'sess-2',
+      'proj-2',
+    );
+  });
+
+  it('sends nothing and does not throw when the main window is destroyed', () => {
+    context.mainWindow.isDestroyed.mockReturnValue(true);
+
+    expect(() => fireFirstOutput('sess-1')).not.toThrow();
+
+    expect(mockBroadcast).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 });
