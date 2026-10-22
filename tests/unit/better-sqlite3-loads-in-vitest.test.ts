@@ -35,7 +35,7 @@ describe('better-sqlite3 loads under vitest', () => {
   });
 
   it('runs on a Node with the Node-API version the prebuilds need', () => {
-    // better-sqlite3 13 builds against Node-API 10 (Node 22.14+ and Electron 44's Node 24).
+    // better-sqlite3 13 builds against Node-API 10 (Node 22.14+ and Electron 45's Node 24).
     expect(Number(process.versions.napi)).toBeGreaterThanOrEqual(REQUIRED_NODE_API);
   });
 
