@@ -425,6 +425,21 @@ const SCENE_MARKERS: Record<string, (page: Page) => Promise<void>> = {
     // The Monitor row agrees with the card: no model and no context before the usage arrives.
     expect(await monitorFields(page, SESSION_WEBSOCKET)).toMatchObject({ status: 'running', modelDisplayName: null, contextPercent: null });
   },
+  'notification-toast': async (page) => {
+    // The exit push raised the app's own toast, in its titled shape.
+    const toast = page.locator('[data-testid="toast"]');
+    await expect(toast.getByTestId('toast-title')).toHaveText('Session ended');
+    await expect(toast.getByTestId('toast-body')).toContainText('exited with code 0.');
+    // A still holds the countdown line where it starts (boot.js freezes that one Web Animation),
+    // so every shot draws it empty. Read twice, apart, so a line that was merely early fails.
+    const fillScale = () => toast.getByTestId('toast-countdown').evaluate((line) => {
+      const fill = line.firstElementChild;
+      return fill ? new DOMMatrixReadOnly(getComputedStyle(fill).transform).a : null;
+    });
+    expect(await fillScale()).toBe(0);
+    await page.waitForTimeout(600);
+    expect(await fillScale()).toBe(0);
+  },
   'completed-tasks': async (page) => {
     // Only the open project's archive, as the desktop's per-project DB answers, and every row
     // carries the stats its last session left, so the footer is not "$0.00 total cost".
