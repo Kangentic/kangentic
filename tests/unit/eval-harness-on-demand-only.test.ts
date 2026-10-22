@@ -7,8 +7,9 @@
  * `npm run eval`, and a pull request quietly costs ten agent calls per push. By
  * the time anyone notices, it has been billing for weeks.
  *
- * It covers the two harnesses that spend quota this way: `eval-ask` and the model-replay harness
- * `eval-answer-models`, which imports the first for its grader.
+ * It covers the four harnesses that spend quota this way: `eval-ask`, the model-replay harness
+ * `eval-answer-models` (which imports the first for its grader), the Condition-check replay
+ * `eval-condition-check`, and the docs-reads measurement `eval-docs-reads`.
  *
  * So the rule is enforced from three directions rather than trusted:
  *   1. this scan, which fails if anything automated references the runner,
