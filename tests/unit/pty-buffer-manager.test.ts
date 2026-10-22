@@ -2115,9 +2115,11 @@ describe('PtyBufferManager', () => {
 
     it('a Clear-Host-style prelude (per-row erases + \\x1b[3J, no \\x1b[2J) cleans the frame purely in-stream', async () => {
       const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
-      manager.initSession(SESSION, '', 80, 24);
+      // Transient, so the pre-TUI one-shot is never armed and nothing
+      // Kangentic injects can be what cleans the parser.
+      manager.initSession(SESSION, '', 80, 24, null, true);
 
-      // The spawn clear prelude's SOURCE layer must not depend on the 2J
+      // The spawn clear prelude's SOURCE layer must not depend on the
       // detection layer at all: pwsh's Clear-Host renders through ConPTY as
       // per-row EL erases plus an \x1b[3J scrollback erase and NEVER emits
       // \x1b[2J (captured live 2026-08-26). The parser must come out clean
@@ -2134,13 +2136,39 @@ describe('PtyBufferManager', () => {
       manager.onData(SESSION, `\x1b[m\x1b[H${'\x1b[K\r\n'.repeat(23)}\x1b[K\x1b[H\x1b[3J`);
       manager.onData(SESSION, 'agent output after the prelude clear');
 
-      // The bare parser read (no gate, no settle, no injected ED3 triggered -
-      // there is no \x1b[2J anywhere in this stream): everything pre-clear is
-      // gone because the STREAM removed it.
+      // The bare parser read (no gate, no settle, no injected ED3): everything
+      // pre-clear is gone because the STREAM removed it.
       const mobileFrame = await manager.getSerializedFrame(SESSION);
       expect(mobileFrame).toContain('agent output after the prelude clear');
       expect(mobileFrame).not.toContain('PS C:');
       expect(mobileFrame).not.toContain('pre-clear preamble');
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a Clear-Host handoff (\\x1b[3J, no \\x1b[2J) starts the byte replay at the shell\'s clear, not at ConPTY\'s startup clear', async () => {
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+
+      // Shaped like a live pwsh 7.6 capture (task #885): ConPTY's escape-only
+      // startup clear, the prompt with the typed spawn command, then
+      // Clear-Host rendered as row erases around an \x1b[3J, then the agent.
+      // The one-shot used to key on \x1b[2J alone, so it never fired here and
+      // getScrollback fell back to ConPTY's startup \x1b[2J, 22 bytes in,
+      // which replayed the prompt and the command.
+      manager.onData(SESSION, '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H');
+      manager.onData(SESSION, 'PS C:\\Users\\dev> Clear-Host; node agent.js\r\n');
+      const rowErases = `${'\x1b[K\r\n'.repeat(23)}\x1b[K\x1b[H`;
+      manager.onData(SESSION, `\x1b[m\x1b[H${rowErases}\x1b[?25h\x1b[?25l\x1b[3J${rowErases}`);
+      manager.onData(SESSION, 'agent output after the prelude clear');
+
+      const replay = manager.getScrollback(SESSION);
+      expect(replay).toContain('\x1b[3J');
+      expect(replay).toContain('agent output after the prelude clear');
+      expect(replay).not.toContain('PS C:');
+      expect(replay).not.toContain('agent.js');
+      // The ring keeps every byte; the strip happens at read time.
+      expect(manager.getRawScrollback(SESSION)).toContain('PS C:');
 
       manager.removeSession(SESSION);
     });
@@ -2165,6 +2193,69 @@ describe('PtyBufferManager', () => {
       // later repaints must not re-trigger it.
       expect(flushed.split('\x1b[3J').length - 1).toBe(1);
       expect(flushed.indexOf('\x1b[2J')).toBeLessThan(flushed.indexOf('\x1b[3J'));
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a Clear-Host handoff (\\x1b[3J, no \\x1b[2J) on a fresh session gets the strip LIVE and in the parser, exactly once, right behind the shell\'s own clear', async () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      // Fresh and NON-transient: the only shape the one-shot is armed for.
+      manager.initSession(SESSION, '', 80, 24);
+
+      // Watch what reaches the headless parser. The instance is spied, not the
+      // prototype, so no other manager's parser is captured.
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { write: (data: string) => void } }>;
+      }
+      const headless = (manager as unknown as ManagerInternals).buffers.get(SESSION)?.headless;
+      if (!headless) throw new Error('test setup: session headless parser missing');
+      const parserWriteSpy = vi.spyOn(headless, 'write');
+
+      // A live pwsh capture's shape: ConPTY's escape-only startup clear (its
+      // \x1b[2J has nothing printable before it), the prompt with the typed
+      // spawn command, then Clear-Host as row erases around ONE \x1b[3J, with
+      // the agent's lines in the SAME chunk behind it, enough to scroll the
+      // 24-row grid. A later full-frame repaint (\x1b[2J) must not fire the
+      // one-shot again.
+      const conptyStartup = '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H';
+      const typedLine = 'PS C:\\Users\\dev> Clear-Host; node agent.js\r\n';
+      const rowErases = `${'\x1b[K\r\n'.repeat(23)}\x1b[K\x1b[H`;
+      const shellClearUpToEd3 = `\x1b[m\x1b[H${rowErases}\x1b[?25h\x1b[?25l`;
+      const shellEd3 = '\x1b[3J';
+      let agentLines = '';
+      for (let line = 1; line <= 40; line += 1) {
+        agentLines += `agent line ${line}\r\n`;
+      }
+      const afterShellClear = rowErases + agentLines;
+      const laterRepaint = '\x1b[2J\x1b[1;1Hlater repaint';
+
+      manager.onData(SESSION, conptyStartup);
+      manager.onData(SESSION, typedLine);
+      manager.onData(SESSION, shellClearUpToEd3 + shellEd3 + afterShellClear);
+      manager.onData(SESSION, laterRepaint);
+
+      const flushedText = () => onFlush.mock.calls.map((call) => call[1] as string).join('');
+      await expect
+        .poll(() => flushedText().includes('later repaint'), { timeout: 2000, interval: 10 })
+        .toBe(true);
+
+      // The stream plus ONE injected ED3 (not the shell's own) directly behind
+      // the shell's, and nothing at the later repaint. The same bytes go to the
+      // live flush buffer and to the parser.
+      const injectedEd3 = '\x1b[3J';
+      const expectedStream = conptyStartup + typedLine + shellClearUpToEd3 + shellEd3 + injectedEd3
+        + afterShellClear + laterRepaint;
+      expect(flushedText()).toBe(expectedStream);
+      expect(parserWriteSpy.mock.calls.map((call) => call[0]).join('')).toBe(expectedStream);
+
+      // The agent's lines that scrolled into the parser's retained scrollback
+      // survive: an injection at chunk end, not behind the clear, would erase
+      // them along with the shell's echo.
+      const frame = await manager.getSerializedFrame(SESSION);
+      expect(frame).toMatch(/agent line 1(?!\d)/);
+      expect(frame).toContain('later repaint');
+      expect(frame).not.toContain('PS C:');
 
       manager.removeSession(SESSION);
     });

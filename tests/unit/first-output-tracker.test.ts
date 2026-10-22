@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FirstOutputTracker } from '../../src/main/pty/lifecycle/first-output-tracker';
 
 describe('FirstOutputTracker', () => {
@@ -91,6 +91,58 @@ describe('FirstOutputTracker', () => {
       const tracker = new FirstOutputTracker();
       tracker.consume('s1', '', () => false);
       expect(tracker.snapshot()).toEqual([]);
+    });
+  });
+
+  // SessionManager's launch-overlay latch arms this as the backstop for an
+  // agent that never shows the evidence it waits for.
+  describe('armCeiling', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('runs the callback once the ceiling passes with nothing emitted', () => {
+      vi.useFakeTimers();
+      const tracker = new FirstOutputTracker();
+      const onCeiling = vi.fn();
+      tracker.armCeiling('s1', 1000, onCeiling);
+      vi.advanceTimersByTime(999);
+      expect(onCeiling).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onCeiling).toHaveBeenCalledTimes(1);
+    });
+
+    it('is cancelled by markEmitted, removeSession, disarmCeiling and clear', () => {
+      vi.useFakeTimers();
+      const tracker = new FirstOutputTracker();
+      const onCeiling = vi.fn();
+      tracker.armCeiling('emitted', 1000, onCeiling);
+      tracker.armCeiling('removed', 1000, onCeiling);
+      tracker.armCeiling('disarmed', 1000, onCeiling);
+      tracker.markEmitted('emitted');
+      tracker.removeSession('removed');
+      tracker.disarmCeiling('disarmed');
+      vi.advanceTimersByTime(5000);
+      expect(onCeiling).not.toHaveBeenCalled();
+
+      tracker.armCeiling('cleared', 1000, onCeiling);
+      tracker.clear();
+      vi.advanceTimersByTime(5000);
+      expect(onCeiling).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op for a session that already emitted or is already armed', () => {
+      vi.useFakeTimers();
+      const tracker = new FirstOutputTracker();
+      const first = vi.fn();
+      const second = vi.fn();
+      tracker.markEmitted('emitted');
+      tracker.armCeiling('emitted', 1000, first);
+      tracker.armCeiling('armed', 1000, first);
+      tracker.armCeiling('armed', 1000, second);
+      vi.advanceTimersByTime(1000);
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(second).not.toHaveBeenCalled();
     });
   });
 });

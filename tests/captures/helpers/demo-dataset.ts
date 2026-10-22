@@ -3186,6 +3186,13 @@ export function buildDemoPreConfig(options: {
       // recording). Main fires that when the first bytes arrive; here it fires when the
       // recording's first window would, or after a beat for a resumed transcript.
       var firstOutputFired = {};
+      // Main's cache holds every session whose agent is already on screen, which is every
+      // running session the sample install starts with, except one a scene marks as resuming:
+      // that one boots when the frame reveals (below). The overlay lifts on this alone, never
+      // on usage, so a running session missing here would sit behind it for good.
+      data.sessions.forEach(function (session) {
+        if (session.status === 'running' && !session.resuming) firstOutputFired[session.id] = true;
+      });
       var originalGetFirstOutput = window.electronAPI.sessions.getFirstOutput;
       window.electronAPI.sessions.getFirstOutput = function () {
         return originalGetFirstOutput.apply(this, arguments).then(function (map) { return Object.assign({}, map, firstOutputFired); });

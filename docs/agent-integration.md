@@ -18,7 +18,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
 | `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
-| `detectFirstOutput(data)` | Detect the adapter's readiness escape, which lifts the shimmer overlay. A heuristic, not proof the agent is up - see First-Output Detection below |
+| `detectFirstOutput(data)` | Detect the adapter's readiness escape, which times the boot geometry re-assert. A heuristic, not proof the agent is up, so it does not lift the launch overlay - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
 
 ### Required Properties
@@ -235,11 +235,14 @@ When a task moves to a column, `resolveTargetAgent()` determines which agent to 
 
 ## First-Output Detection
 
-Each adapter implements `detectFirstOutput(data)` to spot the first output worth showing. This controls when the shimmer overlay lifts in the terminal UI.
+Each adapter implements `detectFirstOutput(data)` to spot its first output. A match times the
+boot geometry re-assert (see [session-lifecycle.md](session-lifecycle.md)'s "Post-boot geometry
+re-assert"). It does not lift the launch overlay for an agent session; see "The launch overlay"
+below for what does.
 
 | Agent | Detection Strategy | Rationale |
 |-------|-------------------|-----------|
-| Claude Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when it takes over the terminal |
+| Claude Code | `\x1b[?25l` (cursor hide) | The pwsh and Windows PowerShell startup frames carry the same escape, so it times the geometry re-assert only, not agent liveness (see The launch overlay) |
 | Codex CLI | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude |
 | Gemini CLI | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude |
 | Qwen Code | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude (inherited from gemini-cli fork) |
@@ -255,16 +258,53 @@ Each adapter implements `detectFirstOutput(data)` to spot the first output worth
 | Antigravity CLI | `data.length > 0` | First paint (logo + welcome banner) arrives as one plain-text burst well under a second after spawn (verified against agy 1.1.13) |
 | Goose CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 
-The `\x1b[?25l` (ANSI cursor hide) sequence usually fires after the shell prompt noise but before the TUI draws its startup banner, which keeps the shell command hidden behind the shimmer overlay.
+**A detector match is never proof the agent is running.** A shell can emit the same escape
+during its own startup: the startup frame of pwsh 7.6 and of Windows PowerShell carries
+`\x1b[?25l`, so on PowerShell the latch trips on SHELL bytes tens of ms after spawn, seconds
+before the agent process exists, and a `data.length > 0` detector trips on the first byte of
+any shell. Anything needing "the agent is demonstrably driving the terminal" must key on the
+stream's first alt-screen entry (`PtyBufferManager`'s `onAltScreenEnter`) or on the evidence
+below. Misreading this latch as agent liveness is what made the task #573 spawn-race fix miss
+its target on PowerShell, and what showed the PowerShell prompt for about three seconds before
+Claude's TUI in a Command Terminal.
 
-**It is a shimmer heuristic, never proof the agent is running.** A shell can emit the same
-escape during its own startup: pwsh 7.6's preamble carries `\x1b[?25l` (see
-`buildSpawnClearPrelude` in `src/shared/paths.ts`), so on PowerShell the latch trips on SHELL
-bytes tens of ms after spawn, seconds before the agent process exists. Anything needing "the
-agent is demonstrably driving the terminal" must key on the stream's first alt-screen entry
-instead (`PtyBufferManager`'s `onAltScreenEnter`) - misreading this latch as agent liveness is
-what made the task #573 spawn-race fix miss its target on PowerShell. See
-[session-lifecycle.md](session-lifecycle.md)'s "Post-boot geometry re-assert".
+### The launch overlay
+
+A terminal's launch overlay lifts when `SessionManager.markAgentReady` says the session's agent
+is on screen. That is the `session:firstOutput` push and the renderer's `sessionFirstOutput`
+map. It fires once, on the first of:
+
+- **The agent's first text after the shell ran the spawn command.** Every agent spawn types the
+  shell's own clear in front of the agent command (`buildSpawnClearPrelude`). Under Windows
+  PowerShell 5.1, pwsh 7.6 and cmd, ConPTY renders that clear as line erases plus `\x1b[3J`,
+  with no `\x1b[2J`. Git Bash, WSL and Linux's ncurses `clear` send `\x1b[H\x1b[2J\x1b[3J`, and a
+  terminfo without the E3 capability sends the `\x1b[2J` alone. ConPTY's own startup clear is a
+  `\x1b[2J` with nothing printable ahead of it. So the first visible text after either clear,
+  when printable text came before that clear, is the agent's, or the shell's error when the
+  agent could not start. `AgentOutputTracker` in the pty host reports it as `agentOutput`. It
+  needs nothing from the adapter, which is why it covers inline agents (Aider, Cursor, Ollama,
+  Goose, Warp, Antigravity) as well as TUIs.
+- **The first alt-screen entry.** No shell enters the alt buffer. A fullscreen Claude Code
+  enters it before it prints anything, so this is usually what fires for Claude.
+- **The agent's SessionStart hook.** For an agent with hooks, measured about 0.4 s after
+  Claude's alt-screen entry.
+- **A 15 s ceiling** (`AGENT_READY_CEILING_MS`), the backstop for a stream none of the above
+  fits. One known case: a terminfo whose clear is `\x1b[H\x1b[J` (TERM=screen, so a dev build
+  launched from GNU screen) sends neither erase the handoff test matches. That pair is left out on
+  purpose: it is plain cursor-home plus erase-below, and no shell's redraws before the typed
+  command runs were measured free of it. The pty host stops scanning a session's output at the
+  same 15 s mark.
+
+A session with no agent keeps its raw first output: its shell is the output. Usage is not
+evidence either way. The spawn seeds it with the model name from `--model`
+(`configuredModelFromCommand`), seconds before the agent draws.
+
+The terminal under the overlay mounts at once and drops PTY output until the lift, then replays
+the scrollback. Mounting early is what sizes the PTY: a cold spawn starts at 120x30, and the
+mount's fit resizes it to the window before the agent's first frame. Measured in a /preview, a
+Command Terminal went from spawn to Claude's TUI in 3.0 to 3.1 s under Windows PowerShell with
+the terminal hidden, the same as with it showing the prompt, so no boot query waits on a reply
+from the hidden terminal.
 
 ## Exit Sequences
 

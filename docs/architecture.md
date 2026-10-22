@@ -283,7 +283,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `session:resize` | invoke | Resize PTY (cols/rows) |
 | `session:list` | invoke | Fetch all sessions |
 | `session:getScrollback` | invoke | Get terminal scrollback buffer |
-| `session:getFirstOutput` | invoke | Fetch the first-output cache (sessionId -> true) so `syncSessions` can rebuild `sessionFirstOutput` after an HMR reload |
+| `session:getFirstOutput` | invoke | Fetch the agent-on-screen cache (sessionId -> true, `SessionManager.markAgentReady`) so `syncSessions` can rebuild `sessionFirstOutput` after an HMR reload |
 | `session:getUsage` | invoke | Fetch session usage (tokens, cost). Optional `projectId` scopes to one project. |
 | `session:getActivity` | invoke | Fetch activity state (thinking/idle). Optional `projectId` scopes to one project. |
 | `session:getActivityReason` | invoke | Fetch the current `ActivityReason` discriminated-union value for one session |
@@ -299,7 +299,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `session:data` | on | Terminal output available (includes `projectId`) |
 | `session:drainAck` | send | Renderer-to-main flow-control ack for per-session PTY backpressure; fire-and-forget (no projectId) |
 | `session:ptyResized` | on | The PTY's grid actually changed (`cols`, `rows`, `PtyResizeOrigin`). Broadcast to every window; the mounted owner xterm uses it to detect and heal a width divergence (xterm re-sends dims only when its own size changes) |
-| `session:firstOutput` | on | The adapter's readiness escape matched (Claude: cursor-hide `\x1b[?25l`), lifting the shimmer overlay. A heuristic, not proof the agent is up - a shell preamble can carry the same escape (includes `projectId`) |
+| `session:firstOutput` | on | The session's agent is on screen (`SessionManager.markAgentReady`: its first text after the shell ran the spawn command, its first alt-screen entry, its SessionStart hook, or a 15 s ceiling), lifting the launch overlay. Never the adapter's first-output detector for an agent session, which a shell preamble can trip. Broadcast once per session to the main window and to every pop-out whose surface declares it, today the Agent Monitor (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
 | `session:removed` | on | Session left main's registry for good (`SessionManager.remove()`: a To Do reset, a task or project delete, a session reset, an aborted spawn). Carries the row's last `Session` snapshot and `projectId`. Its own channel because the status handler can only upsert; the renderer drops the row and every per-session map entry keyed on the id. The main-side handler also purges that session from the background usage and event buffers, so a tick held for `BACKGROUND_FLUSH_MS` cannot flush after the removal and write its numbers back under a row the renderer has dropped |

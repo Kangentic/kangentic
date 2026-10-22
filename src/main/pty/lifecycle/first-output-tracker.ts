@@ -1,29 +1,37 @@
 /**
- * Per-session latch that fires exactly once when an agent first produces
- * "meaningful" PTY output. Used by SessionManager to lift the shimmer
- * overlay in the renderer.
+ * Per-session latch that fires exactly once. Two owners use it for two
+ * different questions:
  *
- * What counts as meaningful is adapter-specific. Claude matches the
- * cursor-hide escape (`\x1b[?25l` - see ClaudeAdapter.detectFirstOutput), as
- * do several other TUI adapters. The decision is delegated to the agent
- * adapter via the `detectFirstOutput` callback passed to `consume()`; when no
- * detector is given, any non-empty chunk qualifies.
+ * - The pty host runs each adapter's `detectFirstOutput` through `consume()`
+ *   and reports a match as `firstOutput`. Main uses that match only to time
+ *   the boot geometry re-assert. Claude matches the cursor-hide escape
+ *   (`\x1b[?25l` - see ClaudeAdapter.detectFirstOutput), as do several other
+ *   TUI adapters; when no detector is given, any non-empty chunk qualifies.
  *
- * CAUTION: this latch is a shimmer-overlay heuristic, not proof the AGENT is
- * up. Shell preambles can carry the very escapes the detectors match (pwsh
- * 7.6 emits `\x1b[?25l` at startup - see buildSpawnClearPrelude in
- * src/shared/paths.ts), so on such shells the latch trips on SHELL bytes
- * tens of ms after spawn. Anything that needs "the agent is demonstrably
- * driving the terminal" must key on the stream's alt-screen entry instead
- * (PtyBufferManager's onAltScreenEnter) - misreading this latch as an
- * agent-liveness signal is how the task #573 spawn-race fix initially
- * missed its target.
+ * - SessionManager keeps its own instance as the launch-overlay latch: it is
+ *   marked (`markEmitted`) when the session's agent is demonstrably on screen
+ *   (`SessionManager.markAgentReady`), and that is the 'first-output' event
+ *   the renderer lifts the shimmer on. `armCeiling()` backstops a session
+ *   whose agent never shows that evidence.
  *
- * The tracker holds only a set of session IDs. Call `removeSession()`
- * when a session is fully cleaned up, or `clear()` during killAll().
+ * CAUTION: a detector match is not proof the AGENT is up. Shell preambles can
+ * carry the very escapes the detectors match (pwsh 7.6 and Windows PowerShell
+ * emit `\x1b[?25l` at startup - see buildSpawnClearPrelude in
+ * src/shared/paths.ts), so on such shells the host's latch trips on SHELL
+ * bytes tens of ms after spawn. Anything that needs "the agent is demonstrably
+ * driving the terminal" must key on the stream's alt-screen entry
+ * (PtyBufferManager's onAltScreenEnter) or the agent's output after the spawn
+ * handoff (AgentOutputTracker) instead - misreading the detector latch as an
+ * agent-liveness signal is how the task #573 spawn-race fix initially missed
+ * its target, and how the Command Terminal came to show the PowerShell prompt
+ * for seconds before Claude's TUI.
+ *
+ * Call `removeSession()` when a session is fully cleaned up, or `clear()`
+ * during killAll(); both also cancel a pending ceiling.
  */
 export class FirstOutputTracker {
   private emitted = new Set<string>();
+  private ceilings = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
    * Feed a fresh PTY chunk. If the session has not yet emitted first
@@ -44,17 +52,41 @@ export class FirstOutputTracker {
   }
 
   /**
-   * Record a first output decided elsewhere (the pty host runs the detector
-   * and reports the result). Returns true the first time for a session, so a
-   * repeated report cannot fire twice.
+   * Record a first output decided elsewhere. Returns true the first time for
+   * a session, so a repeated report cannot fire twice. Cancels the session's
+   * ceiling, which has nothing left to backstop.
    */
   markEmitted(sessionId: string): boolean {
     if (this.emitted.has(sessionId)) return false;
     this.emitted.add(sessionId);
+    this.disarmCeiling(sessionId);
     return true;
   }
 
-  /** True if `consume()` has ever returned true for this session. */
+  /**
+   * Run `onCeiling` after `ms` unless the session emits first. A no-op when it
+   * already emitted or a ceiling is already armed. The timer is unref'd so it
+   * never holds the process open.
+   */
+  armCeiling(sessionId: string, ms: number, onCeiling: () => void): void {
+    if (this.emitted.has(sessionId) || this.ceilings.has(sessionId)) return;
+    const timer = setTimeout(() => {
+      this.ceilings.delete(sessionId);
+      onCeiling();
+    }, ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.ceilings.set(sessionId, timer);
+  }
+
+  /** Cancel a session's pending ceiling, if any. */
+  disarmCeiling(sessionId: string): void {
+    const timer = this.ceilings.get(sessionId);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.ceilings.delete(sessionId);
+  }
+
+  /** True if the session has emitted (`consume()` returned true, or `markEmitted`). */
   hasEmitted(sessionId: string): boolean {
     return this.emitted.has(sessionId);
   }
@@ -72,10 +104,13 @@ export class FirstOutputTracker {
   /** Drop per-session state. Called from SessionManager.remove(). */
   removeSession(sessionId: string): void {
     this.emitted.delete(sessionId);
+    this.disarmCeiling(sessionId);
   }
 
   /** Drop all state. Called from SessionManager.killAll(). */
   clear(): void {
     this.emitted.clear();
+    for (const timer of this.ceilings.values()) clearTimeout(timer);
+    this.ceilings.clear();
   }
 }

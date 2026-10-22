@@ -533,10 +533,11 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   detectFirstOutput(data: string): boolean {
-    // Claude Code hides the cursor when its TUI takes over the terminal.
-    // Detecting ESC[?25l fires after the shell prompt noise but before
-    // the TUI draws the startup banner, keeping the shell command hidden
-    // behind the shimmer overlay.
+    // Claude Code hides the cursor when its TUI takes over the terminal. The
+    // shell's startup frame can carry the same escape (seen under pwsh 7.6
+    // and Windows PowerShell, seconds before Claude ran), so the match only
+    // times the boot geometry re-assert; the launch overlay waits for Claude's
+    // own output (see AgentOutputTracker).
     return data.includes('\x1b[?25l');
   }
 

@@ -204,6 +204,14 @@ export interface ManagedSession {
    */
   altScreenEnteredAt?: number;
   /**
+   * The adapter's first-output detector has matched this spawn's stream (the
+   * pty host's `firstOutput`). It times the boot geometry re-assert, once per
+   * spawn. It is NOT the launch overlay's signal, which a shell's startup
+   * frame can trip for an agent session; that is `SessionManager.markAgentReady`.
+   * Lazily set; dies with the registry entry.
+   */
+  firstOutputDetected?: boolean;
+  /**
    * The grid this session's PTY last had: its spawn grid, then every resize
    * actually applied to it except a phone's (a mobile-origin hold is the size
    * guard's to give back, and an exit disarms the guard without restoring).

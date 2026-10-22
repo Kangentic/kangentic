@@ -52,6 +52,14 @@ the rejected alternatives live in [docs/command-terminal.md](../../docs/command-
   SessionEnd with no SessionStart inside the end settle ends the terminal instead. Known gap: an
   agent with no SessionEnd hook, under WSL or with the watcher off, outlives its agent until its
   PTY exits.
+- **The launch overlay lifts on evidence the agent is on screen, never on first output or
+  usage.** The window reads `sessionFirstOutput`, which main sets in `markAgentReady` (the
+  agent's first text after the shell ran the spawn command, its first alt-screen entry, its
+  SessionStart hook, or a ceiling). The adapter's first-output detector trips on the shell's
+  startup frame and the spawn seeds usage with the model name, so either one showed the
+  PowerShell prompt for seconds. The pane mounts under the overlay with output dropped, so its
+  fit sizes the PTY before the agent's first frame. `command-terminal-launch-overlay.spec.ts` and
+  `session-manager-agent-ready.test.ts` pin it.
 - **The desktop window follows a main-initiated end through ONE removal subscriber.**
   `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`) closes the slot's window when a
   `session-removed` push names a session the `transientSessions` map still points at. A

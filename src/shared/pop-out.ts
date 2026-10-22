@@ -281,11 +281,16 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       IPC.CONFIG_CHANGED,
       // This window can host a task detail (and therefore a live terminal) for a
       // project the board is not on, so it needs the per-session pushes a terminal
-      // consumes. SESSION_DATA and SESSION_FIRST_OUTPUT are NOT listed: those are
-      // routed per-renderer off the focus map rather than fanned to every pop-out,
-      // so a window without that session's terminal never receives its bytes.
+      // consumes. SESSION_DATA is NOT listed: it is routed per-renderer off the
+      // focus map rather than fanned to every pop-out, so a window without that
+      // session's terminal never receives its bytes.
       IPC.SESSION_USAGE,
       IPC.SESSION_EVENT,
+      // The one push that lifts a hosted terminal's launch overlay. Main
+      // broadcasts it once per session to the main window and to each pop-out
+      // that lists it here, so a detail opened here while its agent boots lifts
+      // when the agent is on screen rather than at the next resync.
+      IPC.SESSION_FIRST_OUTPUT,
       // PTY dims echo for the width-drift self-heal. Unlike SESSION_DATA it IS
       // fanned to every window: echoes only fire on real dim changes, and a
       // freshly mounted xterm could miss a focus-routed echo during exactly the

@@ -227,7 +227,7 @@ export function resolveTerminalBackground(colors: TerminalColorOverrides | undef
 
 /** Resolves the effective terminal foreground: the user's custom override, or
  *  the built-in default. Mirrors resolveTerminalBackground so a surface that
- *  must paint terminal-matching text (e.g. LaunchOverlay's terminal variant)
+ *  must paint terminal-matching text (e.g. LaunchOverlay's label)
  *  stays in lockstep with the live xterm theme instead of a stale constant. */
 export function resolveTerminalForeground(colors: TerminalColorOverrides | undefined): string {
   return colors?.foreground || TERMINAL_DEFAULT_COLORS.foreground;

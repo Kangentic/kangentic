@@ -51,6 +51,15 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     });
     if (unsubscribeMessageTrail) signal.addEventListener('abort', unsubscribeMessageTrail);
 
+    // A hosted task detail's terminal stays behind its launch overlay until its
+    // agent is on screen, which main announces once, on this push (declared in
+    // this surface's `channels`). `syncSessions` covers only an agent that was
+    // already up when it last ran.
+    const unsubscribeFirstOutput = window.electronAPI.sessions.onFirstOutput((sessionId) => {
+      useSessionStore.getState().markFirstOutput(sessionId);
+    });
+    signal.addEventListener('abort', unsubscribeFirstOutput);
+
     // Snapshot pushes for the DB-resident half (session spawned/exited, task
     // retitled or moved).
     const unsubscribeChanged = window.electronAPI.monitor.onChanged((snapshot) => {
@@ -98,6 +107,11 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
 
   hmrResync: () => {
     void useMonitorStore.getState().loadSnapshot();
+    // Pattern B, as App.tsx's handler does for the main window: a hosted
+    // task detail's launch overlay lifts only on `sessionFirstOutput`, which
+    // main announces once per session, so a Fast Refresh re-reads it from
+    // main's cache rather than wait for the next snapshot push.
+    void useSessionStore.getState().syncSessions();
     // Pattern B for this window: main is the only authority for the offscreen
     // set, and a surface can sit unchanged across the whole session, so the
     // push alone leaves a hosted pill dark after a Fast Refresh.

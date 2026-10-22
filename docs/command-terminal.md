@@ -87,6 +87,16 @@ ran. Without either signal the sweep judges the terminal after a two-minute ceil
 covers a launch that failed and an agent with neither hooks nor an alt screen, at the cost of
 leaving those up to two minutes longer than before.
 
+The window's launch overlay waits for the same kind of evidence. It used to lift on the adapter's
+first-output latch or on the session's usage, and both arrive before the agent runs: the startup
+frame of pwsh and Windows PowerShell carries the cursor-hide escape Claude's detector matches, and
+the spawn seeds usage with the model name. So a new terminal showed the PowerShell prompt for
+about three seconds before Claude's TUI. It now lifts when main says the agent is on screen
+(`SessionManager.markAgentReady`, see [Agent Integration](agent-integration.md#the-launch-overlay)),
+which works for every agent, inline ones included. The pane mounts behind the overlay with its
+output dropped, so its fit sizes the PTY before the agent's first frame. Mounting only at the lift
+let Claude compose that frame at the 120x30 spawn default.
+
 The sweep cannot read a WSL shell's tree (its agent is not a Win32 descendant of `wsl.exe`), and
 it does not run at all with the background-shell watcher off. There the agent's SessionEnd is the
 only signal, so a SessionEnd with no SessionStart within 5 seconds ends the terminal. `/clear`

@@ -149,7 +149,9 @@ export interface CoreSessionSlice {
    * Null until the first usage payload with `rateLimits` arrives.
    */
   latestRateLimits: RateLimitSnapshot | null;
-  /** Tracks sessions whose PTY has activated the alternate screen buffer (TUI ready). */
+  /** Sessions whose agent is on screen: its first text after the shell ran the
+   *  spawn command, its first alt-screen entry, or its SessionStart hook (main's
+   *  `markAgentReady`). The only signal that lifts a terminal's launch overlay. */
   sessionFirstOutput: Record<string, boolean>;
   sessionActivity: Record<string, ActivityState>;
   /**

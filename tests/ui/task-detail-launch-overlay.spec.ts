@@ -167,6 +167,52 @@ test('opening a detail whose agent has already produced output shows no launch o
   }
 });
 
+test('the usage seed alone keeps the launch overlay; first output lifts it', async () => {
+  // The spawn seeds usage with the model name, seconds before the agent is on
+  // screen. Lifting on it showed the shell's prompt under a task's terminal.
+  // Red-green: put `|| hasUsage` back into TerminalTab's `terminalReady` and the
+  // overlay is gone right after the usage push.
+  const suffix = `usage-${RUN_ID}`;
+  const { browser, page } = await launch(suffix);
+  try {
+    await page.locator('[data-swimlane-name="Executing"]').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator(`[data-task-id="task-overlay-${suffix}"]`).click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 10000 });
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    const overlay = dialog.locator('[data-testid="launch-overlay"]').first();
+    await expect(overlay).toBeVisible({ timeout: 10000 });
+
+    // The usage a spawn seeds: the model off the command, nothing used yet.
+    await page.evaluate((sessionId) => {
+      const stores = (window as unknown as {
+        __zustandStores?: { session: { getState: () => { updateUsage: (id: string, data: object) => void } } };
+      }).__zustandStores;
+      stores?.session.getState().updateUsage(sessionId, {
+        model: { id: 'claude-haiku', displayName: 'Haiku' },
+        contextWindow: {
+          usedPercentage: 0,
+          usedTokens: 0,
+          cacheTokens: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          contextWindowSize: 200000,
+        },
+        cost: { totalCostUsd: 0, totalDurationMs: 0 },
+      });
+    }, `sess-overlay-${suffix}`);
+    // The context bar rendering the model proves the push landed in this window.
+    await expect(dialog.locator('[data-testid="usage-bar"]')).toContainText('Haiku', { timeout: 5000 });
+    await expect(overlay).toBeVisible();
+
+    await page.evaluate((sessionId) => {
+      (window as unknown as { __mockFireFirstOutput?: (id: string) => void }).__mockFireFirstOutput?.(sessionId);
+    }, `sess-overlay-${suffix}`);
+    await expect(dialog.locator('[data-testid="launch-overlay"]')).toHaveCount(0, { timeout: 5000 });
+  } finally {
+    await browser.close();
+  }
+});
+
 test('a session that has produced nothing yet still gets its launch overlay', async () => {
   // The guard against the fix above degenerating into "never show the overlay".
   const suffix = `cold-${RUN_ID}`;

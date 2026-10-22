@@ -557,9 +557,11 @@ export function TaskDetailBody({
   }
 
   // Launching (preparing): worktree creation / CLI boot before the session
-  // exists. The terminal area is otherwise blank here, so mirror the board
-  // card's launch treatment - a centered muted spinner + the spawn status
-  // label - and keep PreSpawnContextBar pinned at the bottom.
+  // exists. The terminal area is otherwise blank here, so show a centered
+  // muted spinner + the spawn status label, and keep PreSpawnContextBar pinned
+  // at the bottom. LaunchOverlay paints the terminal's own colors, so this pane,
+  // TerminalTab's overlay and the terminal that replaces them share one
+  // background.
   if (taskDetailSurfaceFor(displayKind, laneRole) === 'launch-overlay') {
     // No session/PTY yet, so the only right panel that applies is the Description
     // peek (Browser needs a live session; Changes is not offered here). It rides
