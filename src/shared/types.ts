@@ -635,8 +635,8 @@ export interface Task {
    * for it in any column, a move types no column message, and an Automatic Plan
    * approval is held as Manual (`readPlanApprovalDecision`). Column settings,
    * manual drags, Run again and the task's own `auto_command` are untouched.
-   * Moving out of Done and joining a workflow clear it; a workflow task never
-   * carries it (`automationsSwitchRefusal`). Asked only through
+   * Joining a workflow clears it. A move out of Done or a restore keeps it. A
+   * workflow task never carries it (`automationsSwitchRefusal`). Asked only through
    * `canTaskRunAutomations`.
    */
   automations_disabled: boolean;

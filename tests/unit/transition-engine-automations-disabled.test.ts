@@ -8,8 +8,12 @@
  * runner is never entered: no adapter executes, no agent starts, no message is
  * delivered. The gate reads the task FRESH from the repository rather than from
  * the object the caller holds, because a turn end's object predates its paint
- * wait and its Condition check, and a move out of Done clears the switch after
- * the caller read the task.
+ * wait and its Condition check, and the user can throw the switch in between.
+ *
+ * A trip through Done keeps the hold: a held task moved or restored out of Done
+ * comes back held, and the rows of that move are skipped. Its Frequency counts
+ * still start over when it leaves Done, so a row spent before Done runs again
+ * once the user enables automations.
  *
  * `executeSingleAutomation` (Run again) is deliberately NOT gated: pressing Run
  * again on a row is an explicit act, and it is the way a user runs one row of a
@@ -36,6 +40,9 @@ import { TransitionEngine } from '../../src/main/transition-engine/transition-en
 import { SENT_WITH_THE_MOVE } from '../../src/main/automations/automation-runner';
 import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
 import type { AutomationTrigger, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
+
+/** A run's start before every move a test writes, which are stamped now. */
+const BEFORE_DONE = '2026-01-01T00:00:00.000Z';
 
 describe('TransitionEngine and a task with its automations disabled', () => {
   let database: DatabaseType.Database;
@@ -302,7 +309,7 @@ describe('TransitionEngine and a task with its automations disabled', () => {
     });
 
     it('runs the group when the caller\'s object says disabled but the stored row says enabled', async () => {
-      // A move out of Done cleared the switch after the caller read the task.
+      // The user turned the switch back on after the caller read the task.
       const task = createTask(true);
       const staleDisabled: Task = { ...task };
       tasks.update({ id: task.id, automations_disabled: false });
@@ -357,6 +364,110 @@ describe('TransitionEngine and a task with its automations disabled', () => {
       expect(afterOn.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded']);
       expect(showNotification).toHaveBeenCalledTimes(1);
       expect(runs.countRuns(limitedRow.id, task.id)).toBe(1);
+    });
+  });
+
+  // Finishing a task is not the user changing their mind. Whichever way a held
+  // task comes back out of Done (a drag, an agent's kangentic_move_task, or a
+  // restore from the Completed list), it comes back held, and the rows that move
+  // would run are skipped with the reason. The repository writes the moves, so
+  // the stored row the gate reads is the one production leaves.
+  describe('a held task coming back out of Done', () => {
+    let doneColumn: Swimlane;
+    let doneExitRows: ColumnAutomation[];
+
+    beforeEach(() => {
+      doneColumn = new SwimlaneRepository(database).list().find((lane) => lane.role === 'done')!;
+      doneExitRows = automations.replaceForColumn(doneColumn.id, [
+        { name: 'Reopened ping', type: 'notify', trigger: 'exit', enabled: true, config: { title: 'Reopened', body: 'Out of Done' } },
+      ]);
+    });
+
+    /** Finish the task the way a Done move leaves it: in the Done column, archived. Returns the row as read then. */
+    function finish(taskId: string): Task {
+      tasks.move({ taskId, targetSwimlaneId: doneColumn.id, targetPosition: 0 }, { origin: 'renderer' });
+      tasks.archive(taskId);
+      return tasks.getById(taskId)!;
+    }
+
+    /** Take the task out of Done into the Executing column, by a move or a restore. */
+    function bringBack(taskId: string, wayOut: 'move' | 'unarchive'): Task {
+      if (wayOut === 'unarchive') return tasks.unarchive(taskId, column.id, 0);
+      // handleTaskMove's way out: the move, then the archive flag cleared.
+      tasks.move({ taskId, targetSwimlaneId: column.id, targetPosition: 0 }, { origin: 'agent' });
+      tasks.clearArchived(taskId);
+      return tasks.getById(taskId)!;
+    }
+
+    it.each(['move', 'unarchive'] as const)('skips the enter rows of the auto-spawn column a %s brings it back to, so no row starts the agent', async (wayOut) => {
+      // The column a recovery move spawns into: Start an agent is on. The group
+      // starts nothing, but in production spawnAgent's fallback then starts the
+      // agent for the column's own setting, with no column message.
+      expect(column.auto_spawn).toBe(true);
+      const finished = finish(createTask(true).id);
+
+      const restored = bringBack(finished.id, wayOut);
+      expect(restored.archived_at).toBeNull();
+      expect(restored.swimlane_id).toBe(column.id);
+      expect(tasks.getById(finished.id)!.automations_disabled).toBe(true);
+
+      const summary = await engine.executeTransition(restored, column, 'enter', groupOptions());
+
+      expect(summary.outcomes.map((outcome) => outcome.automationId)).toEqual(rowsByTrigger.enter.map((row) => row.id));
+      expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'skipped']);
+      expect(summary.outcomes.map((outcome) => outcome.detail)).toEqual([AUTOMATIONS_DISABLED_REASON, AUTOMATIONS_DISABLED_REASON]);
+      expect(summary.startedAgent).toBe(false);
+      expect(startAgent).not.toHaveBeenCalled();
+      expect(deliverToAgent).not.toHaveBeenCalled();
+      expect(showNotification).not.toHaveBeenCalled();
+    });
+
+    it('skips the Done column\'s own exit rows on a move out of it', async () => {
+      // The exit group holds the object the move read before it moved.
+      const finished = finish(createTask(true).id);
+      bringBack(finished.id, 'move');
+
+      const summary = await engine.executeTransition(finished, doneColumn, 'exit', groupOptions());
+
+      expect(summary.outcomes.map((outcome) => outcome.automationId)).toEqual(doneExitRows.map((row) => row.id));
+      expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['skipped']);
+      expect(summary.outcomes.map((outcome) => outcome.detail)).toEqual([AUTOMATIONS_DISABLED_REASON]);
+      expect(showNotification).not.toHaveBeenCalled();
+    });
+
+    // The hold and the Frequency reset are separate. A row that spent its one
+    // run before Done is still held when the task comes back, and runs again
+    // once the user enables automations, because its count restarted at the
+    // move out of Done.
+    it('runs a row whose Frequency was spent before Done again once the user enables automations', async () => {
+      const [limitedRow] = automations.replaceForColumn(column.id, [
+        { name: 'Enter once', type: 'notify', trigger: 'enter', enabled: true, config: { title: 'Entered', body: 'Once' }, max_runs: 1 },
+      ]);
+      const task = createTask(false);
+
+      const firstLife = await engine.executeTransition(task, column, 'enter', groupOptions());
+      expect(firstLife.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded']);
+      // Stamped well before the moves below, which are stamped now. The boundary
+      // compares timestamps, and a run in the same millisecond as the move out
+      // of Done would be counted as part of the task's second life.
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE task_id = ?').run(BEFORE_DONE, task.id);
+      const spent = await engine.executeTransition(task, column, 'enter', groupOptions());
+      expect(spent.outcomes.map((outcome) => outcome.detail)).toEqual(['Already ran once on this task, its limit.']);
+
+      tasks.update({ id: task.id, automations_disabled: true });
+      finish(task.id);
+      const restored = bringBack(task.id, 'unarchive');
+      expect(runs.countRuns(limitedRow.id, task.id)).toBe(0);
+
+      const whileHeld = await engine.executeTransition(restored, column, 'enter', groupOptions());
+      expect(whileHeld.outcomes.map((outcome) => outcome.detail)).toEqual([AUTOMATIONS_DISABLED_REASON]);
+
+      tasks.update({ id: task.id, automations_disabled: false });
+      const afterEnable = await engine.executeTransition(restored, column, 'enter', groupOptions());
+
+      expect(afterEnable.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded']);
+      expect(runs.countRuns(limitedRow.id, task.id)).toBe(1);
+      expect(showNotification).toHaveBeenCalledTimes(2);
     });
   });
 

@@ -352,10 +352,10 @@ never implies override mode.
 `automations_disabled` (0/1, read as `Task.automations_disabled: boolean`) holds the task out of
 every column's automations: see [Transition Engine > Disabling automations for one
 task](transition-engine.md#disabling-automations-for-one-task). It is written by `create()` and
-`update()` and cleared on two events with no caller asking: leaving a `done` column (`move()` and `unarchive()`;
-not on a `rollback`, the same boundary the Frequency count resets on) and joining a workflow
-(`setWorkflowMembership()`). A workflow task never
-carries it: `create()` and `update()` write 0 for one whatever the input says.
+`update()`, and with no caller asking it is cleared only when the task joins a workflow
+(`setWorkflowMembership()`). `move()` and `unarchive()` never touch it, out of a `done` column
+too. A workflow task never carries it: `create()` and `update()` write 0 for one whatever the
+input says.
 
 ### schema_meta table
 

@@ -3,20 +3,15 @@
  * (src/main/db/repositories/task-repository.ts), on a real migrated database.
  *
  * The switch is the user's hold on a task: no On task enter, On agent turn end
- * or On task exit row runs for it. It clears in exactly two situations, both of
- * which are the board's gates running again:
+ * or On task exit row runs for it. It clears in exactly one situation: the task
+ * joins a workflow. A workflow task never carries the switch, since the
+ * workflow's Pause is its control: create, update and join all write it false.
  *
- * - the task leaves Done. Keyed on the FROM lane's role, at the same point the
- *   Frequency counts reset (`AutomationRunRepository.countRuns`), so a rollback
- *   of a failed move out of Done restores the hold instead of dropping it.
- * - the task joins a workflow. A workflow task never carries the switch, since
- *   the workflow's Pause is its control: create, update and join all write it
- *   false.
- *
- * Every other write (a move into Done, a move between ordinary columns or into
- * To Do, a reorder, an unrelated update) leaves it exactly as it was. Setup puts
- * a disabled task into Done through `move()`, which also proves a move INTO Done
- * does not clear it.
+ * Every move keeps it, by any mover, a move out of Done and a restore from the
+ * archive included. Finishing a task is not the user changing their mind, so a
+ * held task comes back from Done still held, even though its Frequency counts
+ * start over there (`AutomationRunRepository.countRuns`). A reorder and an
+ * unrelated update keep it too.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -76,25 +71,24 @@ describe('the automations switch across moves, unarchive and workflow membership
     tasks.move({ taskId, targetSwimlaneId: laneId, targetPosition }, { origin });
   }
 
-  describe('leaving Done clears it', () => {
-    // Every mover but a rollback: a drag, the agent moving its own task, a
-    // phone, a plan approval, a workflow step, a Move to column row.
-    it.each(['renderer', 'agent', 'mobile', 'auto-move', 'workflow', 'automation'] as const)(
-      'clears it when a %s move takes the task out of Done',
+  describe('leaving Done keeps it', () => {
+    // Every mover: a drag, the agent moving its own task, a phone, a plan
+    // approval, a workflow step, a Move to column row, and a rollback.
+    it.each(['renderer', 'agent', 'mobile', 'auto-move', 'workflow', 'automation', 'rollback'] as const)(
+      'keeps it when a %s move takes the task out of Done',
       (origin) => {
         const taskId = disabledTask('Held task');
         moveTo(taskId, doneLaneId);
-        // The control: arriving in Done is not leaving it.
         expect(storedValue(taskId)).toBe(1);
 
         moveTo(taskId, columnBId, origin);
 
-        expect(storedValue(taskId)).toBe(0);
-        expect(tasks.getById(taskId)!.automations_disabled).toBe(false);
+        expect(storedValue(taskId)).toBe(1);
+        expect(tasks.getById(taskId)!.automations_disabled).toBe(true);
       },
     );
 
-    it('clears it for a Done task that is archived the way a Done move archives it, once it is moved back out', () => {
+    it('keeps it for a Done task that is archived the way a Done move archives it, once it is moved back out', () => {
       const taskId = disabledTask('Held task');
       moveTo(taskId, doneLaneId);
       tasks.archive(taskId);
@@ -102,47 +96,26 @@ describe('the automations switch across moves, unarchive and workflow membership
 
       moveTo(taskId, columnAId);
 
-      expect(tasks.getById(taskId)!.automations_disabled).toBe(false);
+      expect(storedValue(taskId)).toBe(1);
+      expect(tasks.getById(taskId)!.automations_disabled).toBe(true);
     });
 
-    it('clears it when the task leaves Done for To Do', () => {
+    it('keeps it when the task leaves Done for To Do', () => {
       const taskId = disabledTask('Held task');
       moveTo(taskId, doneLaneId);
 
       moveTo(taskId, todoLaneId);
 
-      expect(storedValue(taskId)).toBe(0);
-    });
-
-    it('does not clear it on a rollback out of Done, which restores the hold a failed move interrupted', () => {
-      const taskId = disabledTask('Held task');
-      moveTo(taskId, doneLaneId);
-
-      moveTo(taskId, columnBId, 'rollback');
-
       expect(storedValue(taskId)).toBe(1);
-      expect(tasks.getById(taskId)!.automations_disabled).toBe(true);
     });
 
-    it('does not change a task that was never disabled', () => {
+    it('leaves a task that was never disabled enabled', () => {
       const taskId = tasks.create({ title: 'Plain', description: '', swimlane_id: columnAId }).id;
       moveTo(taskId, doneLaneId);
 
       moveTo(taskId, columnBId);
 
       expect(storedValue(taskId)).toBe(0);
-    });
-
-    it('clears only the task that left Done, not the other disabled tasks still there', () => {
-      const leaver = disabledTask('Leaves');
-      const stayer = disabledTask('Stays');
-      moveTo(leaver, doneLaneId);
-      moveTo(stayer, doneLaneId);
-
-      moveTo(leaver, columnAId);
-
-      expect(storedValue(leaver)).toBe(0);
-      expect(storedValue(stayer)).toBe(1);
     });
   });
 
@@ -203,25 +176,26 @@ describe('the automations switch across moves, unarchive and workflow membership
       return taskId;
     }
 
-    it('clears it when the task is brought back to an ordinary column', () => {
+    it('keeps it when the task is brought back to an ordinary column', () => {
       const taskId = archivedInDone();
       expect(tasks.listArchived().map((task) => task.id)).toEqual([taskId]);
       expect(storedValue(taskId)).toBe(1);
 
       const restored = tasks.unarchive(taskId, columnAId, 0);
 
-      expect(restored.automations_disabled).toBe(false);
+      expect(restored.automations_disabled).toBe(true);
       expect(restored.archived_at).toBeNull();
-      expect(storedValue(taskId)).toBe(0);
+      expect(restored.swimlane_id).toBe(columnAId);
+      expect(storedValue(taskId)).toBe(1);
     });
 
-    it('clears it when the task is brought back into To Do', () => {
+    it('keeps it when the task is brought back into To Do', () => {
       const taskId = archivedInDone();
 
       const restored = tasks.unarchive(taskId, todoLaneId, 0);
 
-      expect(restored.automations_disabled).toBe(false);
-      expect(storedValue(taskId)).toBe(0);
+      expect(restored.automations_disabled).toBe(true);
+      expect(storedValue(taskId)).toBe(1);
     });
 
     it('leaves a task that was never disabled alone', () => {

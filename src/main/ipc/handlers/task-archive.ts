@@ -211,8 +211,6 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     try {
       return await restoration;
     } finally {
-      // The restore also cleared the automations switch of a task leaving Done
-      // (`TaskRepository.unarchive`), which a phone's card shows.
       announceTaskWrite(context, event, resolvedProjectId, { change: 'task-updated', ids: [input.id] });
     }
   });

@@ -1422,21 +1422,21 @@ describe('task-archive handlers', () => {
   // Both restores reach a paired phone
   //
   // A restore from the archive is the desktop's real way out of Done (the UI
-  // never routes an archived card through TASK_MOVE), and leaving Done clears
-  // the task's automations switch inside `TaskRepository.unarchive`
-  // (task-repository-automations-disabled.test.ts pins that). A phone hears the
-  // restore only on the board-changed bus. Before, it heard nothing unless an
-  // auto-spawn session happened to start, so a restore into a column that
-  // starts no agent left its card stale. The fake `unarchive` below clears the
-  // switch the way the repository does, and each listener records the row as it
+  // never routes an archived card through TASK_MOVE), and it puts the card back
+  // on the board. A phone hears the restore only on the board-changed bus.
+  // Before, it heard nothing unless an auto-spawn session happened to start, so
+  // a restore into a column that starts no agent left its card stale in Done.
+  // The restore keeps the task's automations switch (a held task comes back
+  // held, task-repository-automations-disabled.test.ts pins that), so the fake
+  // `unarchive` below leaves it alone, and each listener records the row as it
   // stands when the event fires.
   // =========================================================================
 
   describe('a restore reaches a paired phone', () => {
     /** The rows by id, as the fake repository holds them. */
     let rows: Map<string, MockTask & { archived_at: string | null; automations_disabled: boolean }>;
-    /** Each emit's ids, with every listed row's switch as it stood at that moment. */
-    let switchesAtEmit: Array<Record<string, boolean>>;
+    /** Each emit's ids, with every listed row's archive flag and switch as they stood at that moment. */
+    let rowsAtEmit: Array<Record<string, { archivedAt: string | null; automationsDisabled: boolean } | null>>;
 
     function arrangeHeldArchivedTasks(ids: string[], lanes: MockSwimlane[]): void {
       rows = new Map(ids.map((id) => [id, {
@@ -1444,17 +1444,16 @@ describe('task-archive handlers', () => {
         archived_at: '2026-10-16T00:00:00.000Z',
         automations_disabled: true,
       }]));
-      switchesAtEmit = [];
+      rowsAtEmit = [];
       taskRepo = createMockTaskRepo([]);
       taskRepo.getById.mockImplementation((id: string) => rows.get(id) ?? null);
       taskRepo.list.mockImplementation(() => []);
       taskRepo.unarchive.mockImplementation((id: string, targetSwimlaneId: string) => {
         const row = rows.get(id);
         if (!row) throw new Error(`Task ${id} not found`);
+        // As TaskRepository.unarchive does: the lane and the archive flag, never the switch.
         row.swimlane_id = targetSwimlaneId;
         row.archived_at = null;
-        // TaskRepository.unarchive clears the switch of a task leaving Done.
-        row.automations_disabled = false;
         return row;
       });
       mockGetProjectRepos.mockReturnValue({
@@ -1466,11 +1465,17 @@ describe('task-archive handlers', () => {
       // Recorded, not asserted, in the listener. The announce swallows a
       // listener's throw, so an expect there could never fail the test.
       context.boardEvents.emitBoardChanged.mockImplementation((event: { ids: string[] }) => {
-        switchesAtEmit.push(Object.fromEntries(event.ids.map((id) => [id, rows.get(id)?.automations_disabled ?? true])));
+        rowsAtEmit.push(Object.fromEntries(event.ids.map((id) => {
+          const row = rows.get(id);
+          return [id, row ? { archivedAt: row.archived_at, automationsDisabled: row.automations_disabled } : null];
+        })));
       });
     }
 
-    it('TASK_UNARCHIVE into a column that starts no agent emits task-updated once, with the switch already cleared', async () => {
+    /** What the phone should read at the emit: back on the board, still held. */
+    const restoredAndHeld = { archivedAt: null, automationsDisabled: true };
+
+    it('TASK_UNARCHIVE into a column that starts no agent emits task-updated once, after the row is restored, with the switch kept', async () => {
       const quietLane = createMockSwimlane('lane-review', { auto_spawn: false });
       arrangeHeldArchivedTasks(['task-held'], [doneLane, quietLane]);
 
@@ -1479,7 +1484,7 @@ describe('task-archive handlers', () => {
       expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
         [{ projectId: 'proj-123', change: 'task-updated', ids: ['task-held'] }],
       ]);
-      expect(switchesAtEmit).toEqual([{ 'task-held': false }]);
+      expect(rowsAtEmit).toEqual([{ 'task-held': restoredAndHeld }]);
     });
 
     it('TASK_UNARCHIVE still emits once when the restore\'s worktree step fails', async () => {
@@ -1489,7 +1494,7 @@ describe('task-archive handlers', () => {
       await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held', targetSwimlaneId: 'lane-doing' });
 
       expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(1);
-      expect(switchesAtEmit).toEqual([{ 'task-held': false }]);
+      expect(rowsAtEmit).toEqual([{ 'task-held': restoredAndHeld }]);
     });
 
     it('TASK_UNARCHIVE emits nothing when it is refused before any write', async () => {
@@ -1504,7 +1509,7 @@ describe('task-archive handlers', () => {
       expect(context.boardEvents.emitBoardChanged).not.toHaveBeenCalled();
     });
 
-    it('TASK_BULK_UNARCHIVE emits task-updated once for the batch, with every switch already cleared', async () => {
+    it('TASK_BULK_UNARCHIVE emits task-updated once for the batch, after every row is restored, with every switch kept', async () => {
       const quietLane = createMockSwimlane('lane-review', { auto_spawn: false });
       arrangeHeldArchivedTasks(['task-held-a', 'task-held-b'], [doneLane, quietLane]);
 
@@ -1513,7 +1518,7 @@ describe('task-archive handlers', () => {
       expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([
         [{ projectId: 'proj-123', change: 'task-updated', ids: ['task-held-a', 'task-held-b'] }],
       ]);
-      expect(switchesAtEmit).toEqual([{ 'task-held-a': false, 'task-held-b': false }]);
+      expect(rowsAtEmit).toEqual([{ 'task-held-a': restoredAndHeld, 'task-held-b': restoredAndHeld }]);
     });
   });
 });
