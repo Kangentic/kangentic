@@ -28,6 +28,7 @@ import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation
 import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
+import { PausedForMemoryDialog } from '../dialogs/PausedForMemoryDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
 import { AnnouncementBanner } from '../announcements/AnnouncementBanner';
@@ -628,6 +629,7 @@ export function AppLayout() {
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <LeftoverProcessesDialog />
+      <PausedForMemoryDialog />
       <ReleaseNotesDialog />
       <WhatsNewDialog />
       {/* History first, then the announcement dialog it can open on top. The
