@@ -477,11 +477,10 @@ export interface BoardTaskWire {
    * `true` for one. Hide the control while `workflow` is non-null, as the
    * desktop menu does.
    *
-   * The desktop also clears it by itself: when the task leaves Done (a rollback
-   * of a failed move excepted), when it is restored from the archive, and when
-   * it joins a workflow. Every change, by any hand, reaches the phone as a
-   * `task-updated` board event, after which the next snapshot carries the new
-   * value.
+   * The desktop clears it by itself only when the task joins a workflow. A move
+   * out of Done or a restore from the archive keeps it. Every change, by any
+   * hand, reaches the phone as a `task-updated` board event, after which the
+   * next snapshot carries the new value.
    *
    * Null or absent means a desktop that predates the field (pre-0.22.0). A
    * client offers no control then, since it cannot read the switch's state.

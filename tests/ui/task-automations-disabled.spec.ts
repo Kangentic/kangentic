@@ -391,6 +391,54 @@ test.describe('per-task automations switch: the card menu', () => {
       await browser.close();
     }
   });
+
+  // Leaving Done no longer enables a task's automations again, so a restore keeps the switch
+  // as the user left it. The real repository is pinned at unit tier; this pins the mock that
+  // the UI tier and the web demo run on, which must not write the field on unarchive either.
+  test('restoring an archived task with automations off keeps them off', async () => {
+    const taskId = 'task-ad-restore';
+    const { browser, page } = await launch({
+      tasks: [{ id: taskId, displayId: 75, title: 'Finished task that was held', lane: 'Done', archived: true, automationsDisabled: true }],
+    });
+    try {
+      // The archived record starts held, or the strip below would prove nothing.
+      const heldBefore = await page.evaluate(async (id) => {
+        const tasksApi = (window as unknown as {
+          electronAPI: { tasks: { listArchived: () => Promise<Array<{ id: string; automations_disabled: boolean }>> } };
+        }).electronAPI.tasks;
+        return (await tasksApi.listArchived()).find((task) => task.id === id)?.automations_disabled ?? null;
+      }, taskId);
+      expect(heldBefore).toBe(true);
+
+      const archivedCard = page.locator(`[data-task-id="${taskId}"]`).first();
+      await archivedCard.waitFor({ state: 'visible', timeout: 10000 });
+      await archivedCard.click({ button: 'right' });
+      await byTestId(page, 'archived-context-restore-to').filter({ hasText: /^To Do$/ }).click();
+
+      // The toast is raised after the board is reconciled with the list the mock answers, so
+      // what shows below is the mock's record. Before that, the store paints an optimistic
+      // copy of the archived row, which would show the strip whatever the mock wrote.
+      await expect(toastWith(page, 'Task restored')).toBeVisible();
+
+      const restored = page.locator(`[data-swimlane-name="To Do"] [data-task-id="${taskId}"]`);
+      await expect(restored).toBeVisible();
+      const strip = restored.getByTestId(STRIP_TEST_ID);
+      await expect(strip).toBeVisible();
+      await expect(strip).toHaveText('Automations disabled');
+
+      // The record itself, not only what it paints.
+      const heldAfter = await page.evaluate(async (id) => {
+        const tasksApi = (window as unknown as {
+          electronAPI: { tasks: { list: () => Promise<Array<{ id: string; automations_disabled: boolean; archived_at: string | null }>> } };
+        }).electronAPI.tasks;
+        const restoredTask = (await tasksApi.list()).find((task) => task.id === id);
+        return restoredTask ? { archivedAt: restoredTask.archived_at, automationsDisabled: restoredTask.automations_disabled } : null;
+      }, taskId);
+      expect(heldAfter).toEqual({ archivedAt: null, automationsDisabled: true });
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
 test.describe('per-task automations switch: the card strip', () => {
