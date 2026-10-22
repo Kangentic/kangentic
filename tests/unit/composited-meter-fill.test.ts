@@ -51,6 +51,14 @@ const CLASSNAME_LOOKBEHIND = 600;
  */
 const TRANSITION_LIST_PATTERN = /transition-\[([^\]]*)\]|\btransition-transform\b/g;
 
+/**
+ * Files whose `scaleX(` is a Web Animation keyframe, not a CSS transition, so the rules above
+ * about a transition list have nothing to read. The toast's countdown line is the one: it runs
+ * through `Element.animate`, and the toast store owns its clock (held while the pointer is over
+ * the card), because `.no-motion` zeroes CSS durations and a CSS clock would stop counting.
+ */
+const WEB_ANIMATION_SCALES = new Set(['src/renderer/components/layout/ToastItem.tsx']);
+
 function collectSourceFiles(directory: string): string[] {
   const files: string[] = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
@@ -87,6 +95,7 @@ function findScaledFills(): ScaledFill[] {
   for (const filePath of collectSourceFiles(path.join(REPO_ROOT, SCAN_DIR))) {
     const source = fs.readFileSync(filePath, 'utf-8');
     const relative = toPosix(path.relative(REPO_ROOT, filePath));
+    if (WEB_ANIMATION_SCALES.has(relative)) continue;
     const scaleMatcher = /scaleX\(/g;
     let match: RegExpExecArray | null;
     while ((match = scaleMatcher.exec(source)) !== null) {
