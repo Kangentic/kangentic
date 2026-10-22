@@ -13,7 +13,7 @@ sources:
 `src/main/agent/adapters/warp/warp-adapter.ts` (the detection walk),
 `src/main/agent/adapters/warp/version-detector.ts` (the version command and its parser)
 
-Detection is custom because `oz` does not support `--version` - it uses `dump-debug-info` instead. The detector inlines the same caching and inflight-deduplication pattern as `AgentDetector` but with the alternate version command. Override path is checked first, then `which('oz')` falls back to PATH. Because it does not use the shared `AgentDetector`, `oz` resolves only `which`'s first match and gets neither the multi-match walk nor the dead-shim skip described under Claude.
+Detection is custom because `oz` does not support `--version` - it uses `dump-debug-info` instead. The detector inlines the same caching and inflight-deduplication pattern as `AgentDetector` but with the alternate version command. Override path is checked first, then `which('oz')` falls back to PATH. Because it does not use the shared `AgentDetector`, `oz` resolves only `which`'s first match and gets neither the multi-match walk nor the dead-shim skip described in [Claude Code's CLI detection](claude-code.md#cli-detection).
 
 ## Command Building
 

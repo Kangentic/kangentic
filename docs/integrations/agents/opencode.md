@@ -49,7 +49,7 @@ Not caller-owned (`supportsCallerSessionId = false`). Two capture pathways run c
 
 ## Remote Execution
 
-OpenCode is the only adapter that declares `remoteExecution` (see [Agent Adapter Interface](adapter-interface.md#agent-adapter-interface-1) above and [configuration.md - Remote Execution](../../configuration.md#remote-execution) for the config shape). When a project's mode for OpenCode is `remote`:
+OpenCode is the only adapter that declares `remoteExecution` (see `remoteExecution?` in [Optional properties](optional-properties.md) and [configuration.md - Remote Execution](../../configuration.md#remote-execution) for the config shape). When a project's mode for OpenCode is `remote`:
 
 - **Command:** `command-builder.ts`'s `buildOpenCodeAttachCommand` emits `opencode attach <url> [--dir <serverPath>] [--username u] [--password p]` instead of the local TUI form. `--model` is never emitted - the server is the authority for providers and models. Resume uses `--session <id>` exactly as in local mode.
 - **Auth:** `probeAuth()` (the local `auth.json` check) is bypassed. `remoteExecution.probeServer` (`remote-client.ts`'s `probeOpenCodeServer`) hits `GET <url>/global/health` instead, surfaced via the `agent:probeExecutionServer` IPC channel and the Agent settings tab's "Test connection" button.

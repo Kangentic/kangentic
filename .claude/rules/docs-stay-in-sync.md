@@ -26,9 +26,10 @@ template variable), the docs that enumerate it must be updated to match.
 - But keep the relationship in mind, and run `/sync-docs` (or note the affected docs) when a
   change adds or removes an enumerable item.
 - The canonical mapping, anchor list, and workflow live in `.claude/skills/sync-docs/SKILL.md`.
-  Do not duplicate that list here; update it there. A concept in a docs concept folder (today
-  `docs/integrations/agents/`) names its own authority files in its `sources:` frontmatter, and
-  `node scripts/docs-bundle.mjs sources <file>` finds the concepts a changed file feeds.
+  Do not duplicate that list here; update it there. A concept in the one docs concept folder,
+  `docs/integrations/agents/`, names its own authority files in its `sources:` frontmatter, and
+  `node scripts/docs-bundle.mjs sources <file>` finds the concepts a changed file feeds. The rest
+  of `docs/` stays flat: the pilot split saved an agent no reading (`docs/log.md`).
 
 ## Enforcement (self-maintaining)
 

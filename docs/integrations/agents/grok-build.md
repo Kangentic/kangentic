@@ -111,7 +111,7 @@ a task session's restart applies `--model` / `--reasoning-effort` deterministica
 `tool_calls[]` with JSON-string `arguments`; no timestamps, so entries get a parse-time
 stamp and synthesized uuids). `transcriptUsage`/`transcriptToolCounts` read `updates.jsonl`
 (Claude-parity lifetime rollup). `summarize` runs the plain-output print mode
-(`--output-format plain -p`) with the answer run's deny rules (see the Auto-Name table); its session
+(`--output-format plain -p`) with the answer run's deny rules (see the [Auto-Name](auto-name.md) table); its session
 stays in `~/.grok/sessions` until a title is measured on the answer run. `probeAuth` runs `grok models` and checks for "not
 authenticated" - note grok currently serves a free tier without login, so false means "not
 signed in", not "unusable"; a subscription-less account that hits a limit gets an explicit
@@ -119,7 +119,7 @@ signed in", not "unusable"; a subscription-less account that hits a limit gets a
 (`grok login`, device-code fallback `--device-auth`, `XAI_API_KEY` env for CI).
 
 **Detector.** `binaryName: 'grok'` with NO `agent` alias - grok's installer also publishes
-a generic `agent` shim that collides with Cursor's (see the collision guard below), and
+a generic `agent` shim that collides with Cursor's (see the collision guard in [Cursor CLI](cursor-cli.md#cli-detection)), and
 `parseVersion` requires the `grok ` banner prefix so a foreign binary answering on a shared
 name is rejected. `tests/unit/cursor-grok-binary-collision.test.ts` pins both directions.
 

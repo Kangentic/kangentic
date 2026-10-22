@@ -9,7 +9,7 @@ Review and update `docs/` to match the current source code. This skill contains 
 
 ## Source-to-Doc Mapping
 
-A concept folder (a `docs/` folder with an `index.md`, today `docs/integrations/agents/`) holds
+The one concept folder, `docs/integrations/agents/` (a `docs/` folder with an `index.md`), holds
 Open Knowledge Format concepts, and each concept names its own authority files in its `sources:`
 frontmatter. For those, `node scripts/docs-bundle.mjs sources <changed file>...` prints the
 concepts whose sources list the file or a folder above it. The table below covers the flat docs,
@@ -65,13 +65,12 @@ When the Step 7 report lists updated docs, append a note: "Website may need upda
 
 ## Doc Conventions
 
-- Most docs are flat files in `docs/`. A concept folder (a folder with an `index.md`, today
-  `docs/integrations/agents/`) holds one Open Knowledge Format concept per file instead: YAML
-  frontmatter with `type` (Guide, Reference, Design, Audit or Research), `title`, a one-line
-  `description`, `tags`, and `sources:` (each `- resource: <repo path>`, a file or a folder ending
-  in `/`, with an optional `title` naming the symbols). Its `index.md` lists every concept as
-  `* [Title](file.md) - description`, with the concept's exact description. `docs/log.md` records
-  dated changes to the docs layout, newest first. The pilot split saved an agent no reading
+- Most docs are flat files in `docs/`. The one concept folder, `docs/integrations/agents/`, holds
+  one Open Knowledge Format concept per file instead. A concept's YAML frontmatter and its line in
+  the folder's `index.md` take the shape `tests/unit/okf-docs-conformance.test.ts` enforces: `type`
+  is one of `CONCEPT_TYPES` in `scripts/docs-bundle.mjs`, and `sources:` names the files, or
+  folders ending in `/`, the concept describes. `docs/log.md` records dated changes to the docs
+  layout, newest first. The pilot split saved an agent no reading
   (`docs/log.md`), so never split another flat doc into a concept folder from this skill. That is
   a person's decision, measured first with `scripts/eval-docs-reads.mjs`, which spends agent quota
   and is run by hand only, never by an agent or a pipeline

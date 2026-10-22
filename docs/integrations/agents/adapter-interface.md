@@ -26,7 +26,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented by Kimi (see [Kimi Code -> Authentication](kimi-code.md#authentication)) and Grok (`grok models`, whose output says "not authenticated" from local state). |
 | `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [cross-platform.md](../../cross-platform.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
-| `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
+| `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
 | `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which times the boot geometry re-assert. A heuristic, not proof the agent is up, so it does not lift the launch overlay - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
@@ -41,7 +41,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
 | `permissions` | `AgentPermissionEntry[]` | Supported permission modes with agent-specific labels |
 | `defaultPermission` | `PermissionMode` | Recommended default permission mode |
-| `runtime` | `AdapterRuntimeStrategy` | Activity detection + session ID capture (see below) |
+| `runtime` | `AdapterRuntimeStrategy` | Activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
 
 ## Supported Agents
 
