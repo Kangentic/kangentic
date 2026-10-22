@@ -8,7 +8,7 @@
  * - Review opens the list: oldest wait first, the project named when the
  *   agents span projects, a Resume button per row.
  * - Resume brings the task back through the task's own Resume path and the
- *   row reads Running.
+ *   row reads Running. A refused Resume toasts the card menu's own copy.
  * - Memory recovering leaves the paused toast up: the agents stay paused.
  *
  * Each case owns its page.
@@ -114,6 +114,32 @@ test.describe('Agents paused for low memory', () => {
       const calls = await page.evaluate(() => (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls);
       // The task's own project, not whichever one is on screen.
       expect(calls).toEqual([['task-1', undefined, 'proj-9']]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a refused Resume toasts the card menu\'s one-sentence reason and leaves the row paused', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Main throws the refusal's two-sentence guidance, and Electron decorates
+      // it with the channel and the class, as a real rejection arrives.
+      await page.evaluate(() => {
+        const sessions = window.electronAPI.sessions as unknown as { resume: () => Promise<unknown> };
+        sessions.resume = async () => {
+          throw new Error("Error invoking remote method 'session:resume': Error: This task is complete. Move it out of Done to continue working on it.");
+        };
+      });
+      await firePaused(page, pausedEvent('task-1'));
+      await page.getByTestId('toast-action').click();
+
+      const row = page.getByTestId('paused-for-memory-row');
+      await row.getByTestId('paused-for-memory-resume').click();
+
+      const refusal = page.getByTestId('toast').filter({ has: page.getByTestId('toast-title').getByText("Couldn't resume session", { exact: true }) });
+      await expect(refusal.getByTestId('toast-body')).toHaveText('The task is in Done.');
+      await expect(refusal).toHaveAttribute('data-variant', 'warning');
+      await expect(row).toHaveAttribute('data-state', 'paused');
     } finally {
       await browser.close();
     }

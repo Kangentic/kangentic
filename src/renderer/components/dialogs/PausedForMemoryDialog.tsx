@@ -10,6 +10,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useNow } from '../../hooks/useNow';
 import { formatDateTime, formatTimeAgo } from '../../lib/datetime';
+import { sessionToggleFailureToast } from '../../utils/session-toggle';
 import { orderPausedAgents, pausedRowDetail } from '../../lib/paused-for-memory';
 
 /** How often the header's age re-reads the clock; it shows whole minutes. */
@@ -94,11 +95,8 @@ function PausedAgentRow({ entry, showProject }: { entry: HostMemoryAgentPausedEv
       const session = await window.electronAPI.sessions.resume(entry.taskId, undefined, entry.projectId);
       if (session) setResumed(true);
     } catch (error) {
-      useToastStore.getState().addToast({
-        title: 'Couldn\'t resume session',
-        message: error instanceof Error ? error.message : String(error),
-        variant: 'error',
-      });
+      // The card menu's own failure toast, so a refusal reads the same here.
+      useToastStore.getState().addToast({ ...sessionToggleFailureToast('resume', error), variant: 'warning' });
     } finally {
       setResuming(false);
     }

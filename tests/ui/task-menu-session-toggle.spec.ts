@@ -50,7 +50,7 @@ import {
 
 test.describe.configure({ mode: 'parallel' });
 
-const DONE_REFUSAL = 'The task is in Done.';
+const DONE_REFUSAL = 'This task is complete. Move it out of Done to continue working on it.';
 
 /** Right-click a board card and wait for its menu. */
 async function openCardMenu(page: Page, lane: string, taskId: string): Promise<Locator> {
