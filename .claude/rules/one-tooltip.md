@@ -21,7 +21,10 @@ the trigger as an `aria-description`.
   value, so every tooltip in the app has one look. A native tip is square and OS-styled beside the
   rounded Tooltip, and a user sees the two side by side. There is no opt-out marker.
 - **A tip never names its trigger.** An icon-only control carries its own `aria-label`, and the tip
-  only describes it. A label that repeats the name is not read twice.
+  only describes it. A label that repeats the name is not read twice. The exception is a
+  `SegmentedControl` option's `tip`, which names the option on purpose. Once a collapse step leaves
+  the option an icon, as the board toolbar's view switcher does, the tip is the only visible label
+  it has.
 - **An optional tip passes straight through.** An empty label holds the tip shut, so
   `label={tip ?? ''}` needs no `enabled`. `enabled={false}` is for a tip with text that must stay
   shut, such as a trigger whose menu is open. A disabled control shows why with `tipLabel`
