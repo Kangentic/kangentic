@@ -194,9 +194,9 @@ export const IPC = {
   // src/main/config/write-failure-notice.ts, so this fires at most once until a
   // later write to that same source succeeds.
   // Main window only (sendToRenderer, not broadcast), unlike CONFIG_CHANGED
-  // above: ToastContainer is mounted in AppLayout alone, so a pop-out window has
-  // no toast host to deliver this to. Register it in POP_OUT_SURFACES only if a
-  // pop-out ever gets one.
+  // above. Pop-out windows show toasts too now, but this reports one app-wide
+  // condition once, and a broadcast would raise the same toast in every open
+  // window. Keep it off POP_OUT_SURFACES for that reason.
   CONFIG_WRITE_FAILED: 'config:writeFailed',
 
   // Keybindings
@@ -564,16 +564,16 @@ export const IPC = {
   // there for the app's lifetime (`notifyReadOnlyVolume` in src/main/updater.ts),
   // so a condition every 4-hour check rediscovers still toasts once.
   // Main window only (the updater's own window reference, not broadcast), for
-  // the reason CONFIG_WRITE_FAILED gives above: ToastContainer is mounted in
-  // AppLayout alone, so a pop-out window has no toast host to deliver this to.
+  // the reason CONFIG_WRITE_FAILED gives above: one app-wide condition, toasted
+  // once, not once per open window.
   // Every OTHER updater failure stays silent by design - see the error handler.
   UPDATE_BLOCKED: 'updater:blocked',
 
   // Leftover processes (src/main/pty/process-tag/; the toast and list in the
   // renderer's leftover-processes store). REPORT is a push: what a terminal
   // transition stopped, could not stop, and left running, one report per burst
-  // (a bulk delete is one). Main window only, like CONFIG_WRITE_FAILED: the
-  // toast host lives in AppLayout. STOP is an invoke naming one reported
+  // (a bulk delete is one). Main window only, like CONFIG_WRITE_FAILED: its
+  // toast and list live in the main window. STOP is an invoke naming one reported
   // process by its report id; main never stops a pid it did not report.
   // STOP_SETTLED is a push: the real outcome of a Stop that STOP answered
   // `failed` because main stopped waiting for the pty host, which finished it.

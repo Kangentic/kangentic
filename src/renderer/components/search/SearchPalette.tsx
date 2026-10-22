@@ -8,6 +8,7 @@ import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useToastStore } from '../../stores/toast-store';
 import { formatRelativeTime } from '../../lib/datetime';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
+import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { Tooltip } from '../Tooltip';
 import type { SearchHit, SearchHitKind } from '../../../shared/types';
@@ -42,6 +43,8 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
     onClose,
     { variant: 'command-bar', skipEnterOnHmr: true },
   );
+  // While the palette is open no toast takes a click (ToastContainer).
+  useRegisterOpenOverlay();
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [scope, setScope] = useState<Scope>('current');

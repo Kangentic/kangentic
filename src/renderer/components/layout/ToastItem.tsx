@@ -1,33 +1,49 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Copy, Check } from 'lucide-react';
-import type { Toast } from '../../stores/toast-store';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { X, Copy, Check, List, Settings, RotateCw, Download } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { countdownRemaining, type Toast, type ToastActionIcon } from '../../stores/toast-store';
 import { useNow } from '../../hooks/useNow';
 import { formatTimeAgo } from '../../lib/datetime';
+import { motionReduced } from '../../utils/motion-reduced';
 import { Tooltip } from '../Tooltip';
 
 /** How often a toast's age re-reads the clock; it shows whole minutes. */
 const AGE_TICK_MS = 30_000;
 
+/** The card's fixed width, so a stack lines up on both edges whatever it says. */
+const TOAST_WIDTH_PX = 380;
+
 /**
- * "37 minutes ago" for a toast's `since`, kept current while it is up. No
- * hover title: the card is inert (see the root below), so one would never show.
+ * "2 min ago" for a toast's `since`, kept current while it is up, as a muted
+ * outlined pill after the title.
  */
 function ToastAge({ since }: { since: string }) {
   const now = useNow(AGE_TICK_MS);
   const age = formatTimeAgo(since, now);
   if (!age) return null;
   return (
-    <span data-testid="toast-age" className="ml-1 whitespace-nowrap text-xs text-fg-muted">
+    <span
+      data-testid="toast-age"
+      className="flex-shrink-0 whitespace-nowrap rounded-full border border-edge px-[7px] text-[11px] leading-4 text-fg-muted"
+    >
       {age}
     </span>
   );
 }
 
-const variantStyles: Record<Toast['variant'], { border: string; accent: string }> = {
-  info: { border: 'border-accent/50', accent: 'bg-accent' },
-  success: { border: 'border-green-500/50', accent: 'bg-green-500' },
-  warning: { border: 'border-yellow-500/50', accent: 'bg-yellow-500' },
-  error: { border: 'border-red-500/50', accent: 'bg-red-500' },
+/** The border tint, and the countdown line's track and fill, per variant. */
+const variantStyles: Record<Toast['variant'], { border: string; track: string; fill: string }> = {
+  info: { border: 'border-accent/50', track: 'bg-accent/20', fill: 'bg-accent' },
+  success: { border: 'border-green-500/50', track: 'bg-green-500/20', fill: 'bg-green-500' },
+  warning: { border: 'border-yellow-500/50', track: 'bg-yellow-500/20', fill: 'bg-yellow-500' },
+  error: { border: 'border-red-500/50', track: 'bg-red-500/20', fill: 'bg-red-500' },
+};
+
+const ACTION_ICONS: Record<ToastActionIcon, LucideIcon> = {
+  review: List,
+  settings: Settings,
+  retry: RotateCw,
+  update: Download,
 };
 
 /**
@@ -49,16 +65,68 @@ const EXIT_FALLBACK_MS = 1000;
 /** How long the copy button reads as "copied" before reverting. */
 const COPY_FEEDBACK_MS = 1500;
 
+/** One step a second with Animations off, so the line still says how long is left without moving smoothly. */
+const REDUCED_MOTION_STEP_MS = 1000;
+
+/**
+ * The 2px line along a timed toast's bottom edge, filling as its countdown
+ * runs. One Web Animation spans the whole countdown and is played and paused
+ * with it, so a held toast's line stops exactly where it is and carries on
+ * from there. A CSS keyframe could not be the clock: `.no-motion` zeroes every
+ * animation's duration, and `animationend` is not reliable on a hidden page.
+ * The dismissal is the JS timer in `ToastItem`; this only draws it.
+ */
+function CountdownLine({ toast }: { toast: Toast }) {
+  const fillRef = useRef<HTMLDivElement>(null);
+  const animationRef = useRef<Animation | null>(null);
+  const styles = variantStyles[toast.variant];
+
+  useLayoutEffect(() => {
+    const fill = fillRef.current;
+    if (!fill || typeof fill.animate !== 'function' || toast.durationMs <= 0) return;
+    const steps = Math.max(1, Math.ceil(toast.durationMs / REDUCED_MOTION_STEP_MS));
+    const animation = fill.animate(
+      [{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }],
+      {
+        duration: toast.durationMs,
+        easing: motionReduced() ? `steps(${steps}, end)` : 'linear',
+        fill: 'forwards',
+      },
+    );
+    animation.pause();
+    animationRef.current = animation;
+    return () => {
+      animation.cancel();
+      animationRef.current = null;
+    };
+  }, [toast.durationMs]);
+
+  useLayoutEffect(() => {
+    const animation = animationRef.current;
+    if (!animation) return;
+    animation.currentTime = toast.durationMs - countdownRemaining(toast, Date.now());
+    if (toast.runningSince === null) animation.pause();
+    else animation.play();
+  }, [toast]);
+
+  return (
+    <div className={`absolute inset-x-0 bottom-0 h-0.5 ${styles.track}`} data-testid="toast-countdown">
+      <div ref={fillRef} className={`h-full w-full origin-left ${styles.fill}`} style={{ transform: 'scaleX(0)' }} />
+    </div>
+  );
+}
+
 interface ToastItemProps {
   toast: Toast;
   onDismiss: (id: string) => void;
+  /** False while a dialog or the settings panel is open: nothing on the card takes a click. */
+  interactive: boolean;
 }
 
-export function ToastItem({ toast, onDismiss }: ToastItemProps) {
+export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
 
   // Enter animation: mount hidden, then transition to visible
   useEffect(() => {
@@ -66,12 +134,14 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
     return () => cancelAnimationFrame(frame);
   }, []);
 
-  // Auto-dismiss timer
+  // The countdown's dismissal. Re-armed whenever it starts or stops, so a
+  // held toast never closes under the pointer and a released one closes when
+  // what was left of it runs out.
   useEffect(() => {
-    if (toast.duration <= 0) return;
-    const timer = setTimeout(() => setExiting(true), toast.duration);
+    if (toast.persistent || toast.runningSince === null) return;
+    const timer = setTimeout(() => setExiting(true), countdownRemaining(toast, Date.now()));
     return () => clearTimeout(timer);
-  }, [toast.duration]);
+  }, [toast]);
 
   // Remove from store after exit transition completes
   const handleTransitionEnd = useCallback(() => {
@@ -91,19 +161,28 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
     setExiting(true);
   }, []);
 
+  // A click anywhere on a card that opens something opens it, then closes the
+  // toast. The card's own buttons keep their clicks.
+  const handleCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!toast.onOpen) return;
+    if (event.target instanceof Element && event.target.closest('button')) return;
+    toast.onOpen();
+    setExiting(true);
+  }, [toast]);
+
   // Errors are the toasts people copy: a git or spawn failure arrives here as
-  // the only copy of its own message. The card is inert so the text cannot be
-  // selected (see the comment on the root below), which is the cost this button
-  // buys back. Scoped to `error` rather than added to every toast, because
-  // nobody copies "Saved 1 column" and a button on all four variants is noise.
+  // the only copy of its own message. The card's text cannot be selected
+  // (see the root below), which is the cost this button buys back. Scoped to
+  // `error`, because nobody copies "Saved 1 column".
+  const copyText = toast.title ? `${toast.title}\n${toast.message}` : toast.message;
   const handleCopyClick = useCallback(() => {
-    navigator.clipboard.writeText(toast.message).then(
+    navigator.clipboard.writeText(copyText).then(
       () => setCopied(true),
       // A clipboard write can be refused (no permission, no secure context).
       // Leaving the icon un-flipped is the honest signal; a fake check is worse.
       () => {},
     );
-  }, [toast.message]);
+  }, [copyText]);
 
   useEffect(() => {
     if (!copied) return;
@@ -111,92 +190,100 @@ export function ToastItem({ toast, onDismiss }: ToastItemProps) {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  const opens = toast.onOpen !== undefined && interactive;
+  // Only the card's own controls opt back in, and only while no dialog is open.
+  const controlPointer = interactive ? 'pointer-events-auto' : 'pointer-events-none';
+  const ActionIcon = toast.action?.icon ? ACTION_ICONS[toast.action.icon] : null;
+  const styles = variantStyles[toast.variant];
+
   return (
-    // The CARD is inert, and only the two buttons below opt back in. Do not put
-    // `pointer-events-auto` back here. ToastContainer is `z-[60]`, above
-    // BaseDialog's `z-50`, and it sits bottom-right - exactly where a centred
-    // dialog's footer, the terminal panel, and the board all put live controls.
-    // An interactive card physically covers them and swallows the click, and
-    // since the card body has no onClick the click does nothing at all: not even
-    // dismiss the toast. That shipped as "Save in the Column Manager does
-    // nothing while agents are running".
+    // A card that opens nothing is inert, and only its buttons opt back in. Do
+    // not put `pointer-events-auto` on such a card. ToastContainer is `z-[60]`,
+    // above BaseDialog's `z-50`, and it sits bottom-right - exactly where a
+    // centred dialog's footer, the terminal panel, and the board all put live
+    // controls. A card that took clicks there with nothing to do on them
+    // swallowed them: that shipped as "Save in the Column Manager does nothing
+    // while agents are running".
     //
-    // Viewport-none / card-auto is what Radix, sonner and react-hot-toast do,
-    // but they assume the toast corner is dead space. Here it is not, so the
-    // boundary is drawn one level lower. The cost is that the message is no
-    // longer selectable; keeping the span hit-testable would reintroduce the
-    // bug, since the span is most of the card's area. The copy button on error
-    // toasts is what buys that back, which is why it is a button rather than a
-    // relaxed `pointer-events` rule on the text.
+    // A card that opens something (a task, a list, a workflow, a folder) does
+    // take its clicks, because a click on it now does something. While a dialog
+    // or the settings panel is open, no card and no button takes a click (the
+    // container is `inert` then, see ToastContainer), which is the case that bug
+    // came from. A held countdown comes from the container tracking the pointer,
+    // never from the card taking it, so a click-through card still holds.
     //
-    // `pointer-events-none` is set explicitly rather than inherited from the
-    // container, so a ToastItem rendered anywhere else is still inert. An
-    // exiting toast is `opacity-0` for the whole transition and would otherwise
-    // keep eating clicks while invisible.
+    // An exiting toast is `opacity-0` for the whole transition, and an inert
+    // card keeps it from eating clicks while invisible.
     <div
-      ref={ref}
       data-testid="toast"
+      data-toast-id={toast.id}
+      data-variant={toast.variant}
+      data-persistent={toast.persistent ? 'true' : 'false'}
       onTransitionEnd={handleTransitionEnd}
-      className={`pointer-events-none flex items-stretch overflow-hidden rounded-md border
-        bg-surface shadow-xl shadow-black/40 text-sm
-        max-w-[min(34rem,calc(100vw-1.5rem))]
-        transition-all duration-[var(--toast-duration)] ease-out
-        ${variantStyles[toast.variant].border}
+      onClick={opens ? handleCardClick : undefined}
+      style={{ width: TOAST_WIDTH_PX }}
+      className={`relative max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-md border bg-surface text-sm
+        shadow-xl shadow-black/40 transition-all duration-[var(--toast-duration)] ease-out
+        ${styles.border}
+        ${opens ? 'pointer-events-auto cursor-pointer select-none hover:bg-surface-raised hover:shadow-2xl' : 'pointer-events-none'}
         ${visible && !exiting ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'}
       `}
     >
-      <div className={`w-1 flex-shrink-0 ${variantStyles[toast.variant].accent}`} />
-      {/* items-start, not items-center: a wrapped multi-line message must keep
-          the dismiss button on the first line rather than floating it mid-block. */}
-      <div className="flex items-start gap-2 px-3 py-2 min-w-0">
-        {/* Without the width cap above (and min-w-0 here) a long message grows the
-            toast leftward to the viewport edge and then truncates - a git failure
-            reached ~1800px on a wide monitor and still lost its tail. */}
-        {/* The action lives INSIDE the message's inline flow, not beside it as
-            a flex sibling. As a sibling under `items-start` it pinned to the
-            top right, which on a message that wraps to three lines left it
-            floating beside the first line, visually detached from the sentence
-            it belongs to. Inline, it trails the last line. A one-line toast is
-            unaffected: the card is content-width, so the button already sat
-            immediately after the text. */}
-        <span className="text-fg-secondary min-w-0 break-words">
-          {toast.message}
-          {toast.action && (
-            <>
-              {' '}
-              <button
-                onClick={toast.action.onClick}
-                className="pointer-events-auto text-accent-fg underline underline-offset-2 hover:opacity-80"
-              >
-                {toast.action.label}
-              </button>
-            </>
+      <div className="flex min-w-0 flex-col gap-1 pb-3 pl-3.5 pr-2.5 pt-2.5">
+        <div className="flex min-w-0 items-center gap-2">
+          {toast.title ? (
+            <span className="min-w-0 truncate text-sm font-semibold text-fg" data-testid="toast-title">{toast.title}</span>
+          ) : (
+            // The one-line form, until every call site carries a title.
+            <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-secondary" data-testid="toast-body">{toast.message}</span>
           )}
-          {toast.since && <>{' '}<ToastAge since={toast.since} /></>}
-        </span>
-
-        {toast.variant === 'error' && (
-          <Tooltip label={copied ? 'Message copied' : 'Copy message'}>
-            <button
-              onClick={handleCopyClick}
-              data-testid="toast-copy"
-              aria-label={copied ? 'Message copied' : 'Copy message'}
-              className="pointer-events-auto ml-1 p-0.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
-            >
-              {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-            </button>
-          </Tooltip>
+          {toast.since && <ToastAge since={toast.since} />}
+          <span className="flex-1" />
+          {toast.variant === 'error' && (
+            <Tooltip label={copied ? 'Message copied' : 'Copy message'}>
+              <button
+                type="button"
+                onClick={handleCopyClick}
+                data-testid="toast-copy"
+                aria-label={copied ? 'Message copied' : 'Copy message'}
+                className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
+              >
+                {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+              </button>
+            </Tooltip>
+          )}
+          <button
+            type="button"
+            onClick={handleDismissClick}
+            data-testid="toast-dismiss"
+            aria-label="Dismiss"
+            className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        {toast.title && (
+          // A body breaks only where it has to: copy is one sentence on one
+          // line, and only a task or file name is long enough to wrap.
+          <span className="min-w-0 break-words text-[13px] leading-[19px] text-fg-muted" data-testid="toast-body">
+            {toast.message}
+          </span>
         )}
-
-        <button
-          onClick={handleDismissClick}
-          data-testid="toast-dismiss"
-          aria-label="Dismiss"
-          className="pointer-events-auto ml-1 p-0.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
-        >
-          <X size={14} />
-        </button>
+        {toast.action && (
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={toast.action.onClick}
+              data-testid="toast-action"
+              className={`${controlPointer} inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-[5px] border border-edge-input bg-surface-hover/45 px-2.5 text-xs text-fg-secondary transition-colors hover:bg-surface-hover`}
+            >
+              {ActionIcon ? <ActionIcon size={13} aria-hidden="true" /> : null}
+              {toast.action.label}
+            </button>
+          </div>
+        )}
       </div>
+      {!toast.persistent && <CountdownLine toast={toast} />}
     </div>
   );
 }

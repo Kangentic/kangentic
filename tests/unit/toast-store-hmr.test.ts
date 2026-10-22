@@ -52,11 +52,25 @@ vi.mock('../../src/renderer/stores/config-store', () => ({
 }));
 
 // Import under test AFTER mocks are set up.
-import { useToastStore, withinToastLimit } from '../../src/renderer/stores/toast-store';
+import { countdownRemaining, useToastStore, withinToastLimit } from '../../src/renderer/stores/toast-store';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** A stored toast, timed (4s) or persistent. */
+function makeToast(id: string, persistent: boolean): Toast {
+  return {
+    id,
+    title: id,
+    message: id,
+    variant: 'info',
+    persistent,
+    durationMs: persistent ? 0 : 4000,
+    remainingMs: persistent ? 0 : 4000,
+    runningSince: persistent ? null : 0,
+  };
+}
 
 /** Reset the store to empty toasts between tests without re-importing the module. */
 function clearToasts(): void {
@@ -100,16 +114,85 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('addToast uses duration from config (durationSeconds * 1000)', () => {
-    useToastStore.getState().addToast({ message: 'Timed' });
+    useToastStore.getState().addToast({ title: 'Timed', message: 'Body' });
     const { toasts } = useToastStore.getState();
     // durationSeconds: 4 from the config mock -> 4000ms
-    expect(toasts[0].duration).toBe(4000);
+    expect(toasts[0].durationMs).toBe(4000);
+    expect(toasts[0].remainingMs).toBe(4000);
+    expect(toasts[0].persistent).toBe(false);
+    expect(toasts[0].runningSince).not.toBeNull();
   });
 
   it('addToast respects an explicit duration override', () => {
-    useToastStore.getState().addToast({ message: 'Custom', duration: 8000 });
+    useToastStore.getState().addToast({ title: 'Custom', message: 'Body', durationMs: 8000 });
     const { toasts } = useToastStore.getState();
-    expect(toasts[0].duration).toBe(8000);
+    expect(toasts[0].durationMs).toBe(8000);
+  });
+
+  it('a persistent toast has no countdown', () => {
+    useToastStore.getState().addToast({ title: 'Stays', message: 'Body', persistent: true });
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.persistent).toBe(true);
+    expect(toast.durationMs).toBe(0);
+    expect(toast.runningSince).toBeNull();
+  });
+
+  it('reads the one-line form\'s duration 0 as persistent', () => {
+    useToastStore.getState().addToast({ message: 'Waiting', duration: 0 });
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.persistent).toBe(true);
+    expect(toast.title).toBeNull();
+  });
+
+  it('updateToast changes the words in place and keeps the toast\'s spot and countdown', () => {
+    const firstId = useToastStore.getState().addToast({ title: 'Idle agent paused', message: 'Kangentic paused it to free memory.', persistent: true });
+    const secondId = useToastStore.getState().addToast({ title: 'Other', message: 'Body' });
+    const before = useToastStore.getState().toasts.find((toast) => toast.id === secondId);
+
+    useToastStore.getState().updateToast(firstId, { title: '2 idle agents paused', message: 'Kangentic paused them to free memory.' });
+
+    const { toasts } = useToastStore.getState();
+    expect(toasts.map((toast) => toast.id)).toEqual([firstId, secondId]);
+    expect(toasts[0].title).toBe('2 idle agents paused');
+    expect(toasts[0].message).toBe('Kangentic paused them to free memory.');
+    expect(toasts[0].persistent).toBe(true);
+    expect(toasts[1]).toBe(before);
+  });
+
+  it('updateToast is a no-op for an unknown id and keeps the same stack', () => {
+    useToastStore.getState().addToast({ title: 'A', message: 'Body' });
+    const stack = useToastStore.getState().toasts;
+    useToastStore.getState().updateToast('does-not-exist', { title: 'B' });
+    expect(useToastStore.getState().toasts).toBe(stack);
+  });
+
+  it('holding a countdown stops it where it is, and releasing starts it again from there', () => {
+    const id = useToastStore.getState().addToast({ title: 'Timed', message: 'Body', durationMs: 10_000 });
+    const raisedAt = useToastStore.getState().toasts[0].runningSince ?? 0;
+
+    useToastStore.getState().holdCountdown(id, raisedAt + 3_000);
+    const held = useToastStore.getState().toasts[0];
+    expect(held.runningSince).toBeNull();
+    expect(held.remainingMs).toBe(7_000);
+    // Held: no time passes for it.
+    expect(countdownRemaining(held, raisedAt + 60_000)).toBe(7_000);
+
+    useToastStore.getState().releaseCountdown(id, raisedAt + 60_000);
+    const released = useToastStore.getState().toasts[0];
+    expect(released.runningSince).toBe(raisedAt + 60_000);
+    expect(countdownRemaining(released, raisedAt + 62_000)).toBe(5_000);
+  });
+
+  it('never holds or releases a persistent toast', () => {
+    const id = useToastStore.getState().addToast({ title: 'Stays', message: 'Body', persistent: true });
+    const stack = useToastStore.getState().toasts;
+    useToastStore.getState().holdCountdown(id, Date.now());
+    useToastStore.getState().releaseCountdown(id, Date.now());
+    expect(useToastStore.getState().toasts).toBe(stack);
+  });
+
+  it('countdownRemaining never goes below zero', () => {
+    expect(countdownRemaining({ remainingMs: 1_000, runningSince: 0 }, 5_000)).toBe(0);
   });
 
   it('dismissToast removes the targeted toast and leaves others intact', () => {
@@ -161,9 +244,9 @@ describe('toast-store HMR preservation', () => {
   });
 
   it('withinToastLimit keeps exactly the newest toast when maxCount is 0, waiting toasts included', () => {
-    const closesOnItsOwn: Toast = { id: 'routine', message: 'Routine', variant: 'info', duration: 4000 };
-    const waitingForUser: Toast = { id: 'waiting', message: 'Waiting', variant: 'info', duration: 0 };
-    const newest: Toast = { id: 'newest', message: 'Newest', variant: 'info', duration: 4000 };
+    const closesOnItsOwn = makeToast('routine', false);
+    const waitingForUser = makeToast('waiting', true);
+    const newest = makeToast('newest', false);
     // The newest toast is never a drop candidate (only the toasts before it are),
     // so even a limit of 0 leaves exactly one toast showing.
     expect(withinToastLimit([closesOnItsOwn, waitingForUser, newest], 0)).toEqual([newest]);
@@ -173,7 +256,7 @@ describe('toast-store HMR preservation', () => {
   it('withinToastLimit hands back the same stack when maxCount is 0 and only one toast is showing', () => {
     // The clamp to 1 is what makes a single toast "within the limit" at
     // maxCount 0, so it returns the input untouched instead of a filtered copy.
-    const onlyToast: Toast = { id: 'only', message: 'Only', variant: 'info', duration: 4000 };
+    const onlyToast = makeToast('only', false);
     const stack = [onlyToast];
     expect(withinToastLimit(stack, 0)).toBe(stack);
   });

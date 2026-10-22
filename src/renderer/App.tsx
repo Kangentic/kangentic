@@ -29,6 +29,7 @@ import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { resolveIdleToast } from './utils/idle-toast';
+import { openTaskFromNotification } from './utils/open-task-from-notification';
 import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
@@ -364,38 +365,9 @@ export function App() {
       window.electronAPI.window.flashFrame(true);
     }
 
-    /**
-     * Open a task's detail because the user acted on a notification about it -
-     * an OS notification click, or the Open action on an idle toast. Both mean
-     * the same thing, so they share one path.
-     *
-     * The current project is re-read here rather than captured by the caller: a
-     * toast stays up for `durationSeconds`, and the user can switch projects
-     * before clicking it.
-     */
-    function openTaskFromNotification(notifyProjectId: string, notifyTaskId: string) {
-      // The Command Terminal layer is top-layered over the board, so opening a
-      // task detail underneath it leaves the user looking at a terminal they did
-      // not ask for. A cross-project click closes the layer anyway (close-on-
-      // project-switch); this covers the same-project case. Every PTY stays alive.
-      //
-      // The toast caller can hit this while the user is PRESENT and typing in a
-      // Command Terminal, which the OS-click caller cannot. Hiding it anyway is
-      // deliberate: clicking Open names a task, and a detail window opening
-      // behind the layer is the worse outcome. The layer reopens on Ctrl+Shift+P
-      // with every terminal reattached.
-      useSessionStore.getState().requestHideCommandBar();
-      // agent-focus-ok: acting on a notification is the user asking for this task,
-      // so the detail it opens SHOULD take focus. The OS-click path arrives over an
-      // IPC push like the agent's does, which is why the origin is stated here
-      // rather than inferred. See .claude/rules/agent-driven-focus.md.
-      if (useProjectStore.getState().currentProject?.id === notifyProjectId) {
-        useSessionStore.getState().setDetailTaskId(notifyTaskId);
-      } else {
-        useSessionStore.getState().setPendingOpenTaskId(notifyTaskId);
-        useProjectStore.getState().openProject(notifyProjectId);
-      }
-    }
+    // agent-focus-ok: the two pushes below that open a task (an OS notification
+    // click, and an idle toast's click) do it because the user clicked it, so
+    // the detail SHOULD take focus. openTaskFromNotification says so too.
 
     // Spawn-stall watcher: when a task sits in a "preparing" spawn-progress
     // state (worktree creation / git fetch / queue wait) past the threshold,

@@ -6,6 +6,10 @@ import { PopOutWindowFrame } from './PopOutWindowFrame';
 import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
 import './surfaces';
+import { ToastContainer } from '../components/layout/ToastContainer';
+
+/** A pop-out has no status bar, so its toasts sit this far above the bottom edge. */
+const POP_OUT_TOAST_BOTTOM_OFFSET_PX = 12;
 
 /** Mounted by index.tsx in place of <App/> when this renderer is a pop-out window
  *  (a URL hash / additionalArguments descriptor is present). Runs the surface's
@@ -43,6 +47,10 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
       >
         <surface.Root params={descriptor.params} />
       </PopOutWindowFrame>
+      {/* A pop-out raises toasts too (a task window opened from the detached
+          monitor, the detached Knowledge Graph), and before this nothing here
+          rendered them. No status bar, so the stack sits nearer the edge. */}
+      <ToastContainer bottomOffsetPx={POP_OUT_TOAST_BOTTOM_OFFSET_PX} />
     </ErrorBoundary>
   );
 }

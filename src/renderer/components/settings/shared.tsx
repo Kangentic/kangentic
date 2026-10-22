@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
+import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
@@ -64,6 +65,8 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
   const backdropMouseDown = useRef(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  // While the settings panel is open no toast takes a click (ToastContainer).
+  useRegisterOpenOverlay();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

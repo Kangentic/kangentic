@@ -39,8 +39,13 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
  * file deliberately does NOT take the opt-out read as the opt-out.
  */
 const MARKER = 'agent-focus-ok';
-/** Opening or re-pointing a task detail. Both end in a window that can host a terminal. */
-const OPENS_A_WINDOW = /\b(openWindow|setDetailTaskId)\s*\(/;
+/**
+ * Opening or re-pointing a task detail. Both end in a window that can host a
+ * terminal. `openTaskFromNotification` is the shared helper that calls
+ * `setDetailTaskId` for a notification or toast click, so a file that calls it
+ * opens a window just as surely as one that calls the store directly.
+ */
+const OPENS_A_WINDOW = /\b(openWindow|setDetailTaskId|openTaskFromNotification)\s*\(/;
 /** Threading the origin through, in either of its two spellings. */
 const DECLARES_ORIGIN = /\b(agentInitiated|openedByAgent)\b/;
 /**

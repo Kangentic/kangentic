@@ -3,37 +3,110 @@ import { useConfigStore } from './config-store';
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
+/** The icon on a persistent toast's button, one per kind of action. */
+export type ToastActionIcon = 'review' | 'settings' | 'retry' | 'update';
+
 export interface ToastAction {
   label: string;
+  icon?: ToastActionIcon;
   onClick: () => void;
 }
 
+/**
+ * A toast in the stack. Every toast has a title (what happened, in a few
+ * words) and a body (`message`: the task, the place or the detail). A timed
+ * toast closes on its own once its countdown runs out, and the countdown
+ * holds while the pointer is over it. A persistent toast stays until closed,
+ * and only a persistent toast carries a button: a timed one could leave while
+ * the user reaches for it.
+ *
+ * The countdown lives here rather than in the component so a Fast Refresh
+ * does not restart it (see the HMR stash at the bottom).
+ */
 export interface Toast {
   id: string;
+  /** Null only for a call site still on the one-line form. */
+  title: string | null;
   message: string;
   variant: ToastVariant;
-  duration: number;
+  persistent: boolean;
+  /** A timed toast's whole countdown in ms; 0 for a persistent toast. */
+  durationMs: number;
+  /** The countdown left when it last stopped running, or when it was raised. */
+  remainingMs: number;
+  /** When the countdown last started running (epoch ms). Null while held, and for a persistent toast. */
+  runningSince: number | null;
   action?: ToastAction;
-  /**
-   * When what the toast reports happened (UTC ISO 8601). Shown as its age
-   * ("37 minutes ago") after the message, ticking while the toast is up, so
-   * a toast that waits to be closed does not read as current later.
-   */
+  /** A click on the card opens what the toast is about (a task, a list, a workflow, a folder). */
+  onOpen?: () => void;
+  /** When what the toast reports happened (UTC ISO 8601), shown as its age. */
   since?: string;
 }
 
-export interface ToastInput {
+interface ToastFields {
+  title?: string;
   message: string;
   variant?: ToastVariant;
+  since?: string;
+  onOpen?: () => void;
+}
+
+/** A toast that closes on its own after `durationMs` (the Notifications setting by default). */
+export interface TimedToastInput extends ToastFields {
+  persistent?: false;
+  durationMs?: number;
+  /** The one-line form's countdown: 0 or less meant "stays until closed". */
   duration?: number;
   action?: ToastAction;
-  since?: string;
 }
+
+/** A toast that stays until closed. The only kind that carries a button. */
+export interface PersistentToastInput extends ToastFields {
+  persistent: true;
+  action?: ToastAction;
+}
+
+export type ToastInput = TimedToastInput | PersistentToastInput;
+
+/** What `updateToast` may change in place: the words, the age, the button. */
+export type ToastPatch = Partial<Pick<Toast, 'title' | 'message' | 'variant' | 'since' | 'action' | 'onOpen'>>;
 
 interface ToastStore {
   toasts: Toast[];
   addToast: (input: ToastInput) => string;
+  /** Change a toast in place, keeping its spot in the stack and its countdown. */
+  updateToast: (id: string, patch: ToastPatch) => void;
   dismissToast: (id: string) => void;
+  /** Stop a timed toast's countdown (the pointer is over it). */
+  holdCountdown: (id: string, now: number) => void;
+  /** Start a held countdown again from where it stopped. */
+  releaseCountdown: (id: string, now: number) => void;
+}
+
+/** The countdown a toast has left at `now`. */
+export function countdownRemaining(toast: Pick<Toast, 'remainingMs' | 'runningSince'>, now: number): number {
+  if (toast.runningSince === null) return toast.remainingMs;
+  return Math.max(0, toast.remainingMs - (now - toast.runningSince));
+}
+
+/** Build a stored toast from what a caller passed. */
+export function resolveToast(input: ToastInput, id: string, defaultDurationMs: number, now: number): Toast {
+  const timedInput = input.persistent === true ? null : input;
+  const persistent = input.persistent === true || (timedInput?.duration !== undefined && timedInput.duration <= 0);
+  const durationMs = persistent ? 0 : (timedInput?.durationMs ?? timedInput?.duration ?? defaultDurationMs);
+  return {
+    id,
+    title: input.title ?? null,
+    message: input.message,
+    variant: input.variant ?? 'info',
+    persistent,
+    durationMs,
+    remainingMs: durationMs,
+    runningSince: persistent ? null : now,
+    action: input.action,
+    onOpen: input.onOpen,
+    since: input.since,
+  };
 }
 
 /** Preserve visible toasts across Vite HMR cycles so a Fast Refresh during
@@ -44,12 +117,11 @@ interface ToastStore {
 const initialToasts: Toast[] = import.meta.hot?.data?.toasts ?? [];
 
 /**
- * Hold the stack to `maxCount`, dropping the oldest toasts that close on their
- * own first. A toast that stays until closed (`duration <= 0`) is waiting for
- * the user, and its action can be the only way to what it reports (the
- * leftover-process Review list), so routine toasts never push it out. Only
- * when the waiting toasts alone overflow the limit do the oldest of them go.
- * The newest toast always shows.
+ * Hold the stack to `maxCount`, dropping the oldest timed toasts first. A
+ * persistent toast is waiting for the user, and its button can be the only
+ * way to what it reports (the leftover-process Review list), so routine
+ * toasts never push it out. Only when the persistent toasts alone overflow
+ * the limit do the oldest of them go. The newest toast always shows.
  */
 export function withinToastLimit(toasts: Toast[], maxCount: number): Toast[] {
   let excess = toasts.length - Math.max(maxCount, 1);
@@ -59,7 +131,7 @@ export function withinToastLimit(toasts: Toast[], maxCount: number): Toast[] {
   for (const closesOnItsOwn of [true, false]) {
     for (const toast of olderToasts) {
       if (excess === 0) break;
-      if ((toast.duration > 0) === closesOnItsOwn) {
+      if (!toast.persistent === closesOnItsOwn) {
         dropped.add(toast.id);
         excess -= 1;
       }
@@ -68,31 +140,53 @@ export function withinToastLimit(toasts: Toast[], maxCount: number): Toast[] {
   return toasts.filter((toast) => !dropped.has(toast.id));
 }
 
+function mapToast(toasts: Toast[], id: string, change: (toast: Toast) => Toast): Toast[] {
+  let changed = false;
+  const next = toasts.map((toast) => {
+    if (toast.id !== id) return toast;
+    const updated = change(toast);
+    if (updated !== toast) changed = true;
+    return updated;
+  });
+  return changed ? next : toasts;
+}
+
 export const useToastStore = create<ToastStore>((set) => ({
   toasts: initialToasts,
 
   addToast: (input) => {
     const id = crypto.randomUUID();
     const toastConfig = useConfigStore.getState().config.notifications.toasts;
-    const defaultDuration = toastConfig.durationSeconds * 1000;
-    const maxCount = toastConfig.maxCount;
-    const toast: Toast = {
-      id,
-      message: input.message,
-      variant: input.variant ?? 'info',
-      duration: input.duration ?? defaultDuration,
-      action: input.action,
-      since: input.since,
-    };
-    set((s) => ({
-      toasts: withinToastLimit([...s.toasts, toast], maxCount),
+    const toast = resolveToast(input, id, toastConfig.durationSeconds * 1000, Date.now());
+    set((state) => ({
+      toasts: withinToastLimit([...state.toasts, toast], toastConfig.maxCount),
     }));
     return id;
   },
 
+  updateToast: (id, patch) => {
+    set((state) => ({ toasts: mapToast(state.toasts, id, (toast) => ({ ...toast, ...patch })) }));
+  },
+
   dismissToast: (id) => {
-    set((s) => ({
-      toasts: s.toasts.filter((t) => t.id !== id),
+    set((state) => ({
+      toasts: state.toasts.filter((toast) => toast.id !== id),
+    }));
+  },
+
+  holdCountdown: (id, now) => {
+    set((state) => ({
+      toasts: mapToast(state.toasts, id, (toast) => (toast.persistent || toast.runningSince === null
+        ? toast
+        : { ...toast, remainingMs: countdownRemaining(toast, now), runningSince: null })),
+    }));
+  },
+
+  releaseCountdown: (id, now) => {
+    set((state) => ({
+      toasts: mapToast(state.toasts, id, (toast) => (toast.persistent || toast.runningSince !== null
+        ? toast
+        : { ...toast, runningSince: now })),
     }));
   },
 }));

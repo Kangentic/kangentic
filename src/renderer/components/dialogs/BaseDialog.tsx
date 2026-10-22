@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
+import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { Tooltip } from '../Tooltip';
 import { MaximizeOnDoubleClick } from './MaximizeOnDoubleClick';
 
@@ -143,6 +144,9 @@ export function BaseDialog({
     contentClassName: contentAnimClass,
     onAnimationEnd,
   } = useOverlayPhase(onClose, { variant: 'dialog' });
+  // While any dialog is open no toast takes a click: the toast stack sits over
+  // a centred dialog's footer (ToastContainer).
+  useRegisterOpenOverlay();
 
   const contentRef = useRef<HTMLDivElement>(null);
 
