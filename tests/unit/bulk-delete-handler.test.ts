@@ -65,7 +65,6 @@ vi.mock('p-queue', () => ({
 // simple-git: not exercised by the bulk-delete handler path
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({})),
-  default: vi.fn(() => ({})),
 }));
 
 // DB layer: not exercised by bulk-delete handler (getProjectRepos is mocked below)

@@ -151,7 +151,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
-vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
+vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 
 // registerAllIpc calls retrievalService.attach(context) directly at startup
 // (so the central embedding engine's drain loop is alive from boot, not just

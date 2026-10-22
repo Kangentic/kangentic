@@ -48,7 +48,7 @@ vi.mock('../../src/main/db/repositories/project-repository', () => ({
 vi.mock('node:fs', () => ({ existsSync: vi.fn(() => true) }));
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 const PROJECT_PATH = '/mock/repo';

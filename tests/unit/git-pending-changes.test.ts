@@ -16,7 +16,7 @@ const mockGit = {
 };
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 // currentBranch comes from readWorktreeHead; mock it directly so the probe

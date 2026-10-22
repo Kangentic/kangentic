@@ -25,7 +25,7 @@ const { mockGit } = vi.hoisted(() => {
 });
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGit),
+  simpleGit: vi.fn(() => mockGit),
 }));
 
 import { getBlame, parseBlamePorcelain } from '../../src/main/git/blame';
@@ -156,7 +156,7 @@ describe('getBlame', () => {
 
   it('prefers worktreePath over projectPath as the working directory', async () => {
     mockGit.raw.mockResolvedValue('');
-    const simpleGit = (await import('simple-git')).default;
+    const simpleGit = (await import('simple-git')).simpleGit;
 
     await getBlame({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 

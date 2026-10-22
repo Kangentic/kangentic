@@ -1,4 +1,4 @@
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { readWorktreeHeadUnqueued } from './worktree-head';
 import type { GitBranchSummaryInput, GitBranchSummaryResult } from '../../shared/types';
 

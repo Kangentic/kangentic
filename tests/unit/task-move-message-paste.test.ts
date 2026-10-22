@@ -51,7 +51,6 @@ const hoisted = vi.hoisted(() => ({
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
-  default: vi.fn(() => ({})),
 }));
 // `getGlobalDb` is read by the dev-port ledger when a warm move resolves `{{port}}`
 // (`getDevPortForTask` -> `DevPortRepository.listForTask`, which calls

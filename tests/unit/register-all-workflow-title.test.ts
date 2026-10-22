@@ -162,7 +162,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   MAX_ANALYTICS_STRING_LENGTH: 180,
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
-vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
+vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: { attach: vi.fn() },
 }));

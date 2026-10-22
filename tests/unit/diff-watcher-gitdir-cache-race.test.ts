@@ -44,7 +44,7 @@ const mockGitRaw = vi.fn<(args: string[]) => Promise<string>>();
 const mockGitInstance = { raw: mockGitRaw };
 
 vi.mock('simple-git', () => ({
-  default: vi.fn(() => mockGitInstance),
+  simpleGit: vi.fn(() => mockGitInstance),
 }));
 
 // Extend the real path module: pin sep to '/' for cross-platform consistency

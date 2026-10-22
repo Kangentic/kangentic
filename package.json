@@ -115,7 +115,7 @@
     "recharts": "3.10.1",
     "remark-gfm": "^4.0.1",
     "remove-markdown": "^0.7.0",
-    "simple-git": "^3.36.0",
+    "simple-git": "^4.0.2",
     "tailwindcss": "^4.3.0",
     "three": "^0.185.1",
     "turndown": "^7.2.4",

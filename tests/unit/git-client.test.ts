@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { gitAt, GIT_OUTPUT_MAX_BUFFER, parseDiffStatSummary, parseStatusSummary } from '../../src/main/git/git-client';
 import { setOffMainExecutor, type OffMainExecutor } from '../../src/main/utility-process/off-main-exec';
 
