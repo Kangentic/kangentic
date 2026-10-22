@@ -45,6 +45,11 @@ const SIBLING = 'eval-answer-models';
  * wording, model and effort. Every judged reply is an agent call, so it is held to the same rule.
  */
 const CONDITION_HARNESS = 'eval-condition-check';
+/**
+ * The docs-reads measurement (`scripts/eval-docs-reads.mjs`), which asks a real agent questions about
+ * docs/ and counts the bytes it read. Every question is an agent call, so it is held to the same rule.
+ */
+const DOCS_READS_HARNESS = 'eval-docs-reads';
 /** Where a test, a helper or a fixture can live, whatever its folder depth. */
 const TEST_EXTENSIONS = ['.ts', '.js', '.mjs'] as const;
 const SCRIPT_EXTENSIONS = ['.js', '.mjs'] as const;
@@ -66,11 +71,14 @@ const IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-ask-rollu
 const SIBLING_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-answer-models.test.ts']);
 /** The same for the Condition-check replay. */
 const CONDITION_HARNESS_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-condition-check.test.ts']);
+/** The same for the docs-reads measurement. */
+const DOCS_READS_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-docs-reads.test.ts']);
 
 /** The importing tests that may name `name`, and nothing else. */
 function importingTestsFor(name: string): ReadonlySet<string> {
   if (name === SIBLING) return SIBLING_IMPORTING_TESTS;
   if (name === CONDITION_HARNESS) return CONDITION_HARNESS_IMPORTING_TESTS;
+  if (name === DOCS_READS_HARNESS) return DOCS_READS_IMPORTING_TESTS;
   return IMPORTING_TESTS;
 }
 
@@ -171,7 +179,7 @@ function testScan(name: string = RUNNER): Scan {
   return scanFiles(tests, 'tests', files, (text) => mentionsRunner(text, name));
 }
 
-describe.each([RUNNER, SIBLING, CONDITION_HARNESS])('the %s harness runs on demand only', (harness) => {
+describe.each([RUNNER, SIBLING, CONDITION_HARNESS, DOCS_READS_HARNESS])('the %s harness runs on demand only', (harness) => {
   it('is referenced by no npm script, workflow, or test runner config, nor by a script that is not the harness', () => {
     const scans = automatedScans(harness);
     const offenders = scans.flatMap((scan) => scan.offenders);
@@ -256,6 +264,24 @@ describe('the Condition-check replay', () => {
   it('does not run when it is only imported', async () => {
     const before = process.exitCode;
     await import('../../scripts/eval-condition-check.mjs');
+    expect(process.exitCode).toBe(before);
+  });
+});
+
+describe('the docs-reads measurement', () => {
+  it('refuses to run when a CI environment variable is set, before it checks out or spawns anything', () => {
+    const result = spawnSync(process.execPath, [
+      path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'),
+      'run', '--ref', 'no-such-ref', '--label', 'no-such-label', '--out', 'no-such-output',
+    ], { env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000 });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Refusing to run/);
+  });
+
+  it('does not run when it is only imported', async () => {
+    const before = process.exitCode;
+    await import('../../scripts/eval-docs-reads.mjs');
     expect(process.exitCode).toBe(before);
   });
 });
