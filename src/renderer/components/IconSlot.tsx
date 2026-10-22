@@ -6,6 +6,12 @@ interface IconSlotProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className
   size: number;
   /** Appended after the base classes (e.g. `shrink-0` in a flex row). */
   className?: string;
+  /**
+   * Treat `size` as a minimum width rather than a fixed one, for a branch that can
+   * outgrow it: the Workflows tab swaps its count pill for the running mark, and a
+   * 2-digit pill is wider than the 18px both share below 10. Height stays fixed.
+   */
+  grow?: boolean;
   children: ReactNode;
 }
 
@@ -47,6 +53,9 @@ interface IconSlotProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className
  * it across every state: the glyph inside keeps its own size, and a smaller branch simply
  * sits centred in a slightly larger box. Adopting a slot therefore CAN grow a given
  * branch's footprint by a pixel or two versus an unwrapped glyph. That is deliberate.
+ * `grow` relaxes this for width only. It makes `size` a minimum, for a branch such as a
+ * 2-digit count pill that outgrows the rest, so the box widens for that branch while its
+ * height holds.
  *
  * One trap. The slot neutralizes the element it wraps, which for an `<ActivityMark>` is
  * that component's `<svg>` root - the very node `ActivityMark` documents as having to
@@ -58,12 +67,12 @@ interface IconSlotProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'className
  * on the span that does take the pointer (the Agent Monitor's card does this). A Tooltip
  * around the mark itself would be silently inert, with no test to catch it.
  */
-export function IconSlot({ size, className, children, ...rest }: IconSlotProps) {
+export function IconSlot({ size, className, grow = false, children, ...rest }: IconSlotProps) {
   return (
     <span
       {...rest}
       className={`grid place-items-center [&>*]:pointer-events-none ${className ?? ''}`}
-      style={{ width: size, height: size }}
+      style={grow ? { minWidth: size, height: size } : { width: size, height: size }}
     >
       {children}
     </span>

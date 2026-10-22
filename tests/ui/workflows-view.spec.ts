@@ -56,9 +56,12 @@ const MISSING_PROJECT_ID = 'workflows-view-missing';
  * `paused`: board 11's pair, the running workflow paused yesterday at 18:20
  * beside the draft. `across-boards`: the running workflow with one more task,
  * #420, in Done on another board. `all-done`: the running workflow with every
- * task in Done, which has nothing left to run and is still listed.
+ * task in Done, which has nothing left to run and is still listed. `two-running`:
+ * the running workflow beside a second running one that has no tasks of its own.
+ * `many-drafts`: twelve unstarted workflows and none running, so the count on the
+ * Workflows segment runs to two digits.
  */
-type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards' | 'all-done';
+type Seed = 'none' | 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards' | 'all-done' | 'two-running' | 'many-drafts';
 
 /** What a test adds to a seed beyond its workflows; each is off unless asked for. */
 interface SeedExtras {
@@ -90,8 +93,20 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     },
   };
   const running = { workflow: { id: 'wf-usage', title: 'Usage budgets', state: seed === 'paused' ? 'paused' : 'running', draft: null, color_slot: 5, agent_name: 'claude' } };
-  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards' || seed === 'all-done';
-  const workflows = seed === 'running' || seed === 'across-boards' || seed === 'all-done' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
+  // A second running workflow, last in the list so the running one above stays the one the view opens on.
+  const secondRunning = { workflow: { id: 'wf-theme-rollout', title: 'Theme rollout', state: 'running', draft: null, color_slot: 3, agent_name: 'claude' } };
+  // Twelve unstarted workflows shaped like the draft above, each with its own id and title.
+  const manyDrafts = Array.from({ length: 12 }, (_unused, index) => ({
+    workflow: { ...draft.workflow, id: `wf-draft-${index + 1}`, title: `Theme tokens ${index + 1}` },
+  }));
+  const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards' || seed === 'all-done' || seed === 'two-running';
+  const workflows = seed === 'none'
+    ? []
+    : seed === 'many-drafts'
+    ? manyDrafts
+    : seed === 'two-running'
+    ? [running, secondRunning]
+    : seed === 'running' || seed === 'across-boards' || seed === 'all-done' ? [running] : seed === 'two' || seed === 'paused' ? [running, draft] : [draft];
   // A task row and a Done column tagged with the other project are on its board.
   const otherBoard = seed === 'across-boards'
     ? `state.projects.push({ id: '${OTHER_PROJECT_ID}', name: 'kangentic-mobile', path: '/mock/kangentic-mobile', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: seededAt, created_at: seededAt });
@@ -198,34 +213,156 @@ async function dragCardByHand(page: Page, key: string): Promise<void> {
 const outgoingPort = (page: Page, key: string) => page.locator(`.react-flow__node[data-id="${key}"] .react-flow__handle.source`).first();
 
 test.describe('Workflows header', () => {
-  test('the Workflows segment shows the working mark while a workflow runs, and no count', async () => {
+  test('while a workflow runs the Workflows segment shows the working mark in place of its count', async () => {
     const { browser, page } = await launch('running');
     try {
       const segment = byTestId(page, 'view-toggle-workflows');
       const mark = byTestId(page, 'view-toggle-workflows-running');
+      const count = byTestId(page, 'view-toggle-workflows-count');
       await expect(mark).toBeVisible();
-      await expect(segment).toHaveAttribute('aria-label', 'Workflows, running');
-      // The segment says whether work moves on its own, not how many workflows exist.
+      // Never both: a number beside the ring reads as that many running.
+      await expect(count).toHaveCount(0);
       await expect(segment).toHaveText('Workflows');
+      // The count the ring hides is still spoken, and the running state is the tab's tip.
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows, 1 workflow, 1 running');
+      await expect(segment).toHaveAccessibleDescription('Workflows, 1 running');
       expect(await mark.evaluate((element) => getComputedStyle(element).color))
         .toBe(await computedColor(page, 'var(--color-active)'));
+      const runningWidth = await segment.evaluate((element) => element.getBoundingClientRect().width);
 
-      // Paused, nothing runs: the mark goes, and comes back on Resume.
+      // Paused, nothing runs: the count takes the mark's place, and the mark comes back on Resume.
       await byTestId(page, 'workflow-pause').click();
       await expect(byTestId(page, 'workflow-resume')).toBeVisible();
       await expect(mark).toHaveCount(0);
-      await expect(segment).toHaveAttribute('aria-label', 'Workflows');
+      await expect(count).toHaveText('1');
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
+      await expect(segment).toHaveAccessibleDescription('Workflows');
+      // The slot holds the pill's width, so the swap moves nothing in the row.
+      const pausedWidth = await segment.evaluate((element) => element.getBoundingClientRect().width);
+      expect(Math.abs(pausedWidth - runningWidth)).toBeLessThanOrEqual(0.5);
+
       await byTestId(page, 'workflow-resume').click();
       await expect(mark).toBeVisible();
+      await expect(count).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('a workflow not started yet puts no mark on the Workflows segment', async () => {
+  test('a workflow not started yet shows the count on the Workflows segment, and no mark', async () => {
     const { browser, page } = await launch('draft');
     try {
       await expect(byTestId(page, 'workflow-start')).toBeVisible();
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
+      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveText('1');
+      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the count covers every unfinished workflow, and the mark shows while any one runs', async () => {
+    const { browser, page } = await launch('two');
+    try {
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toBeVisible();
+      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveCount(0);
+      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows, 2 workflows, 1 running');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a two-digit count widens the segment\'s slot to hold the pill, which never spills past it', async () => {
+    const { browser, page } = await launch('many-drafts');
+    try {
+      const pill = byTestId(page, 'view-toggle-workflows-count');
+      await expect(pill).toHaveText('12');
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
+      // The pill and its slot (the pill's parent) are read in one call. A fixed 18px
+      // slot would leave the wider pill sticking out of it, on at least one side.
+      const edges = await pill.evaluate((element) => {
+        const slot = element.parentElement;
+        if (!slot) throw new Error('the count has no slot');
+        const pillRect = element.getBoundingClientRect();
+        const slotRect = slot.getBoundingClientRect();
+        return {
+          pillWidth: pillRect.width,
+          leftOverflow: slotRect.left - pillRect.left,
+          rightOverflow: pillRect.right - slotRect.right,
+        };
+      });
+      // Without this the containment below also holds for a pill that fits 18px.
+      expect(edges.pillWidth, 'a two-digit pill must be wider than the 18px slot floor').toBeGreaterThan(19);
+      expect(edges.leftOverflow).toBeLessThanOrEqual(0.5);
+      expect(edges.rightOverflow).toBeLessThanOrEqual(0.5);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('every running workflow is counted and spoken, not just the first', async () => {
+    const { browser, page } = await launch('two-running');
+    try {
+      const segment = byTestId(page, 'view-toggle-workflows');
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toBeVisible();
+      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveCount(0);
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows, 2 workflows, 2 running');
+      await expect(segment).toHaveAccessibleDescription('Workflows, 2 running');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a workflow list that belongs to another project puts neither a count nor a mark on the Workflows segment', async () => {
+    const { browser, page } = await launch('running');
+    try {
+      type WorkflowStoreHandle = {
+        getState: () => { projectId: string | null; summaries: unknown[] };
+        setState: (partial: { projectId: string | null }) => void;
+      };
+      const readStore = () => page.evaluate(() => {
+        const store = (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow;
+        const { projectId, summaries } = store.getState();
+        return { projectId, summaryCount: summaries.length };
+      });
+      const setStoreProject = (projectId: string | null) => page.evaluate((nextProjectId) => {
+        (window as unknown as { __zustandStores: { workflow: WorkflowStoreHandle } }).__zustandStores.workflow.setState({ projectId: nextProjectId });
+      }, projectId);
+
+      // Settled first: the list is loaded for this project, and the mark shows. A load
+      // landing after the swap below would put the right project back.
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Usage budgets');
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toBeVisible();
+      await expect.poll(readStore).toEqual({ projectId: PROJECT_ID, summaryCount: 1 });
+
+      // The list stays, but it now belongs to a project that is not the open one, as
+      // it does for the beat between a project switch and the new list arriving.
+      await setStoreProject('workflows-view-other-project');
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
+      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveCount(0);
+      const segment = byTestId(page, 'view-toggle-workflows');
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows');
+      // Nothing reloaded it: the foreign list is still there, so the gate is what hid the pill.
+      expect(await readStore()).toEqual({ projectId: 'workflows-view-other-project', summaryCount: 1 });
+
+      // The same list under the open project brings the mark back.
+      await setStoreProject(PROJECT_ID);
+      await expect(byTestId(page, 'view-toggle-workflows-running')).toBeVisible();
+      await expect(segment).toHaveAttribute('aria-label', 'Workflows, 1 workflow, 1 running');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a project with no workflows puts neither a count nor a mark on the Workflows segment', async () => {
+    const { browser, page } = await launch('none');
+    try {
+      // The empty view also paints before the list loads, so wait for the list itself:
+      // otherwise "no pill" would hold for a list that never arrived.
+      await expect.poll(() => page.evaluate(() => (window as unknown as {
+        __zustandStores: { workflow: { getState: () => { projectId: string | null } } };
+      }).__zustandStores.workflow.getState().projectId)).toBe(PROJECT_ID);
+      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveCount(0);
       await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
       await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows');
     } finally {

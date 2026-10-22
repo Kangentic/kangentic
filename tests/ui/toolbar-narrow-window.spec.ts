@@ -61,13 +61,14 @@ const WIDE = { width: 1600, height: 900 };
 /**
  * A project long enough in the name to exercise the title bar, a full set of
  * swimlanes, labelled tasks so the Labels filter has content, backlog items so
- * the Backlog segment carries its count badge, and a running workflow so the
- * Workflows segment carries its working mark. Both widen the switcher, so the
- * row is measured at its widest.
+ * the Backlog segment carries its count pill, and a workflow at rest so the
+ * Workflows segment carries its count pill too. A running workflow would show
+ * the 16px working mark in that pill's place instead, which is the narrower of
+ * the two, so the row is measured at its widest.
  */
-function seedScript(): string {
+function seedScript(backlogCount: number): string {
   return `
-    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'running', draft: null } }];
+    window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'draft', draft: null } }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
 
@@ -129,7 +130,7 @@ function seedScript(): string {
         });
       });
 
-      [0, 1, 2].forEach(function (index) {
+      for (var index = 0; index < ${backlogCount}; index += 1) {
         state.backlogTasks.push({
           id: 'narrow-backlog-' + index,
           title: 'Backlog item ' + index,
@@ -149,21 +150,21 @@ function seedScript(): string {
           created_at: ts,
           updated_at: ts,
         });
-      });
+      }
 
       return { currentProjectId: '${PROJECT_ID}' };
     });
   `;
 }
 
-async function launch(): Promise<{ browser: Browser; page: Page }> {
+async function launch(backlogCount = 3): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: WIDE });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seedScript());
+  await page.addInitScript(seedScript(backlogCount));
 
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
@@ -245,6 +246,12 @@ async function readRow(page: Page, controlTestIds: string[]): Promise<RowReading
  */
 const SEARCH_FLOOR_PX = 110;
 
+/**
+ * The same bound for the one accepted exception, a four-digit backlog count at the
+ * absolute floor, where the search measured 105px on Windows' fonts.
+ */
+const FOUR_DIGIT_SEARCH_FLOOR_PX = 100;
+
 /** The toolbar's OWN search field. The sidebar has one too, earlier in the document. */
 async function readSearchWidth(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -321,10 +328,9 @@ async function expectRowSurvivesTheFloor(
   for (const label of wideLabels) {
     expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
   }
-  // The Backlog count and the Workflows mark are what make this the widest
-  // switcher; without them the floor case below is not the one the ladder was
-  // sized for.
-  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, running');
+  // The two count pills are what make this the widest switcher; without them the
+  // floor case below is not the one the ladder was sized for.
+  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
   await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
 
   const wideHeight = await settledHeight(page);
@@ -397,6 +403,49 @@ test.describe('Chrome rows at the 900x600 floor', () => {
       await collapseSidebar(page);
       await switchToBacklog(page);
       await expectRowSurvivesTheFloor(page, BACKLOG_CONTROLS, BACKLOG_LABELS);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * A 1000+ item backlog keeps every digit at the floor rather than shortening to
+   * "1.2k", which would hide the exact count the pill exists to show. That was a
+   * signed-off trade: the four digits leave the backlog search 105px there on
+   * Windows' fonts, under the 110 the cases above hold a 3-item backlog to. This
+   * holds the trade to its own floor, with room for headless Linux's metrics, so a
+   * pill that grows any further still fails.
+   */
+  test('a 1000+ item backlog keeps every digit of its count at the floor', async () => {
+    const { browser, page } = await launch(1204);
+    try {
+      await switchToBacklog(page);
+      const pill = page.locator('[data-testid="view-toggle-backlog-count"]');
+      await expect(pill).toHaveText('1204');
+      const wideHeight = await settledHeight(page);
+
+      await page.setViewportSize(FLOOR);
+      const narrowHeight = await settledHeight(page);
+      expect(Math.abs(narrowHeight - wideHeight), 'a label wrapped at the floor').toBeLessThanOrEqual(1);
+
+      const fit = await pill.evaluate((element) => {
+        const option = element.closest('[data-testid="view-toggle-backlog"]');
+        if (!option) throw new Error('the Backlog option is not around its count');
+        return {
+          clipped: element.scrollWidth > element.clientWidth,
+          pillRight: element.getBoundingClientRect().right,
+          optionRight: option.getBoundingClientRect().right,
+        };
+      });
+      expect(fit.clipped, 'the count pill clips its own digits').toBe(false);
+      expect(fit.pillRight, 'the count pill runs past its option').toBeLessThanOrEqual(fit.optionRight + 0.5);
+
+      const searchWidth = await readSearchWidth(page);
+      expect(searchWidth, `the search field is ${searchWidth}px with a four-digit backlog count`).toBeGreaterThanOrEqual(FOUR_DIGIT_SEARCH_FLOOR_PX);
+      const reading = await readRow(page, BACKLOG_CONTROLS);
+      for (const control of reading.controls) {
+        expect(control.right, `${control.testId} ends past the row's content edge`).toBeLessThanOrEqual(reading.rowContentRight + 1);
+      }
     } finally {
       await browser.close();
     }

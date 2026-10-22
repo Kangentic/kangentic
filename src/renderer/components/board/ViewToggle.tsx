@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Columns3, ListTodo, Plus, Workflow as WorkflowIcon } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { CountBadge } from '../CountBadge';
+import { IconSlot } from '../IconSlot';
 import { Tooltip } from '../Tooltip';
 import { SegmentedControl } from '../SegmentedControl';
 import { ToolbarSearchFilter } from '../ToolbarSearchFilter';
@@ -19,6 +20,11 @@ import {
   TOOLBAR_ROW_CONTAINER_CLASS,
   WORKFLOWS_TOOLBAR_COLLAPSE,
 } from './toolbar-collapse';
+
+/** "1 item", "21 items": the count a screen reader hears in place of a pill. */
+function countNoun(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
 
 export const ViewToggle = React.memo(function ViewToggle() {
   const activeView = useBoardStore((state) => state.activeView);
@@ -51,14 +57,23 @@ export const ViewToggle = React.memo(function ViewToggle() {
   const priorities = useConfigStore((state) => state.config.backlog.priorities);
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
 
-  // Whether one of the project's workflows is running: the working mark on the
-  // Workflows segment. A count of workflows said how many exist, which the
-  // picker already lists; the mark says whether work is moving on its own.
+  // The Workflows segment answers two questions, one at a time: how many
+  // workflows the project has (the count pill, the same list the picker shows,
+  // since main lists only unfinished ones) and whether work is moving on its own
+  // (the working mark, in the count's place while any workflow runs). Never
+  // both, since a number beside or inside the ring reads as that many running.
   // Loaded per project here, since this row is mounted whenever a project is.
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const workflowRunning = useWorkflowStore((state) => (
-    state.projectId === currentProjectId && state.summaries.some((summary) => summary.workflow.state === 'running')
+  const workflowCount = useWorkflowStore((state) => (
+    state.projectId === currentProjectId ? state.summaries.length : 0
   ));
+  const runningWorkflowCount = useWorkflowStore((state) => (
+    state.projectId === currentProjectId
+      ? state.summaries.filter((summary) => summary.workflow.state === 'running').length
+      : 0
+  ));
+  // "2 running", or empty while none runs. The tip and the spoken name both say it.
+  const runningWorkflowsLabel = runningWorkflowCount > 0 ? `${runningWorkflowCount} running` : '';
   useEffect(() => {
     if (currentProjectId) void useWorkflowStore.getState().loadWorkflows();
   }, [currentProjectId]);
@@ -172,30 +187,46 @@ export const ViewToggle = React.memo(function ViewToggle() {
             // The option's accessible name is set from `ariaLabel`, so the badge
             // below contributes nothing to it. Spell the count out here or it is
             // lost to a screen reader at every width, not just the collapsed one.
-            ariaLabel: backlogItems.length > 0 ? `Backlog, ${backlogItems.length} items` : 'Backlog',
+            ariaLabel: backlogItems.length > 0 ? `Backlog, ${countNoun(backlogItems.length, 'item')}` : 'Backlog',
             icon: <span className={collapse.viewSwitcherIcon}><ListTodo size={16} /></span>,
             // The count stays through every step: it is the one thing the switcher
-            // says that an icon cannot.
+            // says that an icon cannot. Tinted from the option's own text tone, so
+            // it follows the tab from idle to selected with no variant of its own.
             trailing: backlogItems.length > 0
-              ? <CountBadge count={backlogItems.length} variant={activeView === 'backlog' ? 'accent' : 'muted'} />
+              ? <CountBadge count={backlogItems.length} variant="tinted" size="pill" testId="view-toggle-backlog-count" />
               : undefined,
           },
           {
             value: 'workflows' as const,
             label: 'Workflows',
             testId: 'view-toggle-workflows',
-            tip: 'Workflows',
-            ariaLabel: workflowRunning ? 'Workflows, running' : 'Workflows',
+            // The ring takes no pointer inside the slot below, so it cannot carry a
+            // tip of its own, and the option's tip says what runs. The tip keeps the
+            // tab's name, the SegmentedControl exception one-tooltip.md records. At
+            // the icon-only steps it is the only label the option has left, as
+            // Board's and Backlog's are.
+            tip: runningWorkflowsLabel ? `Workflows, ${runningWorkflowsLabel}` : 'Workflows',
+            // The count is spoken while the ring hides it from view.
+            ariaLabel: ['Workflows', workflowCount > 0 ? countNoun(workflowCount, 'workflow') : '', runningWorkflowsLabel]
+              .filter((part) => part !== '')
+              .join(', '),
             icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
-            // The picker's Running ring, at the sidebar's 16px. A paused, a
-            // not-started or a finished workflow shows nothing here.
-            trailing: workflowRunning
+            // One slot for both branches: a running workflow swaps the pill for
+            // the picker's Running ring at the sidebar's 16px, an element-type swap
+            // that would otherwise eat a click landing mid-swap
+            // (.claude/rules/activity-marks.md). The slot holds the pill's 18px, so
+            // nothing in the row moves for a count under 10.
+            trailing: workflowCount > 0
               ? (
-                <Tooltip label="A workflow is running">
-                  <span className="inline-flex shrink-0 text-active" data-testid="view-toggle-workflows-running">
-                    <ActivityMark mark="agent-working" size={16} />
-                  </span>
-                </Tooltip>
+                <IconSlot size={18} grow className="shrink-0">
+                  {runningWorkflowCount > 0
+                    ? (
+                      <span className="inline-flex text-active" data-testid="view-toggle-workflows-running">
+                        <ActivityMark mark="agent-working" size={16} aria-label="Running" />
+                      </span>
+                    )
+                    : <CountBadge count={workflowCount} variant="tinted" size="pill" testId="view-toggle-workflows-count" />}
+                </IconSlot>
               )
               : undefined,
           },

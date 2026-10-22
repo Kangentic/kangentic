@@ -156,12 +156,14 @@ reach. Those render every branch through `components/IconSlot.tsx`, a fixed-size
 branches share: React reconciles the one span in place across the swap, so the node under the
 pointer survives, and the span absorbs the pointer on the glyph's behalf.
 
-Adopted so far: `StopButtonIcon`, `PauseButtonIcon`, and `MonitorCard`'s `StateGlyph`. The last
-is why the neutralization is scoped to the glyph rather than put on the button, since its
-clickable is a whole card carrying other interactive children. It also shows where a tip goes on a
-slotted mark: the card's `Tooltip` wraps the `IconSlot`, which forwards the pointer, focus and
-`aria-description` props the Tooltip clones onto it, because the mark inside takes no pointer and a
-tip around it would never open. Still unwrapped, with the same
+Adopted so far: `StopButtonIcon`, `PauseButtonIcon`, `MonitorCard`'s `StateGlyph`, and the
+Workflows tab in `ViewToggle`, which swaps its count pill for the working mark (its slot takes a
+`grow` prop, so a two-digit pill can widen it). `StateGlyph` is why the neutralization is scoped
+to the glyph rather than put on the button, since its clickable is a whole card carrying other
+interactive children. It also shows where a tip goes on a slotted mark: the card's `Tooltip` wraps
+the `IconSlot`, which forwards the pointer, focus and `aria-description` props the Tooltip clones
+onto it, because the mark inside takes no pointer and a tip around it would never open. Still
+unwrapped, with the same
 element-type swap: `MonitorTable`'s `StateCell` (inside `DataTable`'s clickable `<tr>`) and
 `TerminalPanel`'s session-tab glyph.
 

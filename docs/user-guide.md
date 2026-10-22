@@ -604,8 +604,9 @@ middle draws each task as its card with the links between them, and the inspecto
 shows the workflow's Plan approval above the run order, or the selected task's route, what it waits
 for, and what waits for it, with Open task (Open on its board, for a task on another project's
 board) at the bottom. The board's
-search and filter apply to the canvas too. While one of the project's workflows runs, the
-Workflows segment carries the working mark; a paused or not-started workflow shows none. In the
+search and filter apply to the canvas too. The Workflows segment shows how many unfinished
+workflows the project has, the same list the picker holds. While one of them runs, the working
+mark takes the count's place; with none at all, the segment shows nothing. In the
 picker's list, a line under each name says what that workflow's agent
 is doing ("Agent idle, last message 10:44"), or, with no agent running, how many of its tasks wait
 for you. The bottom terminal panel is hidden in this view and comes back on the board.

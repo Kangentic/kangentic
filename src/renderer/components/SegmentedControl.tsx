@@ -177,7 +177,16 @@ export function SegmentedControl<T extends string>({
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   /** Pending re-measure while an ancestor transform is still running. */
   const retryRef = useRef<number | null>(null);
-  const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
+  /** The option the thumb was last placed on; null until the first placement. */
+  const lastPlacedIndexRef = useRef<number | null>(null);
+  /**
+   * `slide` is true only when this placement moved the thumb to a different
+   * option. Every other re-measure (a count in an option changing width, a project
+   * switch re-populating one, a container query swapping labels for icons, a
+   * window resize) is not the user choosing anything, so the thumb takes the new
+   * box at once instead of animating there (restore-no-animation-replay.md).
+   */
+  const [thumb, setThumb] = useState<{ left: number; width: number; slide: boolean } | null>(null);
 
   const activeIndex = Math.max(0, options.findIndex((option) => option.value === value));
 
@@ -235,7 +244,9 @@ export function SegmentedControl<T extends string>({
       const next = {
         left: (activeRect.left - rowRect.left) / divisor,
         width: activeRect.width / divisor,
+        slide: lastPlacedIndexRef.current !== null && lastPlacedIndexRef.current !== activeIndex,
       };
+      lastPlacedIndexRef.current = activeIndex;
       setThumb((current) =>
         current && current.left === next.left && current.width === next.width ? current : next,
       );
@@ -338,9 +349,10 @@ export function SegmentedControl<T extends string>({
             // Animations setting's and the web build's reduced motion
             // (index.css); everything visual stays in utilities.
             className={`kng-segmented-thumb absolute inset-y-0 left-0 rounded ${tone.thumb} ${
-              // No transition until the thumb has been placed once, so it does
-              // not slide in from the left edge on first paint.
-              thumb ? 'transition-[transform,width] duration-150 ease-out' : ''
+              // Only a placement on a different option slides: not the first one
+              // (the thumb would slide in from the left edge on first paint), and
+              // not a re-measure of the same option (see `slide` above).
+              thumb.slide ? 'transition-[transform,width] duration-150 ease-out' : ''
             }`}
             style={{ transform: `translateX(${thumb.left}px)`, width: thumb.width }}
           />
