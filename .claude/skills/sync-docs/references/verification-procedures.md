@@ -6,6 +6,15 @@ Step-by-step extraction instructions for each anchor type. Used by the `doc-audi
 
 When an anchor maps to multiple target docs, one doc is the **canonical** location (marked in the anchor table) and the others should contain only a cross-reference link. The auditor verifies the full table exists in the canonical doc and that secondary docs link to it rather than duplicating content.
 
+## Concept Folder Targets
+
+Some anchors target a concept folder rather than one file (today `docs/integrations/agents/`). A
+target such as "each adapter's concept in integrations/agents/" means: Glob
+`docs/integrations/agents/*.md`, skip `index.md`, and read every concept whose `sources:` names the
+adapter you are checking. The per-agent tables (Permission Modes, Command Building) live in that
+adapter's own concept. The YAML frontmatter at the top of a concept is metadata, never part of the
+enumeration being compared.
+
 ## Type Union Anchors
 
 **Applies to:** `PermissionMode`, `ActionType`, `SessionStatus`, `SessionRecordStatus`, `SwimlaneRole`, `SuspendedBy`, `ThemeMode`

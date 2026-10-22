@@ -82,7 +82,7 @@ Both runtime files are hidden from git for the untracked case: the builder seeds
 `.grok/hooks/kangentic.json` (unconditionally - the filename is wholly Kangentic-owned),
 `.grok/config.toml` (only when Kangentic creates the file; a pre-existing user config keeps
 its git visibility), and `.kangentic/` into `.git/info/exclude` via the shared
-`git-exclude.ts` mechanism (see the Antigravity section). Neither file carries a secret, so
+`git-exclude.ts` mechanism (see [Antigravity](antigravity.md)). Neither file carries a secret, so
 this is purely untracked-noise control for the Changes pane and `git add -A`.
 
 **Trust.** Folder trust (`~/.grok/trusted_folders.toml`, entries

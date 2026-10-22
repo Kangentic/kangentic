@@ -25,7 +25,8 @@ You receive a prompt specifying which anchors to check:
 When given a list of changed files, map them to anchors:
 - `src/shared/types.ts` -- all Type System Anchors
 - `src/shared/ipc-channels.ts` -- IPC Anchors
-- `src/main/db/migrations.ts` -- Database Anchors
+- `src/main/db/migrations/**` -- Database Anchors (`src/main/db/migrations.ts` is only a re-export shim)
+- `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` -- Agent Adapter Anchors, whose targets are concepts in `docs/integrations/agents/`
 - `src/renderer/components/settings/settings-tabs.ts` -- Settings tabs anchor (the file that declares `SETTINGS_TABS`; `AppSettingsPanel.tsx` only imports it)
 - `src/renderer/components/settings/settings-registry.ts` -- Settings registry anchor
 - `src/shared/template-vars.ts` -- Template Anchors
@@ -37,7 +38,7 @@ If a changed file does not map to any anchor, skip it.
 For each anchor to check:
 
 1. **Extract from source:** Read the source file, extract all enumerable items using the procedure from `references/verification-procedures.md`
-2. **Extract from doc:** Read the target doc file, find the section that should enumerate these items
+2. **Extract from doc:** Read the target doc file, find the section that should enumerate these items. When the target is a concept folder (a per-adapter table lives in each adapter's own concept under `docs/integrations/agents/`), read every concept it names, as `references/verification-procedures.md` "Concept Folder Targets" describes, and ignore each concept's YAML frontmatter
 3. **Compare:** Report items in source but not in doc (missing) and items in doc but not in source (extra)
 
 ## Output Format

@@ -126,7 +126,7 @@ conversation and sends the task once more.
   - A spinning indicator and model name with context percentage when the agent is actively working
   - An idle icon (amber) when the agent is waiting for input
   - "Starting agent..." or "Resuming agent..." during session startup
-  - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see [agent-integration.md](integrations/agents/index.md))
+  - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see `liveTelemetryUnsupported` in [Optional adapter properties](integrations/agents/optional-properties.md))
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
   - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](pr-integration.md#merge-readiness) for what each value promises and which settings change it
