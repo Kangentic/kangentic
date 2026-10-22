@@ -24,7 +24,12 @@ export const RESERVED_NAMES = new Set(['index.md', 'log.md']);
 /** The `type` values a concept may carry. */
 export const CONCEPT_TYPES = ['Guide', 'Reference', 'Design', 'Audit', 'Research'];
 
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+/**
+ * A leading `---` line (after an optional BOM), the block, which may be empty, and the closing `---`
+ * line. `FRONTMATTER` in src/main/retrieval/code/code-record.ts reads the same blocks for the code
+ * index, and tests/unit/code-corpus.test.ts checks the two agree on this repository's markdown.
+ */
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/;
 const FENCE = /^\s*(```|~~~)/;
 
 /** A scalar as YAML writes it here: bare, or double or single quoted. */
@@ -39,22 +44,46 @@ function parseScalar(raw) {
   return value;
 }
 
-/** `[a, "b c"]` as a list of strings. */
+/** `[a, "b, c"]` as a list of strings. A comma inside a quoted item stays in that item. */
 function parseInlineList(raw) {
-  const inner = raw.trim().slice(1, -1).trim();
-  if (inner.length === 0) return [];
-  return inner.split(',').map(parseScalar);
+  const inner = raw.trim().slice(1, -1);
+  if (inner.trim().length === 0) return [];
+  const items = [];
+  let current = '';
+  let quote = null;
+  for (let position = 0; position < inner.length; position += 1) {
+    const character = inner[position];
+    if (quote !== null) {
+      current += character;
+      if (quote === '"' && character === '\\' && position + 1 < inner.length) {
+        current += inner[position + 1];
+        position += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === ',') {
+      items.push(current);
+      current = '';
+      continue;
+    }
+    if (character === '"' || character === '\'') quote = character;
+    current += character;
+  }
+  items.push(current);
+  return items.map(parseScalar);
 }
 
 /**
- * The frontmatter of a markdown file, or null when it has none. Reads the subset this bundle writes:
+ * The frontmatter of a markdown file, or null when it has none. Reads the subset the concepts use:
  * scalar keys, inline lists, and block lists of scalars or of flat mappings (`sources:`). Anything
  * else throws, so a hand edit the parser would misread fails loudly instead of passing as empty.
  */
 export function parseFrontmatter(text) {
   const match = FRONTMATTER.exec(text);
   if (!match) return null;
-  const lines = match[1].split(/\r?\n/);
+  const lines = (match[1] ?? '').split(/\r?\n/);
   const data = {};
   let index = 0;
   while (index < lines.length) {
@@ -104,43 +133,14 @@ export function stripFrontmatter(text) {
   return match ? text.slice(match[0].length) : text;
 }
 
-function quoteIfNeeded(value) {
-  const text = String(value);
-  const needsQuotes = text === '' || /^[\s[\]{}>|*&!%@`'"#,?-]/.test(text) || /:\s|\s#|:$|^\s|\s$/.test(text);
-  return needsQuotes ? `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : text;
-}
-
-/** Frontmatter in the shape `parseFrontmatter` reads back, keys in the order given. */
-export function formatFrontmatter(data) {
-  const lines = ['---'];
-  for (const [key, value] of Object.entries(data)) {
-    if (value === undefined || value === null) continue;
-    if (Array.isArray(value)) {
-      if (value.every((item) => typeof item === 'string')) {
-        lines.push(`${key}: [${value.map(quoteIfNeeded).join(', ')}]`);
-        continue;
-      }
-      lines.push(`${key}:`);
-      for (const item of value) {
-        const entries = Object.entries(item);
-        entries.forEach(([itemKey, itemValue], position) => {
-          lines.push(`${position === 0 ? '  - ' : '    '}${itemKey}: ${quoteIfNeeded(itemValue)}`);
-        });
-      }
-      continue;
-    }
-    lines.push(`${key}: ${quoteIfNeeded(value)}`);
-  }
-  lines.push('---');
-  return `${lines.join('\n')}\n`;
-}
-
 /**
  * A heading's rendered text: links to their text, emphasis markers and HTML tags dropped, and inline
  * code kept as written (GitHub renders `<id>` inside backticks as text).
  */
 export function headingText(raw) {
   const withoutLinks = raw.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1');
+  // Outside code spans: drop HTML tags, `*` emphasis, and `_` emphasis only at a word's edge, so a
+  // snake_case word keeps its underscores the way GitHub's anchor keeps them.
   return withoutLinks
     .split(/(`+[^`]*`+)/)
     .map((part) => (part.startsWith('`')
@@ -167,13 +167,17 @@ export function headingsOf(text) {
   // github-slugger's dedupe: a taken slug gets the next free `-N` counted on its base.
   const occurrences = new Map();
   let fenced = false;
-  stripFrontmatter(text).split(/\r?\n/).forEach((line, lineIndex) => {
+  const body = stripFrontmatter(text);
+  // `line` is 1-based in the whole file, as linksOf reports it, so it counts the frontmatter's lines.
+  const frontmatterLines = text.slice(0, text.length - body.length).split(/\r?\n/).length - 1;
+  body.split(/\r?\n/).forEach((line, lineIndex) => {
     if (FENCE.test(line)) {
       fenced = !fenced;
       return;
     }
     if (fenced) return;
-    const match = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line);
+    // A trailing run of `#` closes the heading only after a space (CommonMark), so `## Using C#` keeps its `#`.
+    const match = /^(#{1,6})\s+(.*?)(?:\s+#+)?\s*$/.exec(line);
     if (!match) return;
     const base = githubSlug(match[2]);
     let slug = base;
@@ -182,7 +186,7 @@ export function headingsOf(text) {
       slug = `${base}-${occurrences.get(base)}`;
     }
     occurrences.set(slug, 0);
-    headings.push({ level: match[1].length, text: match[2], line: lineIndex, slug });
+    headings.push({ level: match[1].length, text: match[2], line: frontmatterLines + lineIndex + 1, slug });
   });
   return headings;
 }
@@ -190,6 +194,15 @@ export function headingsOf(text) {
 /** Every heading anchor in a file's text. */
 export function anchorsOf(text) {
   return new Set(headingsOf(text).map((heading) => heading.slug));
+}
+
+/** A link fragment percent-decoded, or as written when its escapes are malformed (`#100%`). */
+function decodeFragment(fragment) {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
 }
 
 /**
@@ -205,6 +218,8 @@ export function linksOf(text) {
       return;
     }
     if (fenced) return;
+    // Blank each inline code span (a backtick run to the next run of the same length) to spaces of
+    // the same width, so a link written inside backticks is not read and columns stay put.
     const outsideCode = line.replace(/(`+)[\s\S]*?\1/g, (span) => ' '.repeat(span.length));
     for (const match of outsideCode.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
       const url = match[1];
@@ -213,7 +228,7 @@ export function linksOf(text) {
       links.push({
         url,
         path: hash === -1 ? url : url.slice(0, hash),
-        fragment: hash === -1 ? null : decodeURIComponent(url.slice(hash + 1)),
+        fragment: hash === -1 ? null : decodeFragment(url.slice(hash + 1)),
         line: lineIndex + 1,
         column: match.index,
         length: match[0].length,

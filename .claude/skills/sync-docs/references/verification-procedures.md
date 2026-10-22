@@ -8,7 +8,7 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 
 ## Concept Folder Targets
 
-Some anchors target a concept folder rather than one file (today `docs/integrations/agents/`). A
+Some anchors target the one concept folder, `docs/integrations/agents/`, rather than one file. A
 target such as "each adapter's concept in integrations/agents/" means: Glob
 `docs/integrations/agents/*.md`, skip `index.md`, and read every concept whose `sources:` names the
 adapter you are checking. The per-agent tables (Permission Modes, Command Building) live in that

@@ -60,17 +60,60 @@ export function isIndexableCodePath(path: string): boolean {
 }
 
 const MARKDOWN = /\.mdx?$/i;
-const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
-const DESCRIPTION_LINE = /^description:[ \t]*(.*?)[ \t]*$/m;
+/** A leading `---` line (after an optional BOM), the block, which may be empty, and the closing
+ *  `---` line. scripts/docs-bundle.mjs reads the same blocks for /sync-docs and the docs tests, and
+ *  tests/unit/code-corpus.test.ts checks the two agree on this repository's markdown. */
+const FRONTMATTER = /^\uFEFF?---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)??---[ \t]*(?:\r?\n|$)/;
+/** A line a YAML block holds: a key, a list item, an indented continuation, or a comment. */
+const YAML_LINE = /^(?:[A-Za-z_][\w-]*:(?:\s|$)|-(?:\s|$)|\s+\S|\s*#)/;
+const YAML_KEY = /^[A-Za-z_][\w-]*:(?:\s|$)/;
+const DESCRIPTION_KEY = /^description:[ \t]*/;
+/** A block scalar's indicator (`>`, `|-`, ...), whose text is the indented lines after it. */
+const BLOCK_SCALAR = /^[|>][+-]?\d*$/;
 
-/** A markdown file's text without its leading YAML block, and the block's `description`, if any. */
+/**
+ * A markdown file's text without its leading YAML block, and the block's `description`, if any.
+ * A block whose lines do not read as YAML, such as the text between two horizontal rules at the
+ * top of a document, is body text, so the file chunks as if it had no frontmatter.
+ */
 export function splitMarkdownFrontmatter(text: string): { body: string; description: string | null } {
   const match = FRONTMATTER.exec(text);
   if (!match) return { body: text, description: null };
-  const raw = DESCRIPTION_LINE.exec(match[1])?.[1] ?? '';
-  const quoted = raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith('\'') && raw.endsWith('\'')));
-  const description = quoted ? raw.slice(1, -1).replace(/\\(["\\])/g, '$1') : raw;
-  return { body: text.slice(match[0].length), description: description.length > 0 ? description : null };
+  const block = match[1] ?? '';
+  const lines = block.split(/\r?\n/).filter((line) => line.trim() !== '');
+  const readsAsYaml = lines.every((line) => YAML_LINE.test(line)) && lines.some((line) => YAML_KEY.test(line));
+  if (lines.length > 0 && !readsAsYaml) return { body: text, description: null };
+  return { body: text.slice(match[0].length), description: frontmatterDescription(block) };
+}
+
+/**
+ * The block's `description` as one line. A quoted scalar is unescaped; a block scalar (the
+ * `description: |` every .claude agent writes) and a plain scalar that wraps give the first
+ * paragraph of their text, folded with spaces.
+ */
+function frontmatterDescription(block: string): string | null {
+  const lines = block.split(/\r?\n/);
+  const start = lines.findIndex((line) => DESCRIPTION_KEY.test(line));
+  if (start === -1) return null;
+  const value = lines[start].replace(DESCRIPTION_KEY, '').trim();
+  const continuation: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.trim() !== '' && !/^\s/.test(line)) break;
+    continuation.push(line.trim());
+  }
+  const blankAt = continuation.indexOf('');
+  const firstParagraph = (blankAt === -1 ? continuation : continuation.slice(0, blankAt)).join(' ');
+  let description: string;
+  if (BLOCK_SCALAR.test(value)) {
+    description = firstParagraph;
+  } else if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    description = value.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  } else if (value.length >= 2 && value.startsWith('\'') && value.endsWith('\'')) {
+    description = value.slice(1, -1).replace(/''/g, '\'');
+  } else {
+    description = [value, firstParagraph].filter((part) => part.length > 0).join(' ');
+  }
+  return description.length > 0 ? description : null;
 }
 
 /** A file's chunks, or none for one that holds a NUL byte (binary). */

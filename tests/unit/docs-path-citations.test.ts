@@ -4,9 +4,12 @@
  * agent-integration.md into docs/integrations/agents/) leaves each of those citations pointing at
  * nothing, with no link checker anywhere to say so. A GitHub URL into this repo's docs counts too.
  *
- * Out of scope: CHANGELOG files (release history, never rewritten), tests (their docs/ paths are
- * mostly made-up fixture paths), docs/ itself (okf-docs-conformance.test.ts resolves its links), and
- * URLs into any other site, whose docs/ paths are not this repo's.
+ * docs/ is scanned too: okf-docs-conformance.test.ts resolves its markdown links, but a doc that
+ * names another as a backticked path is not a link, and one such citation outlived the move.
+ *
+ * Out of scope: CHANGELOG files and docs/log.md (history, never rewritten), tests (their docs/ paths
+ * are mostly made-up fixture paths), and URLs into any other site, whose docs/ paths are not this
+ * repo's.
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -15,7 +18,7 @@ import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
-const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/];
+const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/];
 /** A docs path, wherever it starts (a bare path, `../../docs/...`, a GitHub URL). */
 const DOCS_PATH = /(?<![\w-])docs\/[\w./-]*?\.md(?![\w])/g;
 /** A URL into anywhere but this repository, whose docs/ paths are not ours. */
@@ -26,7 +29,7 @@ function scannedFiles(): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .filter((file) => /^(src|scripts|\.claude|demo)\//.test(file) || /^packages\/[^/]+\/README\.md$/.test(file) || ROOT_FILES.has(file))
+    .filter((file) => /^(src|scripts|\.claude|demo|docs)\//.test(file) || /^packages\/[^/]+\/README\.md$/.test(file) || ROOT_FILES.has(file))
     .filter((file) => !SKIPPED.some((pattern) => pattern.test(file)))
     .filter((file) => fs.existsSync(path.join(ROOT, file)));
 }
@@ -49,7 +52,7 @@ describe('docs path citations', () => {
     let cited = 0;
     for (const file of files) {
       const text = fs.readFileSync(path.join(ROOT, file), 'utf-8');
-      if (text.includes('\u0000')) continue;
+      if (!text.includes('docs/') || text.includes('\u0000')) continue;
       for (const docsPath of citedDocsPaths(text)) {
         cited += 1;
         if (!fs.existsSync(path.join(ROOT, docsPath))) missing.push(`${file} cites ${docsPath}`);
@@ -59,6 +62,7 @@ describe('docs path citations', () => {
     // Not vacuous: the scan read source, skills and rules, and found real citations.
     expect(files.some((file) => file.startsWith('src/'))).toBe(true);
     expect(files.some((file) => file.startsWith('.claude/'))).toBe(true);
+    expect(files.some((file) => file.startsWith('docs/'))).toBe(true);
     expect(cited).toBeGreaterThan(50);
   });
 });

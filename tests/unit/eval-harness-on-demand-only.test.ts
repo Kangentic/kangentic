@@ -285,6 +285,47 @@ describe('the docs-reads measurement', () => {
     await import('../../scripts/eval-docs-reads.mjs');
     expect(process.exitCode).toBe(before);
   });
+
+  // `summary` and `compare` read records on disk and spend nothing. They are pinned here because this
+  // file is the one place a test may name the harness's path and spawn it.
+  it('compare exits 1 on a failing gate and 0 on a passing one, summary writes summary.json, an unknown mode exits 2', () => {
+    const recordOf = (questionId: string, group: string, gateBytes: number): Record<string, unknown> => ({
+      questionId, group, attempt: 1, passed: true, isError: false, exitCode: 0, gateBytes, docsBytes: gateBytes, reminderBytes: 0, toolCalls: 2, costUsd: 0.01,
+    });
+    const writeRecords = (directory: string, records: ReadonlyArray<Record<string, unknown>>): void => {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, 'records.jsonl'), `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    };
+    // CI=true as well: a mode typed as `run` by mistake refuses before it checks anything out.
+    const runMode = (modeArguments: string[]) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'), ...modeArguments], {
+      env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000,
+    });
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-reads-cli-'));
+    try {
+      const baseline = path.join(scratch, 'baseline');
+      writeRecords(baseline, [recordOf('p1', 'pilot', 10_000), recordOf('c1', 'control', 5_000)]);
+      writeRecords(path.join(scratch, 'equal'), [recordOf('p1', 'pilot', 10_000), recordOf('c1', 'control', 5_000)]);
+      writeRecords(path.join(scratch, 'smaller'), [recordOf('p1', 'pilot', 2_000), recordOf('c1', 'control', 5_000)]);
+
+      const failing = runMode(['compare', '--baseline', baseline, '--candidate', path.join(scratch, 'equal')]);
+      expect(failing.status, failing.stderr).toBe(1);
+      expect(failing.stdout).toMatch(/gate: FAIL \(pilot drop 0 is not above the control noise 0\)/);
+
+      const passing = runMode(['compare', '--baseline', baseline, '--candidate', path.join(scratch, 'smaller')]);
+      expect(passing.status, passing.stderr).toBe(0);
+      expect(passing.stdout).toMatch(/gate: PASS/);
+      expect(passing.stdout).toMatch(/pilot gate bytes 10000 -> 2000 \(drop 8000\); largest control change 0/);
+
+      const summarized = runMode(['summary', '--out', baseline]);
+      expect(summarized.status, summarized.stderr).toBe(0);
+      const rows = JSON.parse(fs.readFileSync(path.join(baseline, 'summary.json'), 'utf-8')) as Array<{ questionId: string; group: string; runs: number; medianGateBytes: number }>;
+      expect(rows.map((row) => [row.questionId, row.group, row.runs, row.medianGateBytes])).toEqual([['p1', 'pilot', 1, 10_000], ['c1', 'control', 1, 5_000]]);
+
+      expect(runMode(['unknown-mode']).status).toBe(2);
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('the Ask harness scan helpers', () => {

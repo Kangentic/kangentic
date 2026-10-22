@@ -400,7 +400,7 @@ export function selectCodePassages<Passage extends { path: string; relevance: nu
   return chosen;
 }
 
-/** A code chunk's text without the path line `codeChunks` opens it with. */
+/** A code chunk's text without the path line `codeChunks` opens it with. A markdown passage keeps the frontmatter description `codeChunks` puts on the next line. */
 function codeBody(path: string, text: string): string {
   const body = text.startsWith(`${path}\n`) ? text.slice(path.length + 1) : text;
   return body.replace(/^\n+/, '').trimEnd();

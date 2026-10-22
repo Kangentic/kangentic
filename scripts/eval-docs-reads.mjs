@@ -83,7 +83,7 @@ function byteLength(text) {
 function toolResultText(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
-  return content.map((part) => (part && part.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n');
+  return content.filter((part) => part && part.type === 'text' && typeof part.text === 'string').map((part) => part.text).join('\n');
 }
 
 /** Bytes of the `<system-reminder>` blocks inside `text`. */
@@ -91,13 +91,18 @@ function reminderBytesOf(text) {
   return (text.match(REMINDER) ?? []).reduce((sum, block) => sum + byteLength(block), 0);
 }
 
-/** Whether a tool call's input points under `<checkout>/docs`. */
+/** Whether a tool call's input points under `<checkout>/docs`. Case folds only where the filesystem does. */
 export function readsDocs(input, checkout) {
   const target = input?.file_path ?? input?.path ?? null;
   if (typeof target !== 'string' || target.length === 0) return false;
-  const normalize = (value) => value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const foldCase = process.platform === 'win32' || process.platform === 'darwin';
+  const normalize = (value) => {
+    const forward = value.replace(/\\/g, '/').replace(/\/+$/, '');
+    return foldCase ? forward.toLowerCase() : forward;
+  };
   const docsRoot = `${normalize(path.resolve(checkout))}/docs`;
-  const resolved = normalize(path.isAbsolute(target) ? target : path.resolve(checkout, target));
+  // Resolved even when absolute, so `<checkout>/docs/../src/x.ts` is not counted as a docs read.
+  const resolved = normalize(path.resolve(checkout, target.replace(/\\/g, '/')));
   return resolved === docsRoot || resolved.startsWith(`${docsRoot}/`);
 }
 
@@ -244,7 +249,7 @@ export function parseArgs(argv) {
   const concurrency = Number(value('--concurrency') ?? 4);
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency: ${value('--concurrency')} is not a positive whole number`);
   const model = value('--model') ?? 'sonnet';
-  if (!MODEL_IDS[model]) throw new Error(`--model: ${model} is not one of ${Object.keys(MODEL_IDS).join(', ')}`);
+  if (!Object.hasOwn(MODEL_IDS, model)) throw new Error(`--model: ${model} is not one of ${Object.keys(MODEL_IDS).join(', ')}`);
   const effort = value('--effort') ?? 'medium';
   if (!EFFORT_ORDER.includes(effort)) throw new Error(`--effort: ${effort} is not one of ${EFFORT_ORDER.join(', ')}`);
   return {
@@ -285,7 +290,11 @@ function removeDirectory(directory) {
   }
 }
 
-/** Stop the CLI and anything it started. On Windows `child.kill()` ends only the CLI. */
+/**
+ * Stop the CLI and anything it started. On Windows `child.kill()` ends only the CLI. On macOS and
+ * Linux it also ends only the CLI, so a timed-out run's own children (ripgrep) can outlive it; this
+ * matches the stopTree of eval-answer-models.mjs and eval-condition-check.mjs.
+ */
 function stopTree(child) {
   if (process.platform !== 'win32') {
     child.kill();
@@ -341,7 +350,13 @@ async function run(options) {
   if (process.platform === 'win32' && /\.(cmd|bat|ps1)$/i.test(options.cli)) {
     throw new Error(`--cli names the shim ${options.cli}; pass the CLI's own executable`);
   }
-  execFileSync(options.cli, ['--version'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 });
+  try {
+    execFileSync(options.cli, ['--version'], { stdio: 'ignore', windowsHide: true, timeout: 30_000 });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    // Without a shell, Windows resolves only .exe and .com on PATH, so an npm `claude.cmd` is not found.
+    throw new Error(`--cli ${options.cli} was not found; pass the CLI's own executable (--cli <path to claude${process.platform === 'win32' ? '.exe' : ''}>)`);
+  }
   const questions = loadQuestions()
     .filter((question) => options.only.length === 0 || options.only.includes(question.id));
   const commit = git(['rev-parse', '--verify', `${options.ref}^{commit}`]);
@@ -352,11 +367,27 @@ async function run(options) {
   fs.mkdirSync(labelDirectory, { recursive: true });
   const checkout = path.join(labelDirectory, 'checkout');
   git(['worktree', 'add', '--detach', checkout, commit]);
-  const settingsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-docs-reads-settings-'));
-  const settingsPath = path.join(settingsDirectory, 'settings.json');
-  fs.writeFileSync(settingsPath, JSON.stringify(RUN_SETTINGS));
-  fs.writeFileSync(path.join(labelDirectory, 'run.json'), JSON.stringify({ ref: options.ref, commit, model: options.model, effort: options.effort, runs: options.runs }, null, 2));
-  const recordsPath = path.join(labelDirectory, 'records.jsonl');
+  // Everything after the checkout exists runs inside the try, so a failure removes it.
+  let settingsDirectory = null;
+  try {
+    settingsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-docs-reads-settings-'));
+    const settingsPath = path.join(settingsDirectory, 'settings.json');
+    fs.writeFileSync(settingsPath, JSON.stringify(RUN_SETTINGS));
+    fs.writeFileSync(path.join(labelDirectory, 'run.json'), JSON.stringify({ ref: options.ref, commit, model: options.model, effort: options.effort, runs: options.runs }, null, 2));
+    await runQuestions({ options, questions, commit, checkout, settingsPath, recordsPath: path.join(labelDirectory, 'records.jsonl') });
+  } finally {
+    if (settingsDirectory !== null) removeDirectory(settingsDirectory);
+    try {
+      git(['worktree', 'remove', '--force', checkout]);
+    } catch (error) {
+      console.error(`left the checkout at ${checkout}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return summary({ out: labelDirectory });
+}
+
+/** Every question `options.runs` times, `options.concurrency` at once, each record appended as it lands. */
+async function runQuestions({ options, questions, commit, checkout, settingsPath, recordsPath }) {
   const jobs = [];
   for (let attempt = 1; attempt <= options.runs; attempt += 1) {
     for (const question of questions) jobs.push({ question, attempt });
@@ -387,17 +418,7 @@ async function run(options) {
       console.log(`${String(done).padStart(3)}/${jobs.length} ${record.passed ? 'ok  ' : 'MISS'} ${question.id} #${attempt} gate=${tally.gateBytes}B docs=${tally.docsBytes}B reminders=${tally.reminderBytes}B calls=${tally.toolCalls} $${tally.costUsd ?? '?'}`);
     }
   };
-  try {
-    await Promise.all(Array.from({ length: Math.min(options.concurrency, jobs.length) }, worker));
-  } finally {
-    removeDirectory(settingsDirectory);
-    try {
-      git(['worktree', 'remove', '--force', checkout]);
-    } catch (error) {
-      console.error(`left the checkout at ${checkout}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-  return summary({ out: labelDirectory });
+  await Promise.all(Array.from({ length: Math.min(options.concurrency, jobs.length) }, worker));
 }
 
 function readRecords(directory) {

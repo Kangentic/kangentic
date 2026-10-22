@@ -25,7 +25,6 @@ import {
   RESERVED_NAMES,
   anchorsOf,
   conceptsForSource,
-  formatFrontmatter,
   githubSlug,
   headingsOf,
   linksOf,
@@ -49,8 +48,12 @@ interface Frontmatter {
   [key: string]: unknown;
 }
 
+const repoTextCache = new Map<string, string>();
+
+/** A repo file's text, read once per run: several checks below read the same docs. */
 function readRepo(repoPath: string): string {
-  return fs.readFileSync(path.join(ROOT, repoPath), 'utf-8');
+  if (!repoTextCache.has(repoPath)) repoTextCache.set(repoPath, fs.readFileSync(path.join(ROOT, repoPath), 'utf-8'));
+  return repoTextCache.get(repoPath) as string;
 }
 
 const docsFiles: string[] = listDocsMarkdown(DOCS);
@@ -98,6 +101,7 @@ describe('docs concept folders', () => {
       }
       const entries = new Map<string, string>();
       for (const line of indexText.split(/\r?\n/)) {
+        // `* [Title](file.md) - description`: the link's file (no fragment) and the description after it.
         const match = /^\* \[[^\]]+\]\(([^)#]+)\) - (.+)$/.exec(line);
         if (match) entries.set(match[1], match[2].trim());
       }
@@ -166,15 +170,28 @@ describe('the bundle helpers', () => {
     expect(githubSlug('Kimi Code -> Authentication')).toBe('kimi-code---authentication');
   });
 
-  it('reads back the frontmatter it writes', () => {
-    const data = {
+  it('reads the frontmatter shape a concept carries', () => {
+    const text = [
+      '---',
+      'type: Reference',
+      'title: Codex CLI',
+      'description: "Moves a task: with a colon, and a \\"quote\\""',
+      'tags: [agents, "codex, cli"]',
+      'sources:',
+      '  - resource: src/main/agent/adapters/codex/',
+      '  - resource: src/shared/types.ts',
+      '    title: AgentCapabilities, CommandOptions',
+      '---',
+      '# Body',
+      '',
+    ].join('\n');
+    expect(parseFrontmatter(text)).toEqual({
       type: 'Reference',
       title: 'Codex CLI',
       description: 'Moves a task: with a colon, and a "quote"',
-      tags: ['agents', 'codex'],
+      tags: ['agents', 'codex, cli'],
       sources: [{ resource: 'src/main/agent/adapters/codex/' }, { resource: 'src/shared/types.ts', title: 'AgentCapabilities, CommandOptions' }],
-    };
-    expect(parseFrontmatter(`${formatFrontmatter(data)}# Body\n`)).toEqual(data);
+    });
     expect(parseFrontmatter('# No frontmatter\n')).toBeNull();
     expect(() => parseFrontmatter('---\nnot a key\n---\n')).toThrow(/not a top-level key/);
   });

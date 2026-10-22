@@ -10,6 +10,8 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
@@ -26,7 +28,10 @@ import {
 } from '../../src/main/retrieval/code/code-status';
 import type { BranchHead, TreeEntry } from '../../src/main/retrieval/branch-git';
 
+import { listDocsMarkdown, parseFrontmatter, stripFrontmatter } from '../../scripts/docs-bundle.mjs';
 import { openTestDatabase } from './helpers/test-database';
+
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
 /**
  * The branch the code index last read, as its sweep stores it. Named by its
@@ -131,6 +136,127 @@ describe('code records', () => {
     for (const question of ['How does the embedding drain pace itself?', 'Which task took the longest?', 'Where is the PTY resize debounced?']) {
       expect(namesCodeIdentifier(question), question).toBe(false);
     }
+  });
+});
+
+describe('splitMarkdownFrontmatter', () => {
+  /** A frontmatter block holding `lines`, then a one-line body. */
+  const withFrontmatter = (...lines: string[]): string => `---\n${lines.join('\n')}\n---\nbody\n`;
+
+  // Each row is one way a YAML description is written. The block scalar rows are the shape every
+  // .claude/agents/*.md file uses; before they were read, such a file's description was the bare
+  // indicator `|`.
+  const descriptionForms: Array<[string, string[], string | null]> = [
+    ['a double-quoted value, unescaping an escaped quote and backslash', ['type: Guide', 'description: "a \\"quoted\\" word and a back\\\\slash"'], 'a "quoted" word and a back\\slash'],
+    ['a single-quoted value, unescaping a doubled quote', ['description: \'It\'\'s a rule\''], 'It\'s a rule'],
+    ['a literal block scalar, as its first paragraph folded with spaces', ['name: reviewer', 'description: |', '  First line of the summary', '  that wraps here.', '', '  Second paragraph, left out.', 'tools: Read'], 'First line of the summary that wraps here.'],
+    ['a block scalar that the next key ends', ['description: |-', '  Only paragraph.', 'tools: Read'], 'Only paragraph.'],
+    ['a folded block scalar', ['description: >', '  Folded text', '  across two lines.'], 'Folded text across two lines.'],
+    ['a plain value that wraps onto indented lines', ['description: A summary that starts here', '  and wraps onto a second line.', 'type: Reference'], 'A summary that starts here and wraps onto a second line.'],
+    ['an empty value as no description', ['type: Reference', 'description:', 'tags: [a]'], null],
+    ['an empty quoted value as no description', ['description: ""', 'type: Reference'], null],
+    ['an absent description key as no description', ['type: Reference', 'title: No summary'], null],
+  ];
+
+  it.each(descriptionForms)('reads %s', (_form, lines, expected) => {
+    expect(splitMarkdownFrontmatter(withFrontmatter(...lines))).toEqual({ body: 'body\n', description: expected });
+  });
+
+  it('reads CRLF frontmatter: no carriage return in the description, and a body that starts after the block', () => {
+    // The description is not the last line: the block's last line loses its carriage return to the closing fence.
+    const quoted = '---\r\ndescription: "Moves a task"\r\ntype: Reference\r\n---\r\n# Title\r\n';
+    expect(splitMarkdownFrontmatter(quoted)).toEqual({ body: '# Title\r\n', description: 'Moves a task' });
+    const blockScalar = '---\r\ndescription: |\r\n  First paragraph.\r\n\r\n  Second paragraph.\r\n---\r\nbody\r\n';
+    expect(splitMarkdownFrontmatter(blockScalar)).toEqual({ body: 'body\r\n', description: 'First paragraph.' });
+  });
+
+  it('accepts a closing fence at the end of the file with no newline after it', () => {
+    expect(splitMarkdownFrontmatter('---\ndescription: Short one\n---')).toEqual({ body: '', description: 'Short one' });
+  });
+
+  it('leaves text with no closing fence unchanged', () => {
+    const unclosed = '---\ndescription: Never closed\n\n# Title\n';
+    expect(splitMarkdownFrontmatter(unclosed)).toEqual({ body: unclosed, description: null });
+  });
+
+  it('accepts a byte order mark before the opening fence', () => {
+    const byteOrderMark = String.fromCharCode(0xfeff);
+    expect(splitMarkdownFrontmatter(`${byteOrderMark}---\ndescription: With a mark\n---\nbody\n`)).toEqual({ body: 'body\n', description: 'With a mark' });
+  });
+
+  it('drops an empty block, and does not swallow the text up to a later ---', () => {
+    expect(splitMarkdownFrontmatter('---\n---\nbody\n')).toEqual({ body: 'body\n', description: null });
+    expect(splitMarkdownFrontmatter('---\n---\nintro text\n\n---\n\nmore\n')).toEqual({ body: 'intro text\n\n---\n\nmore\n', description: null });
+  });
+
+  it('keeps the text between two horizontal rules, and a block with no key, as body', () => {
+    const horizontalRules = '---\n\n# Title\n\nintro text\n---\n\nmore';
+    expect(splitMarkdownFrontmatter(horizontalRules)).toEqual({ body: horizontalRules, description: null });
+    for (const keyless of ['---\n# just a comment\n---\nbody\n', '---\n- one\n- two\n---\nbody\n']) {
+      expect(splitMarkdownFrontmatter(keyless), keyless).toEqual({ body: keyless, description: null });
+    }
+  });
+
+  it('reads the first paragraph of a real agent file\'s description block, and a body that starts after the closing fence', () => {
+    const text = fs.readFileSync(path.join(REPO_ROOT, '.claude', 'agents', 'ipc-auditor.md'), 'utf-8');
+    const { body, description } = splitMarkdownFrontmatter(text);
+    expect(description).toMatch(/^IPC layer consistency auditor\. /);
+    // One line, and only the first paragraph: the second begins "Use this agent proactively".
+    expect(description).not.toMatch(/\n|Use this agent/);
+    expect(body.split(/\r?\n/).slice(0, 2)).toEqual(['', '# IPC Layer Consistency Auditor']);
+  });
+});
+
+describe('codeChunks, a markdown file\'s frontmatter', () => {
+  it('opens each passage with the description for an .mdx path and for an upper-case .MD path', () => {
+    const text = '---\ndescription: Summarizes the lane rules.\n---\n# Lanes\n';
+    for (const markdownPath of ['docs/lanes.mdx', 'docs/LANES.MD']) {
+      expect(codeChunks(markdownPath, text).map((chunk) => chunk.text), markdownPath).toEqual([`${markdownPath}\nSummarizes the lane rules.\n\n# Lanes\n\n`]);
+    }
+  });
+
+  it('puts the first paragraph of a block-scalar description in the header of every passage', () => {
+    const frontmatter = '---\nname: reviewer\ndescription: |\n  Reviews a change for parity.\n\n  Use it after an IPC edit.\n---\n';
+    const body = `# Reviewer\n\n${'Each finding names a file and a line. '.repeat(100)}\n`;
+    const chunks = codeChunks('.claude/agents/reviewer.md', `${frontmatter}${body}`);
+    const header = '.claude/agents/reviewer.md\nReviews a change for parity.\n\n';
+    expect(chunks.length).toBeGreaterThan(2);
+    for (const chunk of chunks) {
+      expect(chunk.text.startsWith(header), `passage ${chunk.seq}`).toBe(true);
+      expect(chunk.text).not.toMatch(/Use it after|name: reviewer/);
+    }
+    expect(chunks.map((chunk) => chunk.text.slice(header.length)).join('')).toBe(`${body}\n`);
+  });
+
+  it('keeps carriage returns out of the header of a CRLF markdown file', () => {
+    const chunks = codeChunks('docs/moving.md', '---\r\ndescription: "Moves a task"\r\ntype: Guide\r\n---\r\n# Title\r\n');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].text.startsWith('docs/moving.md\nMoves a task\n\n# Title')).toBe(true);
+    expect(chunks[0].text.split('\n\n')[0]).not.toContain('\r');
+  });
+});
+
+describe('the frontmatter readers agree', () => {
+  // scripts/docs-bundle.mjs reads the same blocks for /sync-docs and the docs tests, with its own
+  // regex and scalar parser. The two are meant to stay in step on what the docs hold.
+  it('on every markdown file under docs/: the same body, and the same description where there is frontmatter', () => {
+    const disagreements: string[] = [];
+    let filesWithFrontmatter = 0;
+    for (const docPath of listDocsMarkdown(path.join(REPO_ROOT, 'docs'))) {
+      const text = fs.readFileSync(path.join(REPO_ROOT, docPath), 'utf-8');
+      const split = splitMarkdownFrontmatter(text);
+      if (split.body !== stripFrontmatter(text)) disagreements.push(`${docPath}: the bodies differ`);
+      const parsed = parseFrontmatter(text) as { description?: unknown } | null;
+      if (parsed === null) continue;
+      filesWithFrontmatter += 1;
+      const expectedDescription = typeof parsed.description === 'string' && parsed.description.length > 0 ? parsed.description : null;
+      if (split.description !== expectedDescription) {
+        disagreements.push(`${docPath}: description ${JSON.stringify(split.description)}, parseFrontmatter ${JSON.stringify(expectedDescription)}`);
+      }
+    }
+    expect(disagreements).toEqual([]);
+    // Not vacuous: the check has to have read real frontmatter.
+    expect(filesWithFrontmatter).toBeGreaterThanOrEqual(20);
   });
 });
 

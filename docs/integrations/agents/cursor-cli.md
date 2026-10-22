@@ -12,7 +12,7 @@ sources:
 
 Detection uses the shared `AgentDetector` with binary name `cursor-agent` and `binaryAliases: ['agent']`.
 
-Cursor installs BOTH shims, and the short one is not its alone: xAI's Grok CLI also installs `agent`, and on Windows its `agent.exe` beats Cursor's `agent.cmd` in PATHEXT order. Detecting on `agent` therefore made Cursor **undetectable** on any machine that also had Grok - the probe resolved, ran Grok's binary, and Cursor was reported missing. Probing the unambiguous name first is the fix; the alias keeps working where only `agent` exists.
+Cursor installs BOTH shims, and the short one is not its alone: xAI's [Grok CLI](grok-build.md) also installs `agent`, and on Windows its `agent.exe` beats Cursor's `agent.cmd` in PATHEXT order. Detecting on `agent` therefore made Cursor **undetectable** on any machine that also had Grok - the probe resolved, ran Grok's binary, and Cursor was reported missing. Probing the unambiguous name first is the fix; the alias keeps working where only `agent` exists.
 
 Two supporting details make the fallback safe. `parseVersion` accepts `1.0.0`, `agent 1.0.0`, or `Cursor Agent 1.0.0` and rejects anything else, so Grok's own version banner fails the probe rather than passing as Cursor. And the PATH loop CONTINUES to the next candidate when a name resolves but fails its version probe, instead of aborting - without that, finding Grok's `agent` would still end the search. Pinned by `tests/unit/cursor-grok-binary-collision.test.ts`.
 
