@@ -230,6 +230,10 @@ export function createWebviewWindowOpenHandler(
           // `preload` is absent rather than undefined, deliberately.
           nodeIntegration: false,
           contextIsolation: true,
+          // Must also MATCH the opener's, which will-attach-webview forces on.
+          // On Electron 45 a popup whose sandbox differs from its opener's gets
+          // its own process and no opener: `window.open` hands the page null
+          // and the OAuth handback is gone. browser-popup-window.spec.ts pins it.
           sandbox: true,
           webSecurity: true,
           webviewTag: false,

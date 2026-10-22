@@ -98,9 +98,8 @@ export async function loadBridgeIdentity(): Promise<BridgeIdentity | null> {
   const file = identityFile();
   const read = await readEncryptedSecretFile(file, parseIdentity);
   if (!read) return null;
-  // Written by the sync API under a key the async one does not hold, or flagged
-  // for re-encryption (see decryptSecret). Only ever rewritten under GENUINE
-  // encryption, the same bar creating an identity has to clear.
+  // Flagged for re-encryption (see decryptSecret). Only ever rewritten under
+  // GENUINE encryption, the same bar creating an identity has to clear.
   if (read.shouldRewrite && (await isGenuineEncryptionAvailable())) {
     await rewriteEncryptedSecretFile(file, read);
   }
@@ -112,12 +111,37 @@ async function saveBridgeIdentity(identity: BridgeIdentity): Promise<void> {
 }
 
 /**
+ * Moves an identity file that exists but did not load to a dated name beside
+ * it, so a new identity never overwrites it. A read can fail for a reason that
+ * passes, such as a secret store that did not answer this session, and the
+ * file is the only copy of the key every paired phone trusts. Throws when the
+ * move fails, so the pairing fails and the file stays where it is.
+ */
+function setAsideUnreadableIdentity(): void {
+  const filePath = identityPath();
+  if (!fs.existsSync(filePath)) return;
+  const asidePath = path.join(PATHS.configDir, `mobile-bridge-identity.unreadable-${Date.now()}.json`);
+  try {
+    fs.renameSync(filePath, asidePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn('[mobile-bridge/identity] could not move the unreadable identity aside:', error);
+    throw new Error(
+      'Cannot create a mobile bridge identity: the existing identity file could not be read or moved aside. Refusing to overwrite it.',
+      { cause: error },
+    );
+  }
+  console.warn(`[mobile-bridge/identity] could not read the existing identity; moved it to ${path.basename(asidePath)}`);
+}
+
+/**
  * Loads the existing identity, or generates and persists a new one.
  * Throws rather than persisting unprotected private key material when
  * genuine encryption is unavailable (no Linux secret store, or safeStorage
  * disabled) - callers should check isGenuineEncryptionAvailable() first and
  * surface a clear "secure storage unavailable" status instead of calling this
- * blindly.
+ * blindly. An identity file that exists but does not load is moved aside,
+ * never overwritten (setAsideUnreadableIdentity).
  */
 export async function loadOrCreateBridgeIdentity(): Promise<BridgeIdentity> {
   const existing = await loadBridgeIdentity();
@@ -129,6 +153,7 @@ export async function loadOrCreateBridgeIdentity(): Promise<BridgeIdentity> {
     );
   }
 
+  setAsideUnreadableIdentity();
   const identity: BridgeIdentity = {
     staticKeyPair: generateX25519KeyPair(),
     masterSigningKeyPair: generateEd25519KeyPair(),

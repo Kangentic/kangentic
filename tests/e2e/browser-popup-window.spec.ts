@@ -113,11 +113,16 @@ test.describe('Browser pane popups', () => {
     });
   });
 
-  test('the popup shares the guest Session object, so it shares the cookie jar and the user agent', async ({ freshProject, sharedApp }) => {
+  test('the popup keeps its opener and shares the guest Session object, so it shares the cookie jar and the user agent', async ({ freshProject, sharedApp }) => {
     const electronApp = sharedApp.app;
     // The hardest property to verify any other way, and the one OAuth depends
     // on: same Session means same jar AND same browsing context group, which is
-    // what keeps window.opener and postMessage alive.
+    // what keeps window.opener and postMessage alive. Electron 45 also severs the
+    // opener of a popup whose sandbox setting differs from its opener's, so the
+    // opener link is read directly too. Measured on 45.0.0: the handle and the
+    // main-side opener both fail under a mismatch, and all three opener checks
+    // hold after the popup's own navigation fails, so CI's network does not
+    // decide this test.
     const { page } = freshProject;
     const title = `Popup Session ${runId}`;
     await createTask(page, title, 'popup session identity');
@@ -134,7 +139,14 @@ test.describe('Browser pane popups', () => {
     expect(guestUserAgent).toContain('Chrome/');
     expect(guestUserAgent).not.toContain('Electron/');
 
-    await evalInGuest(electronApp, "String(!!window.open('https://example.com/','_blank','width=420,height=420'))");
+    // The guest keeps the handle, as an OAuth client does to poll `popup.closed`. A
+    // popup opened with no opener hands the page null instead.
+    const opened = await evalInGuest(
+      electronApp,
+      "window.__kangenticPopup = window.open('https://example.com/','_blank','width=420,height=420'); "
+        + 'String(window.__kangenticPopup !== null)',
+    );
+    expect(opened).toBe('true');
 
     await expect
       .poll(
@@ -144,13 +156,19 @@ test.describe('Browser pane popups', () => {
       )
       .toContain('example.com');
 
-    const sameSession = await electronApp.evaluate(({ BrowserWindow, webContents }) => {
+    // The poll nearly every OAuth flow runs while the user signs in.
+    expect(await evalInGuest(electronApp, 'String(window.__kangenticPopup.closed)')).toBe('false');
+
+    const popupLinks = await electronApp.evaluate(({ BrowserWindow, webContents }) => {
       const guest = webContents.getAllWebContents().find((contents) => contents.getType() === 'webview');
       const popup = BrowserWindow.getAllWindows().find((window) => window.getTitle() === 'example.com');
       if (!guest || !popup) return null;
-      return popup.webContents.session === guest.session;
+      return {
+        sameSession: popup.webContents.session === guest.session,
+        hasOpener: popup.webContents.opener !== null,
+      };
     });
-    expect(sameSession).toBe(true);
+    expect(popupLinks).toEqual({ sameSession: true, hasOpener: true });
 
     // The popup gets no user agent call of its own. It inherits the stripped one
     // from the Session the guest's call already set, and a sign-in popup is

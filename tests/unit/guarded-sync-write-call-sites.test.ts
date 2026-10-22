@@ -38,14 +38,7 @@ vi.mock('electron', () => ({
     whenReady: () => Promise.resolve(),
   },
   safeStorage: {
-    isEncryptionAvailable: () => true,
-    encryptString: (plaintext: string) => Buffer.from(`encrypted:${plaintext}`, 'utf8'),
-    decryptString: (buffer: Buffer) => {
-      const raw = buffer.toString('utf8');
-      if (raw.startsWith('encrypted:')) return raw.slice('encrypted:'.length);
-      throw new Error('safeStorage.decryptString: invalid ciphertext');
-    },
-    // The async API the auth helpers now use. Its ciphertext carries a v11 tag
+    // The async API the auth helpers use. Its ciphertext carries a v11 tag
     // (a real key), so the Linux "genuine encryption" probe passes on CI too.
     isAsyncEncryptionAvailable: async () => true,
     encryptStringAsync: async (plaintext: string) => Buffer.from(`v11:${plaintext}`, 'utf8'),
@@ -54,7 +47,6 @@ vi.mock('electron', () => ({
       if (raw.startsWith('v11:')) return { result: raw.slice('v11:'.length), shouldReEncrypt: false };
       throw new Error('safeStorage.decryptStringAsync: invalid ciphertext');
     },
-    getSelectedStorageBackend: () => 'keychain',
   },
 }));
 

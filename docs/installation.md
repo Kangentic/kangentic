@@ -5,7 +5,7 @@
 - **At least one agent CLI**, such as Claude Code, Codex CLI, or Gemini CLI, installed, signed in, and on your PATH. The app opens without one but needs one to run tasks. See [supported agents](../README.md#supported-agents).
 - **Node.js 20 or later** to run `npx kangentic`. The app itself does not need Node.
 - **Git 2.26+** -- required for worktree support. Run `git --version` to check.
-- **macOS 13 (Ventura) or later** on a Mac. Electron 44 does not start on macOS 12.
+- **macOS 13 (Ventura) or later** on a Mac. Electron 44 and later do not start on macOS 12.
 
 ## Quick Install (Recommended)
 
