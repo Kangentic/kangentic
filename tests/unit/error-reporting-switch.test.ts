@@ -343,18 +343,34 @@ describe('error reporting runtime behavior (module-state gated)', () => {
   });
 
   describe('initErrorReporting Sentry.init option shape', () => {
-    it('passes sendDefaultPii: false, filters MainProcessSession out of integrations while keeping others, and ignores the known-benign write errors', async () => {
+    it('turns every dataCollection field off, filters MainProcessSession out of integrations while keeping others, and ignores the known-benign write errors', async () => {
       const errorReporting = await importFreshErrorReporting();
       errorReporting.initErrorReporting();
 
       expect(mocks.sentryMock.init).toHaveBeenCalledTimes(1);
       const options = mocks.sentryMock.init.mock.calls[0][0] as {
-        sendDefaultPii: boolean;
+        dataCollection: unknown;
         integrations: (defaultIntegrations: Array<{ name: string }>) => Array<{ name: string }>;
         ignoreErrors: Array<string | RegExp>;
       };
 
-      expect(options.sendDefaultPii).toBe(false);
+      // Spelled out here rather than read back from the shared constant: Sentry 8
+      // collects every field left out, so a field that drops off or flips back on
+      // has to fail this test, not pass along with the constant.
+      expect(options.dataCollection).toEqual({
+        userInfo: false,
+        cookies: false,
+        httpHeaders: { request: false, response: false },
+        httpBodies: [],
+        urlQueryParams: false,
+        graphQL: { document: false, variables: false },
+        genAI: { inputs: false, outputs: false },
+        databaseQueryData: false,
+        queues: false,
+        stackFrameVariables: false,
+      });
+      // The v7 switch is gone in Sentry 8; passing it would only read as a guard.
+      expect(options).not.toHaveProperty('sendDefaultPii');
       expect(options.ignoreErrors).toContain('write EAGAIN');
       expect(options.ignoreErrors).toContain('write EPIPE');
 

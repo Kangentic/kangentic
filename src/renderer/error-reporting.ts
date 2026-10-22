@@ -1,5 +1,6 @@
 import { init as sentryInit, captureException } from '@sentry/electron/renderer';
 import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
+import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
 
 /**
  * Renderer half of Sentry error reporting. The renderer SDK has NO network
@@ -13,15 +14,18 @@ import { filterBreadcrumb } from '../shared/sentry-breadcrumbs';
  * (KANGENTIC_TELEMETRY / KANGENTIC_ERROR_REPORTING / packaged, plus a DSN
  * actually being configured) - so the renderer can never initialize when main
  * did not. Everything else is inherited from the main process, per the SDK
- * docs, except `beforeBreadcrumb`. Main receives renderer crumbs through the
- * SDK's scope forwarding and adds them with `scope.addBreadcrumb`
+ * docs, except two options this process applies before it forwards anything.
+ * `beforeBreadcrumb`: main receives renderer crumbs through the SDK's scope
+ * forwarding and adds them with `scope.addBreadcrumb`
  * (@sentry/electron/esm/main/ipc.js, handleScope), which never calls main's
- * hook. So the renderer runs the shared policy itself, before it forwards.
+ * hook, so the renderer runs the shared policy itself. And `dataCollection`:
+ * the browser client reads its own copy, `userInfo` included, which decides
+ * whether Sentry infers the sender's IP address.
  */
 export function initRendererErrorReporting(): void {
   if (!window.electronAPI?.analytics?.errorReportingEnabled) return;
   try {
-    sentryInit({ beforeBreadcrumb: filterBreadcrumb });
+    sentryInit({ beforeBreadcrumb: filterBreadcrumb, dataCollection: SENTRY_DATA_COLLECTION });
   } catch (error) {
     console.error('[ANALYTICS] Failed to initialize renderer error reporting:', error);
   }

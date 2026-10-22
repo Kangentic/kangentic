@@ -45,7 +45,31 @@ describe('initRendererErrorReporting', () => {
 
     initRendererErrorReporting();
 
-    expect(mocks.init).toHaveBeenCalledWith({ beforeBreadcrumb: filterBreadcrumb });
+    expect(mocks.init).toHaveBeenCalledWith(expect.objectContaining({ beforeBreadcrumb: filterBreadcrumb }));
+  });
+
+  it('turns every dataCollection field off, since the browser client decides IP inference itself', () => {
+    vi.stubGlobal('window', { electronAPI: { analytics: { errorReportingEnabled: true } } });
+
+    initRendererErrorReporting();
+
+    // Exactly these two options, and every field spelled out: Sentry 8
+    // collects any dataCollection field left out.
+    expect(mocks.init).toHaveBeenCalledWith({
+      beforeBreadcrumb: filterBreadcrumb,
+      dataCollection: {
+        userInfo: false,
+        cookies: false,
+        httpHeaders: { request: false, response: false },
+        httpBodies: [],
+        urlQueryParams: false,
+        graphQL: { document: false, variables: false },
+        genAI: { inputs: false, outputs: false },
+        databaseQueryData: false,
+        queues: false,
+        stackFrameVariables: false,
+      },
+    });
   });
 
   it('does not call init() when errorReportingEnabled is false', () => {
