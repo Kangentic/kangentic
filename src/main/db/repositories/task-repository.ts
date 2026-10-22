@@ -638,7 +638,6 @@ export class TaskRepository {
 
       if (task.swimlane_id !== targetSwimlaneId) {
         this.recordMove(taskId, task.swimlane_id, targetSwimlaneId, provenance);
-        this.enableAutomationsLeavingDone(taskId, task.swimlane_id, provenance);
       }
     });
     tx();
@@ -649,21 +648,6 @@ export class TaskRepository {
     this.db.prepare(
       'INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ).run(uuidv4(), taskId, fromSwimlaneId, toSwimlaneId, provenance.origin, provenance.reason ?? null, new Date().toISOString());
-  }
-
-  /**
-   * A task leaving Done runs the board's gates again: its automations switch
-   * clears at the same point its Frequency counts reset, keyed exactly as
-   * `AutomationRunRepository.countRuns` keys that reset (a move FROM a Done-role
-   * column, a rollback excepted). Called inside the transaction that made the move.
-   */
-  private enableAutomationsLeavingDone(taskId: string, fromSwimlaneId: string, provenance: TaskMoveProvenance): void {
-    if (provenance.origin === 'rollback') return;
-    this.db.prepare(`
-      UPDATE tasks SET automations_disabled = 0
-      WHERE id = ? AND automations_disabled = 1
-        AND EXISTS (SELECT 1 FROM swimlanes WHERE id = ? AND role = 'done')
-    `).run(taskId, fromSwimlaneId);
   }
 
   /**
@@ -768,7 +752,6 @@ export class TaskRepository {
       // Entering a column out of the archive is a visit like any other.
       if (before) {
         this.recordMove(id, before.swimlane_id, targetSwimlaneId, { origin: 'unarchive' });
-        this.enableAutomationsLeavingDone(id, before.swimlane_id, { origin: 'unarchive' });
       }
     })();
     return this.getById(id)!;

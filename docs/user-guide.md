@@ -572,8 +572,9 @@ The column's agent settings, manual drags and **Run again** still work, and so d
 command. The card shows an **Automations disabled** strip across its top, and so does its card in
 the [Agent Monitor](#agent-monitor), whose list row and table mark it too. The run log records
 each skipped automation with "Automations are disabled for this task." Choose **Enable automations**
-to turn them back on; nothing that was skipped is replayed. Moving the task out of Done, restoring it
-from the archive, or adding it to a workflow enables them again. A task in a workflow has no such row: pause the workflow instead.
+to turn them back on; nothing that was skipped is replayed. Adding the task to a workflow enables
+them again. A task moved or restored out of Done keeps its automations disabled. A task in a
+workflow has no such row: pause the workflow instead.
 An agent can do the same for its own task with `kangentic_update_task`'s `automationsDisabled`.
 
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so

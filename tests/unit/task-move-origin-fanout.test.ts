@@ -836,12 +836,11 @@ describe('the commit signal fires when the row lands, before the slow work', () 
     expect(context.boardEvents.emitBoardChanged.mock.calls[0]).toEqual(context.boardEvents.emitBoardChanged.mock.calls[1]);
   });
 
-  it('a move out of Done announces only after tasks.move, the write that clears the automations switch', async () => {
-    // TaskRepository.move clears a task's automations switch in the same
-    // transaction when it leaves Done (task-repository-automations-disabled.test.ts
-    // pins that). A paired phone re-reads its board on the bus event, so both
-    // emits must come after the move, or the phone keeps the strip until the
-    // next unrelated change.
+  it('a move out of Done announces only after tasks.move, the write that takes it out of Done', async () => {
+    // A paired phone re-reads its board on the bus event, and the card it
+    // finds there comes from the row's lane and archive flag. Both emits must
+    // come after the move, or the phone keeps the card in Done until the next
+    // unrelated change.
     const context = makeContext(makeTask({ swimlane_id: DONE_LANE_ID, archived_at: '2026-10-16T00:00:00.000Z' }));
     const repos = mockGetProjectRepos() as { tasks: { move: ReturnType<typeof vi.fn> } };
     const movedAtEachEmit: boolean[] = [];

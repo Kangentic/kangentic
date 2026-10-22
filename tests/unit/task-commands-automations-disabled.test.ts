@@ -403,7 +403,8 @@ describe('automationsDisabled in the MCP command handlers', () => {
   });
 
   // Not asserted on a task in To Do: the To Do column is not special to the
-  // switch (it is cleared by leaving Done, not by entering To Do).
+  // switch (no move clears it, into To Do or out of Done; only joining a
+  // workflow does).
   it('keeps the switch on a task created in To Do', async () => {
     const result = await handleCreateTask({ title: 'Parked', automationsDisabled: true, column: 'To Do' }, context);
 

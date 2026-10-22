@@ -255,8 +255,7 @@ export class TransitionEngine {
     if (automations.length === 0) return empty;
 
     // The task's own switch, read fresh rather than from the caller's object:
-    // a turn end's object predates its paint wait and Condition check, and a
-    // move out of Done cleared the switch after the caller read the task.
+    // a turn end's object predates its paint wait and Condition check.
     const runnable = canTaskRunAutomations(this.taskRepo.getById(task.id) ?? task);
     if (!runnable.ok) return this.recordTaskHeld(automations, task, column, runnable.reason, options.alreadyDelivered);
 

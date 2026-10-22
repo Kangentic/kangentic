@@ -1975,8 +1975,6 @@
           swimlane_id: input.targetSwimlaneId,
           archived_at: null,
           position: restorePosition,
-          // Mirrors TaskRepository: leaving Done enables column automations again.
-          automations_disabled: false,
           updated_at: now(),
         });
         archivedTasks.splice(idx, 1);
