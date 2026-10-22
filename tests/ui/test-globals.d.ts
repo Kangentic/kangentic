@@ -90,7 +90,14 @@ declare global {
     /** Fires the low-memory agent-paused push (one agent per call) to every registered subscriber. Installed eagerly at mock-bootstrap time; silently no-ops if no subscriber has registered yet. */
     __mockFireHostMemoryAgentPaused?: (event: import('../../src/shared/types').HostMemoryAgentPausedEvent) => void;
 
-    /** Pushes `config:writeFailed`, which App.tsx toasts verbatim at variant 'error', duration 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
+    /** Pushes `automation:runFailed` (main's "an automation did not do what the board says") to every `automations.onRunFailed` subscriber. Installed once the subscription exists; throws if every subscriber has gone. */
+    __mockFireAutomationRunFailed?: (failure: import('../../src/shared/types').AutomationRunFailure) => void;
+    /** Pushes `workflow:completed` (every task of a workflow reached Done) to every `tasks.onWorkflowCompleted` subscriber. Installed once the subscription exists. */
+    __mockFireWorkflowCompleted?: (completed: import('../../src/shared/types').WorkflowCompletedEvent) => void;
+    /** Pushes `session:idleTimeout` (a session auto-suspended after N idle minutes) to every `sessions.onIdleTimeout` subscriber. Installed once the subscription exists. `projectId` may be omitted by main for a session with no project. */
+    __mockFireIdleTimeout?: (sessionId: string, taskId: string, minutes: number, projectId?: string) => void;
+
+    /** Pushes `config:writeFailed`, which App.tsx toasts verbatim as the body under its title, at variant 'error', durationMs 12000. Installed once `config.onWriteFailed` has a subscriber, so wait for the app to mount. */
     __mockFireConfigWriteFailed?: (message: string) => void;
 
     /** Pushes `leftoverProcesses:report`, which App.tsx turns into the leftover-process toast. Installed once `leftoverProcesses.onReport` has a subscriber, so wait for the app to mount. */

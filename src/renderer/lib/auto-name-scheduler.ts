@@ -6,9 +6,9 @@
  *     placeholder-titled task. When it fires, the Automation agent generates a
  *     title from the task's description, and Kangentic applies it at the
  *     session's next idle edge. There is no suggestion to accept: the title only
- *     ever replaces a placeholder, so the user loses nothing.
- *   - `markAutoNameAsked(taskId)` records that a task has been named (or tried)
- *     and persists it so the next launch does not try again.
+ *     ever replaces a placeholder, so the user loses nothing. A task the timer
+ *     fired for is marked asked for the run, and persisted once it proves
+ *     nameable, so the next launch does not try it again.
  *
  * Why the idle edge: main's task update renames the task's worktree branch with
  * its title, and skips that rename while the agent is working, since git work
@@ -64,13 +64,6 @@ const preservedAutoName = import.meta.hot?.data?.autoNameState as
 export const autoNameTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export const autoNameAsked = new Set<string>(preservedAutoName?.askedTaskIds ?? []);
 export const autoRenamesAwaitingIdle = new Map<string, { rename: PendingAutoRename; stopWatching: () => void }>();
-
-/** Add a taskId to the asked set and persist to AppConfig. Idempotent. */
-export function markAutoNameAsked(taskId: string): void {
-  if (autoNameAsked.has(taskId)) return;
-  autoNameAsked.add(taskId);
-  persistAutoNameAsked(taskId);
-}
 
 /** Persist a taskId to `AppConfig.autoNameAskedTaskIds`, so the next launch does not try it again. */
 function persistAutoNameAsked(taskId: string): void {
@@ -275,6 +268,10 @@ for (const rename of preservedAutoName?.pendingRenames ?? []) renameAtIdleEdge(r
 // the asked set and the waiting titles so a hot reload neither re-names a task
 // nor loses a generated title. Vitest provides no `import.meta.hot`, so this
 // block is a no-op under unit tests.
+//
+// One dev-only gap is accepted: a title still being generated when the reload
+// lands finishes in the old module, which waits for the idle edge and applies
+// the title there, outside the state stashed here.
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot

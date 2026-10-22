@@ -8,7 +8,9 @@
  * - Review opens the list: oldest wait first, the project named when the
  *   agents span projects, a Resume button per row.
  * - Resume brings the task back through the task's own Resume path and the
- *   row reads Running. A refused Resume toasts the card menu's own copy.
+ *   row reads Running. A task that comes back by any other route reads Running
+ *   too (the row watches the session store). A refused Resume toasts the card
+ *   menu's own copy.
  * - Memory recovering leaves the paused toast up: the agents stay paused.
  *
  * Each case owns its page.
@@ -114,6 +116,65 @@ test.describe('Agents paused for low memory', () => {
       const calls = await page.evaluate(() => (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls);
       // The task's own project, not whichever one is on screen.
       expect(calls).toEqual([['task-1', undefined, 'proj-9']]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row reads Running when its task comes back by any route, not only its own Resume button', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Record Resume calls: none may happen, so the state below can only have
+      // come from the session store and not from this row's own button.
+      await page.evaluate(() => {
+        const sessions = window.electronAPI.sessions as unknown as {
+          resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<unknown>;
+        };
+        (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls = [];
+        sessions.resume = async (taskId, resumePrompt, projectId) => {
+          (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls.push([taskId, resumePrompt, projectId]);
+          return null;
+        };
+      });
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9' }));
+      await firePaused(page, pausedEvent('task-2', { projectId: 'proj-9', waitedMs: 5 * 60_000 }));
+      await page.getByTestId('toast-action').click();
+
+      const row = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-1"]');
+      const otherRow = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-2"]');
+      await expect(row).toHaveAttribute('data-state', 'paused');
+
+      // Back through some other route (its card, its window, a move): the store
+      // gains a session for the task. A PAUSED session is not Running...
+      const upsertSession = (status: 'suspended' | 'running') => page.evaluate((nextStatus) => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session: { getState: () => { upsertSession: (session: Record<string, unknown>) => void } } };
+        }).__zustandStores;
+        if (!stores) throw new Error('__zustandStores is not exposed');
+        stores.session.getState().upsertSession({
+          id: 'sess-elsewhere',
+          taskId: 'task-1',
+          projectId: 'proj-9',
+          pid: 4242,
+          status: nextStatus,
+          shell: 'bash',
+          cwd: '/mock/paused-for-memory',
+          startedAt: new Date().toISOString(),
+          exitCode: null,
+        });
+      }, status);
+      await upsertSession('suspended');
+      await expect(row).toHaveAttribute('data-state', 'paused');
+
+      // ...and the same session going live is.
+      await upsertSession('running');
+      await expect(row).toHaveAttribute('data-state', 'running');
+      await expect(row.getByTestId('paused-for-memory-running')).toHaveText('Running');
+      // The row of a task that did not come back is untouched.
+      await expect(otherRow).toHaveAttribute('data-state', 'paused');
+
+      const calls = await page.evaluate(() => (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls);
+      expect(calls).toEqual([]);
     } finally {
       await browser.close();
     }

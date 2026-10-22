@@ -92,7 +92,7 @@ export function countdownRemaining(toast: Pick<Toast, 'remainingMs' | 'runningSi
 /** Build a stored toast from what a caller passed. */
 export function resolveToast(input: ToastInput, id: string, defaultDurationMs: number, now: number): Toast {
   const persistent = input.persistent === true;
-  const durationMs = input.persistent === true ? 0 : (input.durationMs ?? defaultDurationMs);
+  const durationMs = persistent ? 0 : (input.durationMs ?? defaultDurationMs);
   return {
     id,
     title: input.title,

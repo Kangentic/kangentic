@@ -16,10 +16,16 @@
  *        - clears task.session_id
  *        - sends SESSION_IDLE_TIMEOUT to the renderer once the pause landed
  *        - declines, writing nothing, when the agent went back to work
+ *        - declines, writing nothing, while text is typed into the prompt
+ *          (whitespace alone does not hold the pause off)
+ *        - queues ONE pause per session while a sweep fire waits on the task
+ *          lock, and accepts a later fire once that pause settled
  *
  *   #7 - When projectId is missing (getSessionProjectId returns undefined):
  *        - renderer still receives SESSION_IDLE_TIMEOUT
  *        - withTaskLock is NOT entered (no DB writes, no cancel)
+ *        - a task session is still suspended; a Command Terminal (transient,
+ *          already suspended by the sweep) is not suspended a second time
  *
  * Mock strategy mirrors split-lock-cas.test.ts:
  *   - electron and ipcMain are mocked so registerSessionHandlers can be called
@@ -153,6 +159,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
+import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
 
 // ---------------------------------------------------------------------------
 // Shared fixture factory
@@ -178,6 +185,8 @@ function createMockContext() {
       suspend: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
       getActivityCache: vi.fn((): Record<string, string> => ({})),
+      // Read by the idle pause's eligibility re-check: typed text holds it off.
+      getPendingDraft: vi.fn((_sessionId?: string) => null as string | null),
       getActivityCacheForProject: vi.fn(() => ({})),
       getUsageCache: vi.fn(() => ({})),
       getUsageCacheForProject: vi.fn(() => ({})),
@@ -350,6 +359,109 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
       IPC.SESSION_IDLE_TIMEOUT, expect.anything(), expect.anything(), expect.anything(), expect.anything(),
     );
   });
+
+  it('declines, writing and stopping nothing, while the user has text typed into the prompt', async () => {
+    context.sessionManager.getPendingDraft.mockReturnValue('half a thought');
+
+    fireIdleTimeout();
+    // The draft is read under the task lock, so wait for that read before
+    // judging what the pause did with it.
+    await drainUntil(() => context.sessionManager.getPendingDraft.mock.calls.length > 0);
+    // Intentional fixed wait - we cannot poll for non-occurrence. Give the
+    // rest of the pause time to run, were it to go ahead despite the draft.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT, expect.anything(), expect.anything(), expect.anything(), expect.anything(),
+    );
+    // The decline came from the draft check, not from an earlier exit.
+    expect(context.sessionManager.getPendingDraft).toHaveBeenCalledWith('sess-idle');
+  });
+
+  it('still pauses when the prompt holds only whitespace, which is no draft', async () => {
+    context.sessionManager.getPendingDraft.mockReturnValue('  \n  ');
+
+    fireIdleTimeout();
+    await drainUntil(() => context.mainWindow.webContents.send.mock.calls.length > 0);
+
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT,
+      'sess-idle',
+      'task-idle',
+      5,
+      'proj-1',
+    );
+    // The draft was read and judged empty, not skipped.
+    expect(context.sessionManager.getPendingDraft).toHaveBeenCalledWith('sess-idle');
+  });
+
+  it('queues one pause when the sweep fires again while the first still waits on the task lock', async () => {
+    // Hold the task's lock so the first pause cannot start, as it cannot while
+    // another move or resume of the same task is running.
+    let releaseLock: () => void = () => {};
+    let lockHeld = false;
+    const lockHolder = withTaskLock('task-idle', () => new Promise<void>((resolve) => {
+      lockHeld = true;
+      releaseLock = resolve;
+    }));
+    try {
+      await drainUntil(() => lockHeld);
+      expect(lockHeld).toBe(true);
+      fireIdleTimeout();
+      fireIdleTimeout();
+    } finally {
+      // Always release: the lock map is module-wide, so a held lock would hang
+      // every later test that takes this task's lock.
+      releaseLock();
+    }
+    await lockHolder;
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+    // Intentional fixed wait. A second pause, were one queued, runs after the
+    // first and also succeeds against these static mocks, so asserting at the
+    // first suspend would pass vacuously.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.suspend).toHaveBeenCalledTimes(1);
+    expect(context.terminalSubmitScheduler.cancel).toHaveBeenCalledTimes(1);
+    const idleTimeoutSends = context.mainWindow.webContents.send.mock.calls.filter(
+      (call) => call[0] === IPC.SESSION_IDLE_TIMEOUT,
+    );
+    expect(idleTimeoutSends).toHaveLength(1);
+  });
+
+  it('accepts a later fire once the first pause settled without pausing', async () => {
+    // The agent is working when the first pause takes the lock, so it declines.
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-idle': 'thinking' });
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.getActivityCache.mock.calls.length > 0);
+    // Intentional fixed wait - the in-flight set is cleared in a finally
+    // handler that has no observable signal of its own.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+
+    // The agent parked again; the next sweep fire must not be swallowed by the
+    // first, long-settled pause.
+    context.sessionManager.getActivityCache.mockReturnValue({ 'sess-idle': 'idle' });
+    fireIdleTimeout();
+    await drainUntil(() => context.mainWindow.webContents.send.mock.calls.length > 0);
+
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT,
+      'sess-idle',
+      'task-idle',
+      5,
+      'proj-1',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -406,6 +518,59 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
 
     // getProjectRepos must NOT have been called (applySuspendDbWrites skipped).
     expect(mockGetProjectRepos).not.toHaveBeenCalled();
+
+    // A task session that cannot be recorded is still stopped, as it always was.
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-orphan');
+  });
+
+  it('tells the renderer about a Command Terminal but does not suspend it again: the sweep already did', async () => {
+    context.sessionManager.getSession.mockReturnValue(
+      { id: 'sess-command', taskId: 'task-command', transient: true } as Session,
+    );
+    const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
+    if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
+
+    idleTimeoutHandler('sess-command', 'task-command', 10);
+
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT,
+      'sess-command',
+      'task-command',
+      10,
+      undefined,
+    );
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+  });
+
+  it('treats a Command Terminal in a resolved project the same: announced, never paused through a task record', async () => {
+    context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
+    context.sessionManager.getSession.mockReturnValue(
+      { id: 'sess-command', taskId: 'task-command', transient: true } as Session,
+    );
+    const idleTimeoutHandler = capturedSessionEventHandlers.get('idle-timeout');
+    if (!idleTimeoutHandler) throw new Error('idle-timeout handler was not registered');
+
+    idleTimeoutHandler('sess-command', 'task-command', 10);
+
+    // Intentional fixed wait - we cannot poll for non-occurrence. Give the
+    // queued task lock time to run its block, were the listener to enter it.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.SESSION_IDLE_TIMEOUT,
+      'sess-command',
+      'task-command',
+      10,
+      'proj-1',
+    );
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(mockGetProjectRepos).not.toHaveBeenCalled();
+    expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
   });
 });
 

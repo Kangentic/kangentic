@@ -2384,7 +2384,19 @@
         };
       },
       onRunFailed: function (callback) {
+        // Tests can fire this via window.__mockFireAutomationRunFailed(failure),
+        // where failure is an AutomationRunFailure. It throws with no subscriber,
+        // so a missing App.tsx subscription fails by name instead of as a
+        // toast that never shows.
         automationFailureListeners.push(callback);
+        if (!window.__mockFireAutomationRunFailed) {
+          window.__mockFireAutomationRunFailed = function (failure) {
+            if (automationFailureListeners.length === 0) {
+              throw new Error('__mockFireAutomationRunFailed called with no automations.onRunFailed listener registered');
+            }
+            automationFailureListeners.slice().forEach(function (listener) { listener(failure); });
+          };
+        }
         return function () {
           automationFailureListeners = automationFailureListeners.filter(function (entry) { return entry !== callback; });
         };
@@ -2772,8 +2784,24 @@
       onEvent: function () {
         return noop;
       },
-      onIdleTimeout: function () {
-        return noop;
+      onIdleTimeout: function (callback) {
+        // Tests can fire this via
+        // window.__mockFireIdleTimeout(sessionId, taskId, minutes, projectId).
+        // The unsubscribe splices, so a StrictMode double mount does not leave
+        // two live listeners behind (and two toasts per push).
+        if (!window.__mockIdleTimeoutListeners) window.__mockIdleTimeoutListeners = [];
+        window.__mockIdleTimeoutListeners.push(callback);
+        if (!window.__mockFireIdleTimeout) {
+          window.__mockFireIdleTimeout = function (sessionId, taskId, minutes, projectId) {
+            var listeners = (window.__mockIdleTimeoutListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, taskId, minutes, projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockIdleTimeoutListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       getSummary: async function (taskId) {
         return summaryCache[taskId] || null;

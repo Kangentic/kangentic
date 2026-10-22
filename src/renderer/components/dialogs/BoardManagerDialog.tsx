@@ -86,7 +86,7 @@ import { ProfileNameDialog } from './board-manager/ProfileNameDialog';
 import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
-import { asSentence } from '../../lib/ipc-error';
+import { asSentence, describeIpcError } from '../../lib/ipc-error';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -1652,7 +1652,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       setSaving(false);
       useToastStore.getState().addToast({
         title: "Couldn't save",
-        message: asSentence(error instanceof Error ? error.message : String(error)),
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     });

@@ -21,8 +21,12 @@ export function applyRuntimeConfig(
   const effective = configManager.getEffectiveConfig(projectPath || undefined);
   sessionManager.setMaxConcurrent(effective.agent.maxConcurrentSessions);
   sessionManager.setShell(effective.terminal.shell);
-  // The sweep reads 0 as off, so the switch reaches it as 0.
-  sessionManager.setIdleTimeout(effective.agent.idleTimeoutEnabled ? effective.agent.idleTimeoutMinutes : 0);
+  // The idle timer is global-only, so it is read from the global file: a
+  // project file can still hold an `agent.idleTimeoutMinutes` from before the
+  // switch existed, and through the merge a saved 0 there would turn the timer
+  // off for that project. The sweep reads 0 as off, so the switch reaches it as 0.
+  const globalAgent = configManager.load().agent;
+  sessionManager.setIdleTimeout(globalAgent.idleTimeoutEnabled ? globalAgent.idleTimeoutMinutes : 0);
 
   // Hydrate the accumulator's known context windows from persisted metrics so
   // a parked/background card shows a correct percentage on the board without

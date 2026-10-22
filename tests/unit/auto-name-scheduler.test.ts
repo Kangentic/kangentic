@@ -3,7 +3,6 @@
  * (`src/renderer/lib/auto-name-scheduler.ts`).
  *
  * Covers:
- *   - `markAutoNameAsked` (idempotent + persistence call shape)
  *   - `scheduleAutoNameSuggestion` (every precheck)
  *   - the timer body: generate a title, then apply it at the session's next
  *     idle edge (now when it already waits on the user, else when it starts
@@ -58,7 +57,6 @@ const { useProjectStore, useBoardStore, useConfigStore, useSessionStore, useToas
 // (undefined in vitest, harmless).
 import {
   scheduleAutoNameSuggestion,
-  markAutoNameAsked,
   automationAgentCanName,
   cancelAutoNameTimersAndClear,
   autoNameTimers,
@@ -266,43 +264,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-});
-
-// ---------------------------------------------------------------------------
-// markAutoNameAsked
-// ---------------------------------------------------------------------------
-
-describe('markAutoNameAsked', () => {
-  it('adds the taskId to the in-memory set and persists via updateConfig', () => {
-    world.askedTaskIds = ['existing-1'];
-
-    markAutoNameAsked('task-1');
-
-    expect(autoNameAsked.has('task-1')).toBe(true);
-    expect(updateConfig).toHaveBeenCalledTimes(1);
-    expect(updateConfig).toHaveBeenCalledWith({
-      autoNameAskedTaskIds: ['existing-1', 'task-1'],
-    });
-  });
-
-  it('is idempotent: a second call for the same taskId does NOT call updateConfig again', () => {
-    markAutoNameAsked('task-1');
-    markAutoNameAsked('task-1');
-    markAutoNameAsked('task-1');
-
-    expect(updateConfig).toHaveBeenCalledTimes(1);
-  });
-
-  it('skips updateConfig when the persisted list already contains the taskId', () => {
-    // Simulates the boot path: in-memory set is empty (post-clear) but the
-    // persisted config already has the taskId from a prior app run.
-    world.askedTaskIds = ['task-1'];
-
-    markAutoNameAsked('task-1');
-
-    expect(autoNameAsked.has('task-1')).toBe(true);
-    expect(updateConfig).not.toHaveBeenCalled();
-  });
 });
 
 // ---------------------------------------------------------------------------

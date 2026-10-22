@@ -38,6 +38,10 @@ export function openTaskFromNotification(notifyProjectId: string, notifyTaskId: 
     useSessionStore.getState().setDetailTaskId(notifyTaskId);
   } else {
     useSessionStore.getState().setPendingOpenTaskId(notifyTaskId);
-    void useProjectStore.getState().openProject(notifyProjectId);
+    // A switch that did not land must not leave the id for the next switch
+    // to open, as the search palette and the Knowledge Graph also clear it.
+    void useProjectStore.getState().openProject(notifyProjectId).then((outcome) => {
+      if (outcome !== 'opened') useSessionStore.getState().setPendingOpenTaskId(null);
+    });
   }
 }

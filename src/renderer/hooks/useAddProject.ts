@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import type { Project } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
-import { asSentence } from '../lib/ipc-error';
+import { asSentence, describeIpcError } from '../lib/ipc-error';
 
 /**
  * Pick a folder and open it as a project, in one step.
@@ -48,7 +48,7 @@ export function useAddProject() {
     } catch (error) {
       useToastStore.getState().addToast({
         title: "Couldn't read that folder",
-        message: asSentence(error instanceof Error ? error.message : 'Unknown error'),
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       return;
@@ -85,7 +85,7 @@ export function useAddProject() {
     } catch (error) {
       useToastStore.getState().addToast({
         title: "Couldn't add project",
-        message: asSentence(error instanceof Error ? error.message : 'Unknown error'),
+        message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       return;

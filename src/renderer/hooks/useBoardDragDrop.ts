@@ -45,7 +45,7 @@ import {
   settleDropGap,
 } from '../utils/board-drop-preview';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
-import { asSentence } from '../lib/ipc-error';
+import { asSentence, describeIpcError } from '../lib/ipc-error';
 
 /**
  * How long dnd-kit's sortable keeps `wasDragging` true after a drop
@@ -823,7 +823,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
         title: 'Drag failed',
-        message: asSentence(err instanceof Error ? err.message : 'Unknown error'),
+        message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
     }

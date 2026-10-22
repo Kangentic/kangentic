@@ -372,8 +372,8 @@ something is listening on.
 | `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when an agent finishes its turn or needs permission, on the open project. Skipped while that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it |
 | `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
 | `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when a plan completes and its task auto-moves, on the open project |
-| `notifications.toasts.onWorkflowComplete` | boolean | `true` | In-app toast when every task in a workflow reaches Done, on the workflow's project, titled "Workflow complete" over "All 9 tasks of "Usage budgets" are in Done." A click on it opens the workflow |
-| `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast (with a Cancel action) when a task spawn stalls past the threshold while preparing |
+| `notifications.toasts.onWorkflowComplete` | boolean | `true` | In-app toast when every task in a workflow reaches Done, on the workflow's project, titled "Workflow complete" over "All 9 tasks of "Usage budgets" are in Done." It opens nothing on a click, since a finished workflow leaves the Workflows view |
+| `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast when a task spawn stalls past the threshold while preparing. It stays until the spawn resolves, and a click on it opens the task |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
 | `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications of the same kind for one session. Idle and crash have separate buckets, so a crash is never suppressed by a recent idle alert |

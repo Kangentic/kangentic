@@ -155,7 +155,7 @@ export async function autoSpawnTasks(
     // Defensive re-check: a session may have been registered for this task
     // during the `await getShell()` above (a concurrent project open or
     // resumeSuspendedSessions). Placeholders registered by
-    // resumeSuspendedSessions cover user-paused records and
+    // resumeSuspendedSessions cover held-pause records (user or auto) and
     // 'system'-suspended records when autoResumeSessionsOnRestart=false;
     // in either case the user must explicitly Resume - don't auto-spawn over
     // the placeholder and clobber the resumable record's agent_session_id.

@@ -189,6 +189,19 @@ describe('the paused list and its toast', () => {
     expect(toastById(useHostMemoryStore.getState().pausedToastId)?.title).toBe('Idle agent paused');
   });
 
+  it('closes an open Review list when the toast is dismissed, since the list it shows is gone', () => {
+    useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));
+    const toastId = useHostMemoryStore.getState().pausedToastId;
+    useHostMemoryStore.getState().openReview();
+    expect(useHostMemoryStore.getState().reviewOpen).toBe(true);
+
+    useToastStore.getState().dismissToast(toastId ?? '');
+
+    expect(useHostMemoryStore.getState().reviewOpen).toBe(false);
+    expect(useHostMemoryStore.getState().pausedAgents).toEqual([]);
+    expect(useHostMemoryStore.getState().pausedToastId).toBeNull();
+  });
+
   it('leaves the paused toast up when memory recovers: the agents stay paused', () => {
     useHostMemoryStore.getState().receivePressureEvent(makeEvent());
     useHostMemoryStore.getState().receiveAgentPaused(makePaused('task-1'));

@@ -561,9 +561,9 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `hostMemory:recovered` | on | Event: host commit headroom recovered past the hysteresis line after a warning was latched (fires once per recovery, not on every healthy tick). Carries `{ sample }`. Clears the persistent toast `hostMemory:pressure` raised. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
 | `hostMemory:agentPaused` | on | Event: low memory paused an agent that was waiting on the user, one push per agent, on every platform. Carries `HostMemoryAgentPausedEvent` (`pausedAt`, `taskId`, `projectId`, `taskTitle`, `projectName`, `waitedMs`), with the names resolved in main so the toast and the Review list need no lookup. See `src/main/diagnostics/idle-agent-pause.ts` |
 
-The toast names the two levers a user has, a larger initial page file and running fewer agents at
-once, and its Behavior settings action opens that tab, where Max Concurrent Sessions is set. Where
-commit goes per agent, and the page-file steps, are in
+The warning toast reads "Low on memory" over the commit headroom left, and its Settings button opens
+the Behavior tab, where Max Concurrent Sessions is set. The user has two levers: a larger initial
+page file, and fewer agents at once. Where commit goes per agent, and the page-file steps, are in
 [user-guide.md](user-guide.md#low-memory-warning-windows).
 
 ### GPU health (2 channels)
