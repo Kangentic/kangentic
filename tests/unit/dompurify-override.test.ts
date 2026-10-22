@@ -1,14 +1,21 @@
 /**
  * What the `overrides.monaco-editor.dompurify` entry does, and what it does not.
  *
- * monaco-editor 0.57.0 declares `dompurify` at exactly 3.4.15, which GHSA-p98j-92pf-mc4p (patched
- * in 3.4.16) covers, so package.json overrides that dependency to 3.4.16. That changes only
- * `node_modules/dompurify`, a dev-scoped copy nothing imports. The DOMPurify that ships is the copy
- * monaco VENDORS at `esm/vs/base/browser/dompurify/dompurify.js` and imports by relative path from
- * `domSanitize.js`, so the renderer bundle carries 3.4.15 whatever the override says. The override
- * keeps the lockfile out of Dependabot's alerts; it is not a fix for shipped code. The exposure in
- * the shipped copy is low: the advisory needs `IN_PLACE` plus a node-removing hook, and monaco calls
- * DOMPurify with `RETURN_DOM_FRAGMENT` / `RETURN_TRUSTED_TYPE` only.
+ * monaco-editor 0.57.0 declares `dompurify` at exactly 3.4.15. Four advisories cover that release:
+ * GHSA-p98j-92pf-mc4p, patched in 3.4.16, and GHSA-mrv2-3pqr-j5jr, GHSA-cg2g-xh64-v4q7 and
+ * GHSA-c6gr-qvv4-5v3f, patched in 3.4.17. So package.json overrides that dependency to 3.4.17. That
+ * changes only `node_modules/dompurify`, a dev-scoped copy nothing imports. The DOMPurify that ships
+ * is the copy monaco VENDORS at `esm/vs/base/browser/dompurify/dompurify.js` and imports by relative
+ * path from `domSanitize.js`, so the renderer bundle carries 3.4.15 whatever the override says. The
+ * override keeps the lockfile out of Dependabot's alerts; it is not a fix for shipped code.
+ *
+ * The shipped copy is not reachable through any of the four, because each needs a config option
+ * monaco never sets. `domSanitize.js` builds its config from its own allowlists and adds only
+ * `RETURN_DOM_FRAGMENT` or `RETURN_TRUSTED_TYPE`:
+ * - GHSA-p98j, and GHSA-mrv2 (its incomplete fix), need `IN_PLACE` plus a hook that removes a node.
+ * - GHSA-cg2g needs `SAFE_FOR_TEMPLATES`.
+ * - GHSA-c6gr needs `PARSER_MEDIA_TYPE` set to `application/xhtml+xml`.
+ * A test below fails once monaco's sanitizer names any of the three options.
  *
  * An override is a pin: once a later monaco asks for a newer DOMPurify on its own, this entry would
  * silently force the older one back. The tests fail at that point, and when monaco vendors a
@@ -85,9 +92,24 @@ describe('the monaco-editor DOMPurify override', () => {
     expect(
       compareVersions(vendoredVersion as string, overridden),
       `monaco-editor ${monacoManifest.version} now vendors DOMPurify ${vendoredVersion}, at or past the `
-      + `override's ${overridden}, so the advisory is fixed in shipped code. Remove `
+      + `override's ${overridden}, so the advisories are fixed in shipped code. Remove `
       + '"overrides.monaco-editor.dompurify" and its section in .claude/rules/dependency-block-parity.md.',
     ).toBeLessThan(0);
+  });
+
+  // The vendored copy is below the patch, so what keeps it safe is monaco's call shape. Each
+  // advisory needs one of these options; once monaco sets one, the shipped copy is exposed.
+  it('is not reachable in shipped code: monaco sets none of the options the advisories need', () => {
+    const sanitizer = readText(MONACO_SANITIZER);
+    // Positive control: this is the file that calls DOMPurify, so an absent option means something.
+    expect(sanitizer).toContain('RETURN_DOM_FRAGMENT');
+    for (const option of ['IN_PLACE', 'SAFE_FOR_TEMPLATES', 'PARSER_MEDIA_TYPE']) {
+      expect(
+        sanitizer,
+        `${MONACO_SANITIZER} now sets ${option}, which a DOMPurify advisory needs. The vendored copy `
+        + 'is exposed in shipped code; re-check the advisories in this file\'s header.',
+      ).not.toContain(option);
+    }
   });
 
   it('compares versions numerically, not as text', () => {
