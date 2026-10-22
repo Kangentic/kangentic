@@ -191,7 +191,7 @@ export interface TerminalGridReport {
 /**
  * The scroll region has no public read path - `IModes` holds mode flags and
  * DECSTBM is buffer state - so this goes through `_core`, the same private door
- * `src/renderer/addons/fit-addon.ts` uses. Narrowly typed rather than `any`, and
+ * `src/main/pty/buffer/headless-frame.ts` uses. Narrowly typed rather than `any`, and
  * every caller already runs inside a try/catch that degrades to geometry only.
  */
 interface TerminalWithScrollRegion {
