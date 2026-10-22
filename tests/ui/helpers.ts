@@ -299,6 +299,25 @@ export async function openTransientCommandTerminal(page: Page, sessionId: string
   return commandWindow;
 }
 
+/** Deliver `data` to one session's mounted terminal as live PTY output. */
+export async function fireSessionData(page: Page, sessionId: string, data: string): Promise<void> {
+  await page.evaluate(({ targetSessionId, payload }) => {
+    (window as unknown as { __mockFireSessionData: (id: string, data: string) => void })
+      .__mockFireSessionData(targetSessionId, payload);
+  }, { targetSessionId: sessionId, payload: data });
+}
+
+/** Everything the page has written to one session's PTY so far, joined, read
+ *  from the mock's `sessions.write` log. */
+export async function writtenToSession(page: Page, sessionId: string): Promise<string> {
+  return page.evaluate((targetSessionId) => {
+    const calls = (window as unknown as {
+      electronAPI: { sessions: { __writeCalls: Array<{ sessionId: string; payload: string }> } };
+    }).electronAPI.sessions.__writeCalls;
+    return calls.filter((call) => call.sessionId === targetSessionId).map((call) => call.payload).join('');
+  }, sessionId);
+}
+
 /**
  * Chromium flags for a spec that asserts on terminal CONTENT as text. Under
  * WebGL, xterm draws rows to a canvas and `.xterm` innerText is empty; with
