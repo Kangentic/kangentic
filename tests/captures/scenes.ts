@@ -1388,8 +1388,8 @@ export const SCENES: Record<string, SceneDefinition> = {
     focus: '[data-testid="toast"]',
     // No dismiss-and-raise cycle: raising the toast again would take an exit push main never sends
     // twice. The toasts that come later are the sample install's own.
-    // A still pauses the countdown line where it starts (demo/boot.js freezes every Web
-    // Animation), so the poster is the same frame on every shot.
+    // A still pauses the countdown line where it starts (demo/boot.js freezes the Web Animation
+    // under toast-countdown), so the poster is the same frame on every shot.
     motion: 'The toast\'s countdown line fills over its 30 s, holding while the pointer is over the card, and the toast closes; the board\'s sessions raise their own toasts as each finishes its turn on its recording\'s clock, Generate API client types about 25 s in and again every cycle under loop=1.',
   },
   'board-config-change': {

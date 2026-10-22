@@ -609,15 +609,19 @@
     // setInterval; the mock has no intervals of its own; the seed installs none.
     window.setInterval = function () { return 0; };
     // A Web Animation is not a CSS animation, so the zeroed durations above do not reach it.
-    // The one the renderer runs is a timed toast's countdown line, which would otherwise be
-    // drawn wherever its clock had got to when the frame was shot. A still holds every Web
-    // Animation where it starts, so the line is empty in every capture.
+    // A timed toast's countdown line is one, and it would otherwise be drawn wherever its clock
+    // had got to when the frame was shot. A still holds that line where it starts, so it is
+    // empty in every capture. Only that line: dnd-kit's drop animation is a Web Animation too,
+    // and a drag overlay unmounts only once it finishes, so holding every animation left a
+    // still's held card on screen after a visitor's click let go of the pose.
     var nativeAnimate = Element.prototype.animate;
     if (typeof nativeAnimate === 'function') {
       Element.prototype.animate = function () {
         var animation = nativeAnimate.apply(this, arguments);
-        animation.pause();
-        animation.play = function () {};
+        if (typeof this.closest === 'function' && this.closest('[data-testid="toast-countdown"]')) {
+          animation.pause();
+          animation.play = function () {};
+        }
         return animation;
       };
     }
