@@ -955,7 +955,9 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('the Runs Total shows a total no run reported as a dash, and a reported one formatted', async () => {
+  // Two tests, not one that launches two pages: each launch costs several seconds on a loaded
+  // runner, and a pair of them inside one 15s budget timed out on CI.
+  test('the Runs Total shows a total no run reported as a dash', async () => {
     const onlyUnrecorded = fullReport({
       conversations: [{
         conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
@@ -980,6 +982,9 @@ test.describe('Completed task view', () => {
     } finally {
       await unrecorded.browser.close();
     }
+  });
+
+  test('the Runs Total shows the one reported runtime and cost formatted, never zeroed by an unreported run', async () => {
     const onePartial = fullReport({
       conversations: [{
         conversationId: '0407afe2-1111-2222-3333-444444444444', isolatedColumn: null, runs: [
