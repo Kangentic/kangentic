@@ -85,6 +85,7 @@ test.describe('toast behavior', () => {
       await expect(toast.getByTestId('toast-title')).toHaveText('Task moved');
       await expect(toast.getByTestId('toast-body')).toHaveText('"Fix login redirect" is now in Code Review.');
       await expect(toast.getByTestId('toast-countdown')).toHaveCount(1);
+      // toast-count-ok: a part of a toast still on screen (its countdown is 30s), not whether a toast appeared.
       await expect(toast.getByTestId('toast-action')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -106,6 +107,7 @@ test.describe('toast behavior', () => {
       });
       const toast = page.getByTestId('toast');
       await expect(toast).toHaveAttribute('data-persistent', 'true');
+      // toast-count-ok: a part of a persistent toast, which never dismisses itself, not whether a toast appeared.
       await expect(toast.getByTestId('toast-countdown')).toHaveCount(0);
       await expect(toast.getByTestId('toast-age')).toBeVisible();
       await toast.getByTestId('toast-action').click();
