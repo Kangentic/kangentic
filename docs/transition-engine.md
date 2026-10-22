@@ -414,7 +414,7 @@ When a column has `permission_mode='plan'`, Claude runs in plan mode. When the p
 
 The move is keyed on the approval, not on the agent calling `ExitPlanMode`. The `plan-exit` listener (`ipc/handlers/sessions.ts`) fires on the tool's completion (`PostToolUse`), which the CLI sends only for an approved plan, so a rejected plan moves nothing. That holds whoever approves.
 
-Who approves is the column's `plan_approval`. `manual` (the default) waits for the user in the agent's terminal. `automatic` has Kangentic answer the prompt through the agent's plan approval hook, for an agent that declares `supportsPlanAutoApproval` (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)). A task in a running workflow follows the workflow's `plan_approval` instead, and an agent that cannot approve plans, or a task with its automations disabled, always waits for the user. Kangentic's approval also switches the session to the permission mode it would spawn with in the destination column, with fallbacks when that is `plan` (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)). Besides the plan prompt, the hook answers only a planning prompt for another MCP server's tool the allow rules in the project's or the user's Claude settings name, which Claude's plan mode asks about anyway (task #870), so an unattended Planning session does not stall on a tool you allowed. A question the agent asks the user, any other tool, and Kangentic's own tools still wait.
+Who approves is the column's `plan_approval`. `manual` (the default) waits for the user in the agent's terminal. `automatic` has Kangentic answer the prompt through the agent's plan approval hook, for an agent that declares `supportsPlanAutoApproval` (see [Agent Integration](integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). A task in a running workflow follows the workflow's `plan_approval` instead, and an agent that cannot approve plans, or a task with its automations disabled, always waits for the user. Kangentic's approval also switches the session to the permission mode it would spawn with in the destination column, with fallbacks when that is `plan` (see [Agent Integration](integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). Besides the plan prompt, the hook answers only a planning prompt for another MCP server's tool the allow rules in the project's or the user's Claude settings name, which Claude's plan mode asks about anyway (task #870), so an unattended Planning session does not stall on a tool you allowed. A question the agent asks the user, any other tool, and Kangentic's own tools still wait.
 
 Default setup: Planning column has `plan_exit_target_id` pointing to the Executing column.
 
@@ -444,7 +444,7 @@ Because create-into-spawn-column and unarchive route through the same `spawnAgen
 ## See Also
 
 - [Session Lifecycle](session-lifecycle.md) -- spawn entry points, spawn flow, queue, suspend, resume
-- [Agent Integration](agent-integration.md) -- command building, permission modes, per-agent CLI details
+- [Agent Integration](integrations/agents/index.md) -- command building, permission modes, per-agent CLI details
 - [Worktree Strategy](worktree-strategy.md) -- worktree creation details
 - [Database](database.md) -- schema for `column_automations`, `automation_runs`, swimlanes
 - [Configuration](configuration.md#column-automations) -- the `kangentic.json` shape for a column's lists

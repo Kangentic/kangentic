@@ -313,7 +313,7 @@ export function installedPosixShells(): PosixProbeShell[] {
 
 /**
  * The shells an agent CLI hands a whole hook or status-line command to, each
- * entered the way a CLI was measured to enter it (docs/agent-integration.md,
+ * entered the way a CLI was measured to enter it (docs/integrations/agents/claude-code.md,
  * "Paths in hook commands"):
  * - `sh`, `bash`: `-c <command>` (macOS and Linux).
  * - `git-bash`: `bash.exe -c <command>` (Claude Code on Windows with Git Bash).

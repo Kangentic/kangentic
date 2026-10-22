@@ -723,7 +723,7 @@ export interface AgentAdapter {
    * pinned as fixtures, and the hold stayed while the process ran and released
    * when it exited (a process outside the PTY root's tree is invisible to the
    * watcher). `background-commands-declaration.test.ts` enforces the first two.
-   * Per-agent decisions: docs/agent-integration.md, "Background commands".
+   * Per-agent decisions: docs/integrations/agents/background-commands.md, "Background commands".
    *
    * Default (if not implemented): the agent's background commands are not
    * tracked, it never holds a session, and the MCP tool is not offered.

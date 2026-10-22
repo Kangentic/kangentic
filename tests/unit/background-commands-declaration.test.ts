@@ -14,7 +14,7 @@
  *   so a mark could land on the wrong one.
  *
  * The list itself is pinned, so a new declaration is a decision someone
- * records in docs/agent-integration.md ("Background commands"), with the
+ * records in docs/integrations/agents/background-commands.md ("Background commands"), with the
  * captured payloads that back it, and not a flag flipped on its own. The two
  * conditions that need the real CLI (the payloads, and the hold staying while
  * the process runs and releasing when it exits) are the probe's, and are

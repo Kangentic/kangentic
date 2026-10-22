@@ -3771,7 +3771,7 @@
               unavailableTitle:
                 'Droid does not stream live telemetry to Kangentic.\n' +
                 'Run /cost or /context inside the Droid TUI to see model, tokens, and cost.\n' +
-                'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
+                'Tracked upstream: Factory-AI/factory (see docs/integrations/agents/droid.md).',
             },
           },
           {

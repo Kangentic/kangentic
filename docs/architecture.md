@@ -976,7 +976,7 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 
 ### Global Config Writes
 
-Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). It is one read-modify-write: a temp file renamed over the file, written with the file's own mode, and skipped when the file does not parse as a JSON object. Details in [Global Config Writes](agent-integration.md#global-config-writes-claudejson).
+Before every Claude spawn (task chokepoints and the Command Terminal alike), `ClaudeAdapter.ensureTrust()` read-modify-writes the global `~/.claude.json` under one lock: trust for the working directory, `kangentic` in the project's enabled MCP servers, and `diffSidebarOpen: false` so Claude Code 2.1.260's fullscreen diff panel stays closed at launch (it is a global-config key only, so `--settings` cannot carry it). It is one read-modify-write: a temp file renamed over the file, written with the file's own mode, and skipped when the file does not parse as a JSON object. Details in [Global Config Writes](integrations/agents/claude-code.md#global-config-writes-claudejson).
 
 ## Session Recovery
 
@@ -1344,7 +1344,7 @@ Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-defau
 ## See Also
 
 - [Session Lifecycle](session-lifecycle.md) -- Full state machine, spawn flow, queue, crash recovery
-- [Agent Integration](agent-integration.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
+- [Agent Integration](integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, how to add a new provider
 - [Mobile Bridge](mobile-bridge.md) - Pairing ceremony, signed device roster, capability verbs, relay transport
 - [Transition Engine](transition-engine.md) -- Automation adapters, triggers, template variables, priority rules
