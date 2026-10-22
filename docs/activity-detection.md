@@ -38,8 +38,8 @@ This subsystem aims to be near-100% accurate: notification fires within seconds 
    ┌───────────────────┐ ┌─────────────────────────┐ ┌────────────┐ ┌────────────┐
    │ Stability window  │ │ Watchdog table (5 holds)│ │ BgShell    │ │ Ctrl+C     │
    │ (400ms)           │ │ - bg-shell 5min + 30s   │ │ Watcher    │ │ synthesis  │
-   │                   │ │ - stuck-tools  (5min)   │ │ (proc-tree)│ │ (3s settle)│
-   │                   │ │ - stale-think  (180s)   │ │            │ │            │
+   │                   │ │ - stuck-pending-tools 5m│ │ (proc-tree)│ │ (3s settle)│
+   │                   │ │ - stale-thinking (180s) │ │            │ │            │
    │                   │ │ - stuck-subagent (5min) │ │            │ │            │
    └───────────────────┘ └─────────────────────────┘ └────────────┘ └────────────┘
                                                           │

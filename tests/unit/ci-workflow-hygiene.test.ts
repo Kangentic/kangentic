@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Two pins on .github/workflows/*.yml that nothing else watches.
+// Three pins on .github/workflows/*.yml that nothing else watches.
 //
 // 1. Every Linux runner is pinned to Ubuntu 24.04. The node_modules and Playwright cache keys start
 //    with `runner.os`, which reads `Linux` on every Ubuntu release, so a job that drifts to a
@@ -14,6 +14,12 @@ import path from 'node:path';
 //    a renamed file never matches again, so the workflow stops firing when that file changes and
 //    nothing reports it. vitest.config.ts became vitest.config.mts and three workflows carried the
 //    old name in both their `pull_request` and `push` filters.
+//
+// 3. Every Playwright run in ci.yml and deploy-demo.yml passes --fail-on-flaky-tests. CI retries
+//    each test once, and without the flag a test that fails and then passes on that retry leaves
+//    its check green. The project keeps no flaky tests, and before the flag a flake reached main
+//    and was caught only by /release scanning the whole run log. release.yml is out of scope on
+//    purpose: its poster captures' retry is how a slow shot lands.
 //
 // The collectors read the YAML with line-anchored regexes, like release-workflow-gates.test.ts,
 // because js-yaml is only a transitive dependency. A collector that quietly matches nothing would
@@ -555,4 +561,170 @@ describe('collectPathFilterEntries', () => {
       ]);
     },
   );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Pin 3: every Playwright run in ci.yml fails on a flaky test
+// ---------------------------------------------------------------------------------------------
+
+const FAIL_ON_FLAKY_FLAG = '--fail-on-flaky-tests';
+
+interface PlaywrightRun {
+  line: number;
+  command: string;
+  /** The package.json script it goes through, or null for a direct `playwright test`. */
+  viaScript: string | null;
+}
+
+/** The package.json scripts whose command runs `playwright test`, so `npm run <name>` counts as a Playwright run. */
+function readPlaywrightScripts(): string[] {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
+  return Object.entries(packageJson.scripts)
+    .filter(([, command]) => /\bplaywright test\b/.test(command))
+    .map(([name]) => name);
+}
+
+/**
+ * Every line of a workflow that runs Playwright: a direct `playwright test`, or `npm run` of a
+ * script that runs it. Comment lines are skipped. Every other line is read, block-scalar `run: |`
+ * bodies included, so a command moved into a multi-line step is still found.
+ */
+function collectPlaywrightRuns(source: string, playwrightScripts: string[]): PlaywrightRun[] {
+  const runs: PlaywrightRun[] = [];
+  normalizeLineEndings(source).split('\n').forEach((rawLine, lineIndex) => {
+    if (isBlankOrComment(rawLine)) return;
+    const command = rawLine.replace(/^\s*(-\s+)?(run:\s*)?/, '').trim();
+    if (/\bplaywright test\b/.test(command)) {
+      runs.push({ line: lineIndex + 1, command, viaScript: null });
+      return;
+    }
+    const scriptMatch = /\bnpm run ([\w:-]+)/.exec(command);
+    if (scriptMatch && playwrightScripts.includes(scriptMatch[1])) {
+      runs.push({ line: lineIndex + 1, command, viaScript: scriptMatch[1] });
+    }
+  });
+  return runs;
+}
+
+/**
+ * A run without the flag, or an `npm run` that passes it before npm's `--` separator, where npm
+ * takes it as its own option and Playwright never sees it.
+ */
+function findRunsThatLetFlakesPass(runs: PlaywrightRun[]): PlaywrightRun[] {
+  return runs.filter((run) => {
+    const tokens = run.command.split(/\s+/);
+    const flagIndex = tokens.indexOf(FAIL_ON_FLAKY_FLAG);
+    if (flagIndex === -1) return true;
+    if (run.viaScript === null) return false;
+    const separatorIndex = tokens.indexOf('--');
+    return separatorIndex === -1 || separatorIndex > flagIndex;
+  });
+}
+
+function formatFlakeViolations(workflowName: string, violations: PlaywrightRun[]): string {
+  const rows = violations.map((run) => `  ${workflowName}:${run.line} runs "${run.command}"`);
+  return [
+    `Every Playwright run in ${workflowName} must pass ${FAIL_ON_FLAKY_FLAG} (through npm's -- separator for an npm run). Missing:`,
+    ...rows,
+    'CI retries each test once, so without the flag a test that passes only on its retry leaves the check green.',
+    'See the note above the UI shards run step in .github/workflows/ci.yml.',
+  ].join('\n');
+}
+
+describe('ci.yml Playwright runs fail on a flaky test', () => {
+  const playwrightScripts = readPlaywrightScripts();
+  const ciSource = readWorkflowSource('ci.yml');
+
+  it('knows test:demo as a Playwright script (proves the script reader still matches)', () => {
+    expect(playwrightScripts).toContain('test:demo');
+  });
+
+  it('finds exactly the UI, E2E and web demo runs', () => {
+    const runs = collectPlaywrightRuns(ciSource, playwrightScripts);
+    const signatures = runs.map((run) => {
+      if (run.command.includes('--project=ui')) return 'ui';
+      if (run.command.includes('--project=electron')) return 'electron';
+      if (run.viaScript === 'test:demo') return 'demo';
+      return run.command;
+    });
+    expect(
+      signatures.sort(),
+      'ci.yml no longer runs exactly these three Playwright commands. Update this list with the new shape, and keep the flag on it.',
+    ).toEqual(['demo', 'electron', 'ui']);
+  });
+
+  it('passes --fail-on-flaky-tests on every one of them', () => {
+    const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(ciSource, playwrightScripts));
+    expect(violations, formatFlakeViolations('ci.yml', violations)).toEqual([]);
+  });
+
+  it('catches the flag dropped from the real UI shard run', () => {
+    const regressed = replaceExactly(
+      ciSource,
+      `--project=ui --shard=\${{ matrix.shardIndex }}/\${{ matrix.shardTotal }} ${FAIL_ON_FLAKY_FLAG}`,
+      `--project=ui --shard=\${{ matrix.shardIndex }}/\${{ matrix.shardTotal }}`,
+    );
+    const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
+    expect(violations.map((run) => run.command.includes('--project=ui'))).toEqual([true]);
+  });
+
+  it('catches the flag dropped from the real web demo run', () => {
+    const regressed = replaceExactly(ciSource, `npm run test:demo -- ${FAIL_ON_FLAKY_FLAG}`, 'npm run test:demo');
+    const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
+    expect(violations.map((run) => run.viaScript)).toEqual(['test:demo']);
+  });
+
+  it('flags an npm run that passes the flag where npm keeps it', () => {
+    const runs = collectPlaywrightRuns(`        run: npm run test:demo ${FAIL_ON_FLAKY_FLAG}\n`, playwrightScripts);
+    expect(findRunsThatLetFlakesPass(runs)).toHaveLength(1);
+  });
+
+  it('flags an npm run that has a separator but puts the flag before it', () => {
+    // The `--` exists, so this is not the no-separator case above. npm still keeps a flag that sits
+    // to its left, so only a separator that comes first lets Playwright see the flag.
+    const runs = collectPlaywrightRuns(`        run: npm run test:demo ${FAIL_ON_FLAKY_FLAG} -- --reporter=line\n`, playwrightScripts);
+    expect(findRunsThatLetFlakesPass(runs)).toHaveLength(1);
+  });
+
+  it('accepts an npm run that puts the flag after the separator among other arguments', () => {
+    const runs = collectPlaywrightRuns(`        run: npm run test:demo -- --reporter=line ${FAIL_ON_FLAKY_FLAG}\n`, playwrightScripts);
+    expect(runs).toHaveLength(1);
+    expect(findRunsThatLetFlakesPass(runs)).toEqual([]);
+  });
+
+  it('reads a Playwright command inside a block-scalar run and skips comments', () => {
+    const source = [
+      '        run: |',
+      '          echo starting',
+      '          npx playwright test --project=ui',
+      '        # npx playwright test --project=electron is only mentioned here',
+    ].join('\n');
+    const runs = collectPlaywrightRuns(source, playwrightScripts);
+    expect(runs).toEqual([{ line: 3, command: 'npx playwright test --project=ui', viaScript: null }]);
+    expect(findRunsThatLetFlakesPass(runs)).toHaveLength(1);
+  });
+});
+
+describe('deploy-demo.yml Playwright runs fail on a flaky test', () => {
+  const playwrightScripts = readPlaywrightScripts();
+  const deploySource = readWorkflowSource('deploy-demo.yml');
+
+  it('finds exactly the web demo smoke', () => {
+    const runs = collectPlaywrightRuns(deploySource, playwrightScripts);
+    expect(
+      runs.map((run) => run.viaScript),
+      'deploy-demo.yml no longer runs exactly the test:demo smoke. Update this list with the new shape, and keep the flag on it.',
+    ).toEqual(['test:demo']);
+  });
+
+  it('passes --fail-on-flaky-tests on it', () => {
+    const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(deploySource, playwrightScripts));
+    expect(violations, formatFlakeViolations('deploy-demo.yml', violations)).toEqual([]);
+  });
+
+  it('catches the flag dropped from the real smoke run', () => {
+    const regressed = replaceExactly(deploySource, `npm run test:demo -- ${FAIL_ON_FLAKY_FLAG}`, 'npm run test:demo');
+    const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
+    expect(violations.map((run) => run.viaScript)).toEqual(['test:demo']);
+  });
 });

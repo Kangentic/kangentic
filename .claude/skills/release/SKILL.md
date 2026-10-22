@@ -24,8 +24,9 @@ This command does NOT use `/merge-back`. The release flow is fundamentally diffe
 Every step operates on the MAIN checkout, even though the board usually hands the release task its
 own worktree. Git is the easy half: pass `git -C <main> ...` everywhere. The cwd-sensitive commands
 are the trap, because a bare `cd` is reset by the harness between tool calls. Run each of
-`node scripts/verify-node-modules.js`, `npm ci`, `npm run typecheck`, `npx playwright test`, and
-`npm version` as one PowerShell call shaped `Push-Location <main>; <command>`. `npm ci` is the one
+`node scripts/verify-node-modules.js`, `npm ci`, `npm run typecheck`, `npx playwright test`,
+`npm version`, and `node scripts/release-changelog.mjs` as one PowerShell call shaped
+`Push-Location <main>; <command>`. `npm ci` is the one
 that does damage rather than nothing: run it bare and it wipes the WORKTREE's `node_modules` while
 the verifier in main still reports stale. Every Read, Glob, Grep, Edit, and Write path is a
 main-checkout absolute path, and the `doc-auditor` agent is given the main-checkout root so it does
@@ -147,18 +148,25 @@ PREVIOUS version. That is why Step 2 reads all three files back.
    regression, a broken build, or an E2E failure would all sail past it. One `gh` call covers
    every one of those in about a second.
 
-   Confirm the green is a real green, not a green-via-retry. CI runs UI and E2E with `retries: 1`,
-   so a flake hides inside a passing check. Run
-   `gh run view <runId> --repo Kangentic/kangentic --log` as ONE command and read `flaky` out of
-   the output it returns. Do not pipe it into a filter and do not redirect it to a file:
-   `bash-single-command.md` forbids both, the guard hook denies the pipe outright, and an agent
-   that hits that wall mid-release may skip the check instead of working around it. If the
-   combined log comes back truncated, re-run it one job at a time with
-   `gh run view --job <jobId> --repo Kangentic/kangentic --log`, taking the job ids from the
-   plain `gh run view <runId>`. A hit is a flake, and the project's standing
-   never-leave-a-flake rule makes an unresolved one a blocker: fix it, rewrite it
-   deterministically, or remove it with a justification before releasing. Do not ask whether to
-   release around it.
+   A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
+   `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its
+   shard and the run's conclusion is `failure` (`tests/unit/ci-workflow-hygiene.test.ts` pins the
+   flag in `ci.yml`). Before the flag, a flake hid inside a passing check and this step scanned the
+   whole 7 MB run log for `flaky`; v0.48.0's scan found one that had already reached main.
+
+   A run that failed on a flake (its shard's summary lists the test under `flaky`) is a blocker
+   under the never-leave-a-flake rule: fix it, rewrite it deterministically, or remove it with a
+   justification. Do not ask whether to release around it.
+
+   **The fix lands through its own PR, never as a merge from inside this release.**
+   1. Make the fix, commit it on a branch of its own, and open the PR. `/pull-request` drives its
+      checks green.
+   2. Stop the release and report the PR. Merging it is the Merge column's job
+      (`/merge-pull-request`) or the user's. Never `gh pr merge --admin` from inside `/release`:
+      v0.48.0 did, the auto mode classifier stopped the next tool call as a merge without review,
+      and the user had to step in mid-release anyway.
+   3. Resume `/release` once the PR is on main. Fast-forward main and start again at pre-flight
+      step 1: the new HEAD needs its own green CI run, and the range Step 3 reads has grown.
 
 Report the current version (from package.json), the bump type, and what the new version will be before proceeding.
 
@@ -176,26 +184,43 @@ Run these checks sequentially.
 1. Run `npm run typecheck`. If it fails, report type errors and stop.
 2. Run `npx playwright test --project=ui`.
 
-**Triaging a Step 1.2 failure.** What a failure means depends on its shape, and the two shapes
-want opposite responses. Sort it before reacting:
+**Triaging a Step 1.2 failure.** A failure is either the machine's or yours, and the two want
+opposite responses. Sort it before reacting.
 
-- **An assertion failure is yours.** A spec that fails an `expect` is a test defect or a real
-  regression, and either way it blocks. Diagnose it, fix it, and re-run. The project's
-  never-leave-a-flake rule applies in full: fix, rewrite deterministically, or remove with a
-  justification. Never ask whether to release around it.
-- **A worker process abort is the machine's.** `worker process exited unexpectedly (code=...)`
-  carries no assertion, no selector, and no wait to harden, so there is no de-flake edit that
-  addresses it. Chromium died. On Windows, `3221226505` (`0xC0000409`) under three workers and
-  1500-plus tests is resource exhaustion, not a product defect.
+**Read the failure's `error-context.md` and screenshot under `test-results/` FIRST.** Playwright
+clears that folder at the start of every run, so the scoped re-run below deletes the one piece of
+evidence that could show a real regression.
 
-  A process abort does NOT block when all three hold: the spec is untouched in this release's
-  commit range, it passes on a scoped re-run, and pre-flight step 8's CI run is green on this
-  commit with no `flaky` hits. Record it in the Step 7 report as an environmental failure and
-  keep going. If any of the three does not hold, treat it as an assertion failure and stop.
+A failure is the machine's (environmental) only when ALL FOUR hold:
 
-Re-running the full suite a third time to chase a clean local exit is not diligence; it is a
-ten-minute coin flip that cannot tell you anything the three checks above have not already
-answered.
+1. **It carries no assertion.** Its `error-context.md`, if it wrote one, has no Expected/Received
+   block. An interrupted `expect` prints one, so a timeout inside an assertion does not qualify.
+2. **The code it stopped in is untouched in this release's commit range.** Judge the code it
+   stopped in, not the spec file: v0.48.0's failure stopped in `launchPage`, which the release had
+   not changed, inside a spec the release had.
+3. **It passes on a scoped re-run** (`npx playwright test <spec> --project=ui`).
+4. **Pre-flight step 8's CI run is green on this commit.** CI fails on a flaky test, so that green
+   also says no test needed its retry.
+
+When all four hold, record it in the Step 7 report as an environmental failure, naming the four
+checks, and keep going. When any one fails, it is yours: a test defect or a real regression, and
+either way it blocks. Diagnose it, fix it, and re-run. The never-leave-a-flake rule applies in
+full: fix, rewrite deterministically, or remove with a justification, and the fix lands through its
+own PR as pre-flight step 8 describes. Never ask whether to release around it.
+
+Shapes that have met all four here, under three workers beside the live dev server. These are
+examples, not the rule:
+
+- `worker process exited unexpectedly (code=3221226505)`, which is `0xC0000409`. Chromium died of
+  resource exhaustion (v0.32.1).
+- `"beforeAll" hook timeout of 15000ms exceeded` inside `launchPage()` (v0.42.0).
+- A bare `Test timeout of 15000ms exceeded` with no Expected/Received block (v0.43.0).
+- `page.goto: Navigation ... is interrupted by another navigation to` the same URL, inside
+  `launchPage` (v0.48.0). `navigateToVite` in `tests/ui/helpers.ts` now retries that form, so a
+  repeat means it happened on three attempts in a row.
+
+Re-running the full suite a third time to chase a clean local exit is not diligence. It is a
+ten-minute coin flip that cannot tell you anything the four checks above have not already answered.
 
 ## Step 1.5 -- Documentation Audit
 
@@ -273,48 +298,40 @@ and `publish-protocol.yml` workflow, not this one. See that skill for details.
 
 ## Step 3 -- Generate Changelog
 
-1. **Find the previous tag:** Run `git describe --tags --abbrev=0 --match "v*"` (the filter matters
-   for the reason Step 0 point 1 gives: without it this returns a `protocol-v*` tag and the
-   changelog silently covers the wrong range). If no tags exist, use the root commit as the
-   starting point (this is the first release).
-2. **Collect commits:** Run `git log <previousTag>..HEAD --oneline --no-decorate` (or `git log --oneline --no-decorate` if no previous tag).
-3. **Group commits** into categories using conventional commit prefixes:
-   - **Breaking Changes** -- commits with `!` after the type (e.g., `feat!:`, `fix!:`) or containing `BREAKING CHANGE` in the subject
-   - **Features** -- commits with `feat:` prefix
-   - **Fixes** -- commits with `fix:` prefix
-   - **Other** -- commits with `chore:`, `docs:`, `refactor:`, `test:`, `style:`, `perf:`, `ci:`, `build:` prefix
-   - **Fallback** -- commits without a conventional prefix get loose keyword matching for backwards compatibility:
-     - Starting with "Add", "Implement", "Create", or containing "feature" -- Features
-     - Starting with "Fix" or containing "bug", "resolve" -- Fixes
-     - Everything else -- Other
-   - When displaying commit messages in the changelog, strip the conventional prefix (e.g., `feat: add dark mode` becomes `Add dark mode`)
-4. **Format the changelog entry:**
+Run `scripts/release-changelog.mjs` in main, with the tag Step 0 captured and the new version:
 
-```markdown
-## [vX.Y.Z] - YYYY-MM-DD
+`Push-Location <main>; node scripts/release-changelog.mjs <previousTag> <X.Y.Z> --write`
 
-### Breaking Changes
-- Commit message here (abc1234)
+- **`<previousTag>` is Step 0's value.** Step 0 already applied `--match "v*"`, which is what keeps
+  a `protocol-v*` tag from starting the range in the middle of the desktop release. Never run a
+  fresh `git describe` for it.
+- **What it writes.** It reads `<previousTag>..HEAD` from the checkout it lives in, sorts each
+  commit by its conventional prefix (Breaking Changes for a `!` or `BREAKING CHANGE`, then
+  Features, Fixes and Other, with a keyword fallback for a subject that has no prefix), strips the
+  prefix, and inserts the entry after the `<!-- releases -->` marker in CHANGELOG.md's existing
+  shape.
+- **What it leaves out.** `/code-review` bookkeeping: a commit whose only change is
+  `docs/code-review-fanout-audit.md`, and a single-parent commit that changes nothing, which is
+  how a pass's Refuted and Decisions ledger rides. They were 22 of v0.48.0's 136 commits and tell
+  a reader nothing about the release.
+- **What it prints.** The entry, then one line with the count per section and how many commits it
+  skipped, zero included, then each skipped commit's hash and subject. Read that list: a wrong skip
+  removes a line from a public changelog, and the list is the only place it shows. Keep the summary
+  line and the list for Step 7.
+- **Exit 2 means nothing was written.** The causes are a missing marker, an entry already there for
+  the version, an empty range, and a bad argument. Fix the cause and re-run it. Never type the
+  entry by hand.
 
-### Features
-- Commit message here (abc1234)
-
-### Fixes
-- Commit message here (def5678)
-
-### Other
-- Commit message here (ghi9012)
-```
-
-Omit any category section that has no entries.
-
-5. **Read `CHANGELOG.md`**, then use the **Edit tool** to insert the new entry after the `<!-- releases -->` marker line. If the file doesn't exist or doesn't have the marker, stop with an error.
+Leave off `--write` for a dry run that prints the same output and writes nothing.
+`tests/unit/release-changelog.test.ts` pins the sorting, the skip and the insertion. A fresh fork
+with no tag passes its root commit (`git rev-list --max-parents=0 HEAD`) as `<previousTag>`. The
+range starts after that commit, so the entry leaves it out; say so in the Step 7 report.
 
 ## Step 3.5 -- Generate Release Notes
 
 Generate a concise, user-friendly summary for the GitHub Release draft body. This is separate from the CHANGELOG -- the CHANGELOG is the full technical log, while release notes are a brief summary for end users.
 
-1. **Use the same commit list from Step 3**, but rewrite them in plain language:
+1. **Use the entry Step 3 printed**, but rewrite its lines in plain language:
    - Strip conventional commit prefixes (`feat:`, `fix:`, etc.)
    - Remove commit hashes
    - Rewrite terse commit subjects into clear, user-friendly descriptions
@@ -325,7 +342,7 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    trailer, for a change its subject undersells, such as something that switches off for some users.
    Put each in its section with its meaning kept, and fold it into the bullet for the same change
    rather than listing the change twice. The trailer is the only way such a note reaches this file,
-   since the commit list above is subjects only.
+   since the entry Step 3 printed is built from subjects only.
 2. **Group into sections:**
    - **What's New** -- features and enhancements
    - **Bug Fixes** -- fixes
@@ -376,7 +393,8 @@ Summarize the release:
 
 - Version: vX.Y.Z
 - Tag: vX.Y.Z
-- Commits included: N
+- Commits included: N, and the review-record commits Step 3 left out (its summary line and the
+  list under it)
 - Changelog entry: show the generated entry
 - **Release notes:** Read `RELEASE_NOTES.md` and display the contents. Tell the user: "These release notes will be applied to the draft GitHub Release automatically by CI."
 - GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all five targets into it (Windows x64, macOS arm64 and x64, Linux x64 and arm64), rebuilds the macOS update feed for both arches, verifies the asset manifest, and then publishes it automatically.
@@ -476,16 +494,16 @@ back.
 
 ## Allowed Tools
 
-Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `gh`, `npm`, `npx`, and `curl` commands), `Write` (for commit message temp file), and `Edit` (for CHANGELOG.md).
+Use `Read`, `Glob`, `Grep`, `Bash` (for `git`, `gh`, `npm`, `npx`, and `curl` commands), `Write` (for the commit message temp file and `RELEASE_NOTES.md`), and `Edit` (for the Step 1.5 doc fixes). Step 3's changelog script runs through `PowerShell` in main, like the other cwd-sensitive commands "Where this runs" lists.
 
 `gh` carries the entire GitHub half of the release: the symbol-secret check and the leftover-release
 check in pre-flight, and every Step 7 call that watches the run and verifies what was published.
 Without `Bash(gh:*)` the release can still tag and push, which is the worst possible failure shape,
 because it ships the build and then cannot confirm what it shipped.
 
-Step 8 needs two more: `PowerShell`, for the sentry skill's Windows request pattern, which chains
-with `;` and so cannot go through `Bash` under `.claude/rules/bash-single-command.md`; and
-`Bash(curl:*)` for its macOS and Linux form. Without those grants Step 8 cannot make a single
+Step 8 uses two of those grants: `PowerShell`, for the sentry skill's Windows request pattern,
+which chains with `;` and so cannot go through `Bash` under `.claude/rules/bash-single-command.md`;
+and `Bash(curl:*)` for its macOS and Linux form. Without those grants Step 8 cannot make a single
 Sentry request. It reaches the sentry skill's instructions with `Read`, which is already granted,
 rather than by invoking the skill.
 

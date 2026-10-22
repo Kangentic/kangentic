@@ -3381,9 +3381,10 @@ export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
 /** Concrete transcription engine ids. `stub` is the no-ML test engine. */
 export type DictationEngineId = 'stub' | 'sherpa-onnx' | 'whisper-cpp' | 'remote-openai' | 'hybrid' | 'chunked-offline';
 
-/** User-facing engine selection. `auto` tiers by detected hardware; the rest
- *  force a specific engine for latency-vs-accuracy comparison. `remote` maps
- *  to the `remote-openai` engine. */
+/** User-facing engine selection. Only `remote` changes the engine: it maps to
+ *  the `remote-openai` engine for the final pass. Every other value, `auto`
+ *  included, runs the on-device hybrid tiered by detected hardware, because
+ *  `selectEngine` (`engine-selection.ts`) checks for `remote` alone. */
 export type DictationEngineMode = 'auto' | 'sherpa-onnx' | 'whisper-cpp' | 'hybrid' | 'remote';
 
 /** Coarse hardware tier driving the auto engine/model choice. */

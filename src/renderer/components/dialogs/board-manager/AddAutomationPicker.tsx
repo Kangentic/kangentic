@@ -111,8 +111,8 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
       portal
       transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
       // 26rem, not the old `w-80` (20rem). Every type's one-line description
-      // wrapped to two at that width ("Sends an HTTP request. Retries a network
-      // error or a 5xx." is the longest), which made a four-item list read as a
+      // wrapped to two at that width (the webhook's "Sends a request. Retries a
+      // network error, 408, 429 or 5xx." is among the longest), which made a four-item list read as a
       // wall of text and pushed the copy-from-another-column group below the
       // fold. The descriptions are written to one line, so the menu is sized to
       // hold one line.

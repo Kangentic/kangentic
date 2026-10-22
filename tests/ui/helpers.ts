@@ -12,6 +12,7 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 // that reaches window despite the funnel wrapper.
 import { BENIGN_RENDERER_ERRORS, isBenignRendererError } from '../../src/shared/benign-renderer-errors';
 import { MONACO_HANDLED_ERROR_LOG_TAG } from '../../src/renderer/monaco-error-funnel';
+import { isRetryableViteNavigationError } from './vite-navigation-retry';
 export { BENIGN_RENDERER_ERRORS, isBenignRendererError };
 
 /**
@@ -86,10 +87,10 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 }
 
 const VITE_GOTO_ATTEMPTS = 3;
-const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://chromewebdata/'];
 
 /**
- * `page.goto` against the Vite dev server, retrying only a navigation that never reached it.
+ * `page.goto` against the Vite dev server, retrying only a navigation that never reached it or that a
+ * reload cut short.
  *
  * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
  * navigation a moment later failed with `net::ERR_CONNECTION_REFUSED`, while the same server went
@@ -102,10 +103,18 @@ const VITE_UNREACHED_MARKERS = ['net::ERR_CONNECTION_REFUSED', 'chrome-error://c
  * project-move.spec.ts's beforeAll, with nothing in the server log and the spec passing alone, so it
  * is retried too.
  *
- * No assertion is ever retried, since neither form means the app loaded. Any other navigation
- * error, and either form on the last attempt, is rethrown.
+ * A navigation can also be "interrupted by another navigation to" the SAME url: something reloaded
+ * the page while its first load was still running. The v0.48.0 release's local UI run hit that form
+ * in toast-behavior.spec.ts, 248 ms into launchPage, with no reload, optimizer or HMR line in the
+ * Vite server log and the spec passing alone, so it is retried too. Chromium reports the url
+ * normalized (`http://localhost:5174/` for a VITE_URL with no trailing slash), so the match uses
+ * `new URL(url).href`. A page that really reloads itself on boot reloads on every attempt and still
+ * fails after the last one.
  *
- * A third form reaches the app but never mounts it. The v0.46.0 release's local UI run failed
+ * No assertion is ever retried, since none of these forms means the app loaded. Any other
+ * navigation error, and any of these forms on the last attempt, is rethrown.
+ *
+ * A fourth form reaches the app but never mounts it. The v0.46.0 release's local UI run failed
  * search-palette.spec.ts:335 on a page whose load event fired and whose #root stayed empty for 15 s,
  * while every other test in the file booted the same way in about a second. Load fires after the
  * entry's module graph has run or failed, so an empty root that long after load is a boot that
@@ -140,8 +149,7 @@ async function navigateToVite(page: Page, url: string): Promise<void> {
       await page.goto(url);
       return;
     } catch (error) {
-      const unreached = error instanceof Error && VITE_UNREACHED_MARKERS.some((marker) => error.message.includes(marker));
-      if (!unreached || attempt >= VITE_GOTO_ATTEMPTS) throw error;
+      if (!isRetryableViteNavigationError(error, url) || attempt >= VITE_GOTO_ATTEMPTS) throw error;
       await waitForViteReady(url);
     }
   }

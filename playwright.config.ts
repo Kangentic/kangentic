@@ -66,10 +66,12 @@ export default defineConfig({
       // in parallel). The electron project keeps 8 - its per-file launch overlap
       // is the real win there.
       workers: 3,
-      // CI-only single retry: the UI suite has a few timing-sensitive specs
-      // (drag-and-drop settle/animation) that flake under load. A retry marks
-      // them "flaky" (still visible) rather than failing the whole run on one
-      // flake. Mirrors the `electron` project. Local runs keep retries: 0.
+      // CI-only single retry. It does not let a flake pass: ci.yml runs this
+      // project with --fail-on-flaky-tests, so a test that passes only on its
+      // retry still fails the shard. The retry is what tells a flake from a
+      // steady failure in the log, and `trace: 'on-first-retry'` records the
+      // trace to de-flake it from. Mirrors the `electron` project. Local runs
+      // keep retries: 0.
       retries: process.env.CI ? 1 : 0,
       use: {
         browserName: 'chromium',
@@ -98,8 +100,9 @@ export default defineConfig({
       // need longer (multi-phase restart scenarios) opt in via `test.slow()`.
       timeout: 45_000,
       // Retries are CI-only. Local /test runs do not pay 2x cost on the
-      // occasional Windows Electron debug-pipe flake; CI keeps the safety net
-      // to avoid PR-blocking transients.
+      // occasional Windows Electron debug-pipe flake. On CI the retry tells a
+      // flake from a steady failure and records its trace, and ci.yml's
+      // --fail-on-flaky-tests fails the shard either way.
       retries: process.env.CI ? 1 : 0,
     },
     {

@@ -218,8 +218,9 @@ jobs:
         run: npx playwright install chromium
       - name: Build the web demo
         run: npm run build:demo
+      # --fail-on-flaky-tests: see the note above the UI shards' run step.
       - name: Smoke the web demo (Playwright, demo project)
-        run: npm run test:demo
+        run: npm run test:demo -- --fail-on-flaky-tests
 
   # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
   # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
@@ -354,8 +355,15 @@ jobs:
       # required lib is ever missing, Chromium fails to launch - re-add --with-deps.
       - name: Install Playwright Chromium
         run: npx playwright install chromium
+      # --fail-on-flaky-tests: a test that fails and then passes on its CI retry fails the shard.
+      # The project keeps no flaky tests, and before this flag a flake hid inside a green check
+      # until /release scanned the whole run log for it. The retry (retries: 1 in
+      # playwright.config.ts) still runs, so the log says flaky rather than failed and the trace
+      # recorded on that retry is there to de-flake from. The demo and E2E steps pass the same
+      # flag, and so does deploy-demo.yml's smoke. release.yml's poster captures do not, because
+      # their retry is how a slow shot lands. tests/unit/ci-workflow-hygiene.test.ts pins all four.
       - name: Run UI tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: npx playwright test --project=ui --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: npx playwright test --project=ui --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --fail-on-flaky-tests
 
   # Thin required gate: this single check ("UI tests (Playwright)") is what branch
   # protection requires, so the matrix shards stay an impl detail. It only fails if
@@ -404,7 +412,8 @@ jobs:
   # binary, which the root package's postinstall (`install-electron`) downloads
   # now that the electron package no longer does it itself. No Playwright browser
   # download (the electron project drives the bundled Electron). retries=1 on CI
-  # comes from playwright.config.ts.
+  # comes from playwright.config.ts, and --fail-on-flaky-tests fails a shard whose
+  # test passed only on that retry (see the note above the UI shards' run step).
   e2e-shards:
     name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-24.04
@@ -433,7 +442,7 @@ jobs:
       - name: Build (production bundle)
         run: npm run build
       - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: xvfb-run -a npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: xvfb-run -a npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --fail-on-flaky-tests
 
   # Thin required gate: the single "E2E tests (Electron)" check that branch
   # protection requires, green only if every E2E shard passed. Mirrors the `ui`
