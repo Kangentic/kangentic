@@ -63,7 +63,7 @@
     "@electron/notarize": "^3.1.1",
     "@eslint/js": "^10.0.1",
     "@kangentic/branding": "^2.8.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@monaco-editor/react": "^4.7.0",
     "@playwright/test": "^1.60.0",
     "@sentry/cli": "^3.8.0",
@@ -73,7 +73,7 @@
     "@tailwindcss/postcss": "^4.3.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/react-virtual": "^3.14.2",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
@@ -106,7 +106,7 @@
     "p-queue": "^9.3.0",
     "pixelmatch": "^8.0.0",
     "playwright": "^1.60.0",
-    "postcss": "^8.5.15",
+    "postcss": "^8.5.31",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-colorful": "^5.7.0",
@@ -123,8 +123,8 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0",
     "uuid": "^14.0.0",
-    "vite": "^8.0.16",
-    "vitest": "^5.0.1",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
     "which": "^7.0.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
@@ -146,10 +146,10 @@
     }
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.3.0",
+    "@huggingface/transformers": "^4.3.1",
     "better-sqlite3": "^13.0.3",
     "font-list": "^2.1.0",
-    "koffi": "3.3.2",
+    "koffi": "3.3.3",
     "node-pty": "1.2.0-beta.15",
     "sherpa-onnx-node": "^1.13.8",
     "sqlite-vec": "^0.1.9"
@@ -168,7 +168,7 @@
   },
   "overrides": {
     "monaco-editor": {
-      "dompurify": "3.4.16"
+      "dompurify": "3.4.17"
     }
   }
 }
