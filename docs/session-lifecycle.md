@@ -110,7 +110,7 @@ sessions bypass all of this (not task agents).
      `trustedFolders.json`. Adapters with no such state implement it as a no-op. Trust
      pre-population for the worktree path is the main job, but not the only one: Claude also
      writes `diffSidebarOpen: false` here to keep its fullscreen diff panel closed (see
-     [Global Config Writes](agent-integration.md#global-config-writes-claudejson)). Every path
+     [Global Config Writes](integrations/agents/claude-code.md#global-config-writes-claudejson)). Every path
      that builds an agent command calls this first, including the Command Terminal.
    - Check for previous suspended session (can resume?)
    - If resuming: reconcile the stored `agent_session_id` against the record's own `status.json` (see [Resume](#resume)), then use it with `--resume`, no prompt
@@ -1154,7 +1154,7 @@ When a task moves to a column where `resolveTargetAgent()` returns a different a
 4. A `handoff-context.md` file is written to the new session directory for reference
 5. A `handoffs` record is inserted in the database tracking the from/to agents, sessions, and the full context packet
 
-The handoff is transparent to the user - the task card shows spawn progress phases (`packaging-handoff`, `detecting-agent`, `starting-agent`) and the shimmer overlay lifts when the new agent is on screen (`SessionManager.markAgentReady`, see [Agent Integration](agent-integration.md#the-launch-overlay)).
+The handoff is transparent to the user - the task card shows spawn progress phases (`packaging-handoff`, `detecting-agent`, `starting-agent`) and the shimmer overlay lifts when the new agent is on screen (`SessionManager.markAgentReady`, see [The launch overlay](integrations/agents/adapter-interface.md#the-launch-overlay)).
 
 ## Output Streaming
 
@@ -1766,7 +1766,7 @@ phone needs and reads the rest by request.
   adapter's first-output latch, which a shell's startup frame trips, and not on usage, which the
   spawn seeds with the model name. Both hosts mount the terminal at once under the overlay and
   drop PTY output until the lift, then replay the scrollback. See
-  [agent-integration.md](agent-integration.md#the-launch-overlay).
+  [The launch overlay](integrations/agents/adapter-interface.md#the-launch-overlay).
 - **Replay veil for a warm mount.** For an already-running session, `sessionFirstOutput` is already
   set, so `TerminalTab`'s launch overlay never shows (`terminalReady` is derived from it), so the whole mount-time fit -> replay -> refit ->
   held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now
@@ -1866,7 +1866,7 @@ first await and released once the spawn has registered its row or the start has 
 2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
 3. `await adapter.ensureTrust(projectRoot)` - trust pre-population, `kangentic` MCP enablement,
    and for Claude the diff-panel write (see
-   [Global Config Writes](agent-integration.md#global-config-writes-claudejson)). The Command
+   [Global Config Writes](integrations/agents/claude-code.md#global-config-writes-claudejson)). The Command
    Terminal bypasses the two spawn chokepoints, but not this: every path that builds an agent
    command applies the adapter's pre-spawn global-config state first
 4. Build the agent command (with MCP server if enabled), passing `capturePromptText` so the
@@ -1959,6 +1959,6 @@ that way.
 ## See Also
 
 - [Configuration](configuration.md) -- permission modes and session limits
-- [Agent Integration](agent-integration.md) -- command building, hook injection, per-agent CLI details
+- [Agent Integration](integrations/agents/index.md) -- command building, hook injection, per-agent CLI details
 - [Transition Engine](transition-engine.md) -- what triggers spawns and suspends
 - [Activity Detection](activity-detection.md) -- thinking/idle state from hooks

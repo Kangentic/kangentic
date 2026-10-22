@@ -29,7 +29,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Activity Marks](activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
 
 ### Integration
-- [Agent Integration](agent-integration.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
+- [Agent Integration](integrations/agents/index.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
 - [Adapter Session History](adapter-session-history.md) - Native session-history file formats Kangentic reads for real-time telemetry; the authoritative reference for the sessionHistory hook
 - [Command Injection](command-injection.md) - How a column's message to its agent and its model/effort settings reach a live session, the verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, GitHub/Azure DevOps/Jira/Linear/etc., how to add a new provider

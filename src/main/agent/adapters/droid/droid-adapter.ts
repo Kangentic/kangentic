@@ -144,14 +144,14 @@ export class DroidAdapter implements AgentAdapter {
    * `OTEL_TELEMETRY_ENDPOINT` is out-of-band, and the post-hoc
    * `<uuid>.settings.json` schema is undocumented. ContextBar would
    * otherwise spin forever - declare an unavailable affordance pointing
-   * users at the in-TUI surfaces. See docs/agent-integration.md.
+   * users at the in-TUI surfaces. See docs/integrations/agents/droid.md.
    */
   readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
     unavailableLabel: 'Telemetry: TUI only',
     unavailableTitle:
       'Droid does not stream live telemetry to Kangentic.\n' +
       'Run /cost or /context inside the Droid TUI to see model, tokens, and cost.\n' +
-      'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
+      'Tracked upstream: Factory-AI/factory (see docs/integrations/agents/droid.md).',
   };
 
   /**

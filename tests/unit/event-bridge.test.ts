@@ -716,7 +716,7 @@ describe('event-bridge directives survive real shell execution (shell form)', ()
 
 describe('bridge paths reach the bridge as written through each hook shell', () => {
   // Each agent CLI hands a hook or status-line command to a shell of its own
-  // (measured per CLI in docs/agent-integration.md, "Paths in hook commands").
+  // (measured per CLI in docs/integrations/agents/claude-code.md, "Paths in hook commands").
   // The probe run sets KNG_PROBE, so a shell that expands `$KNG_PROBE`,
   // `${KNG_PROBE}` or `%KNG_PROBE%` shows up as EXPANDED, and Gemini, Qwen and
   // grok's own `$NAME` replacement is what CLI_ENVIRONMENT_REFERENCE matches.

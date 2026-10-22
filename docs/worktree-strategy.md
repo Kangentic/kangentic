@@ -482,7 +482,7 @@ The setup phase, steps 10 to 12, runs after the job ends (`setUpWorktree`). The 
 
 Each step logs its time in the removal path's format, `[WORKTREE] create step=<name> done in <n>ms`: `stale-node-modules` (before the job), `fetch`, `stale-dir`, `worktree-add` and `configure` (in it), then `copy-files`, `link-node-modules` and `init-script` (after it). The job's own `[GIT_QUEUE] done create-worktree:<id8> in <n>ms` line is the git phase's total.
 
-Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](agent-integration.md#trust-management)).
+Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](integrations/agents/claude-code.md#trust-management)).
 
 ### Windows Long Paths
 
@@ -580,10 +580,10 @@ All in `src/main/agent/`:
 |--------|-------------|-------------|------|
 | `status-bridge.js` | `status.json` | statusLine | Token usage, cost, model, context % |
 | `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
-| `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` or `tool_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode`; and matcher `mcp__.*` when the session's allow rules name another server's tool | Approves the plan when the session's `plan-approval.json` says to, and while it does, an allowed MCP tool plan mode asks about; otherwise prints nothing (see [Agent Integration](agent-integration.md#plan-approval-bridgejs)) |
-| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](agent-integration.md#background-shell-hint-bridgejs)) |
+| `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` or `tool_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode`; and matcher `mcp__.*` when the session's allow rules name another server's tool | Approves the plan when the session's `plan-approval.json` says to, and while it does, an allowed MCP tool plan mode asks about; otherwise prints nothing (see [Agent Integration](integrations/agents/bridge-scripts.md#plan-approval-bridgejs)) |
+| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](integrations/agents/bridge-scripts.md#background-shell-hint-bridgejs)) |
 
-The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](agent-integration.md#hook-injection) for the full mapping.
+The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](integrations/agents/claude-code.md#hook-injection) for the full mapping.
 
 Each bridge reads JSON from stdin (piped by Claude Code), writes its output, and exits. All writes are try/catch wrapped for non-fatal failures.
 
@@ -594,7 +594,7 @@ Activity state (thinking/idle) is derived from event types in the events pipelin
 All sessions (main repo and worktree) use a unified approach. For each session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` and passed via `--settings`:
 
 1. Read `.claude/settings.json` from project root (committed, shared), fresh on every spawn so a commit or pull reaches the next session
-2. Merge `.claude/settings.local.json` from project root (gitignored, personal) over it: list keys combined, other keys from the local file (see [Settings Merge](agent-integration.md#settings-merge))
+2. Merge `.claude/settings.local.json` from project root (gitignored, personal) over it: list keys combined, other keys from the local file (see [Settings Merge](integrations/agents/claude-code.md#settings-merge))
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants -- hooks are skipped since they may be stale leftovers from before the unified approach)
 4. Inject bridge commands into appropriate hook points
 5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
@@ -701,7 +701,7 @@ Two listeners bracket a removal, and they are deliberately NOT symmetric in plac
 
 Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json`, Qwen's `~/.qwen/trustedFolders.json`, Grok's `~/.grok/trusted_folders.toml`, and Antigravity's `trustedWorkspaces` array have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor; Qwen has no ancestor check at all, so it records one entry per worktree whenever `security.folderTrust.enabled` is set).
 
-`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](agent-integration.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
+`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](integrations/agents/index.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
 Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
 

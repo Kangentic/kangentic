@@ -1,0 +1,41 @@
+---
+type: Reference
+title: Aider
+description: How Kangentic detects Aider, builds its command and maps permission modes, and what the integration leaves out.
+tags: [agents, adapter, aider]
+sources:
+  - resource: src/main/agent/adapters/aider/
+---
+# Aider
+
+## CLI Detection
+
+Detection is inlined in the adapter (no separate detector class): check `config.agent.cliPaths.aider`, fall back to `PATH` via `which`, run `aider --version`. The version output (`aider 86.2`) is parsed to strip the product name prefix.
+
+## Command Building
+
+`src/main/agent/adapters/aider/aider-adapter.ts`
+
+```
+aider --message "prompt text" --chat-mode <mode> --no-auto-commits
+```
+
+- `--message` delivers the prompt (shell-safe quoting applied)
+- `--no-auto-commits` prevents Aider from auto-committing (Kangentic manages git)
+- `--notifications --notifications-command` runs `node <event-bridge> <events file> idle` when Aider waits for input. Aider runs it through its own shell, so the paths are written bare when they allow it. A path that cannot be carried through the outer shell drops the pair, and the prompt regex stays the idle signal (see `isBareShellToken` in [cross-platform.md](../../cross-platform.md))
+
+## Permission Modes
+
+| Mode | Flags | Aider Mode |
+|------|-------|------------|
+| `plan` / `dontAsk` | `--chat-mode ask` | Ask (Read-Only Questions) |
+| `default` | (no flags) | Code (Confirm Changes) |
+| `acceptEdits` / `auto` | `--architect` | Architect (Two-Model Design) |
+| `bypassPermissions` | `--yes` | Auto Yes (Skip Confirmations) |
+
+## Limitations
+
+- No session resume (no `--resume` equivalent)
+- No structured status output; idle comes from the notifications command above or the prompt regex
+- No hooks, settings merge, or trust mechanism
+- No TUI alternate screen - uses streaming text output

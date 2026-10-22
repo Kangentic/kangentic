@@ -109,7 +109,7 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 2. Extract all exported template variable names (`{{cwd}}`, `{{branchName}}`, `{{taskTitle}}`,
    `{{projectPath}}`) and their descriptions
 3. Read `docs/configuration.md#shortcuts` (canonical)
-4. Compare: report missing variables. `docs/transition-engine.md` and `docs/agent-integration.md`
+4. Compare: report missing variables. `docs/transition-engine.md` and `docs/integrations/agents/adapter-interface.md`
    only cross-reference this system with a link - they do not enumerate it.
 
 ## Task Template Variable Anchors (auto_command / spawn_agent promptTemplate)

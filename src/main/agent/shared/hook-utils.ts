@@ -89,7 +89,7 @@ export function filterKangenticHooks<T>(
  * on Windows. Each adapter declares one for each command it builds. On macOS
  * and Linux every CLI runs the command with `sh -c` or `bash -c`, so there it
  * is always `sh-or-powershell`. What each CLI was measured to do is in
- * docs/agent-integration.md, "Paths in hook commands".
+ * docs/integrations/agents/claude-code.md, "Paths in hook commands".
  */
 export type HookShell =
   /** The command is one `-c` argument to sh, bash or Git Bash, or one `-Command` argument to PowerShell. */

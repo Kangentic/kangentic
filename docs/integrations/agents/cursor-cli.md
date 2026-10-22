@@ -1,0 +1,76 @@
+---
+type: Reference
+title: Cursor CLI
+description: How Kangentic detects Cursor CLI, builds its command and maps permission modes, and what the integration leaves out.
+tags: [agents, adapter, cursor]
+sources:
+  - resource: src/main/agent/adapters/cursor/
+---
+# Cursor CLI
+
+## CLI Detection
+
+Detection uses the shared `AgentDetector` with binary name `cursor-agent` and `binaryAliases: ['agent']`.
+
+Cursor installs BOTH shims, and the short one is not its alone: xAI's Grok CLI also installs `agent`, and on Windows its `agent.exe` beats Cursor's `agent.cmd` in PATHEXT order. Detecting on `agent` therefore made Cursor **undetectable** on any machine that also had Grok - the probe resolved, ran Grok's binary, and Cursor was reported missing. Probing the unambiguous name first is the fix; the alias keeps working where only `agent` exists.
+
+Two supporting details make the fallback safe. `parseVersion` accepts `1.0.0`, `agent 1.0.0`, or `Cursor Agent 1.0.0` and rejects anything else, so Grok's own version banner fails the probe rather than passing as Cursor. And the PATH loop CONTINUES to the next candidate when a name resolves but fails its version probe, instead of aborting - without that, finding Grok's `agent` would still end the search. Pinned by `tests/unit/cursor-grok-binary-collision.test.ts`.
+
+## Command Building
+
+`src/main/agent/adapters/cursor/cursor-adapter.ts`
+
+### New Session (Interactive)
+
+```
+agent "prompt text"
+```
+
+User confirms changes in the PTY. Default mode.
+
+### New Session (Non-Interactive)
+
+```
+agent -p "prompt text" --output-format stream-json
+```
+
+Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is set. Has full write access. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume.
+
+### Resumed Session
+
+```
+agent --resume="<chat-id>"
+```
+
+The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
+
+## Permission Modes
+
+| Mode | Behavior | Cursor Mode |
+|------|----------|-------------|
+| `default` | (no special flag) | Interactive (Confirm Changes) |
+| `bypassPermissions` | `-p ... --output-format stream-json` | Non-Interactive (Full Access) |
+
+## Limitations
+
+- No hooks, no structured status pipeline (PTY silence timer only)
+- No settings merge, no trust mechanism
+- Kangentic's MCP server reaches every session through the project's `.cursor/mcp.json` (a static
+  `${env:...}` entry beside the user's servers, `project-mcp-config.ts`) and `--approve-mcps`, which
+  also approves the user's own project servers for that run. The entry is removed when the last
+  session in the folder exits. A `.cursor/mcp.json` Kangentic cannot parse as a JSON object (one
+  with comments, say) is left untouched, and that start gets neither the entry nor
+  `--approve-mcps`; a workflow's agent refuses to start there and says why.
+- Interactive mode prints no session id. A workflow's agent on Cursor gets one before launch
+  instead: `createSessionId` runs `cursor-agent create-chat` in the project folder (measured: it
+  prints the bare UUID and writes nothing under `~/.cursor`), and the start opens that chat with
+  `--resume=<id>` plus the first message. Whether `--resume` opens a chat made this way in an
+  interactive session, and keeps it across a Pause, has not been run live yet. A task or Command
+  Terminal in interactive mode still starts without an id, so it cannot be resumed.
+- No `transcript-cleanup.ts` (uses streaming text output, not a TUI alternate screen)
+- `locateSessionHistoryFile` returns null. The location is no longer unknown - Cursor writes
+  `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` plus a per-session
+  `store.db` - but two things block wiring it in: the records carry NO timestamp, and the stored
+  text is WRAPPED (`<user_query>...</user_query>`) rather than the raw submitted text. See
+  [Command Injection - Cursor](../../command-injection.md#cursor-located-not-yet-verified). Cursor was
+  also measured as turn-end flushed, so it gets no `command-injection` verifier either.

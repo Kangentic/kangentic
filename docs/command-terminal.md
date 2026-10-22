@@ -92,7 +92,7 @@ first-output latch or on the session's usage, and both arrive before the agent r
 frame of pwsh and Windows PowerShell carries the cursor-hide escape Claude's detector matches, and
 the spawn seeds usage with the model name. So a new terminal showed the PowerShell prompt for
 about three seconds before Claude's TUI. It now lifts when main says the agent is on screen
-(`SessionManager.markAgentReady`, see [Agent Integration](agent-integration.md#the-launch-overlay)),
+(`SessionManager.markAgentReady`, see [The launch overlay](integrations/agents/adapter-interface.md#the-launch-overlay)),
 which works for every agent, inline ones included. The pane mounts behind the overlay with its
 output dropped, so its fit sizes the PTY before the agent's first frame. Mounting only at the lift
 let Claude compose that frame at the 120x30 spawn default.

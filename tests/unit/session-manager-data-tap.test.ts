@@ -337,7 +337,7 @@ describe('SessionManager data-tap', () => {
     // Sample inside the 16ms flush window: getScrollback's pre-flush drain
     // empties the pending buffer via onDrain, so this chunk never reaches
     // onFlush. For cursor-hide adapters the ESC[?25l first-output marker can
-    // arrive in exactly that first chunk (docs/agent-integration.md pins it
+    // arrive in exactly that first chunk (docs/integrations/agents/grok-build.md pins it
     // for Grok), and nothing guarantees the marker recurs - so the drain
     // stream MUST feed the latch too, or a terminal mounting onto a
     // just-spawned session strands the shimmer overlay and the resuming
