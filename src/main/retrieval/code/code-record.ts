@@ -18,12 +18,20 @@ import type { ChunkInput } from '../types';
  * each opening with the file's path, so a passage reads as being from its
  * file. The measured retrieval (`corpora.ts`) was taken on exactly these
  * chunks; a change here re-measures before it ships.
+ *
+ * A markdown file's leading YAML frontmatter (the OKF concepts under docs/,
+ * the .claude rules and skills) is not text a question matches: it is
+ * dropped, and its `description` goes on the line after the path, so every
+ * passage of a concept carries its one-line summary. Version 4 made that
+ * change without a re-measure: a file with no frontmatter chunks exactly as
+ * before (tests/unit/code-corpus.test.ts pins it), and a markdown file only
+ * loses the YAML block and gains a line.
  */
 
 /** Bump when the chunking or the file rules change, so every file re-reads.
  *  The re-read also removes a file the rules now skip, and an unchanged
  *  passage keeps its embedding, so a bump costs a read of the branch. */
-export const CODE_RECORD_VERSION = 3;
+export const CODE_RECORD_VERSION = 4;
 /** Files bigger than this are skipped: generated, vendored, or data. */
 export const CODE_MAX_FILE_BYTES = 256 * 1024;
 const CHUNK_CHARS = 1_600;
@@ -51,12 +59,29 @@ export function isIndexableCodePath(path: string): boolean {
     && !SECRET_FILES.test(path);
 }
 
+const MARKDOWN = /\.mdx?$/i;
+const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+const DESCRIPTION_LINE = /^description:[ \t]*(.*?)[ \t]*$/m;
+
+/** A markdown file's text without its leading YAML block, and the block's `description`, if any. */
+export function splitMarkdownFrontmatter(text: string): { body: string; description: string | null } {
+  const match = FRONTMATTER.exec(text);
+  if (!match) return { body: text, description: null };
+  const raw = DESCRIPTION_LINE.exec(match[1])?.[1] ?? '';
+  const quoted = raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith('\'') && raw.endsWith('\'')));
+  const description = quoted ? raw.slice(1, -1).replace(/\\(["\\])/g, '$1') : raw;
+  return { body: text.slice(match[0].length), description: description.length > 0 ? description : null };
+}
+
 /** A file's chunks, or none for one that holds a NUL byte (binary). */
 export function codeChunks(path: string, text: string): ChunkInput[] {
   if (text.includes('\u0000')) return [];
+  const markdown = MARKDOWN.test(path) ? splitMarkdownFrontmatter(text) : null;
+  const content = markdown ? markdown.body : text;
+  const header = markdown?.description ? `${path}\n${markdown.description}` : path;
   const pieces: string[] = [];
   let current = '';
-  for (const line of text.split('\n')) {
+  for (const line of content.split('\n')) {
     if (DECLARATION.test(line) && current.length > 0) {
       pieces.push(current);
       current = '';
@@ -83,7 +108,7 @@ export function codeChunks(path: string, text: string): ChunkInput[] {
   }
   if (buffer) bodies.push(buffer);
   return bodies.map((body, seq) => {
-    const chunkText = `${path}\n\n${body}`;
+    const chunkText = `${header}\n\n${body}`;
     return {
       seq,
       text: chunkText,

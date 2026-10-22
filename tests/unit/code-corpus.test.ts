@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
-import { codeChunks, isIndexableCodePath, namesCodeIdentifier } from '../../src/main/retrieval/code/code-record';
+import { codeChunks, isIndexableCodePath, namesCodeIdentifier, splitMarkdownFrontmatter } from '../../src/main/retrieval/code/code-record';
 import { batchesBySize, purgeCodeRecords, sweepCodeRecords, type CodeIndexerDeps } from '../../src/main/retrieval/code/code-indexer';
 import { readIndexedHead } from '../../src/main/retrieval/branch-git';
 import {
@@ -41,6 +41,8 @@ describe('code records', () => {
   it('keeps source and docs, and skips tests, fixtures, data, lock files, binaries and build output', () => {
     for (const kept of [
       'src/main/pty/session-manager.ts', 'docs/architecture.md', 'scripts/dev.js', 'README.md', 'src/renderer/App.tsx',
+      // A concept in an OKF folder, and a folder index.
+      'docs/integrations/agents/codex-cli.md', 'docs/integrations/agents/index.md',
       // Lookalikes of a secret file's name that are ordinary source.
       'src/env.ts', 'src/keyboard.ts', 'src/credentials.ts', 'docs/aws-credentials.md', 'src/envrc-loader.ts',
     ]) {
@@ -88,6 +90,34 @@ describe('code records', () => {
     for (const chunk of chunks) expect(chunk.text.slice('src/steps.ts\n\n'.length)).toMatch(/^export function step\d/);
     // Nothing lost or repeated.
     expect(chunks.map((chunk) => chunk.text.slice('src/steps.ts\n\n'.length)).join('')).toBe(`${text}\n`);
+  });
+
+  it('drops a markdown file\'s frontmatter and opens each passage with its path and description', () => {
+    const frontmatter = '---\ntype: Reference\ntitle: Codex CLI\ndescription: How Kangentic launches Codex CLI.\ntags: [agents, codex]\nsources:\n  - resource: src/main/agent/adapters/codex/\n---\n';
+    const body = `# Codex CLI\n\n${'Codex reads MCP servers from config.toml. '.repeat(60)}\n`;
+    const chunks = codeChunks('docs/integrations/agents/codex-cli.md', `${frontmatter}${body}`);
+    const header = 'docs/integrations/agents/codex-cli.md\nHow Kangentic launches Codex CLI.\n\n';
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.text.startsWith(header)).toBe(true);
+      expect(chunk.text).not.toMatch(/type: Reference|resource: src/);
+    }
+    expect(chunks[0].text.slice(header.length)).toMatch(/^# Codex CLI/);
+    expect(chunks.map((chunk) => chunk.text.slice(header.length)).join('')).toBe(`${body}\n`);
+  });
+
+  it('reads a quoted description and keeps the path alone when there is none', () => {
+    expect(splitMarkdownFrontmatter('---\ndescription: "Moves a task: fast"\n---\nbody').description).toBe('Moves a task: fast');
+    const noDescription = codeChunks('.claude/rules/x.md', '---\npaths:\n  - "src/**"\n---\n# Rule\n');
+    expect(noDescription[0].text).toBe('.claude/rules/x.md\n\n# Rule\n\n');
+  });
+
+  it('chunks a file with no frontmatter, or a non-markdown file that starts with ---, exactly as before', () => {
+    const plain = '# Title\n\nSome text.\n';
+    expect(codeChunks('docs/plain.md', plain)[0].text).toBe(`docs/plain.md\n\n${plain}\n`);
+    const yamlLike = '---\ndescription: not frontmatter here\n---\nexport const value = 1;\n';
+    expect(codeChunks('src/odd.ts', yamlLike).map((chunk) => chunk.text).join('')).toContain('description: not frontmatter here');
+    expect(codeChunks('src/odd.ts', yamlLike)[0].text.startsWith('src/odd.ts\n\n---')).toBe(true);
   });
 
   it('holds a file with a NUL byte as a document with no passages', () => {
