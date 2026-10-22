@@ -6,7 +6,13 @@ import type { SettingScope } from './setting-scope';
 const minutesOf = (milliseconds: number): number => Math.round(milliseconds / 60_000);
 
 export interface SettingDefinition {
-  /** Unique key matching config path, e.g. 'terminal.fontSize' */
+  /**
+   * Unique key, normally the config path it writes, e.g. 'terminal.fontSize'.
+   * A row that writes the same key under several parents takes the shared
+   * part: `notifications.onAgentIdle` is one dropdown writing both
+   * `notifications.desktop.onAgentIdle` and `notifications.toasts.onAgentIdle`,
+   * and `settings-tab-scope-parity.test.ts` pins each such id to its event key.
+   */
   id: string;
   /** Tab this setting belongs to */
   tabId: string;

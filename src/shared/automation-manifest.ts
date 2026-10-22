@@ -166,7 +166,13 @@ export interface AutomationManifestEntry {
    * every later operation on that task until a restart.
    */
   timeoutMs: number | null;
-  retry: { attempts: number; on: 'network-or-5xx' } | null;
+  /**
+   * How often the runner retries, and on what. `network-or-retryable-status`
+   * is a failed connection or an HTTP 408, 429 or 5xx (the webhook adapter's
+   * `isRetryableStatus`), which the adapter signals with
+   * `AutomationRetryableError`.
+   */
+  retry: { attempts: number; on: 'network-or-retryable-status' } | null;
   /**
    * The triggers this type is offered on. Omitted means every trigger. Move to
    * column declares turn end only: on enter or exit its move would run inside
@@ -308,12 +314,12 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
 
   webhook: {
     label: 'Call webhook',
-    description: 'Sends an HTTP request. Retries a network error or a 5xx.',
+    description: 'Sends a request. Retries a network error, 408, 429 or 5xx.',
     icon: 'webhook',
     status: 'stable',
     needs: [],
     timeoutMs: 30_000,
-    retry: { attempts: 3, on: 'network-or-5xx' },
+    retry: { attempts: 3, on: 'network-or-retryable-status' },
     fields: [
       { key: 'url', label: 'URL', kind: 'text', escape: 'url', templateVariables: true, placeholder: 'https://hooks.example.com/abc' },
       {

@@ -333,7 +333,8 @@ rather than a manual poll loop (no `sleep` - the single-command rule forbids it)
    exits 8 while anything is pending and only adds a scary-looking error to the transcript. Go
    straight to the `--watch` form, which exits 0 once every row reads `pass`.
 3. Interpret the result:
-   - **All checks passed** (every row `pass`; the watch exited 0): go to Step 6b (flake scan).
+   - **All checks passed** (every row `pass`; the watch exited 0): go to Step 8. A green check cannot
+     hide a flaky test (Step 6b says why).
    - **A check failed** (a `fail`/`failure` row, or `--fail-fast` returned on a failure): go to
      Step 7 (auto-fix).
    - **The 10-minute Bash timeout fired with checks still only pending** (no failure yet, just
@@ -341,17 +342,14 @@ rather than a manual poll loop (no `sleep` - the single-command rule forbids it)
      Only when the checks have made NO forward progress across two consecutive full 10-minute watches
      (genuinely stuck, not merely slow) go to Step 8b (escalate, stuck checks).
 
-## Step 6b - Flake scan (ZERO flaky tolerance)
+## Step 6b - Flakes fail the check (ZERO flaky tolerance)
 
-A test that fails then passes on retry still counts as a failure here. CI runs the UI and Electron
-projects with `retries: 1`, so a flake can show up as a GREEN check. Do not accept green-via-retry:
-
-1. Identify the latest CI run for `<branch>` (`gh pr checks <branch> --json name,state,link` to find
-   the run, then `gh run view <run-id>`).
-2. Inspect the UI and E2E job output for any test that needed a retry (Playwright reports these as
-   "flaky"). Retrieve the job log if needed to confirm.
-3. If any flaky test is found, treat it exactly like a failure and go to Step 7 to de-flake it. Only
-   when the checks are green AND no test was retried do you proceed to Step 8.
+A test that fails then passes on retry counts as a failure here, and CI already treats it as one.
+CI runs the UI, E2E and web demo Playwright tiers with `retries: 1` and `--fail-on-flaky-tests`,
+so a test that passes only on its retry fails its shard and its check reads `fail`
+(`tests/unit/ci-workflow-hygiene.test.ts` pins the flag in `.github/workflows/ci.yml`). There is no
+separate scan to run: a flake reaches Step 7 as a failing check, and the shard's summary lists it
+under `flaky` rather than `failed`. Step 7 classifies it from that line.
 
 ## Step 7 - Auto-fix loop (max 3 rounds, fully automatic)
 
@@ -360,8 +358,8 @@ re-monitor. Hard cap: 3 rounds. After the 3rd unsuccessful round, go to Step 8b.
 
 For each round:
 
-1. Pull the failure detail: `gh run view <run-id> --log-failed` (and the full job log for a flake
-   that passed on retry).
+1. Pull the failure detail: `gh run view <run-id> --log-failed`. A flake fails its shard, so this
+   log carries it too, listed under `flaky` in the shard's summary.
 2. Classify each problem and act automatically:
    - **Real regression** (the code is wrong): fix the code with `Edit`.
    - **Broken or wrong test** (the code is right, the assertion is stale): fix the test. Delegate
@@ -373,7 +371,8 @@ For each round:
      from the moved base than a regression in your own code, so read what it asserts before
      changing production code to satisfy it. If Step 3.5 already re-ran it green, this is not the
      explanation and it is a real regression.
-   - **Flaky test** (passed on retry, or intermittent across shards/runs): do NOT accept it.
+   - **Flaky test** (listed under `flaky` because it passed on its retry, or intermittent across
+     shards/runs): do NOT accept it.
      Delegate to `test-builder` to rewrite it deterministically (replace fixed waits with conditional
      polls, disambiguate selectors, etc.). If it is genuinely unsalvageable, remove it with an
      explicit justification in the commit body. Leave NO flaky tests behind.
@@ -418,8 +417,8 @@ message each time a turn ends, and moves the task to Merge when it reads `PR: re
 line is a contract, and this section and that row change together
 (`tests/unit/board-turn-end-contracts.test.ts` fails when they drift):
 
-- `PR: ready to merge` comes only from Step 8: every check green and the Step 6b flake scan found no
-  test that passed on retry.
+- `PR: ready to merge` comes only from Step 8: every check green, which includes no test that passed
+  only on its retry (Step 6b).
 - `PR: blocked` comes only from Step 8b.
 - Every other stop prints no outcome line. Each one still ends a turn, so the automation still
   reads it: the Step 0 typecheck or lint failure, a failed `gh auth status`, a detached HEAD, the

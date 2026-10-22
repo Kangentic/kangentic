@@ -456,7 +456,9 @@ The `/test` command is the full local gate: typecheck, build, then unit + UI + E
 no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
 manual local runs - the automated gate now runs on CI as PR checks (the **Testing** column runs
 `/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
-unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To run tiers directly:
+unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). CI retries a failed
+Playwright test once and still fails the check when the retry passes (`--fail-on-flaky-tests` in
+`.github/workflows/ci.yml`), so a green check means no test was flaky. To run tiers directly:
 
 ```bash
 npx playwright test              # UI + E2E
