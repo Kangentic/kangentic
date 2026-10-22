@@ -152,8 +152,8 @@ hit-testable, and the `<g>` never gets `key={mark}`.
 
 That covers a mark FLIP only. An icon that changes element type between states (lucide at rest,
 `ActivityMark` when active) unmounts the `<svg>` too, which no change inside `ActivityMark` can
-reach. Those render every branch through `components/IconSlot.tsx`, a fixed-size `<span>` all
-branches share: React reconciles the one span in place across the swap, so the node under the
+reach. Those render every branch through `components/IconSlot.tsx`, a fixed-size `<span>` (a minimum
+width with `grow`) all branches share: React reconciles the one span in place across the swap, so the node under the
 pointer survives, and the span absorbs the pointer on the glyph's behalf.
 
 Adopted so far: `StopButtonIcon`, `PauseButtonIcon`, `MonitorCard`'s `StateGlyph`, and the
@@ -195,7 +195,8 @@ hinting fix and checked on a rendered idle/working swap strip.
 Control marks render at size 20: their r=10 ring draws 18.33px, a pixel match for the lucide
 `Circle` they replaced.
 
-Indicators render at 16 (`TaskCard` and both sidebar components), not the 14 the lucide glyphs
+Indicators render at 16 (`TaskCard`, both sidebar components, and the Workflows tab in
+`ViewToggle`), not the 14 the lucide glyphs
 used. The branding envelope is 18 wide where lucide's `Mail` was 20, so a same-number swap
 silently shrinks it about 10%. 15 restored the drawn size production shipped; 16 is a deliberate
 one-step legibility bump on top of that. Move the sidebar's two indicator components together or
