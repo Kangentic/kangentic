@@ -1084,6 +1084,10 @@ describe.runIf(process.platform === 'win32')('Windows Toolhelp listing (real)', 
 
 describe.runIf(process.platform === 'win32')('Windows PTY root pin (real)', () => {
   it('pins a child of this process, reads its creation and exit times on the pinned handle, and refuses a process it did not start', async () => {
+    // The pin's times are the kernel's, `Date.now()` is the JS clock, and the two read a millisecond
+    // apart on a runner (an exit time came back one millisecond after the `Date.now()` taken next).
+    // An upper bound against `Date.now()` therefore carries this allowance, never zero.
+    const CLOCK_SKEW_MS = 100;
     const spawnedAtMs = Date.now();
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
     await new Promise((resolve) => child.once('spawn', resolve));
@@ -1092,7 +1096,7 @@ describe.runIf(process.platform === 'win32')('Windows PTY root pin (real)', () =
     try {
       expect(pin).not.toBeNull();
       expect(pin!.startedAtMs).toBeGreaterThanOrEqual(spawnedAtMs - 1000);
-      expect(pin!.startedAtMs).toBeLessThanOrEqual(Date.now());
+      expect(pin!.startedAtMs).toBeLessThanOrEqual(Date.now() + CLOCK_SKEW_MS);
       expect(pin!.readExitedAtMs()).toBeNull();
       // This process's own parent did not start it.
       expect(api.pinRoot(process.ppid, 0)).toBeNull();
@@ -1103,7 +1107,7 @@ describe.runIf(process.platform === 'win32')('Windows PTY root pin (real)', () =
       const exitedAtMs = pin!.readExitedAtMs();
       expect(exitedAtMs).not.toBeNull();
       expect(exitedAtMs!).toBeGreaterThanOrEqual(pin!.startedAtMs);
-      expect(exitedAtMs!).toBeLessThanOrEqual(Date.now());
+      expect(exitedAtMs!).toBeLessThanOrEqual(Date.now() + CLOCK_SKEW_MS);
     } finally {
       pin?.release();
       if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
