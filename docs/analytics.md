@@ -240,9 +240,12 @@ in one Sentry org, one triage surface.
   Sentry's server-side data scrubbing is on by default. Sentry 8 replaced `sendDefaultPii` with
   `dataCollection` and collects every field it leaves out, so `src/shared/sentry-data-collection.ts`
   spells out all of them, off, and both processes pass it: no IP address, cookies, HTTP headers or
-  bodies, query strings, local variables, or AI, database and queue payloads. Headers and bodies
-  matter in main because the MCP HTTP server runs there, and an error raised while it handles a
-  request would otherwise carry the request's token header and its tool arguments. Further scrubbing
+  bodies, query strings, local variables, or GraphQL, AI, database and queue payloads. Headers and
+  bodies matter in main because the MCP HTTP server runs there, and an error raised while it handles
+  a request would otherwise carry the request's token header and its tool arguments. Main also sets
+  `attachStacktrace: false`, which Sentry 8 turned on: the SDK reports GPU and renderer process
+  exits as messages, and a synthetic stack would group distinct exit reasons together instead of by
+  message. Further scrubbing
   rules belong in the Sentry UI (Advanced Data Scrubbing), not in a
   `beforeSend` here. There are four exceptions, all done on the machine before anything is sent
   rather than as Sentry rules, the same shape as the component-stack reduction above. The utility

@@ -1,4 +1,4 @@
-import { simpleGit } from 'simple-git';
+import { openSimpleGit } from './simple-git-client';
 import type { GitFileHistoryCommit, GitFileHistoryInput, GitFileHistoryResult } from '../../shared/types';
 
 /**
@@ -46,7 +46,7 @@ export async function getFileHistory(input: GitFileHistoryInput): Promise<GitFil
   const maxCommits = input.maxCommits ?? DEFAULT_MAX_COMMITS;
 
   try {
-    const git = simpleGit(workingDirectory);
+    const git = openSimpleGit(workingDirectory);
     const rawLog = await git.raw([
       'log',
       '--follow',

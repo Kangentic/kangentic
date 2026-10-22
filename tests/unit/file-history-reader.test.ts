@@ -122,7 +122,7 @@ describe('getFileHistory', () => {
 
     await getFileHistory({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 
-    expect(simpleGit).toHaveBeenCalledWith('/project/.kangentic/worktrees/task');
+    expect(simpleGit).toHaveBeenCalledWith('/project/.kangentic/worktrees/task', { allowEnvironment: ['GIT_CEILING_DIRECTORIES'] });
   });
 
   it('honors a custom maxCommits', async () => {

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { simpleGit } from 'simple-git';
+import { openSimpleGit } from './simple-git-client';
 import { replacePathPrefix } from '../../shared/paths';
 
 const DEBOUNCE_MS = 500;
@@ -197,7 +197,7 @@ export class DiffWatcher {
       return;
     }
 
-    simpleGit(worktreePath)
+    openSimpleGit(worktreePath)
       .raw(['rev-parse', '--absolute-git-dir'])
       .then((output) => {
         const gitDir = output.trim();

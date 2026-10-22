@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { simpleGit } from 'simple-git';
+import { openSimpleGit } from '../../git/simple-git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { DiffSubscriptionRegistry } from '../../git/diff-subscription-registry';
@@ -62,7 +62,7 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     stepTimings.push(`${label} ${Math.round(performance.now() - stepStartedAt)}ms`);
   };
   try {
-    const git = simpleGit(checkPath);
+    const git = openSimpleGit(checkPath);
     const status = await git.status();
     noteStep('status');
 

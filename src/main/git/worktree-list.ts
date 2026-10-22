@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
-import { simpleGit, type SimpleGit } from 'simple-git';
+import type { SimpleGit } from 'simple-git';
+import { openSimpleGit } from './simple-git-client';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { isSamePath } from '../../shared/paths';
 import type { ProjectWorktrees, WorktreeRecord } from '../../shared/types';
@@ -99,7 +100,7 @@ export async function enumerateWorktrees(
 async function parseWorktreeList(projectPath: string): Promise<ParsedWorktree[]> {
   let raw: string;
   try {
-    raw = await simpleGit(projectPath).raw(['worktree', 'list', '--porcelain']);
+    raw = await openSimpleGit(projectPath).raw(['worktree', 'list', '--porcelain']);
   } catch {
     return [];
   }
@@ -179,7 +180,7 @@ async function buildRecord(
     return baseRecord;
   }
 
-  const worktreeGit = simpleGit(entry.path);
+  const worktreeGit = openSimpleGit(entry.path);
 
   // Dirty status. `simple-git`'s status() throws when invoked on a
   // half-broken worktree (mid-rebase, missing HEAD); we treat those as
