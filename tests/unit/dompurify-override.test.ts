@@ -77,6 +77,16 @@ describe('the monaco-editor DOMPurify override', () => {
     expect(installed).toBe(overridden);
   });
 
+  it('is at or past 3.4.17, the release that patches all four advisories', () => {
+    if (overridden === undefined) return;
+    expect(
+      compareVersions(overridden, '3.4.17'),
+      `the override's ${overridden} is below 3.4.17, which patches GHSA-mrv2-3pqr-j5jr, `
+      + 'GHSA-cg2g-xh64-v4q7 and GHSA-c6gr-qvv4-5v3f. The override must not drop below the release '
+      + 'that patches them.',
+    ).toBeGreaterThanOrEqual(0);
+  });
+
   // The claim this test once made was that the override fixes the shipped copy. It does not, and
   // these two pin why, so the claim cannot quietly come back.
   it('does not reach shipped code: monaco imports its own vendored copy by relative path', () => {

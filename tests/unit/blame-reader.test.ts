@@ -156,7 +156,7 @@ describe('getBlame', () => {
 
   it('prefers worktreePath over projectPath as the working directory', async () => {
     mockGit.raw.mockResolvedValue('');
-    const simpleGit = (await import('simple-git')).simpleGit;
+    const { simpleGit } = await import('simple-git');
 
     await getBlame({ projectPath: '/project', worktreePath: '/project/.kangentic/worktrees/task', filePath: 'src/a.ts' });
 
