@@ -271,7 +271,7 @@ unapplied.
      commit messages, and stage `packages/protocol/CHANGELOG.md` with the other doc files.
    - A version bumped but never tagged is NOT a gap. See
      `.claude/rules/protocol-release-parity.md` for why the tag is the line.
-5. Stage the changed doc files (e.g. `git add docs/foo.md docs/bar.md`). They ride into the
+5. Stage the changed doc files (e.g. `git add docs/<changed-doc>.md`). They ride into the
    release commit in Step 4.
 6. Report what was fixed: list the changed doc files. A large doc pass folded into the
    version-bump commit is expected and desired - do not treat it as scope creep.

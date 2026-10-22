@@ -1,8 +1,10 @@
 /**
- * Helpers for docs/ as an Open Knowledge Format v0.2 bundle (see docs/index.md): frontmatter, the
- * GitHub heading slug, heading and link extraction, and the concept list. The conformance test
- * (tests/unit/okf-docs-conformance.test.ts) and /sync-docs read the bundle through these, so the
- * two cannot disagree about what a heading's anchor is or what a concept's sources are.
+ * Helpers for the Open Knowledge Format v0.2 concepts under docs/: frontmatter, the GitHub heading
+ * slug, heading and link extraction, and the concept list. A folder with an `index.md` is a concept
+ * folder (today docs/integrations/agents/); the rest of docs/ is flat markdown with no frontmatter
+ * (docs/log.md says why). The conformance test (tests/unit/okf-docs-conformance.test.ts) and
+ * /sync-docs read the docs through these, so the two cannot disagree about what a heading's anchor
+ * is or what a concept's sources are.
  *
  *   node scripts/docs-bundle.mjs sources <repo path>...
  *

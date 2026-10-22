@@ -182,7 +182,7 @@ string in a `-c` value that reaches Codex through the user's shell, where `quote
 `.kangentic/codex-event-bridge.cjs`, `env:KANGENTIC_EVENTS_PATH`, the event type and the base64
 directives (`codexHookCommand` refuses anything else).
 
-Aider's notifications command quotes for its own shell (see the Aider section), and Antigravity's
+Aider's notifications command quotes for its own shell (see [Aider](aider.md)), and Antigravity's
 hook commands are unquoted by design, because its hook runner keeps quote characters literal.
 
 `tests/unit/event-bridge.test.ts` runs each form through real shells: Git Bash, both PowerShells,

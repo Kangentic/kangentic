@@ -26,7 +26,9 @@ template variable), the docs that enumerate it must be updated to match.
 - But keep the relationship in mind, and run `/sync-docs` (or note the affected docs) when a
   change adds or removes an enumerable item.
 - The canonical mapping, anchor list, and workflow live in `.claude/skills/sync-docs/SKILL.md`.
-  Do not duplicate that list here; update it there.
+  Do not duplicate that list here; update it there. A concept in a docs concept folder (today
+  `docs/integrations/agents/`) names its own authority files in its `sources:` frontmatter, and
+  `node scripts/docs-bundle.mjs sources <file>` finds the concepts a changed file feeds.
 
 ## Enforcement (self-maintaining)
 
@@ -34,6 +36,8 @@ template variable), the docs that enumerate it must be updated to match.
   reports the diff.
 - **Workflow:** `/sync-docs` (run standalone) performs the full update pass; its targeted anchor
   check also runs automatically inside `/pull-request`, `/merge-pull-request`, and `/merge-back`.
+- **Test:** `tests/unit/okf-docs-conformance.test.ts` fails on a concept's `sources:` path that
+  no longer exists, so renaming or deleting a source file a concept names is caught in CI.
 
 ## Scope
 

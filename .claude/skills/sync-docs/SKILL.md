@@ -9,14 +9,18 @@ Review and update `docs/` to match the current source code. This skill contains 
 
 ## Source-to-Doc Mapping
 
-Each doc file and the source files that are its authority:
+A concept folder (a `docs/` folder with an `index.md`, today `docs/integrations/agents/`) holds
+Open Knowledge Format concepts, and each concept names its own authority files in its `sources:`
+frontmatter. For those, `node scripts/docs-bundle.mjs sources <changed file>...` prints the
+concepts whose sources list the file or a folder above it. The table below covers the flat docs,
+which carry no frontmatter.
 
 | Doc | Primary Source Files |
 |-----|---------------------|
 | `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts`, `src/main/retrieval/retrieval-service.ts` and `src/main/retrieval/graph-facade.ts` (the `knowledgeGraph:*` rows) |
 | `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
 | `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split), `src/main/retrieval/summary/**` and `src/main/retrieval/retrieval-service.ts` (the Knowledge Graph section: when summary passes run, their backoff, Rebuild) |
-| `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
+| `integrations/agents/*.md` | Each concept's `sources:` (the adapter contract, registry and resolver for `adapter-interface.md`; `src/main/agent/adapters/<agent>/` for each adapter's concept) |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
 | `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/main/automations/**` (the adapter registry, the runner, per-field escaping), `src/shared/template-escape.ts` (stripShellMetacharacters), `src/shared/automation-manifest.ts`, `src/shared/types.ts` (AutomationType, AutomationTrigger, AutomationRunStatus, AutomationConfig) |
 | `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
@@ -61,9 +65,19 @@ When the Step 7 report lists updated docs, append a note: "Website may need upda
 
 ## Doc Conventions
 
-- Flat structure in `docs/` - no subdirectories
+- Most docs are flat files in `docs/`. A concept folder (a folder with an `index.md`, today
+  `docs/integrations/agents/`) holds one Open Knowledge Format concept per file instead: YAML
+  frontmatter with `type` (Guide, Reference, Design, Audit or Research), `title`, a one-line
+  `description`, `tags`, and `sources:` (each `- resource: <repo path>`, a file or a folder ending
+  in `/`, with an optional `title` naming the symbols). Its `index.md` lists every concept as
+  `* [Title](file.md) - description`, with the concept's exact description. `docs/log.md` records
+  dated changes to the docs layout, newest first. The pilot split saved an agent no reading
+  (`docs/log.md`), so do not split another flat doc into a concept folder without measuring it
+  first (`scripts/eval-docs-reads.mjs`)
+- Never name a docs file like an agent instruction file (`claude.md`, `gemini.md`, `agents.md`,
+  `warp.md`): on a case-insensitive filesystem the agent loads it as instructions
 - Each doc has a clear H1 title and opening paragraph stating purpose
-- Cross-reference other docs with relative links (`[Title](filename.md)`)
+- Cross-reference other docs with relative links (`[Title](filename.md)`, or `../` out of a concept folder)
 - Technical docs include "See Also" sections at the bottom
 - No emojis
 - Tables for structured data (schema, config keys, constants)
@@ -79,7 +93,8 @@ When the Step 7 report lists updated docs, append a note: "Website may need upda
 
 - The subsystem it documents has been removed entirely
 - Its content has been fully merged into another doc
-- Always update `docs/README.md` and `README.md` when adding/removing
+- Always update `docs/README.md` and `README.md` when adding/removing, and a concept folder's
+  `index.md` when adding or removing one of its concepts
 
 ## Anchor Points
 
@@ -105,7 +120,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | `EventType` | Object keys | activity-detection.md |
 | `EventTypeActivity` | Mapping entries | activity-detection.md |
 | `ActivityDetectionStrategy` | Discriminated union variants | activity-detection.md |
-| `AdapterRuntimeStrategy` | Interface fields | agent-integration.md |
+| `AdapterRuntimeStrategy` | Interface fields | integrations/agents/adapter-types.md |
 | `AppConfig` / `DEFAULT_CONFIG` | Flattened dot-paths + defaults | configuration.md |
 | `BoardConfig` | Interface fields | configuration.md |
 | `BoardColumnConfig` | Interface fields | configuration.md |
@@ -140,16 +155,17 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | Source file(s) | Target doc |
 |--------|---------------|------------|
-| AgentAdapter interface methods | `src/main/agent/agent-adapter.ts` | agent-integration.md (interface table) |
-| AgentAdapter required properties | `src/main/agent/agent-adapter.ts` | agent-integration.md (properties table) |
-| Registered adapters list | `src/main/agent/agent-registry.ts` | agent-integration.md (supported agents table) |
-| Supported agents table | `src/main/agent/adapters/*/` (one adapter per agent) | agent-integration.md (supported agents table) |
-| Per-agent permission modes | `src/main/agent/adapters/claude/claude-adapter.ts`, `src/main/agent/adapters/codex/codex-adapter.ts`, `src/main/agent/adapters/gemini/gemini-adapter.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | agent-integration.md (per-agent permission tables) |
-| Per-agent CLI flag mappings | `src/main/agent/adapters/codex/command-builder.ts`, `src/main/agent/adapters/gemini/command-builder.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | agent-integration.md (per-agent permission tables) |
-| Per-agent capability discovery | `src/main/agent/adapters/*/capability-discovery.ts` | agent-integration.md (model/effort tables) |
-| First-output detection strategies | All adapter files (`detectFirstOutput` method) | agent-integration.md (first-output detection table) |
-| Exit sequences | All adapter files (`getExitSequence` method) | agent-integration.md (exit sequences table) |
-| Session history file location | All adapter files (`locateSessionHistoryFile` method) | agent-integration.md (session history file location table) |
+| AgentAdapter interface methods | `src/main/agent/agent-adapter.ts` | integrations/agents/adapter-interface.md (interface table) |
+| AgentAdapter required properties | `src/main/agent/agent-adapter.ts` | integrations/agents/adapter-interface.md (properties table) |
+| AgentAdapter optional properties | `src/main/agent/agent-adapter.ts` | integrations/agents/optional-properties.md |
+| Registered adapters list | `src/main/agent/agent-registry.ts` | integrations/agents/adapter-interface.md (supported agents table) and integrations/agents/index.md (one concept per adapter) |
+| Supported agents table | `src/main/agent/adapters/*/` (one adapter per agent) | integrations/agents/adapter-interface.md (supported agents table) |
+| Per-agent permission modes | `src/main/agent/adapters/claude/claude-adapter.ts`, `src/main/agent/adapters/codex/codex-adapter.ts`, `src/main/agent/adapters/gemini/gemini-adapter.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | Each adapter's concept in integrations/agents/ (its Permission Modes table) |
+| Per-agent CLI flag mappings | `src/main/agent/adapters/codex/command-builder.ts`, `src/main/agent/adapters/gemini/command-builder.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | Each adapter's concept in integrations/agents/ (its Permission Modes table) |
+| Per-agent capability discovery | `src/main/agent/adapters/*/capability-discovery.ts` | integrations/agents/adapter-types.md (model/effort tables) |
+| First-output detection strategies | All adapter files (`detectFirstOutput` method) | integrations/agents/adapter-interface.md (first-output detection table) |
+| Exit sequences | All adapter files (`getExitSequence` method) | integrations/agents/adapter-interface.md (exit sequences table) |
+| Session history file location | All adapter files (`locateSessionHistoryFile` method) | integrations/agents/adapter-interface.md (session history file location table) |
 | Per-agent transcript cleanup | `src/main/agent/handoff/transcript-cleanup.ts`, `src/main/agent/adapters/*/transcript-cleanup.ts` | handoff.md (per-agent transcript cleanup section) |
 | Handoff DB columns | `src/main/db/repositories/handoff-repository.ts` | handoff.md (database storage table) |
 
@@ -157,7 +173,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and agent-integration.md (cross-reference only) |
+| Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and integrations/agents/adapter-interface.md (cross-reference only) |
 | Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | transition-engine.md (canonical, "Template Variables"), architecture.md (cross-reference only) |
 
 ### Integration Anchors
@@ -207,7 +223,8 @@ Determine what source files changed:
    - Run `git describe --tags --abbrev=0` to find the latest release tag
    - Run `git diff --name-only <tag>..HEAD` to get all files changed since that release
 3. Filter to source files only (exclude `docs/`, `.claude/`, `tests/`)
-4. Map changed source files to affected docs using the Source-to-Doc Mapping above
+4. Map changed source files to affected docs using the Source-to-Doc Mapping above, and run
+   `node scripts/docs-bundle.mjs sources <changed source files>` for the concept folders
 5. If no source files changed (docs-only or config-only commit), report "No source changes detected - skipping doc review" and stop
 
 ### Step 2 - Anchor Point Verification
@@ -219,25 +236,25 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 **Single-file anchors:**
 
 - `src/shared/types.ts`
-  WHY: union types, interfaces, and config defaults (PermissionMode, ActionType, SessionStatus, AppConfig, BoardConfig, EventType, etc.) are enumerated across configuration.md, database.md, session-lifecycle.md, transition-engine.md, agent-integration.md, activity-detection.md.
+  WHY: union types, interfaces, and config defaults (PermissionMode, ActionType, SessionStatus, AppConfig, BoardConfig, EventType, etc.) are enumerated across configuration.md, database.md, session-lifecycle.md, transition-engine.md, integrations/agents/adapter-types.md, activity-detection.md.
 
 - `src/shared/ipc-channels.ts`
   WHY: every IPC channel string is enumerated by group in architecture.md (per-group tables, group counts in section headers).
 
 - `src/shared/template-vars.ts`
-  WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and agent-integration.md.
+  WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and integrations/agents/adapter-interface.md.
 
 - `src/shared/task-template-vars.ts`
-  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (26 names: task_xml, workflow_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 5 automation-only names column, fromColumn, toColumn, trigger, agentReply, plus the 2 workflow-agent-only names columns and brief_xml) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). agent-integration.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (26 names: task_xml, workflow_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 5 automation-only names column, fromColumn, toColumn, trigger, agentReply, plus the 2 workflow-agent-only names columns and brief_xml) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). integrations/agents/adapter-interface.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
 
 - `src/shared/automation-manifest.ts`
   WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
 
 - `src/main/agent/agent-adapter.ts`
-  WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getSubmissionVerifier, summarize, answerFromContext, openAnswerSession, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in agent-integration.md. Catches drift that types.ts re-exports miss.
+  WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getSubmissionVerifier, summarize, answerFromContext, openAnswerSession, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in integrations/agents/adapter-interface.md and integrations/agents/optional-properties.md. Catches drift that types.ts re-exports miss.
 
 - `src/main/agent/agent-registry.ts`
-  WHY: canonical list of registered adapters; adding/removing an adapter is a docs-affecting event for agent-integration.md "Supported agents" table.
+  WHY: canonical list of registered adapters; adding/removing an adapter is a docs-affecting event for integrations/agents/adapter-interface.md's "Supported Agents" table, and for a concept of its own in integrations/agents/ (listed in that folder's index.md).
 
 - `src/main/agent/mcp-http-server.ts`
   WHY: MCP server entry point and tool registration; backs mcp-server.md component table.
@@ -302,13 +319,13 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: every CREATE TABLE column, ALTER TABLE, and seed data block is enumerated in database.md schema tables and migration history. Glob covers global-schema.ts, project-schema.ts, default-data.ts, spawn-agent-config-migration.ts, and any future migration file. (Note: `src/main/db/migrations.ts` is a 2-line re-export shim - do not rely on it.)
 
 - `src/main/agent/adapters/**`
-  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive per-adapter tables in agent-integration.md, adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 15 adapters and all their internal files.
+  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive the per-adapter concepts in integrations/agents/ and the per-adapter tables in adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 15 adapters and all their internal files.
 
 - `src/main/agent/handoff/**`
   WHY: handoff orchestration (session-history-reference.ts, transcript-cleanup.ts) backs handoff.md sections. Small directory; safe to glob.
 
 - `src/main/agent/shared/**`
-  WHY: shared agent helpers (cli-print.ts, cli-answer.ts, auto-name.ts, prompt-xml.ts, agent-detector.ts, bridge-utils.ts, hook-utils.ts, exec-version.ts) back multiple feature docs (configuration.md, agent-integration.md, cross-platform.md). Small directory; safe to glob.
+  WHY: shared agent helpers (cli-print.ts, cli-answer.ts, auto-name.ts, prompt-xml.ts, agent-detector.ts, bridge-utils.ts, hook-utils.ts, exec-version.ts) back multiple feature docs (configuration.md, the integrations/agents/ concepts, cross-platform.md). Small directory; safe to glob.
 
 - `src/main/agent/mcp-http/**`
   WHY: MCP tool registrations (task-tools.ts, session-tools.ts, search-tools.ts, project-tools.ts, diagnostics-tools.ts, browser-tools.ts) are enumerated in mcp-server.md. Adding a new tool is a docs-affecting event. The settings panel renders the same tools from `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`); `tests/unit/mcp-tool-list-parity.test.ts` asserts every registered tool is in both the manifest and mcp-server.md (see `.claude/rules/mcp-tool-list-parity.md`).
@@ -390,8 +407,10 @@ Scan for undocumented features and determine where to document them:
 
 Check overall doc health:
 
-1. Verify all internal links between docs resolve (no broken `[text](file.md)` links)
-2. Check that `docs/README.md` lists all docs in `docs/`
+1. Verify all internal links between docs resolve: run `npx vitest run tests/unit/okf-docs-conformance.test.ts`,
+   which resolves every relative link and `#fragment` in `docs/`, checks concept frontmatter and
+   `sources:`, and checks each concept folder's `index.md` against its concepts' descriptions
+2. Check that `docs/README.md` lists all docs in `docs/` (a concept folder through its `index.md`)
 3. Check that the `README.md` Documentation section is current
 4. Flag any doc over 500 lines that could benefit from splitting
 

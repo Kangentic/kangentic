@@ -16,8 +16,8 @@ const SHELL_ID_PATTERN = new RegExp(SHELL_ID_PATTERN_SOURCE);
  * Parser for Kimi CLI's `wire.jsonl` session telemetry.
  *
  * Wire protocol v1.9 (verified empirically against `kimi --print
- * --output-format stream-json` on v1.37.0 + the upstream schema in
- * `docs/en/customization/wire-mode.md`).
+ * --output-format stream-json` on v1.37.0 + the upstream schema, the
+ * "Wire mode" page of Kimi CLI's own documentation).
  *
  * On-disk layout:
  *   `~/.kimi/sessions/<work_dir_hash>/<session_uuid>/wire.jsonl`
@@ -872,7 +872,7 @@ function accumulateStatusUpdate(
   // input_cache_creation.
   //
   // IMPORTANT: token_usage in StatusUpdate is the *current step*
-  // count per upstream (docs/customization/wire-mode.md), NOT a
+  // count per upstream (Kimi CLI's "Wire mode" docs page), NOT a
   // session-cumulative total. Multiple StatusUpdates per turn each
   // report a different per-step value. Last-wins here means
   // contextWindow.totalInputTokens reflects the most recent step's

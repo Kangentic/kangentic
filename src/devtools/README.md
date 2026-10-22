@@ -144,8 +144,7 @@ right port).
    `main/` if it talks to filesystem / process state.
 3. Register a `kangentic_devtools_*` tool in `mcp/preview-tools.ts`
    that calls the new endpoint and formats the result.
-4. Update this README's subsystem list and the architecture plan in
-   `docs/devtools.md` (when that doc lands).
+4. Update this README's subsystem list.
 
 Both gates apply to every tool:
 - `developer.previewInspectionServer` (master switch - lockfile + bridge)
