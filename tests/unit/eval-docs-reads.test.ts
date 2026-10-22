@@ -22,7 +22,24 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { gate, grade, loadQuestions, parseArgs, readsDocs, RUN_SETTINGS, runArgs, summarize, tallyStream } from '../../scripts/eval-docs-reads.mjs';
+import * as os from 'node:os';
+import {
+  callTarget,
+  gate,
+  grade,
+  HARNESS_FILE_PREFIX,
+  harnessFilesIn,
+  loadQuestions,
+  loadQuestionSet,
+  pairedComparison,
+  parseArgs,
+  readsDocs,
+  RUN_SETTINGS,
+  runArgs,
+  SECOND_ROUND_QUESTIONS_PATH,
+  summarize,
+  tallyStream,
+} from '../../scripts/eval-docs-reads.mjs';
 
 const CHECKOUT = path.resolve('/scratch/checkout');
 const FIXTURE_PATH = path.resolve(__dirname, '../fixtures/claude-docs-read-stream.jsonl');
@@ -534,6 +551,7 @@ describe('parseArgs', () => {
       baseline: null,
       candidate: null,
       only: [],
+      questions: null,
       cli: 'claude',
       runs: 3,
       concurrency: 4,
@@ -545,7 +563,7 @@ describe('parseArgs', () => {
   it('reads every flag it knows', () => {
     const options = parseArgs([
       'run', '--ref', 'main', '--label', 'baseline', '--out', 'results', '--runs', '5', '--concurrency', '2',
-      '--model', 'opus', '--effort', 'max', '--cli', 'claude-binary', '--only', 'p1,c1',
+      '--model', 'opus', '--effort', 'max', '--cli', 'claude-binary', '--only', 'p1,c1', '--questions', 'set.json',
     ]);
 
     expect(options).toEqual({
@@ -556,6 +574,7 @@ describe('parseArgs', () => {
       baseline: null,
       candidate: null,
       only: ['p1', 'c1'],
+      questions: 'set.json',
       cli: 'claude-binary',
       runs: 5,
       concurrency: 2,
@@ -641,6 +660,20 @@ describe('the run and its questions', () => {
     expect(RUN_SETTINGS).toEqual({ advisorModel: '', autoMemoryEnabled: false });
   });
 
+  it('holds a second-round set of keyword-free and broad questions, each naming concepts that exist', () => {
+    const questionSet = loadQuestionSet(SECOND_ROUND_QUESTIONS_PATH);
+    const questions = questionSet.questions as Array<{ id: string; group: string; question: string; expect: string[]; gold: string[] }>;
+    expect(questionSet.promptPrefix).toMatch(/docs\/README\.md/);
+    expect(new Set(questions.map((question) => question.id)).size).toBe(questions.length);
+    expect(new Set(questions.map((question) => question.group))).toEqual(new Set(['paraphrase', 'broad']));
+    for (const question of questions) {
+      expect(question.expect.length, question.id).toBeGreaterThan(0);
+      for (const pattern of question.expect) expect(() => new RegExp(pattern, 'i')).not.toThrow();
+      expect(question.gold.length, question.id).toBeGreaterThan(0);
+      for (const concept of question.gold) expect(fs.existsSync(path.resolve(__dirname, '../..', concept)), concept).toBe(true);
+    }
+  });
+
   it('holds pilot and control questions whose patterns compile', () => {
     const questions = loadQuestions() as Array<{ id: string; group: string; question: string; expect: string[] }>;
     expect(new Set(questions.map((question) => question.id)).size).toBe(questions.length);
@@ -651,5 +684,157 @@ describe('the run and its questions', () => {
       expect(question.expect.length).toBeGreaterThan(0);
       for (const pattern of question.expect) expect(() => new RegExp(pattern, 'i')).not.toThrow();
     }
+  });
+});
+
+describe('the per-call trace', () => {
+  it('names each call\'s target relative to the checkout, in call order, with its result bytes', () => {
+    const stdout = [
+      toolUse('t1', 'Read', { file_path: path.join(CHECKOUT, 'docs', 'README.md') }),
+      toolResult('t1', 'index text'),
+      toolUse('t2', 'Grep', { pattern: 'trust', path: path.join(CHECKOUT, 'docs') }),
+      toolResult('t2', 'docs/a.md'),
+      toolUse('t3', 'Glob', { pattern: '**/*.md' }),
+      toolResult('t3', 'a.md\nb.md'),
+      RESULT_LINE,
+    ].join('\n');
+
+    const tally = tallyStream(stdout, CHECKOUT);
+
+    expect(tally.trace).toEqual([
+      { tool: 'Read', target: 'docs/README.md', bytes: Buffer.byteLength('index text') },
+      { tool: 'Grep', target: 'trust @ docs', bytes: Buffer.byteLength('docs/a.md') },
+      { tool: 'Glob', target: '**/*.md', bytes: Buffer.byteLength('a.md\nb.md') },
+    ]);
+  });
+
+  it('keeps only the file name of a path outside the checkout, so no machine path reaches a record', () => {
+    const outside = path.resolve('/home/someone/notes/private.md');
+    expect(callTarget('Read', { file_path: outside }, CHECKOUT)).toBe('private.md');
+    expect(callTarget('Read', { file_path: path.join(CHECKOUT, 'docs', '..', '..', 'x.md') }, CHECKOUT)).toBe('x.md');
+    expect(callTarget('Grep', { pattern: 'codex' }, CHECKOUT)).toBe('codex');
+    expect(callTarget('Read', {}, CHECKOUT)).toBe('');
+  });
+
+  it('records a call whose result never came back with zero bytes', () => {
+    const tally = tallyStream([toolUse('t1', 'Read', { file_path: 'docs/x.md' }), RESULT_LINE].join('\n'), CHECKOUT);
+    expect(tally.trace).toEqual([{ tool: 'Read', target: 'docs/x.md', bytes: 0 }]);
+  });
+});
+
+describe('context tokens', () => {
+  it('sums every input token class from the result line, and keeps output apart', () => {
+    const result = line({
+      type: 'result', result: 'ok', is_error: false,
+      usage: { input_tokens: 12, cache_read_input_tokens: 70_000, cache_creation_input_tokens: 9_000, output_tokens: 400 },
+    });
+    const tally = tallyStream(result, CHECKOUT);
+    expect(tally.contextTokens).toBe(79_012);
+    expect(tally.outputTokens).toBe(400);
+  });
+
+  it('leaves both null when the run reported no usage', () => {
+    const tally = tallyStream(RESULT_LINE, CHECKOUT);
+    expect(tally.contextTokens).toBeNull();
+    expect(tally.outputTokens).toBeNull();
+  });
+});
+
+describe('harnessFilesIn', () => {
+  it('finds the harness\'s script, question sets and test in a checkout, and nothing else', () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-scrub-'));
+    fs.mkdirSync(path.join(checkout, 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(checkout, 'tests', 'unit'), { recursive: true });
+    const prefix = HARNESS_FILE_PREFIX as string;
+    const harnessNames = [`${prefix}.mjs`, `${prefix}-questions.json`, `${prefix}-questions-v2.json`];
+    for (const name of [...harnessNames, 'docs-bundle.mjs']) fs.writeFileSync(path.join(checkout, 'scripts', name), '');
+    fs.writeFileSync(path.join(checkout, 'tests', 'unit', `${prefix}.test.ts`), '');
+    fs.writeFileSync(path.join(checkout, 'tests', 'unit', 'code-corpus.test.ts'), '');
+
+    const found = harnessFilesIn(checkout).map((file: string) => path.relative(checkout, file).replace(/\\/g, '/')).sort();
+
+    expect(found).toEqual([...harnessNames.map((name) => `scripts/${name}`), `tests/unit/${prefix}.test.ts`].sort());
+    expect(prefix.length).toBeGreaterThan(5);
+  });
+
+  it('finds nothing in a checkout from before the harness existed', () => {
+    expect(harnessFilesIn(fs.mkdtempSync(path.join(os.tmpdir(), 'eval-scrub-empty-')))).toEqual([]);
+  });
+});
+
+describe('loadQuestionSet', () => {
+  const writeTemp = (content: unknown): string => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-set-'));
+    const file = path.join(directory, 'set.json');
+    fs.writeFileSync(file, JSON.stringify(content));
+    return file;
+  };
+
+  it('reads a bare list with the default prefix, and an object with its own', () => {
+    const bare = loadQuestionSet(writeTemp([{ id: 'a' }]));
+    expect(bare.questions).toEqual([{ id: 'a' }]);
+    expect(bare.promptPrefix).toMatch(/^Answer from this repository's documentation\./);
+
+    const shaped = loadQuestionSet(writeTemp({ promptPrefix: 'Start at docs/README.md.\n\n', questions: [{ id: 'b' }] }));
+    expect(shaped).toEqual({ promptPrefix: 'Start at docs/README.md.\n\n', questions: [{ id: 'b' }] });
+  });
+
+  it('refuses a file that is neither shape', () => {
+    expect(() => loadQuestionSet(writeTemp({ items: [] }))).toThrow(/expected a list of questions/);
+  });
+});
+
+describe('pairedComparison', () => {
+  const record = (questionId: string, group: string, overrides: Record<string, unknown>) => ({
+    questionId, group, passed: true, gateBytes: 1000, toolCalls: 2, contextTokens: 50_000, costUsd: 0.05, ...overrides,
+  });
+
+  it('reports the candidate-over-baseline ratio of summed question means, and pass rates', () => {
+    const baseline = [
+      record('q1', 'paraphrase', { gateBytes: 1000 }), record('q1', 'paraphrase', { gateBytes: 3000 }),
+      record('q2', 'broad', { gateBytes: 4000, passed: false }), record('q2', 'broad', { gateBytes: 4000 }),
+    ];
+    const candidate = [
+      record('q1', 'paraphrase', { gateBytes: 1000 }), record('q1', 'paraphrase', { gateBytes: 1000 }),
+      record('q2', 'broad', { gateBytes: 2000 }), record('q2', 'broad', { gateBytes: 2000 }),
+    ];
+
+    const result = pairedComparison(baseline, candidate);
+
+    // Baseline means 2000 + 4000 = 6000, candidate 1000 + 2000 = 3000.
+    expect(result.measures.gateBytes.ratio).toBeCloseTo(0.5);
+    expect(result.measures.toolCalls.ratio).toBeCloseTo(1);
+    expect(result.passRate).toEqual({ baseline: 0.75, candidate: 1 });
+    expect(result.groups).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'paraphrase', questions: 1, gateBytes: 0.5 }),
+      expect.objectContaining({ group: 'broad', questions: 1, gateBytes: 0.5 }),
+    ]));
+    const { low, high } = result.measures.gateBytes;
+    expect(low).not.toBeNull();
+    expect(low as number).toBeLessThanOrEqual(0.5);
+    expect(high as number).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('gives an interval that spans 1 when the arms differ only by noise, and the same interval every time', () => {
+    const baseline = ['a', 'b', 'c', 'd'].flatMap((id, index) => [record(id, 'paraphrase', { gateBytes: 1000 + index * 400 })]);
+    const candidate = ['a', 'b', 'c', 'd'].flatMap((id, index) => [record(id, 'paraphrase', { gateBytes: index % 2 === 0 ? 900 + index * 400 : 1100 + index * 400 })]);
+
+    const first = pairedComparison(baseline, candidate);
+    const second = pairedComparison(baseline, candidate);
+
+    expect(first.measures.gateBytes.low as number).toBeLessThan(1);
+    expect(first.measures.gateBytes.high as number).toBeGreaterThan(1);
+    expect(second.measures).toEqual(first.measures);
+  });
+
+  it('counts only questions run in both arms, and skips a measure a record lacks', () => {
+    const baseline = [record('q1', 'paraphrase', { contextTokens: null }), record('only-before', 'paraphrase', { gateBytes: 99_999 })];
+    const candidate = [record('q1', 'paraphrase', { contextTokens: null })];
+
+    const result = pairedComparison(baseline, candidate);
+
+    expect(result.questions.map((row: { questionId: string }) => row.questionId)).toEqual(['q1']);
+    expect(result.measures.gateBytes.ratio).toBeCloseTo(1);
+    expect(result.measures.contextTokens.ratio).toBeNull();
   });
 });

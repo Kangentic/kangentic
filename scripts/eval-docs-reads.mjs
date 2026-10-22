@@ -33,6 +33,14 @@
  * `gateBytes` over the `pilot` questions is larger than the largest absolute change any `control`
  * question shows between the two runs, and no pilot question passes fewer runs than it did before.
  * With three runs, "any drop" would pass on noise; the controls' own drift is the noise estimate.
+ *
+ * The second round (`--questions scripts/eval-docs-reads-questions-v2.json`) asks what the first could
+ * not: questions with no keyword to grep for, and questions that span several concepts. Its prompt
+ * prefix names the docs index, the same in both arms. Each record also carries `trace` (every call's
+ * tool, target relative to the checkout, and result bytes) and `contextTokens` (every input token the
+ * run's requests carried). `compare` on such a set prints `pairedComparison`: per-measure
+ * candidate-over-baseline ratios with a 95% bootstrap interval. How to read it was fixed in
+ * docs/log.md before the runs.
  */
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -44,7 +52,11 @@ import { isEntrypoint } from './lib/is-entrypoint.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
+/** Every file of this harness starts with this name: the script, its question sets, its test. */
+export const HARNESS_FILE_PREFIX = path.basename(fileURLToPath(import.meta.url), '.mjs');
 const QUESTIONS_PATH = path.join(HERE, 'eval-docs-reads-questions.json');
+/** The second round's set: questions with no greppable keyword, and questions that span concepts. */
+export const SECOND_ROUND_QUESTIONS_PATH = path.join(HERE, 'eval-docs-reads-questions-v2.json');
 /** Past this, a run counts as failed and its CLI is stopped. */
 const RUN_TIMEOUT_MS = 6 * 60_000;
 const EFFORT_ORDER = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -56,7 +68,19 @@ const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
 /** The question list: `{ id, group: 'pilot' | 'control', question, expect: string[] }`. */
 export function loadQuestions() {
-  return JSON.parse(fs.readFileSync(QUESTIONS_PATH, 'utf8'));
+  return loadQuestionSet(QUESTIONS_PATH).questions;
+}
+
+/**
+ * A question file: a bare list (the first round's file, which uses the default prompt prefix), or
+ * `{ promptPrefix, questions }`. Every run of a set gets the same prefix in both arms, so a prefix
+ * that names the docs index is a choice of the set, never of one arm.
+ */
+export function loadQuestionSet(file) {
+  const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (Array.isArray(parsed)) return { promptPrefix: PROMPT_PREFIX, questions: parsed };
+  if (!parsed || !Array.isArray(parsed.questions)) throw new Error(`${file}: expected a list of questions or { promptPrefix, questions }`);
+  return { promptPrefix: typeof parsed.promptPrefix === 'string' ? parsed.promptPrefix : PROMPT_PREFIX, questions: parsed.questions };
 }
 
 /** The flags each run passes: file tools only, no MCP, no session file, stream-json on stdout. */
@@ -107,8 +131,31 @@ export function readsDocs(input, checkout) {
 }
 
 /**
+ * What a tool call aimed at, for the trace: a path relative to the checkout (forward slashes), or
+ * for a search its pattern with the path it searched. Absolute paths would put machine paths in the
+ * records, so a path outside the checkout keeps only its file name.
+ */
+export function callTarget(name, input, checkout) {
+  const relative = (value) => {
+    if (typeof value !== 'string' || value.length === 0) return null;
+    const resolved = path.resolve(checkout, value.replace(/\\/g, '/'));
+    const inside = path.relative(path.resolve(checkout), resolved);
+    if (inside.startsWith('..') || path.isAbsolute(inside)) return path.basename(resolved);
+    return inside.replace(/\\/g, '/') || '.';
+  };
+  const where = relative(input?.file_path ?? input?.path ?? null);
+  if (name === 'Grep' || name === 'Glob') {
+    const pattern = typeof input?.pattern === 'string' ? input.pattern : '';
+    return where ? `${pattern} @ ${where}` : pattern;
+  }
+  return where ?? '';
+}
+
+/**
  * One run's numbers from its stream-json stdout. Tool calls come from assistant lines and their
  * results from user lines; a line with a `parent_tool_use_id` is a subagent's and is left out.
+ * `trace` lists each call in order with what it aimed at and the bytes it returned, so a run can show
+ * whether the agent read an index, grepped, or opened a concept.
  */
 export function tallyStream(stdout, checkout) {
   const calls = new Map();
@@ -120,6 +167,9 @@ export function tallyStream(stdout, checkout) {
     reminderBytes: 0,
     gateBytes: 0,
     docsBytes: 0,
+    contextTokens: null,
+    outputTokens: null,
+    trace: [],
     answer: null,
     costUsd: null,
     models: [],
@@ -139,7 +189,9 @@ export function tallyStream(stdout, checkout) {
     if (record.type === 'assistant') {
       for (const block of record.message?.content ?? []) {
         if (block?.type !== 'tool_use' || calls.has(block.id)) continue;
-        calls.set(block.id, { name: block.name, input: block.input });
+        const entry = { tool: block.name, target: callTarget(block.name, block.input, checkout), bytes: 0 };
+        calls.set(block.id, { name: block.name, input: block.input, entry });
+        tally.trace.push(entry);
         tally.toolCalls += 1;
         tally.toolCallsByName[block.name] = (tally.toolCallsByName[block.name] ?? 0) + 1;
       }
@@ -159,7 +211,9 @@ export function tallyStream(stdout, checkout) {
           tally.toolResultBytes += bytes;
           tally.reminderBytes += reminder;
           tally.gateBytes += bytes - reminder;
-          if (readsDocs(calls.get(block.tool_use_id)?.input, checkout)) tally.docsBytes += bytes - reminder;
+          const call = calls.get(block.tool_use_id);
+          if (call) call.entry.bytes = bytes - reminder;
+          if (readsDocs(call?.input, checkout)) tally.docsBytes += bytes - reminder;
         } else if (block?.type === 'text' && typeof block.text === 'string') {
           tally.reminderBytes += reminderBytesOf(block.text);
         }
@@ -170,6 +224,14 @@ export function tallyStream(stdout, checkout) {
       tally.models = Object.keys(record.modelUsage ?? {});
       tally.durationMs = typeof record.duration_ms === 'number' ? record.duration_ms : null;
       tally.isError = record.is_error === true;
+      // Every token of context the run's requests carried (system prompt and tool results included),
+      // cached or not: what the run cost in context, apart from which run happened to warm the cache.
+      const usage = record.usage;
+      if (usage && typeof usage === 'object') {
+        const count = (value) => (typeof value === 'number' ? value : 0);
+        tally.contextTokens = count(usage.input_tokens) + count(usage.cache_read_input_tokens) + count(usage.cache_creation_input_tokens);
+        tally.outputTokens = typeof usage.output_tokens === 'number' ? usage.output_tokens : null;
+      }
     }
   }
   return tally;
@@ -239,6 +301,82 @@ export function gate(baseline, candidate) {
   return { pilotBefore, pilotAfter, pilotDrop, controlNoise, fewerPasses, passed: reasons.length === 0, reasons };
 }
 
+/** Deterministic PRNG, so a comparison's interval is the same on every read of the same records. */
+function mulberry32(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = state;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The measures a paired comparison reports, each a per-run number on a record. */
+export const PAIRED_MEASURES = ['gateBytes', 'toolCalls', 'contextTokens', 'costUsd'];
+
+function mean(values) {
+  return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+/**
+ * Two runs of one question set (the second round, task 889): per question the mean of each measure in
+ * each arm, and overall the candidate-over-baseline ratio of the summed question means, with a 95%
+ * bootstrap interval from resampling questions (fixed seed). A ratio under 1 means the candidate spent
+ * less; an interval that spans 1 is no detectable difference. Pass rates are compared, not ratioed.
+ * Only questions run in both arms count.
+ */
+export function pairedComparison(baselineRecords, candidateRecords, { draws = 2000, seed = 889 } = {}) {
+  const byQuestion = (records) => {
+    const groups = new Map();
+    for (const record of records) {
+      const entry = groups.get(record.questionId) ?? { group: record.group, records: [] };
+      entry.records.push(record);
+      groups.set(record.questionId, entry);
+    }
+    return groups;
+  };
+  const before = byQuestion(baselineRecords);
+  const after = byQuestion(candidateRecords);
+  const ids = [...before.keys()].filter((id) => after.has(id));
+  const questionMeans = ids.map((id) => {
+    const row = { questionId: id, group: before.get(id).group };
+    for (const [arm, groups] of [['baseline', before], ['candidate', after]]) {
+      const records = groups.get(id).records;
+      row[arm] = { runs: records.length, passes: records.filter((record) => record.passed).length };
+      for (const measure of PAIRED_MEASURES) {
+        row[arm][measure] = mean(records.map((record) => record[measure]).filter((value) => typeof value === 'number'));
+      }
+    }
+    return row;
+  });
+  const ratioOf = (rows, measure) => {
+    const usable = rows.filter((row) => typeof row.baseline[measure] === 'number' && typeof row.candidate[measure] === 'number');
+    const baseSum = usable.reduce((sum, row) => sum + row.baseline[measure], 0);
+    const candidateSum = usable.reduce((sum, row) => sum + row.candidate[measure], 0);
+    return baseSum > 0 ? candidateSum / baseSum : null;
+  };
+  const random = mulberry32(seed);
+  const resamples = Array.from({ length: draws }, () => Array.from({ length: questionMeans.length }, () => questionMeans[Math.floor(random() * questionMeans.length)]));
+  const percentile = (sorted, share) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(share * (sorted.length - 1))))];
+  const measures = {};
+  for (const measure of PAIRED_MEASURES) {
+    const ratio = ratioOf(questionMeans, measure);
+    const drawn = resamples.map((rows) => ratioOf(rows, measure)).filter((value) => typeof value === 'number').sort((left, right) => left - right);
+    measures[measure] = { ratio, low: drawn.length > 0 ? percentile(drawn, 0.025) : null, high: drawn.length > 0 ? percentile(drawn, 0.975) : null };
+  }
+  const passRate = (arm) => {
+    const runs = questionMeans.reduce((sum, row) => sum + row[arm].runs, 0);
+    return runs > 0 ? questionMeans.reduce((sum, row) => sum + row[arm].passes, 0) / runs : null;
+  };
+  const groups = [...new Set(questionMeans.map((row) => row.group))].map((group) => {
+    const rows = questionMeans.filter((row) => row.group === group);
+    return { group, questions: rows.length, ...Object.fromEntries(PAIRED_MEASURES.map((measure) => [measure, ratioOf(rows, measure)])) };
+  });
+  return { questions: questionMeans, measures, groups, passRate: { baseline: passRate('baseline'), candidate: passRate('candidate') } };
+}
+
 export function parseArgs(argv) {
   const value = (flag) => {
     const at = argv.indexOf(flag);
@@ -260,6 +398,7 @@ export function parseArgs(argv) {
     baseline: value('--baseline'),
     candidate: value('--candidate'),
     only: (value('--only') ?? '').split(',').filter(Boolean),
+    questions: value('--questions'),
     cli: value('--cli') ?? 'claude',
     runs,
     concurrency,
@@ -340,6 +479,23 @@ function runOnce(cli, argv, prompt, cwd) {
   });
 }
 
+/**
+ * This harness's own files inside a checkout: its script, its question sets and its test. They hold
+ * the answers' keywords, so an agent that greps the whole repository could find an answer there
+ * instead of in docs/. Both arms delete them before the first question.
+ */
+export function harnessFilesIn(checkout) {
+  const found = [];
+  for (const folder of ['scripts', path.join('tests', 'unit')]) {
+    const directory = path.join(checkout, folder);
+    if (!fs.existsSync(directory)) continue;
+    for (const name of fs.readdirSync(directory)) {
+      if (name.startsWith(HARNESS_FILE_PREFIX)) found.push(path.join(directory, name));
+    }
+  }
+  return found;
+}
+
 function git(args) {
   return execFileSync('git', ['-C', PROJECT_ROOT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
@@ -357,7 +513,8 @@ async function run(options) {
     // Without a shell, Windows resolves only .exe and .com on PATH, so an npm `claude.cmd` is not found.
     throw new Error(`--cli ${options.cli} was not found; pass the CLI's own executable (--cli <path to claude${process.platform === 'win32' ? '.exe' : ''}>)`);
   }
-  const questions = loadQuestions()
+  const questionSet = loadQuestionSet(options.questions ? path.resolve(options.questions) : QUESTIONS_PATH);
+  const questions = questionSet.questions
     .filter((question) => options.only.length === 0 || options.only.includes(question.id));
   const commit = git(['rev-parse', '--verify', `${options.ref}^{commit}`]);
   const labelDirectory = path.resolve(options.out, options.label);
@@ -370,11 +527,12 @@ async function run(options) {
   // Everything after the checkout exists runs inside the try, so a failure removes it.
   let settingsDirectory = null;
   try {
+    for (const file of harnessFilesIn(checkout)) fs.rmSync(file, { force: true });
     settingsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-docs-reads-settings-'));
     const settingsPath = path.join(settingsDirectory, 'settings.json');
     fs.writeFileSync(settingsPath, JSON.stringify(RUN_SETTINGS));
-    fs.writeFileSync(path.join(labelDirectory, 'run.json'), JSON.stringify({ ref: options.ref, commit, model: options.model, effort: options.effort, runs: options.runs }, null, 2));
-    await runQuestions({ options, questions, commit, checkout, settingsPath, recordsPath: path.join(labelDirectory, 'records.jsonl') });
+    fs.writeFileSync(path.join(labelDirectory, 'run.json'), JSON.stringify({ ref: options.ref, commit, model: options.model, effort: options.effort, runs: options.runs, questions: options.questions ?? 'default' }, null, 2));
+    await runQuestions({ options, questions, promptPrefix: questionSet.promptPrefix, commit, checkout, settingsPath, recordsPath: path.join(labelDirectory, 'records.jsonl') });
   } finally {
     if (settingsDirectory !== null) removeDirectory(settingsDirectory);
     try {
@@ -387,7 +545,7 @@ async function run(options) {
 }
 
 /** Every question `options.runs` times, `options.concurrency` at once, each record appended as it lands. */
-async function runQuestions({ options, questions, commit, checkout, settingsPath, recordsPath }) {
+async function runQuestions({ options, questions, promptPrefix, commit, checkout, settingsPath, recordsPath }) {
   const jobs = [];
   for (let attempt = 1; attempt <= options.runs; attempt += 1) {
     for (const question of questions) jobs.push({ question, attempt });
@@ -400,7 +558,7 @@ async function runQuestions({ options, questions, commit, checkout, settingsPath
     while (next < jobs.length) {
       const { question, attempt } = jobs[next];
       next += 1;
-      const outcome = await runOnce(options.cli, runArgs({ settingsPath, model: modelId, effort: options.effort }), `${PROMPT_PREFIX}${question.question}`, checkout);
+      const outcome = await runOnce(options.cli, runArgs({ settingsPath, model: modelId, effort: options.effort }), `${promptPrefix}${question.question}`, checkout);
       const tally = tallyStream(outcome.stdout, checkout);
       const record = {
         questionId: question.id,
@@ -415,7 +573,7 @@ async function runQuestions({ options, questions, commit, checkout, settingsPath
       };
       fs.appendFileSync(recordsPath, `${JSON.stringify(record)}\n`);
       done += 1;
-      console.log(`${String(done).padStart(3)}/${jobs.length} ${record.passed ? 'ok  ' : 'MISS'} ${question.id} #${attempt} gate=${tally.gateBytes}B docs=${tally.docsBytes}B reminders=${tally.reminderBytes}B calls=${tally.toolCalls} $${tally.costUsd ?? '?'}`);
+      console.log(`${String(done).padStart(3)}/${jobs.length} ${record.passed ? 'ok  ' : 'MISS'} ${question.id} #${attempt} gate=${tally.gateBytes}B docs=${tally.docsBytes}B reminders=${tally.reminderBytes}B calls=${tally.toolCalls} context=${tally.contextTokens ?? '?'}tok $${tally.costUsd ?? '?'}`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(options.concurrency, jobs.length) }, worker));
@@ -447,10 +605,19 @@ function summary(options) {
   return 0;
 }
 
-/** Two runs side by side and the gate's verdict. Spends nothing. */
+/**
+ * Two runs side by side. A first-round set (pilot and control groups) gets the gate's verdict; any
+ * other set gets the paired comparison, which has no verdict of its own: its pre-registered reading is
+ * in docs/log.md. Spends nothing.
+ */
 function compare(options) {
-  const baseline = summarize(readRecords(options.baseline));
-  const candidate = summarize(readRecords(options.candidate));
+  const baselineRecords = readRecords(options.baseline);
+  const candidateRecords = readRecords(options.candidate);
+  if (!baselineRecords.some((record) => record.group === 'pilot' || record.group === 'control')) {
+    return comparePaired(baselineRecords, candidateRecords);
+  }
+  const baseline = summarize(baselineRecords);
+  const candidate = summarize(candidateRecords);
   const after = new Map(candidate.map((row) => [row.questionId, row]));
   console.log('question | group | passes before | passes after | gate bytes before | gate bytes after | docs bytes before | docs bytes after');
   for (const row of baseline) {
@@ -472,6 +639,34 @@ function compare(options) {
   return verdict.passed ? 0 : 1;
 }
 
+function comparePaired(baselineRecords, candidateRecords) {
+  const result = pairedComparison(baselineRecords, candidateRecords);
+  const format = (value, digits = 0) => (typeof value === 'number' ? value.toFixed(digits) : '-');
+  console.log('question | group | passes before | passes after | mean bytes before | after | mean calls before | after | mean context tokens before | after');
+  for (const row of result.questions) {
+    console.log([
+      row.questionId,
+      row.group,
+      `${row.baseline.passes}/${row.baseline.runs}`,
+      `${row.candidate.passes}/${row.candidate.runs}`,
+      format(row.baseline.gateBytes),
+      format(row.candidate.gateBytes),
+      format(row.baseline.toolCalls, 1),
+      format(row.candidate.toolCalls, 1),
+      format(row.baseline.contextTokens),
+      format(row.candidate.contextTokens),
+    ].join(' | '));
+  }
+  console.log(`\npass rate ${format(result.passRate.baseline, 3)} -> ${format(result.passRate.candidate, 3)}`);
+  for (const [measure, { ratio, low, high }] of Object.entries(result.measures)) {
+    console.log(`${measure}: candidate/baseline ${format(ratio, 3)} (95% interval ${format(low, 3)} to ${format(high, 3)})`);
+  }
+  for (const group of result.groups) {
+    console.log(`group ${group.group} (${group.questions} questions): ${PAIRED_MEASURES.map((measure) => `${measure} ${format(group[measure], 3)}`).join(', ')}`);
+  }
+  return 0;
+}
+
 async function main(argv) {
   const options = parseArgs(argv);
   if (options.mode === 'run' && options.ref && options.label && options.out) return run(options);
@@ -479,7 +674,8 @@ async function main(argv) {
   if (options.mode === 'compare' && options.baseline && options.candidate) return compare(options);
   console.error([
     'usage: node scripts/eval-docs-reads.mjs run --ref <git ref> --label <name> --out <dir>',
-    '         [--runs N] [--model haiku|sonnet|opus] [--effort low..max] [--concurrency N] [--only id,...] [--cli <path>]',
+    '         [--questions <file>] [--runs N] [--model haiku|sonnet|opus] [--effort low..max] [--concurrency N]',
+    '         [--only id,...] [--cli <path>]',
     '       node scripts/eval-docs-reads.mjs summary --out <dir>/<label>',
     '       node scripts/eval-docs-reads.mjs compare --baseline <dir>/<label> --candidate <dir>/<label>',
   ].join('\n'));
