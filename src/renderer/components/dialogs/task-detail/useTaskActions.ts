@@ -10,7 +10,7 @@ import { hasSessionLifecycle } from '../../../utils/task-progress';
 import { prNumberFromUrl } from '../../../../shared/pr-url';
 import type { useTaskProgress } from '../../../utils/task-progress';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
-import { sessionToggleFailureToast, toastIfReconnectedResume } from '../../../utils/session-toggle';
+import { sessionFailureBody, sessionToggleFailureToast, toastIfReconnectedResume } from '../../../utils/session-toggle';
 import { openTaskFromNotification } from '../../../utils/open-task-from-notification';
 
 // agent-focus-ok: this file takes no main-process push. The scan reads the
@@ -252,7 +252,8 @@ export function useTaskActions(input: {
       useSessionStore.getState().clearPendingCommandLabel(input.task.id);
       useToastStore.getState().addToast({
         title: `Couldn't run ${command.displayName}`,
-        message: asSentence(describeIpcError(error, '')),
+        // The command resumes the session, so a Resume refusal can be the reason.
+        message: sessionFailureBody(error),
         variant: 'warning',
       });
       await host.refresh().catch(() => {});

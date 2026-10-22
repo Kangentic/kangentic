@@ -239,13 +239,32 @@ export function isPauseOffered(input: {
   return offer?.direction === 'pause';
 }
 
+const RESUME_BLOCK_REASONS: readonly ResumeBlockReason[] = ['todo', 'done', 'archived'];
+
 /**
- * User-facing copy for a refusal: where the task is, as one sentence. The
- * main-process handler throws this string, and it is the body under a
- * "Couldn't resume session" toast title, the disabled Resume row's tooltip, and
- * the phone's error, so it reads as the reason, not as an internal error.
+ * User-facing copy for a refusal: where the task is, and the move that gets
+ * past it. The main-process handler throws this string, so it is the phone's
+ * error, and the card menu shows it as the disabled Resume row's tooltip. Both
+ * are read on their own, with nothing else saying what to do, so each names
+ * the move. A desktop toast reads the shorter `resumeBlockToastBody` instead.
  */
 export function resumeBlockMessage(reason: ResumeBlockReason): string {
+  switch (reason) {
+    case 'todo':
+      return 'This task is in To Do. Move it to another column to start its agent.';
+    case 'done':
+      return 'This task is complete. Move it out of Done to continue working on it.';
+    case 'archived':
+      return 'This task is archived. Restore it to the board to continue working on it.';
+  }
+}
+
+/**
+ * The same refusal as a toast body: one sentence under the "Couldn't resume
+ * session" title. The card the toast sits beside already shows the column, so
+ * where the task is says enough there.
+ */
+export function resumeBlockToastBody(reason: ResumeBlockReason): string {
   switch (reason) {
     case 'todo':
       return 'The task is in To Do.';
@@ -254,4 +273,14 @@ export function resumeBlockMessage(reason: ResumeBlockReason): string {
     case 'archived':
       return 'The task is archived.';
   }
+}
+
+/**
+ * The refusal whose `resumeBlockMessage` is `message`, or null when it is none.
+ * Main throws the message, so this is how the renderer reads a refused resume
+ * back to its reason to toast the short body. An exact match: both sides read
+ * the one function above.
+ */
+export function resumeBlockReasonOfMessage(message: string): ResumeBlockReason | null {
+  return RESUME_BLOCK_REASONS.find((reason) => resumeBlockMessage(reason) === message) ?? null;
 }

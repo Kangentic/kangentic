@@ -2,7 +2,12 @@ import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { sessionLifecyclePhase } from './task-progress';
-import { resumeBlockMessage, sessionToggleOffer } from '../../shared/session-resume-eligibility';
+import {
+  resumeBlockMessage,
+  resumeBlockReasonOfMessage,
+  resumeBlockToastBody,
+  sessionToggleOffer,
+} from '../../shared/session-resume-eligibility';
 import type { Session, SessionDisplayState, Task } from '../../shared/types';
 
 /**
@@ -42,12 +47,21 @@ export function sessionToggleRowFor(
 }
 
 /**
- * The toast for a pause or resume that failed. Main throws a refusal's copy
- * verbatim, so the reason is the body and reads as guidance.
+ * The body of a toast for a session call that failed: the reason, as one
+ * sentence. A Resume refusal (Done, archived, To Do) arrives as main's
+ * two-sentence guidance, written for the phone and the menu's tooltip, and
+ * toasts as its one-sentence form.
  */
+export function sessionFailureBody(error: unknown): string {
+  const reason = describeIpcError(error, '');
+  const refusal = resumeBlockReasonOfMessage(reason);
+  return refusal ? resumeBlockToastBody(refusal) : asSentence(reason);
+}
+
+/** The toast for a pause or resume that failed. */
 export function sessionToggleFailureToast(direction: SessionToggleDirection, error: unknown): { title: string; message: string } {
   const title = direction === 'pause' ? "Couldn't pause session" : "Couldn't resume session";
-  return { title, message: asSentence(describeIpcError(error, '')) };
+  return { title, message: sessionFailureBody(error) };
 }
 
 /**

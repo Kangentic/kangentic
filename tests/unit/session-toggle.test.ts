@@ -1,7 +1,7 @@
 /**
  * The card menu's Pause session / Resume session row: which row a task gets
  * (`sessionToggleRowFor`), the copy a failed toggle toasts
- * (`sessionToggleFailureToast`), the "Reconnected" toast
+ * (`sessionToggleFailureToast`, over `sessionFailureBody`), the "Reconnected" toast
  * (`toastIfReconnectedResume`), and the click handler that ties them to the
  * session store (`runSessionToggle`).
  *
@@ -62,6 +62,7 @@ const reconcileIpc: Mock = vi.fn();
 // Import after the global stub so the store modules see the mocked window.
 import {
   runSessionToggle,
+  sessionFailureBody,
   sessionToggleFailureToast,
   sessionToggleRowFor,
   toastIfReconnectedResume,
@@ -183,10 +184,17 @@ describe('sessionToggleFailureToast', () => {
   });
 
   it('titles a failed resume and keeps a reason that is already a sentence', () => {
-    expect(sessionToggleFailureToast('resume', new Error('The task is in Done.'))).toEqual({
+    expect(sessionToggleFailureToast('resume', new Error('The worktree is missing.'))).toEqual({
       title: "Couldn't resume session",
-      message: 'The task is in Done.',
+      message: 'The worktree is missing.',
     });
+  });
+
+  it('toasts main\'s two-sentence Resume refusal as its one-sentence form', () => {
+    // Main throws the guidance the phone and the tooltip read; the toast sits by the card.
+    const refused = new Error(`Error invoking remote method 'session:resume': Error: ${resumeBlockMessage('done')}`);
+    expect(sessionToggleFailureToast('resume', refused)).toEqual({ title: "Couldn't resume session", message: 'The task is in Done.' });
+    expect(sessionFailureBody(new Error(resumeBlockMessage('archived')))).toBe('The task is archived.');
   });
 
   it('drops the channel and class main decorates a rejection with', () => {

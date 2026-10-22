@@ -32,6 +32,8 @@ import {
   resumeBlockMessage,
   resumeBlockReason,
   resumeBlockReasonForTask,
+  resumeBlockReasonOfMessage,
+  resumeBlockToastBody,
   sessionToggleOffer,
   taskSessionStatesOf,
   type SessionLifecyclePhase,
@@ -91,8 +93,9 @@ describe('resumeBlockReason', () => {
   });
 
   it('phrases every refusal as user-facing guidance', () => {
-    // These strings reach the user verbatim as the body under the
-    // "Couldn't resume session" toast title, so each is one sentence.
+    // The message reaches the phone and the disabled Resume row's tooltip
+    // verbatim, read with nothing beside it, so it names the move. The toast
+    // body sits under a "Couldn't resume session" title, so it is one sentence.
     for (const reason of ['todo', 'done', 'archived'] as const) {
       const message = resumeBlockMessage(reason);
       expect(message.length).toBeGreaterThan(0);
@@ -100,8 +103,17 @@ describe('resumeBlockReason', () => {
       // long dash (see .claude/rules/writing-style.md).
       expect(message).not.toContain(String.fromCharCode(0x2014));
       expect(message).not.toContain('--');
-      expect(message).toMatch(/^[A-Z][^.!?]*\.$/);
+      expect(message).toMatch(/\bMove it\b|\bRestore it\b/);
+      expect(resumeBlockToastBody(reason)).toMatch(/^[A-Z][^.!?]*\.$/);
     }
+  });
+
+  it('reads main\'s thrown refusal back to its reason, and nothing else', () => {
+    for (const reason of ['todo', 'done', 'archived'] as const) {
+      expect(resumeBlockReasonOfMessage(resumeBlockMessage(reason))).toBe(reason);
+    }
+    expect(resumeBlockReasonOfMessage('The worktree is missing.')).toBeNull();
+    expect(resumeBlockReasonOfMessage('')).toBeNull();
   });
 });
 
