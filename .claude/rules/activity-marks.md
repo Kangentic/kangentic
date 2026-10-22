@@ -72,8 +72,9 @@ measurements, and the upstream geometry history live in
   the web build applies it. Test selectors key off `data-mark`.
 - **Sizes are fixed by role.** Two keylines: 18 for indicators, 20 for controls. Size floors are
   12 for indicators and 16 for controls, which is why `TerminalPanel`'s 8px session dot stays
-  lucide. Control marks render at size 20, indicators at 16 (`TaskCard` and both sidebar
-  components). Move the sidebar's two indicator components together or the row goes ragged.
+  lucide. Control marks render at size 20, indicators at 16 (`TaskCard`, both sidebar
+  components, and the Workflows tab in `ViewToggle`). Move the sidebar's two indicator components
+  together or the row goes ragged.
 - **lucide stays everywhere else** (140+ files). Column icon names are persisted as kebab-case
   strings in the DB, so `utils/icon-registry.ts` resolves them, loading lucide's whole glyph map
   lazily (`ui-conventions.md`, Icons).
