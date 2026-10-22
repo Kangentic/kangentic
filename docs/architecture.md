@@ -130,7 +130,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (34 channels)
+### Tasks (33 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -554,7 +554,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `leftoverProcesses:stopSettled` | push | The real outcome of a Stop that `stop` answered `'failed'` because main stopped waiting for the pty host, which finished it anyway (`LeftoverStopSettled`). The row takes it only while it still reads failed; no toast. Main window only |
 | `leftoverProcesses:check` | invoke | Which reported processes, named by their report ids, have ended since the report. The pty host checks each by pid and start key, never a scan (`isRunning` on the reader), and an id main no longer knows, or a process it cannot read, is left out. Asked by `useLeftoverRecheck` while a row that claims a live process is on screen, through its toast or its open list; an ended one retries its Done task's worktree removal, as a Stop does |
 
-### Host memory pressure (2 channels)
+### Host memory pressure (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `hostMemory:pressure` | on | Event: host commit headroom crossed below the warning threshold (edge-triggered, not a per-tick heartbeat). Carries `{ sample, activeAgentCount }`. See `src/main/diagnostics/host-memory.ts` (Sentry DESKTOP-16) |
