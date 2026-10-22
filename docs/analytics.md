@@ -145,12 +145,12 @@ Profiles. Column names and task content never leave the machine.
 
 `settings_snapshot` answers "what are people actually running with", the question that changes a
 default; a stream of setting-changed events would only say what was touched. It carries only the
-settings that differ from their default, from a fixed allowlist of fourteen global settings
+settings that differ from their default, from a fixed allowlist of sixteen global settings
 (`SETTINGS_SNAPSHOT_ALLOWLIST` in `src/main/analytics/settings-snapshot.ts`): `knowledgeGraph.indexingEnabled`,
 `knowledgeGraph.enabled`, `knowledgeGraph.localModel`, `knowledgeGraph.acceleration`,
 `agent.maxConcurrentSessions` (bucketed `1-3` / `4-7` / `9-12` / `13-16` / `17+`),
-`agent.autoResumeSessionsOnRestart`, `agent.idleTimeoutMinutes` (bucketed
-`1-15` / `16-29` / `31-60` / `61+`), `browserAutomation.enabled`, `browserAutomation.allowEval`,
+`agent.autoResumeSessionsOnRestart`, `agent.idleTimeoutEnabled`, `agent.idleTimeoutMinutes`
+(bucketed `1-15` / `16-29` / `31-60` / `61+`), `agent.pauseIdleAgentsOnLowMemory`, `browserAutomation.enabled`, `browserAutomation.allowEval`,
 `browserAutomation.restrictNavigationToLocalhost` (sent as `browserAutomation.localhostOnly`,
 since Aptabase rejects the whole event for a key over 40 characters), `mobileBridge.relayMode`,
 `dictation.language`, `windowLightDismiss`, and `animationsEnabled`. Property keys are the

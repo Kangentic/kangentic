@@ -97,10 +97,11 @@ test.describe('settings write failure toast', () => {
   });
 
   test('a field that still writes per keystroke toasts once, not once per character', async () => {
-    // Text fields now commit on blur (SettingTextInput), but NUMBER fields still write
-    // on every keystroke: typing "120" into a timeout writes 1, then 12, then 120. The
-    // Theme tab's swatch grid is the same shape on every arrow key. That is what the
-    // per-key cooldown is for, and it is why this case uses a number field.
+    // Text fields now commit on blur (SettingTextInput), but plain NUMBER fields still
+    // write on every keystroke: typing "120" into Max concurrent sessions writes 1, then
+    // 12, then 120. The Theme tab's swatch grid is the same shape on every arrow key.
+    // That is what the per-key cooldown is for, and it is why this case uses a number
+    // field. (The idle timer's Minutes idle stepper commits on blur or Enter instead.)
     const { browser, page } = await launchPage();
     try {
       await createProject(page, `settings-write-failure-burst-${Date.now()}`);
@@ -108,10 +109,10 @@ test.describe('settings write failure toast', () => {
       await failEveryConfigWrite(page);
       await openTab(page, 'Behavior');
 
-      const idleTimeout = page.getByTestId('setting-row-agent.idleTimeoutMinutes').locator('input');
-      await idleTimeout.click();
-      await idleTimeout.fill('');
-      await idleTimeout.type('120', { delay: 20 });
+      const maxSessions = page.getByTestId('setting-row-agent.maxConcurrentSessions').locator('input');
+      await maxSessions.click();
+      await maxSessions.fill('');
+      await maxSessions.type('120', { delay: 20 });
 
       await expect(failureToasts(page)).toHaveCount(1, { timeout: 5000 });
       // Hold past the last keystroke to prove nothing further arrives, rather than

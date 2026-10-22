@@ -891,12 +891,22 @@ These are global-only settings that apply to the entire app.
 | Max Concurrent Sessions | Limit how many agents can run at the same time. A request past the limit waits in the [Session Queue](#session-queue). |
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
 | Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
-| Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Stop Leftover Processes | Stop what an agent left running in its folder when its task is done, moved back to To Do, or deleted, or when its Command Terminal ends. Off, nothing is stopped and the toast still lists what kept running. |
 | Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
 
 The Board tab has its own Auto-apply board config changes switch. See [Board Settings](#board-settings).
+
+### Performance Settings
+
+Global-only, like Behavior.
+
+| Setting | Description |
+|---------|-------------|
+| Graphics Acceleration | Hardware rendering for the app window and terminals. A change restarts Kangentic. See [Graphics failures](#graphics-failures). |
+| Animations | Transition and motion effects across the app. |
+| Pausing agents: When memory runs low | On by default. While memory runs low, pause the agent that has waited on you longest, one a minute, until there is room. See [Pausing agents](#pausing-agents). |
+| Pausing agents: When idle | Off by default. Pause any agent that has waited on you for the minutes on its second line, Minutes idle (30 by default). |
 
 ### Dictation
 
@@ -1084,7 +1094,7 @@ If Claude Code has already deleted a conversation (it removes transcripts older 
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Mobile Bridge](mobile-bridge.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you, for low memory or the idle timer (see [Pausing agents](#pausing-agents)), stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Graphics failures
 
@@ -1164,6 +1174,36 @@ installed command, so no `npx` process sits beside each agent.
 
 The warning shows how long ago the reading was taken, and it clears by itself once the room climbs
 back past twice the line.
+
+## Pausing agents
+
+An agent waiting on you holds all the memory it reserved: about 1 GB for each Claude Code agent on
+Windows. Kangentic can pause one for you, two ways, both in Settings > Performance > Pausing agents.
+
+**When memory runs low** (on by default). Once a minute, while memory is low, Kangentic pauses the
+agent that has waited on you longest, then reads memory again before the next. It stops once there
+is room. Each platform reads its own signal:
+
+- **Windows:** the room left under the commit limit, the same figure the
+  [low memory warning](#low-memory-warning-windows) reads. Low starts at the warning's line and ends
+  at twice it.
+- **Linux:** free memory plus free swap, against RAM plus swap, through the same lines.
+- **macOS:** the system's own memory pressure level. Low starts at warn or critical and ends at
+  normal.
+
+Only an agent that has waited on you for at least 5 minutes, idle or at a permission prompt, is
+paused. Never an agent that is working, one with text typed into its prompt, one whose terminal is
+on screen, or one with a column command or message on its way to it. Command Terminals and a
+workflow's own agent are never paused. An agent paused at a permission prompt does not run the tool
+it was asking about.
+
+**When idle** (off by default). Pauses any agent that has waited on you for the minutes you set (30
+by default). It counts idle waits only, not a permission prompt.
+
+Either way the agent stays paused until you resume it: a restart does not bring it back, and
+neither does memory recovering or a move into a column that starts agents. Resume it from its card
+or its task window, as you would one you paused yourself. The conversation picks up where it
+stopped. Pausing frees a slot, so a queued task can start in it.
 
 ## Conversation Memory
 
