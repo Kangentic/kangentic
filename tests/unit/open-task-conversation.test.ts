@@ -1,23 +1,21 @@
 /**
- * `openTaskConversation(taskId, projectId, target?)`: the one function every
- * conversation entry point calls (the header pill, the kebab item, the completed
- * task view's tab bar and Route card, the archived card's menu).
+ * `openTaskConversation(taskId, projectId)`: the function the header pill and
+ * the kebab item call to open a task's conversation window. A completed task
+ * shows its conversation in its own Conversation tab instead.
  *
- * It decides WHICH session id to raise on the session store's open signal, and
- * what tab to ask for. Behaviors pinned here:
+ * It decides WHICH session id to raise on the session store's open signal.
+ * Behaviors pinned here:
  *
  *   - Which session: an open conversation window anchored on ANY of the task's
- *     sessions is reused (so a Route pill switches that window's tab instead of
- *     opening a second window for the same conversation). Several candidates:
- *     the one on the live session wins, then the one raised last (highest
- *     zIndex). With none open: the live session, then the newest listed one.
+ *     sessions is reused (so a second open raises that window instead of
+ *     opening another for the same conversation). Several candidates: the one
+ *     on the live session wins, then the one raised last (highest zIndex). With
+ *     none open: the live session, then the newest listed one.
  *   - No history at all: a toast, and the signal is left exactly as it was.
  *   - A listing that fails is not fatal while a live session exists.
- *   - A `target` asks for that tab and takes NO terminal capture (a column opens
- *     at its own position); with no target the tab request is null, which a
- *     window that is already open reads as "keep the tab you are on", and the
- *     live terminal's viewport is captured so the viewer can open where the
- *     user was looking.
+ *   - The tab request is null, which a window that is already open reads as
+ *     "keep the tab you are on", and the live terminal's viewport is captured
+ *     so the viewer can open where the user was looking.
  *
  * The real session, window and toast stores run; only `window.electronAPI`
  * (the transcript listing) and the config store (the toast store reads its
@@ -28,10 +26,8 @@
  * Red-green: drop the `candidate.kind === 'conversation'` filter and the
  * task-detail case fails; swap the live preference for the zIndex rule alone
  * and the live-wins case fails; flip the zIndex comparison and the raised-last
- * case fails; drop the `target ? null :` guard and the target case fails (it
- * registers a capture reader so the guard has something to take); pass the
- * store's old tab instead of `null` and the no-target case fails; drop the
- * catch and the rejected-listing cases fail.
+ * case fails; pass the store's old tab instead of `null` and the no-tab case
+ * fails; drop the catch and the rejected-listing cases fail.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -75,11 +71,6 @@ const FOREIGN_SESSION_ID = 'session-of-another-task';
 const SENTINEL_SESSION_ID = 'session-sentinel';
 const SENTINEL_TAB: ConversationTabRequest = { swimlaneId: 'swimlane-sentinel' };
 const SENTINEL_REQUEST_ID = 7;
-
-const REVIEW_TARGET: ConversationTabRequest = {
-  swimlaneId: 'swimlane-review',
-  visitStartedAt: '2026-10-20T18:11:00.000Z',
-};
 
 function makeLiveSession(): Session {
   return {
@@ -229,7 +220,7 @@ describe('openTaskConversation: reusing an open conversation window', () => {
     electronStub.listSessions.mockResolvedValue(LISTED_SESSIONS);
     seedWindows([{ anchor: OLDER_SESSION_ID, zIndex: 1 }]);
 
-    await openTaskConversation(TASK_ID, PROJECT_ID, REVIEW_TARGET);
+    await openTaskConversation(TASK_ID, PROJECT_ID);
 
     expect(signal().conversationSessionId).toBe(OLDER_SESSION_ID);
     expect(signal().conversationSessionId).not.toBe(LIVE_SESSION_ID);
@@ -300,31 +291,7 @@ describe('openTaskConversation: reusing an open conversation window', () => {
 describe('openTaskConversation: the tab and the terminal capture', () => {
   const capturedViewport = { visibleLines: ['> fix the failing test', 'Working on it'], atBottom: true };
 
-  it('asks for the target tab and takes no terminal capture when a target is given', async () => {
-    seedLiveSession();
-    electronStub.listSessions.mockResolvedValue(LISTED_SESSIONS);
-    // A reader IS registered, so only the target guard keeps the capture from running.
-    const reader = vi.fn(() => capturedViewport);
-    registerTerminalCapture(LIVE_SESSION_ID, reader);
-
-    await openTaskConversation(TASK_ID, PROJECT_ID, REVIEW_TARGET);
-
-    expect(signal().conversationTab).toEqual(REVIEW_TARGET);
-    expect(useSessionStore.getState().pendingTuiAnchor).toBeNull();
-    expect(reader).not.toHaveBeenCalled();
-  });
-
-  it('asks for a column with no stay the same way', async () => {
-    seedLiveSession();
-    const columnOnly: ConversationTabRequest = { swimlaneId: 'swimlane-executing' };
-
-    await openTaskConversation(TASK_ID, PROJECT_ID, columnOnly);
-
-    expect(signal().conversationTab).toEqual(columnOnly);
-    expect('visitStartedAt' in (signal().conversationTab as ConversationTabRequest)).toBe(false);
-  });
-
-  it('asks for no tab when no target is given, whatever tab the store still held', async () => {
+  it('asks for no tab, whatever tab the store still held', async () => {
     seedLiveSession();
     expect(useSessionStore.getState().conversationTab).toEqual(SENTINEL_TAB);
 
@@ -334,7 +301,7 @@ describe('openTaskConversation: the tab and the terminal capture', () => {
     expect(signal().conversationTab).toBeNull();
   });
 
-  it('captures the live terminal viewport for the session it opens when no target is given', async () => {
+  it('captures the live terminal viewport for the session it opens', async () => {
     seedLiveSession();
     registerTerminalCapture(LIVE_SESSION_ID, () => capturedViewport);
 

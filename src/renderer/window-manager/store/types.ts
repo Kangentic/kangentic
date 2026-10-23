@@ -133,8 +133,8 @@ export interface ManagedWindow {
    *  window on the board layer, under the graph. */
   scrollToTurnUuid?: string;
   /** Transient, never persisted: the tab a `conversation` window was last asked
-   *  to show (a Route pill's column, or All), consumed once the window has
-   *  switched to it. A restored window opens on All. */
+   *  to show (a column, or All), consumed once the window has switched to it.
+   *  A restored window opens on All. */
   conversationTab?: ConversationTabRequest;
   /** Transient, never persisted: the project a `conversation` window's
    *  transcript belongs to, when it is not the open one. The Knowledge Graph
