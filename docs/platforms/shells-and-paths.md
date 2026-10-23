@@ -72,7 +72,7 @@ executes - a real clear in the real byte stream that every consumer (live termin
 ring, headless parser, replays, phone) honors natively. This is the source-level guard against
 shell/ConPTY updates reshaping their startup bytes (pwsh 7.6 started emitting `\x1b[?25l` and
 `\x1b[2J` inside its escape-only startup preamble, which broke every heuristic that keyed on
-those markers); see [session-lifecycle](../architecture/sessions/index.md) for the detection layer it pairs
+those markers); see [Output streaming](../architecture/sessions/output-streaming.md#buffering-and-the-scrollback-ring) for the detection layer it pairs
 with.
 
 ### npm `.cmd` shims under PowerShell and Git Bash

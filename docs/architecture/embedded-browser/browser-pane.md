@@ -4,7 +4,6 @@ title: Embedded browser pane
 description: How the Browser pane hardens its webview and keys cookie jars per task, how Draw, Inspect and Send build the XML-tagged capture prompt and paste it through the paste engine, how agents drive the pane with kangentic_browser_* tools, and its settings, limits and zero-quota preview rig.
 tags: [browser, webview, capture, paste-engine, agent-driving]
 sources:
-  - resource: src/main/browser/
   - resource: src/renderer/components/browser/
   - resource: src/main/ipc/handlers/browser.ts
   - resource: src/main/pty/paste-engine.ts
@@ -20,6 +19,16 @@ sources:
     title: web-contents-created handler
   - resource: src/shared/types.ts
     title: BrowserCaptureInput, BrowserPickedElement, AppConfig.browser
+  - resource: src/main/browser/browser-pane-opener.ts
+  - resource: src/main/browser/browser-pane-registry.ts
+  - resource: src/main/browser/browser-pane-driver.ts
+  - resource: src/main/browser/cdp/
+  - resource: src/main/browser/browser-url-store.ts
+  - resource: src/main/browser/browser-partition-cleanup.ts
+  - resource: src/main/browser/guest-session-policy.ts
+  - resource: src/main/browser/agent-input-signal.ts
+  - resource: src/main/browser/drive-telemetry.ts
+  - resource: src/main/browser/viewport-override-store.ts
 ---
 # Embedded browser pane
 
@@ -126,10 +135,10 @@ The pane deliberately does NOT default to a Kangentic-chosen dev-server port. A 
 
 Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypress, query DOM, read console, wait, navigate, and (opt-in) eval against the dev server the user has loaded. This closes the verify loop without a Kangentic-managed preview.
 
-- **Opening and closing the pane:** an agent opens its OWN task's pane with `kangentic_browser_open_pane` and puts panes away with `kangentic_browser_close_pane`, so hitting `no-pane-open` is no longer a dead end that forces it to stop and ask the user. Pane open state is renderer-owned (`browserOpenTasks`) while the MCP server is main-process, so this crosses the process boundary: `src/main/browser/browser-pane-opener.ts` validates every precondition in main (the open project, the per-project `browser.enabled` gate, the task row, the URL), pushes `BROWSER_PANE_OPEN_REQUEST` / `BROWSER_PANE_CLOSE_REQUEST` fire-and-forget, and then awaits the PANE REGISTRY rather than an acknowledgement. That is deliberate: a reply saying "I set the flag" would not mean the pane is driveable, whereas a registered live guest does. The renderer half is `useBrowserPaneRequestBridge` (mounted by `WindowLayer`'s `BoardBridges`), which opens the pane before requesting the window so the window mounts with the pane already showing rather than changing tree shape one commit later. Opening seeds the task's URL sidecar first, because a pane with no URL renders the empty state and registers no guest at all. See [MCP server](../../integrations/mcp-server/index.md) for the tools' arguments and scoping.
+- **Opening and closing the pane:** an agent opens its OWN task's pane with `kangentic_browser_open_pane` and puts panes away with `kangentic_browser_close_pane`, so hitting `no-pane-open` is no longer a dead end that forces it to stop and ask the user. Pane open state is renderer-owned (`browserOpenTasks`) while the MCP server is main-process, so this crosses the process boundary: `src/main/browser/browser-pane-opener.ts` validates every precondition in main (the open project, the per-project `browser.enabled` gate, the task row, the URL), pushes `BROWSER_PANE_OPEN_REQUEST` / `BROWSER_PANE_CLOSE_REQUEST` fire-and-forget, and then awaits the PANE REGISTRY rather than an acknowledgement. That is deliberate: a reply saying "I set the flag" would not mean the pane is driveable, whereas a registered live guest does. The renderer half is `useBrowserPaneRequestBridge` (mounted by `WindowLayer`'s `BoardBridges`), which opens the pane before requesting the window so the window mounts with the pane already showing rather than changing tree shape one commit later. Opening seeds the task's URL sidecar first, because a pane with no URL renders the empty state and registers no guest at all. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) for the tools' arguments and scoping.
 - **Registration:** the renderer registers each open pane's guest webContents id (`webview.getWebContentsId()`) with the main process on `dom-ready`, via `BROWSER_PANE_REGISTER` / `BROWSER_PANE_UNREGISTER` IPC, and unregisters that same guest id on unmount. The main-process pane registry (`src/main/browser/browser-pane-registry.ts`) mints a surface HANDLE per guest (`pane_<8hex>`; a lane's is `lane_<8hex>`) and records the guest's taskId and owning agent session beside it, so the tools target one tab per handle for that tab's whole life: re-registering the same guest (a `/clear` rotates the owning session) updates the owner in place and keeps the handle, a different guest always gets a new one, and a handle whose guest is gone answers `surface-gone` naming the replacement (see decision 34). Main also tracks the guest's own `destroyed` / `did-navigate` so the registry stays honest across a hard reload. The tracked URL is a fallback, not the reported value: `kangentic_browser_list_panes` reads each pane's URL live from the guest, because `did-navigate` never fires for same-document navigation and a dev server's SPA routing, `pushState`, and fragment changes would otherwise leave the cache reporting a URL the pane had left. The cache is used only when the guest is gone or has no URL to report yet.
 - **Driving (in-process):** the driver (`src/main/browser/browser-pane-driver.ts`) resolves the target, attaches Chrome DevTools Protocol to the guest webContents, and runs the shared CDP helpers in `src/main/browser/cdp/` (the same content-agnostic driver the dev inspection bridge uses through a compat shim). No HTTP bridge, no lockfile: the pane is in the same process as the MCP server. Debuggers detach synchronously on `before-quit`.
-- **Gating:** the global **Agent Browser** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [MCP server](../../integrations/mcp-server/index.md) and `.claude/rules/browser-automation-driver.md`.
+- **Gating:** the global **Agent Browser** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [Browser panes](../../integrations/mcp-server/browser-panes.md#browser-automation-tool-surface-kangentic_browser_) and `.claude/rules/browser-automation-driver.md`.
 
 ## Cross-platform notes
 

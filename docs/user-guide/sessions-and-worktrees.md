@@ -58,7 +58,7 @@ If Claude Code has already deleted a conversation (it removes transcripts older 
 
 ### User-Paused Sessions
 
-Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Mobile Bridge](../integrations/mobile-bridge/index.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you, for low memory or the idle timer (see [Pausing agents](#pausing-agents)), stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+Sessions paused manually by the user (via the pause button in the task detail dialog or its kebab menu, the Pause session row in a task's right-click menu, or from a paired phone; see [Capability verbs](../integrations/mobile-bridge/capability-verbs.md)) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. An agent Kangentic paused for you, for low memory or the idle timer (see [Pausing agents](#pausing-agents)), stays paused the same way. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Pausing agents
 

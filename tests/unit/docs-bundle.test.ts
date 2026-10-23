@@ -1,6 +1,7 @@
 /**
  * Unit tests for scripts/docs-bundle.mjs, the helpers behind the docs concept folder: frontmatter,
- * GitHub heading slugs, heading and link extraction, the concept list, and the `sources` CLI.
+ * GitHub heading slugs, heading and link extraction, the concept list, the parts a titled source
+ * entry covers, and the `sources` CLI.
  *
  * tests/unit/okf-docs-conformance.test.ts already covers repeated-heading numbering, three slugs,
  * one frontmatter shape and three conceptsForSource cases through these helpers. This file pins the
@@ -14,6 +15,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   conceptsForSource,
+  coveredPartsOf,
   githubSlug,
   headingText,
   headingsOf,
@@ -419,6 +421,38 @@ describe('conceptsForSource', () => {
   });
 });
 
+describe('coveredPartsOf', () => {
+  it('names the symbols a titled entry covers in a shared file', () => {
+    const concept: ConceptRecord = { path: 'docs/config.md', frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'AppConfig, DEFAULT_CONFIG' }] } };
+    expect(coveredPartsOf('src/shared/types.ts', concept)).toBe('AppConfig, DEFAULT_CONFIG');
+    expect(coveredPartsOf('.\\src\\shared\\types.ts', concept)).toBe('AppConfig, DEFAULT_CONFIG');
+  });
+
+  it('joins the titles when two titled entries cover the path', () => {
+    const concept: ConceptRecord = {
+      path: 'docs/two.md',
+      frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'Swimlane' }, { resource: 'src/shared/', title: 'shared helpers' }] },
+    };
+    expect(coveredPartsOf('src/shared/types.ts', concept)).toBe('Swimlane; shared helpers');
+  });
+
+  it('is null when an untitled entry, a bare string or a blank title covers the path whole', () => {
+    const titledAndWhole: ConceptRecord = {
+      path: 'docs/whole.md',
+      frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'Swimlane' }, { resource: 'src/shared/' }] },
+    };
+    expect(coveredPartsOf('src/shared/types.ts', titledAndWhole)).toBeNull();
+    expect(coveredPartsOf('src/shared/types.ts', { path: 'docs/bare.md', frontmatter: { sources: ['src/shared/types.ts'] } })).toBeNull();
+    expect(coveredPartsOf('src/shared/types.ts', { path: 'docs/blank.md', frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: '  ' }] } })).toBeNull();
+  });
+
+  it('is null when no entry covers the path, so a title on another file never leaks in', () => {
+    const concept: ConceptRecord = { path: 'docs/other.md', frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'Swimlane' }] } };
+    expect(coveredPartsOf('src/shared/ipc-channels.ts', concept)).toBeNull();
+    expect(coveredPartsOf('src/shared/types.ts', { path: 'docs/none.md', frontmatter: null })).toBeNull();
+  });
+});
+
 describe('listDocsMarkdown and listConcepts', () => {
   let tempRoot: string;
   let docsRoot: string;
@@ -506,6 +540,12 @@ describe('the sources CLI', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe('no/such/dir/file.ts: (no concept lists it)');
     expect(lines[1].startsWith(`${CLAUDE_ADAPTER_PATH}: `)).toBe(true);
+  });
+
+  it('puts the covered parts in brackets after a concept that lists a shared file for some of its symbols', () => {
+    const result = runCli(['sources', 'src/shared/types.ts']);
+    expect(result.status).toBe(0);
+    expect(outputLines(result.stdout)[0]).toContain('docs/settings/app-config.md [AppConfig, DEFAULT_CONFIG]');
   });
 
   it('exits 2 and prints the usage line on stderr when given no paths, no mode or another mode', () => {

@@ -6,7 +6,6 @@ tags: [contributing, rules, claude-code, conventions]
 sources:
   - resource: scripts/measure-rule-load.js
   - resource: tests/unit/rules-index-parity.test.ts
-  - resource: .claude/rules/
 ---
 # Authoring a rule
 

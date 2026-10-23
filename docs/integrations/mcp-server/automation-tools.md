@@ -8,8 +8,6 @@ sources:
   - resource: src/main/agent/commands/automation-commands.ts
   - resource: src/shared/automation-manifest.ts
     title: AUTOMATION_MANIFEST
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Column automation tools
 
@@ -122,7 +120,7 @@ Each entry takes `name` (required, unique within the column ignoring case), `typ
 optional `condition` or `finalLine` and an optional `maxRuns` (all off by default), an optional
 `id`, and the type's own fields flat on the object. The `on` key belongs to this tool's input
 only: `kangentic.json` stores the same rows in one array per trigger and has no `on` key (see
-[Settings](../../settings/index.md)).
+[Configuration cascade](../../settings/cascade.md#column-automations)).
 
 ```json
 {

@@ -18,7 +18,7 @@ projects, the CLI and the status bar. Tasks themselves are in [Tasks](tasks.md).
 
 When you first open Kangentic with no existing projects, a welcome screen greets you with an **Open a Project** button. Click it to select a project folder and get started.
 
-The welcome screen also detects Git and your installed agent CLIs, showing each one's version, or an install link when it is missing and a login command when it is found but unauthenticated. Two links in the footer open in your browser: **Read the setup guide** and **Pair a phone**, the latter covering the mobile companion app (see [Mobile Bridge](../integrations/mobile-bridge/index.md)).
+The welcome screen also detects Git and your installed agent CLIs, showing each one's version, or an install link when it is missing and a login command when it is found but unauthenticated. Two links in the footer open in your browser: **Read the setup guide** and **Pair a phone**, the latter covering the mobile companion app (see [Mobile bridge overview](../integrations/mobile-bridge/overview.md)).
 
 On subsequent launches, Kangentic automatically re-opens the last activated project so you pick up right where you left off. If you launch with the `--cwd` flag, that path takes priority.
 

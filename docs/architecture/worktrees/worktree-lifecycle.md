@@ -342,7 +342,7 @@ The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `Pos
 
 Each bridge reads JSON from stdin (piped by Claude Code), writes its output, and exits. All writes are try/catch wrapped for non-fatal failures.
 
-Activity state (thinking/idle) is derived from event types in the events pipeline. See [Activity Detection](../activity/index.md) for the full design.
+Activity state (thinking/idle) is derived from event types in the events pipeline. See [Activity event types](../activity/event-types.md) for the full design.
 
 ### Settings Merge
 
@@ -380,7 +380,7 @@ Each Claude Code session gets a directory at `<project>/.kangentic/sessions/<cla
   plan-approval.json # Whether Kangentic approves the next plan (written by main, read by plan-approval-bridge)
 ```
 
-The SessionManager watches these files with debounced `fs.watch` and emits IPC events to the renderer. Activity state (thinking/idle) is derived from event types -- see [Activity Detection](../activity/index.md).
+The SessionManager watches these files with debounced `fs.watch` and emits IPC events to the renderer. Activity state (thinking/idle) is derived from event types -- see [Activity event types](../activity/event-types.md).
 
 ## Session Lifecycle
 
@@ -456,7 +456,7 @@ Two listeners bracket a removal, and they are deliberately NOT symmetric in plac
 
 Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json`, Qwen's `~/.qwen/trustedFolders.json`, Grok's `~/.grok/trusted_folders.toml`, and Antigravity's `trustedWorkspaces` array have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor; Qwen has no ancestor check at all, so it records one entry per worktree whenever `security.folderTrust.enabled` is set).
 
-`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agents](../../integrations/agents/index.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
+`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Optional adapter properties](../../integrations/agents/optional-properties.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
 Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
 
@@ -464,7 +464,7 @@ Notifying from the chokepoint is deliberate. Worktree removal is hand-copied acr
 `setWorktreeRemovingListener` (also wired in `src/main/index.ts`). Its contract is "drop any OS
 handle you hold under this path, I am about to delete it", and it releases both `DiffWatcher`
 instances for that prefix (`IpcContext`'s and the bridge-owned one, see
-[Mobile Bridge](../../integrations/mobile-bridge/index.md)).
+[Data feeds](../../integrations/mobile-bridge/data-feeds.md)).
 
 It hangs off the *internal* method rather than the public one precisely because the husk-clear
 above must also fire it: that path's failure mode is a directory that could not be deleted because

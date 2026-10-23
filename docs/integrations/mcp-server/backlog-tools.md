@@ -7,8 +7,6 @@ sources:
   - resource: src/main/agent/mcp-http/session-tools.ts
     title: Backlog tool registrations
   - resource: src/main/agent/commands/backlog-commands.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Backlog tools
 

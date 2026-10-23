@@ -6,8 +6,6 @@ tags: [mcp, workflows]
 sources:
   - resource: src/main/agent/mcp-http/workflow-tools.ts
   - resource: src/main/agent/commands/workflow-commands.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Workflow tools
 

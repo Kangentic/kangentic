@@ -25,7 +25,7 @@ sources:
 
 The transition engine runs a column's automations when tasks move between swimlanes. It handles the logic that makes Kanban columns "active" -- spawning agents, sending messages, running scripts, calling webhooks, and raising notifications.
 
-Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration cascade](../../settings/cascade.md#column-automations) and the tables are [Database](../../database/index.md).
+Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration cascade](../../settings/cascade.md#column-automations) and the tables are [Board tables](../../database/board-tables.md#column_automations-table).
 
 ## Priority Rules on Task Move
 
@@ -33,7 +33,7 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [Pull requests](../../integrations/pull-requests/index.md)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
+| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [PR linking](../../integrations/pull-requests/pr-linking.md#where-pr-state-is-persisted)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
 | 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task |
 | 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
 | 3 | Task has **active session** | A model or effort change suspends and respawns with the destination's CLI flags. A column message alone is injected into the running session. A permission-only change, or none, keeps it alive. |
@@ -132,7 +132,7 @@ Offered on `turn_end` only: on enter or exit its move would run inside the move 
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
 
-`kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [Settings](../../settings/index.md)).
+`kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [Configuration cascade](../../settings/cascade.md#column-automations)).
 
 ## Every row is isolated, bounded and recorded
 

@@ -26,7 +26,7 @@ came back. A resume begins no turn, so the payload carries neither a turn start 
 anchor. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
 cut short (see [Transition Engine](../automations/transition-engine.md), "A resume catches up the workflow step").
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
-from `'activity'`; see [Activity Detection](../activity/index.md), "Turn ends".
+from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
 
 ## Where resume is refused
 
@@ -36,7 +36,7 @@ place**, in the task's current column. Its body is `resumeTaskSession`
 task, so a phone Resume is the same resume: it cancels a resume already in flight for the task,
 labels the task "Resuming session...", resumes the conversation idle, and runs no enter
 automations or column message. The read-stream feed tells the phone when that promise holds
-(`resumable`, see [Mobile Bridge](../../integrations/mobile-bridge/index.md)). It is refused for three states, resolved by one shared
+(`resumable`, see [Data feeds](../../integrations/mobile-bridge/data-feeds.md)). It is refused for three states, resolved by one shared
 rule (`sessionToggleOffer` in `src/shared/session-resume-eligibility.ts`, over `resumeBlockReasonForTask`)
 that the main-process handler, the task detail, the card menu row, and the phone's `startTaskSession`
 (`handlers/session-start.ts`, the `start-session` verb) all read, and whose role set startup recovery shares:
@@ -213,7 +213,7 @@ restart), and the auto_command escalation emits `resending-command` ("Re-sending
 It emits before its
 suspend and clears the label in a `finally` once the resume has returned or failed, the ordering
 task-move's Phase 3 uses. The emit is what lets the mobile bridge tell this respawn from a park
-(see [Mobile Bridge](../../integrations/mobile-bridge/index.md)); until #682 this path emitted nothing, and the phone showed
+(see [Scope and protocol history](../../integrations/mobile-bridge/scope.md#protocol-0140-a-respawn-shows-the-phone-switching-not-ended)); until #682 this path emitted nothing, and the phone showed
 "Session ended" for the swap.
 
 That main-side emit alone is not sufficient: `SessionManager.suspend()` pushes the session's

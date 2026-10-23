@@ -262,8 +262,8 @@ terminates only what is left, each through a handle whose creation time is re-ch
 the shell's own lifetime: the host holds a handle on every Windows PTY root from the moment
 node-pty sets its pid until it handles the exit (`pinRoot`), reads the exact creation and exit
 times off it, and runs no cleanup without both, so a child of an earlier or later owner of the
-shell's pid is never taken for the shell's (see "Parent pids Windows reuses" in
-[Worktrees](../worktrees/index.md)). What outlives the
+shell's pid is never taken for the shell's (see
+[Process reaping](../worktrees/process-reaping.md#parent-pids-windows-reuses)). What outlives the
 grace, a dev server the agent started included, is terminated, as a crashed pty host's tree stop
 does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits.
 On Linux that ends Claude gracefully: with its shell killed outright (`shell-killed` in the Linux

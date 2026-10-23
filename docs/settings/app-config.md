@@ -153,7 +153,7 @@ When a project's mode for an agent is `remote`:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `mcpServer.enabled` | boolean | `true` | Allow agents to create and query tasks via MCP tools. When disabled, no kangentic MCP server is injected into sessions. See [MCP Server](../integrations/mcp-server/index.md). |
+| `mcpServer.enabled` | boolean | `true` | Allow agents to create and query tasks via MCP tools. When disabled, no kangentic MCP server is injected into sessions. See [How the MCP server works](../integrations/mcp-server/how-it-works.md). |
 | `mcpServer.bindAddress` | string | `'127.0.0.1'` | Interface the in-process MCP HTTP server listens on. Not exposed in Settings UI - edit `config.json` directly. Widening past loopback exposes the server to other machines; read once at startup. Use a wildcard (`0.0.0.0`), which binds loopback too - binding one specific non-loopback interface leaves loopback unbound and breaks every local agent. See [Network Access](../integrations/mcp-server/how-it-works.md#network-access). |
 | `mcpServer.callbackHost` | string \| undefined | unset | Not exposed in Settings UI - edit `config.json` directly. Allowlisted alongside `bindAddress` for DNS-rebinding-protection so a real external request is not rejected. Does not auto-wire a remote OpenCode session (see [Network Access](../integrations/mcp-server/how-it-works.md#network-access)). |
 
@@ -162,8 +162,8 @@ When a project's mode for an agent is `remote`:
 Reservation range for `kangentic_reserve_dev_ports` / `kangentic_check_dev_ports`.
 Kangentic does not decide what a project's ports should be - the project already
 does, in its own config - so nothing is reserved until an agent asks. See
-[MCP Server](../integrations/mcp-server/index.md) for the tools and
-[Database](../database/index.md) for the `dev_ports` ledger.
+[Session tools](../integrations/mcp-server/session-tools.md#kangentic_reserve_dev_ports) for the tools and
+[Storage model](../database/storage-model.md#dev_ports-table) for the `dev_ports` ledger.
 
 Neither key is exposed in Settings UI - edit `config.json` directly. Note that
 neither appears in `DEFAULT_CONFIG` either: the defaults below come from
@@ -256,7 +256,7 @@ Global-only policy (no per-project override) for whether and how an agent may dr
 
 ## Mobile Bridge
 
-The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile Bridge](../integrations/mobile-bridge/index.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
+The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile bridge overview](../integrations/mobile-bridge/overview.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
@@ -275,7 +275,7 @@ Power-user settings for diagnosing the activity engine and other internal subsys
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `developer.activityDebugOverlay` | boolean | `false` | Show the floating activity-engine debug overlay. Renders live counters (pendingToolCount, subagentDepth, bg shells), the current `ActivityReason`, and a ring buffer of recent transitions for every running session in the current project. Polls `getActivityStats` every 2 seconds while open; lazy-disables the IPC when closed. With this on, the engine also writes a per-session JSON snapshot to `<projectRoot>/.kangentic/debug/<sessionId>.json` on every state change for post-mortem reads. |
-| `developer.persistConsoleLogs` | boolean | dev: `true`, prod: `false` | Persist `info`, `debug`, and `log`-level console output to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, or to `<configDir>/logs/<YYYY-MM-DD>.log` while no project is open (global subsystems such as the mobile bridge log either way). Errors and warnings are always persisted regardless of this toggle. NDJSON one file per day. Read via the `kangentic_tail_logs` MCP tool, which merges both locations. Lines are written asynchronously; a dev build writes the ones still queued synchronously when a signal, the hard failsafe, or any other `process.exit` ends the process (see [Telemetry](../telemetry/index.md)). |
+| `developer.persistConsoleLogs` | boolean | dev: `true`, prod: `false` | Persist `info`, `debug`, and `log`-level console output to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, or to `<configDir>/logs/<YYYY-MM-DD>.log` while no project is open (global subsystems such as the mobile bridge log either way). Errors and warnings are always persisted regardless of this toggle. NDJSON one file per day. Read via the `kangentic_tail_logs` MCP tool, which merges both locations. Lines are written asynchronously; a dev build writes the ones still queued synchronously when a signal, the hard failsafe, or any other `process.exit` ends the process (see [Usage analytics](../telemetry/usage-analytics.md#what-we-collect-aptabase)). |
 | `developer.recordIpcTraffic` | boolean | dev `/preview`: `true`, otherwise `false` | Record IPC traffic to `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jsonl`: inbound handler invocations (channel, args, result, durationMs, errors) plus outbound main-to-renderer pushes (the agent-driven board-invalidation events) tagged `direction: "out"`. Mutating channels (settings writes, MCP config, attachments) appear as `{ redacted: true, channel }` to keep secrets out of disk logs. Off by default outside the ephemeral `/preview`, whose data directory is wiped on close, because it has a non-trivial disk cost when enabled. Read via `kangentic_get_ipc_log`. |
 | `developer.previewInspectionServer` | boolean | dev: `true`, prod: `false` (UI absent in prod) | Bind a localhost-only HTTP inspection bridge that powers the dev-only `kangentic_devtools_*` MCP tools (screenshot, click, type, drag, query DOM, React fiber walker, console, engine + renderer state). Writes a per-worktree lockfile to `<projectRoot>/.kangentic/preview.lock` for cross-instance discovery. Bound to 127.0.0.1 on a random port; no auth (localhost is the boundary). UI affordance excluded from production builds entirely; the key persists in `AppConfig` for type compatibility but has no effect in shipped binaries. |
 | `developer.previewEvalEnabled` | boolean | dev: `true`, prod: `false` (UI absent in prod) | Stricter gate on top of `previewInspectionServer`. Enables three high-risk inspection-bridge endpoints: `eval` (run any JavaScript in the renderer), `inject_session_event` (synthesize fake activity-engine events without spawning a real CLI), and `raw PTY input` (write any byte sequence directly to a session terminal, including control codes). Defaults ON in dev builds (mirrors `previewInspectionServer`) so the agent-driven workflow has these available on every `/preview` without a manual toggle; an explicit stored value still wins. Localhost-only and excluded from production builds entirely. |

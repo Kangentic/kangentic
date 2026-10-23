@@ -12,8 +12,6 @@ sources:
   - resource: src/main/search/search-core.ts
   - resource: src/main/retrieval/related-work.ts
   - resource: src/main/retrieval/commit/commit-search.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Search tools
 

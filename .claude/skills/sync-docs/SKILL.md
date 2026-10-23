@@ -19,8 +19,10 @@ To find the concepts a change affects, run
 node scripts/docs-bundle.mjs sources <changed file>...
 ```
 
-which prints, per file, each concept whose sources list the file or a folder above it. That lookup
-replaces a hand-kept mapping table. When a change touches a file no concept lists, decide which
+which prints, per file, each concept whose sources list the file or a folder above it. A concept
+followed by brackets lists the file only for the parts named there, as in
+`docs/settings/app-config.md [AppConfig, DEFAULT_CONFIG]` for `src/shared/types.ts`: open it only
+when the diff touches one of them. That lookup replaces a hand-kept mapping table. When a change touches a file no concept lists, decide which
 concept documents it and add the file to that concept's `sources:` in the same change, so the next
 lookup finds it.
 
@@ -64,7 +66,10 @@ each rule are in `research/okf-knowledge-format.md`.
   No two concepts may share one.
 - `sources:` stay narrow: the files the concept documents, or a folder only when every file in it
   is documented there. A whole subsystem folder or a shared mega-file (`src/shared/types.ts`)
-  flags the concept on unrelated changes; name the symbols in `title` when a shared file is unavoidable.
+  flags the concept on unrelated changes; name the symbols in `title` when a shared file is
+  unavoidable, so the lookup prints them and a change to other symbols skips the concept. A file
+  that a parity test already ties to the docs (`src/shared/mcp-tool-manifest.ts`, checked by
+  `mcp-tool-list-parity.test.ts`) belongs only to the concept that documents the file itself.
 - Every folder holding markdown has an `index.md` listing each concept as
   `* [Title](file.md) - description` with the concept's exact description, and linking each
   subfolder's `index.md`. Only `docs/index.md` carries frontmatter (`okf_version: "0.2"`).

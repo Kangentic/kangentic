@@ -44,7 +44,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `keybindings:probeGlobal` | invoke | Probe whether each canonical combo can be claimed as a system-wide global shortcut (via Electron `globalShortcut`); returns `Record<combo, 'available' \| 'taken' \| 'unsupported'>`. Used by the Hotkeys settings tab to warn when a combo is already owned by the OS or another app. |
 
 ## Mobile Bridge (14 channels)
-Machine-global (like Config), not project-scoped - backs the Mobile Devices settings tab. See [Mobile Bridge](../../integrations/mobile-bridge/index.md) for the pairing ceremony, roster, capability verbs, and relay transport this group fronts.
+Machine-global (like Config), not project-scoped - backs the Mobile Devices settings tab. See [Mobile bridge overview](../../integrations/mobile-bridge/overview.md) for the pairing ceremony, roster, capability verbs, and relay transport this group fronts.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, relay transport state, paired device count, pairing-in-progress |
@@ -131,8 +131,8 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 ## Analytics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Telemetry](../../telemetry/index.md). |
-| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Telemetry](../../telemetry/index.md). |
+| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Error reporting (Sentry)](../../telemetry/error-reporting.md). |
+| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Usage analytics](../../telemetry/usage-analytics.md). |
 
 ## App (1 channel)
 | Channel | Pattern | Purpose |

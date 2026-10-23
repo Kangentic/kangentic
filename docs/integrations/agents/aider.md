@@ -22,7 +22,7 @@ aider --message "prompt text" --chat-mode <mode> --no-auto-commits
 
 - `--message` delivers the prompt (shell-safe quoting applied)
 - `--no-auto-commits` prevents Aider from auto-committing (Kangentic manages git)
-- `--notifications --notifications-command` runs `node <event-bridge> <events file> idle` when Aider waits for input. Aider runs it through its own shell, so the paths are written bare when they allow it. A path that cannot be carried through the outer shell drops the pair, and the prompt regex stays the idle signal (see `isBareShellToken` in [Platforms](../../platforms/index.md))
+- `--notifications --notifications-command` runs `node <event-bridge> <events file> idle` when Aider waits for input. Aider runs it through its own shell, so the paths are written bare when they allow it. A path that cannot be carried through the outer shell drops the pair, and the prompt regex stays the idle signal (see `isBareShellToken` in [Shells and paths](../../platforms/shells-and-paths.md#path-handling))
 
 ## Permission Modes
 

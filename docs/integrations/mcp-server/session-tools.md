@@ -16,8 +16,6 @@ sources:
   - resource: src/main/agent/commands/activity-interval-commands.ts
   - resource: src/main/agent/commands/dev-port-commands.ts
   - resource: src/main/agent/commands/structured-transcript.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Session tools
 
