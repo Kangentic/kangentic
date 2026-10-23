@@ -101,7 +101,7 @@ enumeration being compared.
 1. Read `src/renderer/components/settings/settings-tabs.ts`
 2. Find the `SETTINGS_TABS` array definition
 3. Extract each tab's label/id and note its `category` ('project' vs 'system') and `tier`
-4. Read `docs/user-guide.md` and `docs/settings/settings-panel.md`
+4. Read `docs/user-guide/settings.md` and `docs/settings/settings-panel.md`
 5. Verify all tabs are documented and the project/shared split is described correctly
 6. Compare: report missing tabs
 

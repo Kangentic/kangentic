@@ -514,7 +514,7 @@ in one Sentry org, one triage surface.
   record behind them is already gone. Reading consumes the notice, so a reload cannot re-toast.
   The way back is the Settings > Performance toggle, which saves and restarts in one call
   (`IPC.GPU_HEALTH_SET_ACCELERATION`) through the normal quit, so that run records `clean`.
-  See "Graphics failures" in [user-guide.md](../user-guide.md) for what the user sees.
+  See "Graphics failures" in [user-guide.md](../user-guide/index.md) for what the user sees.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
   handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update

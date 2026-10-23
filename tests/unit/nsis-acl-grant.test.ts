@@ -69,7 +69,7 @@ describe('NSIS ALL APPLICATION PACKAGES grant', () => {
       upstreamGrants,
       'electron-builder now grants ALL APPLICATION PACKAGES itself (electron-builder#10242). Delete ' +
         'build/installer.nsh, the nsis.include line in electron-builder.yml, this test, and the ' +
-        'troubleshooting note in docs/installation.md.'
+        'troubleshooting note in docs/user-guide/installation.md.'
     ).toEqual([]);
   });
 });

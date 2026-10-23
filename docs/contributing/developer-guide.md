@@ -555,7 +555,7 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 - [Cross-Platform](../platforms/index.md) -- Shell resolution, path handling, packaging, fuses
 - [Activity Detection](../architecture/activity/index.md) -- Event pipeline, thinking/idle state
 - [Worktree Strategy](../architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
-- [User Guide](../user-guide.md) -- End-user feature walkthrough
+- [User Guide](../user-guide/index.md) -- End-user feature walkthrough
 
 ## Documentation Maintenance
 

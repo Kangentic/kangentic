@@ -148,7 +148,7 @@ Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "m
 
 - macOS users will NOT receive auto-updates
 - They must re-run `npx kangentic` manually to get new versions
-- The Gatekeeper bypass is required on each install (see [Installation Guide](../installation.md#macos-gatekeeper))
+- The Gatekeeper bypass is required on each install (see [Installation Guide](../user-guide/installation.md#macos-gatekeeper))
 
 ### Draft Releases Are Invisible to Auto-Updater
 

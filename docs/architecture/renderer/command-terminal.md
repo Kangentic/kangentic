@@ -20,7 +20,7 @@ Ctrl+Shift+P opens an ephemeral "transient" session with no DB persistence: quic
 agent CLI without creating a task on the board. This document records the design decisions and
 the bugs behind them. The prescriptive version, which is what you need when editing the layer,
 is [`.claude/rules/command-terminal.md`](../../../.claude/rules/command-terminal.md). The end-user
-walkthrough is in [User Guide](../../user-guide.md#command-terminal).
+walkthrough is in [User Guide](../../user-guide/command-terminal.md#command-terminal).
 
 ## A second window-manager layer
 
