@@ -84,6 +84,14 @@ flag in its command, as a trailing shell comment when the program rejects unknow
 task active for as long as the server lives: the board shows it working through every Stop,
 and the column's On agent turn end automations never run.
 
+## Docs
+
+`docs/` is an Open Knowledge Format bundle. Start at [docs/index.md](docs/index.md): each
+folder's `index.md` lists its concepts with one line on what each holds, so pick a concept by its
+description before reading any doc, then read it whole. Each concept's frontmatter `sources:`
+names the code it documents; `node scripts/docs-bundle.mjs sources <file>` lists the concepts a
+source file maps to.
+
 ## Architecture
 
 ### Data Flow
@@ -118,39 +126,11 @@ and the column's On agent turn end automations never run.
   between states must render through `components/IconSlot.tsx` or it swallows the click.
   Rules: `.claude/rules/activity-marks.md`. Design history: [docs/architecture/renderer/activity-marks.md](docs/architecture/renderer/activity-marks.md).
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
-  `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
-  settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
-  `'system'` tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications,
-  Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared
-  settings that apply across all projects, saved to global config, and remain fully functional with
-  no project open. The Task tab holds task-presentation settings split out of Board (Card Density,
-  Ticket Numbers) and Terminal (the whole Context Bar section): those describe how an individual
-  task presents itself, not board layout or terminal cosmetics, so Board stays pure board layout
-  and Terminal stays pure terminal cosmetics. The Performance tab holds app-wide rendering:
-  Graphics acceleration (Chromium hardware rendering, which the GPU recovery path in
-  `src/main/index.ts` turns off after a run the GPU killed) and Animations, which moved from
-  Board because it toggles `.no-motion` on `<html>` and was never board chrome. It also holds
-  Pausing agents (low memory, and the idle timer that left Behavior). The Knowledge
-  Graph tab's own hardware row stayed put and is named "Model acceleration": it pairs with Search quality as one
-  speed-versus-accuracy decision, and the rename is what keeps it distinct from Graphics
-  acceleration. Terminal (shell, font, cursor style,
-  colors) is global-only, not per-project: shell in particular was never reliably project-scoped
-  at the PTY-spawn level (`SessionManager` caches a single `configuredShell` keyed to whichever
-  project is currently focused - `src/main/pty/session-manager.ts`), so a background project's
-  spawn/resume could silently pick up the wrong shell. There is no Global/Project scope toggle.
-  Theme is its own tab, not folded into General, so it has a discoverable sidebar entry distinct
-  from Project Location. System tabs are further grouped in the sidebar into three tiers (`tier`
-  in `settings-tabs.ts`): Core (Board through Notifications, unlabeled - the default group
-  directly under the System header), Advanced (Workflows through Mobile Devices), and Other
-  (Privacy, Developer). Tiers must stay contiguous; `settings-tab-scope-parity.test.ts` enforces
-  it. A thin full-bleed divider (not just the "System" text label) marks the Project/System
-  boundary, since that split is behavioral (System tabs must work with no project open), not just
-  organizational. Order within each group (Project; each System tier) is curated by
-  frequency/concept, not alphabetical - see the comment above `SETTINGS_TABS` in
-  `settings-tabs.ts` for why.
-  When adding a new setting, its `tabId` must match its `scope` - see
-  `.claude/rules/settings-tab-scope.md`, which is enforced by
-  `tests/unit/settings-tab-scope-parity.test.ts`.
+  `category`: `'project'` tabs save per project and are hidden with no project open; `'system'`
+  tabs save to global config and work with no project open. There is no Global/Project scope
+  toggle. A setting's `tabId` must match its `scope` (`.claude/rules/settings-tab-scope.md`,
+  enforced by `tests/unit/settings-tab-scope-parity.test.ts`). Which tab holds what, the three
+  system tiers and why: [docs/settings/settings-panel.md](docs/settings/settings-panel.md).
 
 ### Per-Project Directory
 All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore` on project
@@ -176,28 +156,12 @@ below is the part that must stay in context.
 
 #### The board test gate (Testing and Merge columns)
 
-The expensive and flaky tiers now run on CI as PR checks, not on the local machine. Moving a task
-into the **Testing** column runs `/pull-request`: it creates a PR and drives its CI checks (lint,
-typecheck, unit, build, the UI shards, and the Linux Electron E2E shards) to all-green, auto-fixing
-the code and de-flaking or rewriting tests along the way, then stops without merging. Moving it into
-**Merge** runs `/merge-pull-request`: it merges the green PR and fast-forwards the local `main`
-checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back` stays a direct
-quick-push escape hatch for admins. `/test` is now for **manual local runs** only - it is no longer
-wired to a column.
-
-Upstream of both, the **Code Review** column runs `/code-review` as an isolated column agent in the
-task's OWN worktree (`isolated` isolates the conversation, not the filesystem - see
-[docs/architecture/sessions/index.md](docs/architecture/sessions/index.md)). Entering the column suspends the task
-agent's session and kills its PTY, so the two never overlap - but it leaves that agent's
-UNCOMMITTED work in the shared tree, which is why the review pass commits by set math over
-`git status` and never `git add -A`. It fixes every finding it verifies (Lows included), applies its
-recommended option on a decision and lists the alternative, adds tests, and commits that pass itself,
-so Testing can open on a branch carrying a `*(review)` commit no local agent authored. That is
-expected, not corruption. The pass ends with a verdict computed by `scripts/review-verdict.mjs`:
-**Ready** (move to Testing) or **Blocked** (move back to Executing and do the named steps). There is no
-"skipped" status, and the commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A finished pass normally leaves the tree clean; a fix on an already-dirty
-path stays uncommitted by design, so a dirty tree means the pass is either in flight or left those
-paths deliberately mixed.
+The expensive and flaky tiers run on CI as PR checks. The **Testing** column runs `/pull-request`
+(create the PR, drive its CI checks to green, never merge) and **Merge** runs `/merge-pull-request`
+(merge the green PR, fast-forward local `main`). Upstream, the **Code Review** column runs
+`/code-review` in the task's own worktree and commits its own `*(review)` pass, which is expected,
+then ends Ready or Blocked. `/test` is for manual local runs only. What each column runs and why:
+[docs/contributing/board-test-gate.md](docs/contributing/board-test-gate.md).
 
 #### When to test
 
@@ -230,7 +194,8 @@ validation is CI's job (the PR checks), or the `/test` command for a manual loca
 Terminal ownership handoff (one xterm per session, enforced via `dialogSessionIds`), the
 activity-log event pipeline (hook -> event-bridge.js -> JSONL -> store, replacing an aggregate
 terminal), WebGL rendering with automatic canvas fallback, and 200ms PTY resize debouncing.
-Details: [docs/architecture/sessions/index.md](docs/architecture/sessions/index.md) and
+Details: [docs/architecture/sessions/terminal-ownership.md](docs/architecture/sessions/terminal-ownership.md),
+[docs/architecture/sessions/output-streaming.md](docs/architecture/sessions/output-streaming.md) and
 [docs/architecture/system-overview.md](docs/architecture/system-overview.md).
 
 ## Conventions
@@ -325,39 +290,12 @@ overrides in a gitignored `CLAUDE.local.md` at the project root.
 
 ### Authoring a rule
 
-When you codify a new convention, add it as a `.claude/rules/*.md` file following the existing
-ones (e.g. `board-config-parity.md`):
-
-1. **One concern per file**, with a descriptive kebab-case filename.
-2. **Decide loading, and measure what it costs.** Always-on rules (no frontmatter) load every
-   session, so reserve them for universal, file-independent conventions (tool use, house style,
-   security); we run 4, totalling about 12k characters. Everything subsystem-specific gets
-   `paths:` frontmatter so it loads only when a matching file enters context. The number to
-   watch is not that always-on count but the union an ordinary edit pulls in, because a rule
-   scoped to `src/renderer/**` matches nearly every renderer file: measured on 2026-09-21, a
-   board-card edit loads 129k characters of CLAUDE.md plus rules, a PTY edit 65k.
-   `node scripts/measure-rule-load.js` prints it per subsystem (`--verbose` names each rule).
-   Run it when you add a rule or widen a glob. If your change moves a subsystem's number a lot,
-   narrow the glob or split the rule rather than accepting it. This is a procedure, not a gate:
-   there is no measured point at which the union starts hurting, so a pass/fail threshold would
-   be invented. The one real gate is on CLAUDE.md alone, where the harness supplies the limit.
-3. **Mind the read-trigger gap.** A path-scoped rule loads when a matching file is *read into
-   context*, not when Claude *creates* a new file in that path. So (a) any convention that must
-   hold at file-creation time (universal style, security) belongs in an always-on rule, a lint
-   rule, or a hook, never path-scoped-only; and (b) every path-scoped rule should have a CI
-   backstop (a `tests/unit/` test, an ESLint rule, or a review-time auditor agent) so a missed
-   load is still caught.
-4. **Structure:** a one-paragraph context (the problem / the bug it prevents), `## The rule`
-   (prescriptive), `## Enforcement (self-maintaining)`, and `## Scope`.
-5. **Name an enforcement, strongest available.** A `PreToolUse` hook blocks 100%; a `tests/unit/`
-   check or ESLint rule both run in CI; a review-time auditor agent or `/code-review` is the
-   probabilistic fallback. Flag explicitly where mechanical coverage is missing. Do not stack
-   three redundant enforcers on one rule.
-6. **Update the index above** with a one-line pointer, and add a backlink from the enforcing
-   agent or skill so the rule stays the single source of truth.
-7. **Scaling.** Rules are discovered recursively, so when the flat list grows large, group them
-   into `.claude/rules/<subsystem>/` subdirectories (e.g. `frontend/`, `backend/`). There is no
-   per-rule local override; machine-specific overrides go in `CLAUDE.local.md`.
+A new convention is one `.claude/rules/<kebab-name>.md` with a context paragraph, `## The rule`,
+`## Enforcement (self-maintaining)` and `## Scope`. Give it `paths:` frontmatter unless it must
+hold in every session (we run 4 always-on rules), name the strongest enforcement available, and add
+its one-line pointer to the index above (`tests/unit/rules-index-parity.test.ts` checks it). Run
+`node scripts/measure-rule-load.js` when you add a rule or widen a glob. The full procedure, the
+read-trigger gap and why: [docs/contributing/authoring-rules.md](docs/contributing/authoring-rules.md).
 
 **Linting:** `npm run lint` runs `eslint src/ --max-warnings 0` in CI
 (`.github/workflows/ci.yml`), so ESLint rules (`no-explicit-any`, `no-require-imports`, etc.)
