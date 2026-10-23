@@ -330,7 +330,7 @@ written, via `WorktreeManager.findWorktreeHoldingBranch` (`parseWorktreeBranches
 `git worktree list --porcelain` into a branch to path map). That matters because the tool response is
 sent before auto-spawn runs, so a collision caught later can only reach a desktop toast the calling
 agent never sees. The preflight fails open when git cannot be probed, and is skipped for backlog
-items. See [MCP Server](mcp-server.md#kangentic_create_task) for the full refusal contract.
+items. See [MCP Server](integrations/mcp-server/task-tools.md#kangentic_create_task) for the full refusal contract.
 
 ### When worktree creation fails with a written error
 
@@ -389,7 +389,7 @@ base-branch fetch (`fetchIfStale`, which worktree creation runs whatever this sw
 one branch and does not count. A failed fetch stamps nothing, so the scheduler also counts from its
 own last attempt (`lastAttemptAt`); without that, an offline repo would retry on every tick.
 
-The lifecycle mirrors `prRefreshScheduler` ([pr-integration.md](pr-integration.md#the-scheduler)):
+The lifecycle mirrors `prRefreshScheduler` ([pr-integration.md](integrations/pull-requests/refresh-and-scheduler.md#the-scheduler)):
 one active timer, an immediate deferred sweep, re-armed after a config change, torn down on project
 switch, project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with
 each sweep wrapped inside it. `git.autoFetch` replaced `git.autoFetchIntervalMinutes`;
@@ -409,7 +409,7 @@ There is a third caller, and it is a head start rather than a trigger of its own
 follow finds the fetch already cached or still in flight instead of starting one after the card has
 landed. It shares this scheduler's throttle cache AND its `git.autoFetch` switch, so a user who
 turned background fetching off gets no fetch from dragging. Its fetch also resets the sweep's clock. See
-[board-drag-perf-audit.md](board-drag-perf-audit.md).
+[board-drag-perf-audit.md](audits/board-drag-perf-audit.md).
 
 Two things are deliberate. The scheduler's fetches run with `GIT_TERMINAL_PROMPT=0` and
 `GCM_INTERACTIVE=never` (`nonInteractiveGitEnv` in `fetch-throttle.ts`): a fetch on a timer has no
@@ -709,7 +709,7 @@ Notifying from the chokepoint is deliberate. Worktree removal is hand-copied acr
 `setWorktreeRemovingListener` (also wired in `src/main/index.ts`). Its contract is "drop any OS
 handle you hold under this path, I am about to delete it", and it releases both `DiffWatcher`
 instances for that prefix (`IpcContext`'s and the bridge-owned one, see
-[Mobile Bridge](mobile-bridge.md)).
+[Mobile Bridge](integrations/mobile-bridge/index.md)).
 
 It hangs off the *internal* method rather than the public one precisely because the husk-clear
 above must also fire it: that path's failure mode is a directory that could not be deleted because

@@ -56,7 +56,7 @@ import { readInterfaceFieldNames, readStringUnionMembers } from './helpers/share
  */
 const MCP_UNEXPOSED_COLUMN_FIELDS: Record<string, string> = {
   is_archived:
-    'Deliberate. docs/mcp-server.md states that update_column never changes a column\'s archived '
+    'Deliberate. docs/integrations/mcp-server/column-tools.md states that update_column never changes a column\'s archived '
     + 'state, so editing Done cannot dislodge it from the board.',
   role:
     'Structural identity, fixed at create. SwimlaneUpdateInput omits it too - see the comment on '

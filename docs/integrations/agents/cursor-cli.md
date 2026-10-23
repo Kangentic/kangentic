@@ -1,10 +1,12 @@
 ---
 type: Reference
 title: Cursor CLI
-description: How Kangentic detects Cursor CLI, builds its command and maps permission modes, and what the integration leaves out.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p stream-json commands, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
 tags: [agents, adapter, cursor]
 sources:
-  - resource: src/main/agent/adapters/cursor/
+  - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
+  - resource: src/main/agent/adapters/cursor/project-mcp-config.ts
+  - resource: src/main/agent/adapters/cursor/stream-parser.ts
 ---
 # Cursor CLI
 

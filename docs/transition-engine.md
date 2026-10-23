@@ -12,7 +12,7 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [pr-integration.md](pr-integration.md)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
+| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [pr-integration.md](integrations/pull-requests/index.md)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
 | 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task |
 | 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
 | 3 | Task has **active session** | A model or effort change suspends and respawns with the destination's CLI flags. A column message alone is injected into the running session. A permission-only change, or none, keeps it alive. |

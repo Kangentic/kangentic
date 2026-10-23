@@ -1,10 +1,19 @@
 ---
 type: Reference
 title: Claude Code
-description: How Kangentic detects Claude Code, builds its command, maps permission modes, merges per-session settings, injects hooks, and writes ~/.claude.json before each spawn.
+description: Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, and the locked single write to ~/.claude.json for trust and diffSidebarOpen.
 tags: [agents, adapter, claude]
 sources:
-  - resource: src/main/agent/adapters/claude/
+  - resource: src/main/agent/adapters/claude/claude-adapter.ts
+  - resource: src/main/agent/adapters/claude/detector.ts
+  - resource: src/main/agent/adapters/claude/command-builder.ts
+  - resource: src/main/agent/adapters/claude/hook-manager.ts
+  - resource: src/main/agent/adapters/claude/trust-manager.ts
+  - resource: src/main/agent/adapters/claude/claude-json-lock.ts
+  - resource: src/main/agent/adapters/claude/diff-panel.ts
+  - resource: src/main/agent/adapters/claude/model-picker-probe.ts
+  - resource: src/main/agent/shared/hook-utils.ts
+  - resource: src/main/agent/shared/npm-shim-target.ts
 ---
 # Claude Code
 

@@ -29,7 +29,7 @@
  *       keeps local consumers working for the default and for a wildcard
  *       bind ('0.0.0.0' / '::' bind loopback too). A bind to one SPECIFIC
  *       non-loopback interface does NOT bind loopback, so local agents
- *       would get an unreachable URL - see docs/mcp-server.md's Network
+ *       would get an unreachable URL - see docs/integrations/mcp-server/how-it-works.md's Network
  *       Access section.
  *
  * Tool registrations live under ./mcp-http/, one `register*Tools` file per

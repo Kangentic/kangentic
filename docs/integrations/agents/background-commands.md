@@ -1,11 +1,12 @@
 ---
 type: Reference
 title: Background commands
-description: How an agent declares background commands so a running build holds its task active, and how a hook-driven declaration is wired.
+description: How a background build or dev server holds its task thinking, the four conditions for declaring backgroundCommands, each agent's launch and stop signals, why Droid, Cursor and Antigravity do not declare it, and the BackgroundCommandSpec directives and hint hook that wire it.
 tags: [agents, activity, background-shells]
 sources:
   - resource: src/main/agent/shared/background-command-hooks.ts
   - resource: src/main/agent/shared/background-shell-hint-hook.ts
+  - resource: src/shared/background-command-spec.ts
   - resource: src/main/agent/agent-adapter.ts
     title: backgroundCommands
 ---

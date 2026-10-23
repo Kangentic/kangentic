@@ -3,13 +3,13 @@ paths:
   - "src/main/agent/mcp-http/**"
   - "src/shared/mcp-tool-manifest.ts"
   - "src/renderer/components/settings/tabs/McpServerTab.tsx"
-  - "docs/mcp-server.md"
+  - "docs/integrations/mcp-server/**"
 ---
 # Rule: MCP tool-list parity (panel + docs track the registrations)
 
 The Kangentic MCP server registers its tools across the `*-tools.ts` files in
 `src/main/agent/mcp-http/`. Two human-facing surfaces enumerate those tools: the Settings -> MCP
-Server tool list (`McpServerTab.tsx`) and `docs/mcp-server.md`. Nothing forced either
+Server tool list (`McpServerTab.tsx`) and the `docs/integrations/mcp-server/` concepts. Nothing forced either
 to track the registrations, so both drifted: the panel hardcoded 10 of 46 registered tools, missing
 the entire browser and backlog families, `list_projects`, `search_everything`, and move/delete task.
 A user reading the panel had no idea most of the agent's board, browser, and session capabilities
@@ -28,8 +28,10 @@ under `src/main/agent/mcp-http/*-tools.ts`, keep its user-facing surfaces in syn
    Give it a `label`, a one-line `blurb`, and a `category`.
 2. **Panel:** `McpServerTab.tsx` renders every manifest entry as a cell in its category's group.
    You do not edit the panel for a new tool - listing it in the manifest is enough.
-3. **Docs:** document the tool in `docs/mcp-server.md` (the exhaustive reference). This couples to
-   [[docs-stay-in-sync]]: the MCP tool list is a doc anchor.
+3. **Docs:** give the tool its own `## kangentic_<name>` heading in the
+   `docs/integrations/mcp-server/` concept for its family (task-tools, column-tools, session-tools,
+   and so on), and list a new concept in that folder's `index.md`. The concepts together are the
+   exhaustive reference. This couples to [[docs-stay-in-sync]]: the MCP tool list is a doc anchor.
 4. **Diagnostics group:** the dev-leaning diagnostics tools (and the read-only `kangentic_query_db`)
    carry `category: 'diagnostics'`, so they render last, in a group that starts closed
    (`startsClosed` on the category). They are listed in full like every other tool: no flag drops a
@@ -45,8 +47,8 @@ are intentionally not part of this surface.
   `registerTool('<name>', ...)` literal under `src/main/agent/mcp-http/*-tools.ts` (it globs by the
   `-tools.ts` suffix, so a brand-new registration file is auto-covered) and asserts (a) every
   registered tool has a manifest entry; (b) every manifest entry names a real registered tool
-  (catches a rename/removal); (c) every manifest tool appears in
-  `docs/mcp-server.md`. It additionally asserts (d) every registration declares `annotations:` via
+  (catches a rename/removal); (c) every manifest tool has a heading of its own in one of
+  the `docs/integrations/mcp-server/` concepts. It additionally asserts (d) every registration declares `annotations:` via
   one of the two shared constants in `src/main/agent/mcp-http/annotations.ts`
   (`READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS`), that those constants keep their spec-correct
   values, that no `*-tools.ts` redefines them locally, and that any tool named with a mutating verb
@@ -66,7 +68,7 @@ are intentionally not part of this surface.
   Because the rule is path-scoped, a brand-new `*-tools.ts` file does not pre-load this rule (the
   read-trigger gap); the CI test is the real guarantee.
 - **Review:** `/code-review` flags a new `registerTool` call site without a matching manifest entry,
-  and the `doc-auditor` agent reports a tool missing from `docs/mcp-server.md`.
+  and the `doc-auditor` agent reports a tool missing from the `docs/integrations/mcp-server/` concepts.
 
 Do not weaken these by deleting a manifest entry to silence the test - that reintroduces the exact
 drift the rule prevents.
@@ -74,7 +76,7 @@ drift the rule prevents.
 ## Scope
 
 Tools registered under `src/main/agent/mcp-http/*-tools.ts` and the two surfaces that enumerate them
-for humans (the settings panel via `MCP_TOOL_MANIFEST`, and `docs/mcp-server.md`). The dev-only
+for humans (the settings panel via `MCP_TOOL_MANIFEST`, and the `docs/integrations/mcp-server/` concepts). The dev-only
 `kangentic_devtools_*` tools under `src/devtools/` are out of scope. The tools' own server-facing
 `description` strings (sent to agents) are authored independently of the manifest's short UI copy;
 this rule governs name parity, not description wording.

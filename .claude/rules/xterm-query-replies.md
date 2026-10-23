@@ -67,4 +67,4 @@ which is the same split.
 
 Every xterm `Terminal` in the repo whose `onData` output is written to a PTY: the renderer's
 `useTerminal`, and the dev probes that stand in for it. The phone's terminal (the `Kangentic/mobile`
-repo) is out of mechanical reach; `docs/mobile-bridge.md` carries the contract note.
+repo) is out of mechanical reach; `docs/integrations/mobile-bridge/data-feeds.md` carries the contract note.

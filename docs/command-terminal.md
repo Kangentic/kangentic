@@ -140,7 +140,7 @@ Before this, the renderer namer read the same empty field and no Claude terminal
 
 ## Starting one from a phone
 
-The bridge's `command-terminal` verb (see [Mobile Bridge](mobile-bridge.md#capability-verbs))
+The bridge's `command-terminal` verb (see [Mobile Bridge](integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
 runs the same `startCommandTerminal` as the desktop's New, with `unattended: true`. A user on a
 phone is away from the desk and cannot recover a start that hangs on a credential prompt or a
 slow fetch, so an unattended start keeps the desktop's steps and makes each one unable to block:

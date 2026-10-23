@@ -36,7 +36,7 @@
  *
  * Never point this at the dogfooding instance; it launches its own app with its own
  * data directory under tests/.test-data and a throwaway project under tests/.tmp.
- * The 2026-09-16 audit that produced it is docs/board-drag-perf-audit.md.
+ * The 2026-09-16 audit that produced it is docs/audits/board-drag-perf-audit.md.
  */
 import { _electron as electron } from 'playwright';
 import path from 'node:path';

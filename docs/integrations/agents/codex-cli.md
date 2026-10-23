@@ -1,10 +1,17 @@
 ---
 type: Reference
 title: Codex CLI
-description: How Kangentic detects Codex CLI, builds its new and resume commands, wires MCP and hooks through -c overrides, pre-approves directory trust, and maps permission modes to sandbox flags.
+description: Why Codex's MCP and hook overrides go in as quote-free -c flags, how hook trust comes from Codex's own app-server hash, how per-worktree trust entries are added to and removed from config.toml, and how permission modes map to sandbox and approval flags.
 tags: [agents, adapter, codex]
 sources:
-  - resource: src/main/agent/adapters/codex/
+  - resource: src/main/agent/adapters/codex/codex-adapter.ts
+  - resource: src/main/agent/adapters/codex/detector.ts
+  - resource: src/main/agent/adapters/codex/command-builder.ts
+  - resource: src/main/agent/adapters/codex/hook-manager.ts
+  - resource: src/main/agent/adapters/codex/hook-trust.ts
+  - resource: src/main/agent/adapters/codex/trust-manager.ts
+  - resource: src/main/agent/adapters/codex/config-toml.ts
+  - resource: src/main/agent/adapters/codex/session-history-parser.ts
 ---
 # Codex CLI
 
@@ -73,7 +80,7 @@ The entry is also **removed** when Kangentic deletes the worktree, via the adapt
 
 ## Launch Options
 
-Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optional Properties](optional-properties.md#optional-properties)): `disableApps`, off by default. When enabled, `--disable apps` is appended to both the new-session and `resume` command forms, skipping Codex's optional cloud ChatGPT Apps MCP connector (`apps` feature, stable and on by default per `codex features list`), which can hang the whole session at `Booting MCP server: codex_apps` (openai/codex#20167, #19284, #16550). The flag is per-invocation only - it never touches the user's `~/.codex/config.toml`. Configured via the Agent settings tab's Launch Options row, stored at `agent.launchOptions.codex.disableApps`.
+Codex declares one `AgentLaunchOptionInfo` (see [Agent Adapter Interface - Optional Properties](optional-properties.md)): `disableApps`, off by default. When enabled, `--disable apps` is appended to both the new-session and `resume` command forms, skipping Codex's optional cloud ChatGPT Apps MCP connector (`apps` feature, stable and on by default per `codex features list`), which can hang the whole session at `Booting MCP server: codex_apps` (openai/codex#20167, #19284, #16550). The flag is per-invocation only - it never touches the user's `~/.codex/config.toml`. Configured via the Agent settings tab's Launch Options row, stored at `agent.launchOptions.codex.disableApps`.
 
 ## Permission Modes
 

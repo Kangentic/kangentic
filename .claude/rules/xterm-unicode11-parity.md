@@ -40,7 +40,7 @@ disagreeing on a width diverge worse than both being wrong together.
 - The helper's structural `Unicode11HostTerminal` parameter bridges both packages' nominally
   distinct `Terminal` types; no per-site cast is needed or wanted.
 - The phone's replaying xterm (the `Kangentic/mobile` repo) must activate unicode11 the same
-  way; that repo is out of mechanical reach here, so `docs/mobile-bridge.md` carries the
+  way; that repo is out of mechanical reach here, so `docs/integrations/mobile-bridge/data-feeds.md` carries the
   contract note.
 
 ## Enforcement (self-maintaining)

@@ -2,6 +2,16 @@
 
 ## 2026-10-22
 
+**Correction** to the drift numbers below, and a post-hoc rerun. `headingsOf` reports 1-based lines,
+and `measure-docs-structure.mjs` read them as 0-based, so a changed heading line was charged to the
+section before it. Fixed, the same concepts give recall 0.802 (89 commits fully predicted, 18 with
+none) and the same 67% median size; retrieval is unchanged. Then the pilot's 22 descriptions were
+rewritten as routing keys and its `sources:` narrowed to files, per the design rules in
+`research/okf-knowledge-format.md`. That is a change made after seeing the results, so these numbers
+are evidence, not a pre-registered pass: drift recall 0.821 (91 full, 14 none) with a median of 59% of
+the old file flagged; retrieval MRR@10 0.702 and recall@5 0.938 under the embedding model, 0.670 under
+BM25.
+
 **Update** with the second round's three cheap tests. None met its bar; each found something to fix.
 
 - **Drift** (`node scripts/measure-docs-structure.mjs drift`): 128 commits changed the flat file with

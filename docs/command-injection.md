@@ -138,7 +138,7 @@ The `agent_session_id` is NOT captured once at plan-build time: `buildCommandInj
 re-reads the session record by primary key (`findByAnyId(recordId)`) on every poll, and when the
 record's id has changed mid-burst it accepts a match under either the current or the
 plan-build-time id. A `/clear` during an in-flight burst forks the live conversation to a new id
-(see docs/adapter-session-history.md, "Mid-session fork reconcile"); polling only the
+(see docs/integrations/agents/session-history.md, "Mid-session fork reconcile"); polling only the
 plan-build-time id would never confirm, so the burst would spend its whole retry budget pressing
 Enter into a session whose evidence is being written somewhere else.
 
@@ -180,7 +180,7 @@ Rung 3 is what makes the guarantee falsifiable rather than aspirational. It rout
 - While that gate waits, the verifier is re-polled every second against each command's original first-Enter watermark (its `CommandDelivery.firstSentAt` on the burst result), and once more when the turn completes. A confirmation anywhere in that wait cancels the restart and the outcome becomes `confirmed`. A restart re-runs the command, and it did: every observed live injection of a skill command (`/merge-pull-request`, four of four moves) was reported `failed` by the burst and then run a second time by the restart (#682). The poll runs during the wait rather than only after it because the verifier reads a bounded tail; a long turn can push the entry out of reach of a single check at the end. Turn completion on its own is never taken as delivery evidence: the turn that completes may be the one that was already running when the command was typed. A verifier that throws is a miss on both looks (logged, then the restart proceeds), never a reason to abandon the restart: the gate is the one path that re-sends a swallowed command.
 - It is attempted at most once. If the restart's argv prompt still does not confirm, the outcome is `failed`.
 - It carries **only** the user's message. An adapter-emitted settings write joined into an argv prompt stops being a slash invocation and becomes literal message text, and `--resume` preserves already-applied settings anyway.
-- It emits the `resending-command` spawn-progress phase ("Re-sending command...") before the suspend, through `restartSessionForSettingsChange`'s required `phase`, so the card names the swap and the mobile bridge can attach the label to the suspend's `session-ended` (see [Mobile Bridge](mobile-bridge.md)).
+- It emits the `resending-command` spawn-progress phase ("Re-sending command...") before the suspend, through `restartSessionForSettingsChange`'s required `phase`, so the card names the swap and the mobile bridge can attach the label to the suspend's `session-ended` (see [Mobile Bridge](integrations/mobile-bridge/index.md)).
 
 ### The exit path is rung 2 only, and it is AWAITED
 

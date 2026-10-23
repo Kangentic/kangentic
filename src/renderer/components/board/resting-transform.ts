@@ -9,7 +9,7 @@ import { CSS } from '@dnd-kit/utilities';
  * a 200ms transition from identity to identity: at 90 workflow cards in To Do,
  * a 3ms style pass and about 5ms of paint and layerize on the frame that first
  * draws the overlay (`scripts/drag-perf-rig.mjs`, W100). Matching strings start
- * none. See docs/board-drag-perf-audit.md.
+ * none. See docs/audits/board-drag-perf-audit.md.
  *
  * A module of its own, not an export of `TaskCard.tsx`: a component module
  * that also exports a value is no Fast Refresh boundary, so every edit to the

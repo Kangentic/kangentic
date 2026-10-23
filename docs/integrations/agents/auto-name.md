@@ -1,12 +1,16 @@
 ---
 type: Reference
 title: Auto-name (summarize)
-description: How an adapter's summarize call names tasks and Command Terminals, where the names surface, and how to add summarize to a new adapter.
+description: How summarize names tasks and Command Terminals on the Automation agent, the per-agent title invocations (answer run or runCliPrintSummarize), the 30 second automatic rename, the hourly rate limit and the asked-task set, and how to add summarize to a new adapter.
 tags: [agents, auto-name]
 sources:
   - resource: src/main/agent/shared/auto-name.ts
+  - resource: src/main/agent/shared/cli-print.ts
+  - resource: src/main/agent/shared/summarize-rate-limit.ts
+  - resource: src/renderer/lib/auto-name-scheduler.ts
+  - resource: src/renderer/components/NameFromPromptButton.tsx
 ---
-# Auto-Name (Summarize)
+# Auto-name (summarize)
 
 Suggests a task title from the task description, and names a Command Terminal from its first prompt, via each adapter's optional `summarize?(prompt, cliPath, cwd, options)` method. Both run on the **Automation agent** (Settings > Workflows, `AppConfig.automation`), at its model and effort, never on the project's default agent: the project default was Opus at xhigh, the top tier for four to eight words. With no Automation agent, or one whose adapter has no `summarize` (Warp has no headless run; Aider, Ollama and Goose have headless answer runs but no summarize yet), naming is off: the renderer hides the button and never schedules the automatic rename, a Command Terminal keeps "Command Terminal N", and main's handler refuses the call. Renderer and main read the same predicate, `namingAgentReady` (`src/shared/answer-agent.ts`), and main resolves the agent through the resolver Condition checks use (`src/main/automations/automation-agent.ts`), so the detection cache and the effort rule exist once.
 

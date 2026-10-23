@@ -1,3 +1,9 @@
+---
+type: Audit
+title: Board card drag performance audit
+description: "Measurements of the board card drag on a production build (2026-09-16): no dropped frames in the gesture, one stall from an xterm built mid-drag that is now held until the drop, and dev mode 4 to 7 times slower on every synchronous cost."
+tags: [audit, performance, drag, board]
+---
 # Board card drag performance audit (2026-09-16)
 
 Dragging a card is the board's most-used gesture, and from the `npm start` dogfooding instance

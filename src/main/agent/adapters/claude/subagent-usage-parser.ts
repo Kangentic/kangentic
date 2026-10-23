@@ -178,7 +178,7 @@ interface FoldedMessage {
  *   main parser: the main path's rule is exact for its own data and must not
  *   change, and it is silently wrong for this data.
  *
- * The rule is the one documented in `docs/code-review-fanout-audit.md` section 2.
+ * The rule is the one documented in `docs/audits/code-review-fanout-audit.md` section 2.
  *
  * `ts` is the EARLIEST record of a group and `model` the first non-empty one, so
  * a re-walk of an appended file reproduces the same row byte for byte (the

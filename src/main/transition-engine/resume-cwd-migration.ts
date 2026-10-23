@@ -25,7 +25,7 @@ import type { AgentAdapter } from '../agent/agent-adapter';
  * spawn proceeds with the same `--resume <id>`, degrading to today's exact
  * behavior (a visible "No conversation found"), never to silent conversation
  * loss. This is deliberately NOT the `canResumeSession` transcript-presence guard
- * that was built and reverted in #255 (see docs/adapter-session-history.md): it
+ * that was built and reverted in #255 (see docs/integrations/agents/session-history.md): it
  * never downgrades resume -> fresh, and it early-returns when `oldCwd === newCwd`
  * (the mocked E2E resume specs keep cwd identical across spawns, so they never
  * reach the migration).

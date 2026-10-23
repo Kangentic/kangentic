@@ -1,10 +1,11 @@
 ---
 type: Reference
 title: Goose CLI
-description: How Kangentic detects Goose CLI, builds and resumes its command, maps permission modes, and detects activity.
+description: Block's Goose CLI with goose run -t -s, goose session and -n/-r resume, approval mode set through the GOOSE_MODE env var (acceptEdits resolves down to smart_approve, plan to chat with no tools), a version parser that rejects the pressly/goose migration tool, and PTY-only activity.
 tags: [agents, adapter, goose]
 sources:
-  - resource: src/main/agent/adapters/goose/
+  - resource: src/main/agent/adapters/goose/goose-adapter.ts
+  - resource: src/main/agent/adapters/goose/detector.ts
 ---
 # Goose CLI
 

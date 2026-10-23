@@ -1,10 +1,19 @@
 ---
 type: Reference
 title: Grok Build
-description: How Kangentic runs xAI's Grok Build, a Claude-compatible TUI, and how its command building and permission modes map.
+description: xAI's Grok Build, a Claude-compatible Rust TUI, with caller-owned -s and --resume ids, a per-cwd .grok/hooks/kangentic.json using an env events path, a config.toml MCP block of env references plus --allow MCPTool, trusted_folders.toml cascade and updates.jsonl telemetry.
 tags: [agents, adapter, grok]
 sources:
-  - resource: src/main/agent/adapters/grok/
+  - resource: src/main/agent/adapters/grok/grok-adapter.ts
+  - resource: src/main/agent/adapters/grok/detector.ts
+  - resource: src/main/agent/adapters/grok/command-builder.ts
+  - resource: src/main/agent/adapters/grok/hook-manager.ts
+  - resource: src/main/agent/adapters/grok/mcp-config.ts
+  - resource: src/main/agent/adapters/grok/trust-manager.ts
+  - resource: src/main/agent/adapters/grok/session-paths.ts
+  - resource: src/main/agent/adapters/grok/session-history-parser.ts
+  - resource: src/main/agent/adapters/grok/transcript-parser.ts
+  - resource: src/main/agent/adapters/grok/command-injection-verifier.ts
 ---
 # Grok Build
 

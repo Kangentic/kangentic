@@ -4,7 +4,7 @@
  * list (REVIEW_PREEXISTING_DIRTY.tmp) under --out-dir (default .kangentic/) in one invocation,
  * so the review driver pays one Bash call instead of generating a ~200KB pack through
  * the Write tool (tool input is billed as model output; a 200KB pack costs roughly
- * 100k output tokens if the driver writes it itself - see docs/code-review-fanout-audit.md).
+ * 100k output tokens if the driver writes it itself - see docs/audits/code-review-fanout-audit.md).
  *
  * Usage: node scripts/build-review-pack.mjs [<baseRef>] [--body-cap <bytes>] [--out-dir <path>]
  *        [--shard-lines <lines>]
@@ -60,7 +60,7 @@ const SINGLE_FILE_CAP_BYTES = 1024 * 1024;
 // admission comment below records. Half the body cap: a single file whose changed lines alone
 // would take half the pack's body budget is a lockfile, a generated bundle, or a snapshot dump,
 // which no finder reads linearly. The pack is therefore bounded by the review's own changed
-// lines plus the body cap, not by a constant; docs/code-review-fanout-audit.md section 14
+// lines plus the body cap, not by a constant; docs/audits/code-review-fanout-audit.md section 14
 // records how often the corpus hits this ceiling.
 const PACK_HUNK_SECTION_CAP_BYTES = 100 * 1024;
 
@@ -69,7 +69,7 @@ const PACK_HUNK_SECTION_CAP_BYTES = 100 * 1024;
 // criteria reach, and every pack byte is re-read by up to 11 finders while a file left out is
 // read only by the finders that actually want it - so bytes spent on untouched code are the
 // pack's worst-value bytes. Measured across eight merged PRs: identical file coverage, packs
-// 2% to 71% smaller (docs/code-review-fanout-audit.md, the windowed-bodies section).
+// 2% to 71% smaller (docs/audits/code-review-fanout-audit.md, the windowed-bodies section).
 const WINDOW_CONTEXT_LINES = 20; // body tier: a file admitted under the body cap
 const HUNK_CONTEXT_LINES = 3; // hunk tier: every other readable file, what the union diff used to carry
 const WINDOW_MERGE_GAP_LINES = 5; // two windows closer than this merge; an elision marker costs a line

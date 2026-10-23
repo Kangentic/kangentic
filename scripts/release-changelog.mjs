@@ -34,7 +34,13 @@ import { fileURLToPath } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
 
 export const RELEASES_MARKER = '<!-- releases -->';
-export const REVIEW_AUDIT_DOC = 'docs/code-review-fanout-audit.md';
+export const REVIEW_AUDIT_DOC = 'docs/audits/code-review-fanout-audit.md';
+/**
+ * Where the audit lived until task 889 moved it into docs/audits/. A release range can span the
+ * move, and the review records committed before it name this path, so both count.
+ */
+export const REVIEW_AUDIT_DOC_BEFORE_MOVE = 'docs/code-review-fanout-audit.md';
+const REVIEW_AUDIT_PATHS = new Set([REVIEW_AUDIT_DOC, REVIEW_AUDIT_DOC_BEFORE_MOVE]);
 
 const RECORD_SEPARATOR = '\x1e';
 const FIELD_SEPARATOR = '\x1f';
@@ -68,7 +74,7 @@ export function parseGitLog(raw) {
 export function isReviewRecord(commit) {
   if (commit.parents.length > 1) return false;
   if (commit.files.length === 0) return true;
-  return commit.files.length === 1 && commit.files[0] === REVIEW_AUDIT_DOC;
+  return commit.files.length === 1 && REVIEW_AUDIT_PATHS.has(commit.files[0]);
 }
 
 /** Which section a subject belongs in, and its text with the conventional prefix stripped. */

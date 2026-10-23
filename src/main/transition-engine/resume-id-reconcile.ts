@@ -20,7 +20,7 @@ import { sessionOutputPaths } from './session-paths';
  * resumed id when the agent's own last report disagrees with the DB.
  *
  * Deliberately NOT the `canResumeSession` transcript-presence guard that was
- * built and reverted in #255 (see docs/adapter-session-history.md): it reads
+ * built and reverted in #255 (see docs/integrations/agents/session-history.md): it reads
  * ONLY Kangentic's own session directory (never the agent CLI's storage as a
  * gate), it can only swap WHICH id is resumed (the spawn stays `--resume`,
  * never downgraded to fresh), and on every failure path (missing dir or file,

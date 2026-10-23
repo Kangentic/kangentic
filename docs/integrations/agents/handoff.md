@@ -1,4 +1,14 @@
-# Cross-Agent Handoff
+---
+type: Reference
+title: Cross-agent handoff
+description: "How a task moved to a column with a different agent gets the source agent's native session file passed by path: the three trigger conditions, the prompt wording, the handoffs table, the per-column passthrough toggle, and which TUI agents have a transcript cleaner."
+tags: [handoff, agents, session-history, transcripts]
+sources:
+  - resource: src/main/agent/handoff/
+  - resource: src/main/db/repositories/handoff-repository.ts
+  - resource: src/main/transition-engine/agent-resolver.ts
+---
+# Cross-agent handoff
 
 When a task moves to a column with a different agent (e.g. Claude Code to Codex), Kangentic locates the source agent's native session history file and passes its path to the target agent. This enables seamless continuation across different AI coding tools without losing progress.
 
@@ -54,7 +64,7 @@ Post-spawn: handoff DB record updated with target session ID
 
 ## Session History File Locations
 
-Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 15 supported adapters) lives in [Agent Integration > Session History File Location](integrations/agents/adapter-interface.md#session-history-file-location); maintained there as the single source of truth.
+Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 15 supported adapters) lives in [Agent Integration > Session History File Location](adapter-interface.md#session-history-file-location); maintained there as the single source of truth.
 
 ## Prompt Delivery
 
@@ -91,7 +101,7 @@ Handoff records are stored in the `handoffs` table for audit trail:
 
 ## MCP Access
 
-Claude Code sessions can access handoff metadata via the `kangentic_get_handoff_context` MCP tool, which returns the session history file path and handoff metadata. The `kangentic_get_transcript` tool provides structured access to session transcripts for Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, and Antigravity sessions (other agents fall back to raw scrollback). See [MCP Server](mcp-server.md) for details.
+Claude Code sessions can access handoff metadata via the `kangentic_get_handoff_context` MCP tool, which returns the session history file path and handoff metadata. The `kangentic_get_transcript` tool provides structured access to session transcripts for Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, and Antigravity sessions (other agents fall back to raw scrollback). See [MCP Server](../mcp-server/index.md) for details.
 
 ## Disabling Session History Passthrough
 
@@ -109,7 +119,7 @@ GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript
 
 ## See Also
 
-- [Agent Integration](integrations/agents/index.md) - Adapter interface, per-agent CLI details
-- [Session Lifecycle](session-lifecycle.md) - Spawn flow, suspend, resume
-- [Database](database.md) - Schema for handoffs table
-- [MCP Server](mcp-server.md) - `kangentic_get_handoff_context` and `kangentic_get_transcript` tools
+- [Agent Integration](index.md) - Adapter interface, per-agent CLI details
+- [Session Lifecycle](../../session-lifecycle.md) - Spawn flow, suspend, resume
+- [Database](../../database.md) - Schema for handoffs table
+- [MCP Server](../mcp-server/index.md) - `kangentic_get_handoff_context` and `kangentic_get_transcript` tools

@@ -1,10 +1,11 @@
 ---
 type: Reference
 title: Oz CLI (Warp)
-description: How Kangentic detects Warp's Oz CLI, builds its command and maps permission modes, and what the integration leaves out.
+description: Warp's Oz CLI, a one-shot oz agent run cloud runner with an end-of-options guard, detection through dump-debug-info because oz has no --version, permission modes that are labels only since Warp profiles hold the real permissions, and no resume, hooks or history.
 tags: [agents, adapter, warp]
 sources:
-  - resource: src/main/agent/adapters/warp/
+  - resource: src/main/agent/adapters/warp/warp-adapter.ts
+  - resource: src/main/agent/adapters/warp/version-detector.ts
 ---
 # Oz CLI (Warp)
 

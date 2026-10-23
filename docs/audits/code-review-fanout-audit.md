@@ -1,3 +1,12 @@
+---
+type: Audit
+title: Code review fan-out audit
+description: "Where a /code-review fan-out's tokens went on 2026-08-29 and which driver changes cut them, followed by a running table of every later review pass: pack size, finders, reads, and findings raised, fixed and refuted."
+tags: [audit, code-review, tokens, subagents]
+sources:
+  - resource: .claude/skills/code-review/SKILL.md
+  - resource: scripts/build-review-pack.mjs
+---
 # Code-review fan-out token audit
 
 Audited: 2026-08-29. Subject: the `/code-review main` run against task #568 (2026-08-29, agent

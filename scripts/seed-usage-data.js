@@ -130,7 +130,7 @@ function listProjects(configDir) {
 
 // The agent types this board's fan-out commands actually spawn. A dashboard
 // seeded with driver turns alone understates a fan-out by most of its traffic:
-// on the session measured in docs/code-review-fanout-audit.md the subagents
+// on the session measured in docs/audits/code-review-fanout-audit.md the subagents
 // moved 2.5x the driver's cache reads and 2.8x its output.
 const SUBAGENT_TYPES = [
   'review-finder',

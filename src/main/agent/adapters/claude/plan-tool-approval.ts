@@ -36,7 +36,7 @@ import type { PlanToolApprovalHookSpec } from '../../shared/plan-approval-hook';
  *
  * Kangentic's own server is always left out. Kangentic adds `mcp__kangentic` to
  * every session's allow list, and its mutating tools must keep prompting while
- * planning (docs/mcp-server.md, "Honest mutating annotations"). Its read-only
+ * planning (docs/integrations/mcp-server/how-it-works.md, "Honest mutating annotations"). Its read-only
  * tools already pass through their `readOnlyHint`.
  */
 

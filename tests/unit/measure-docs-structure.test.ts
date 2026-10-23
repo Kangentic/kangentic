@@ -56,9 +56,13 @@ describe('mapping a flat file\'s lines to concepts', () => {
     { path: 'docs/a/adapter-interface.md', h1: 'Agent adapter interface', headings: new Set(['Agent adapter interface', 'Supported Agents']) },
   ];
 
-  it('gives each line the H2-and-deeper heading path above it', () => {
+  it('gives each line the H2-and-deeper heading path above it, a heading line its own section', () => {
     const paths = headingPathsByLine(flat);
     expect(paths[2]).toEqual([]);
+    // A changed heading line belongs to the section it opens, not the one before it.
+    expect(paths[3]).toEqual(['Codex CLI']);
+    expect(paths[4]).toEqual(['Codex CLI', 'Permission Modes']);
+    expect(paths[6]).toEqual(['Gemini CLI']);
     expect(paths[5]).toEqual(['Codex CLI', 'Permission Modes']);
     expect(paths[8]).toEqual(['Gemini CLI', 'Permission Modes']);
     expect(paths[10]).toEqual(['Supported Agents']);

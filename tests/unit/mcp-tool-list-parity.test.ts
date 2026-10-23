@@ -4,7 +4,7 @@
  * The Kangentic MCP server registers its tools across the `*-tools.ts` files in
  * src/main/agent/mcp-http/. Two human-facing surfaces enumerate those tools:
  * the Settings -> MCP Server "Available Tools" list (McpServerTab.tsx) and
- * docs/mcp-server.md. Both used to hardcode their own copy and drifted - the
+ * the docs/integrations/mcp-server/ concepts. Both used to hardcode their own copy and drifted - the
  * panel listed 10 of 46 registered tools, missing the whole browser and backlog
  * families.
  *
@@ -13,8 +13,8 @@
  *   (a) every registered tool has a manifest entry (a new tool fails until listed);
  *   (b) every manifest entry names a real registered tool (a renamed/removed
  *       tool fails until the manifest is updated);
- *   (c) every manifest tool is documented in docs/mcp-server.md, which is the
- *       exhaustive reference.
+ *   (c) every manifest tool has a heading in one of the docs/integrations/mcp-server/
+ *       concepts, which together are the exhaustive reference.
  *
  * The dev-only kangentic_devtools_* tools live under src/devtools/, OUTSIDE the
  * scanned glob, so they are intentionally not in scope. Within scope, every
@@ -30,7 +30,16 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from '../../src/main/agen
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const MCP_HTTP_DIR = path.join(REPO_ROOT, 'src/main/agent/mcp-http');
-const DOCS_PATH = path.join(REPO_ROOT, 'docs/mcp-server.md');
+const DOCS_DIR = path.join(REPO_ROOT, 'docs/integrations/mcp-server');
+
+/** Every MCP concept's text. The folder's index.md only links concepts, so it never holds a tool heading. */
+function readMcpDocs(): string {
+  return fs
+    .readdirSync(DOCS_DIR)
+    .filter((name) => name.endsWith('.md') && name !== 'index.md')
+    .map((name) => fs.readFileSync(path.join(DOCS_DIR, name), 'utf-8'))
+    .join('\n');
+}
 
 /** The shipped registration files. Glob by suffix so a brand-new `<x>-tools.ts` is auto-covered. */
 function collectToolFiles(): string[] {
@@ -151,23 +160,26 @@ describe('mcp tool-list parity', () => {
     ).toEqual([]);
   });
 
-  it('every manifest tool has its own heading in docs/mcp-server.md', () => {
+  it('every manifest tool has its own heading in the docs/integrations/mcp-server/ concepts', () => {
     // A mention anywhere in the file used to satisfy this, which let two browser
     // tools live under a shared prose heading with no anchor of their own. That
     // is silent breakage rather than cosmetic: mcpToolDocsUrl() deep-links to
     // `#<tool name>`, and markdown derives the anchor from the heading text, so
     // a tool with no heading of its own links to nothing on the docs site.
-    const docContent = fs.readFileSync(DOCS_PATH, 'utf-8');
+    // A concept that groups several tools gives each an H2 or H3; one that covers a
+    // single tool may carry it as its H1.
+    const docContent = readMcpDocs();
     const headings = new Set(
-      Array.from(docContent.matchAll(/^### (kangentic_\w+)$/gm), (match) => match[1]),
+      Array.from(docContent.matchAll(/^#{1,3} (kangentic_\w+)$/gm), (match) => match[1]),
     );
     const undocumented = MCP_TOOL_MANIFEST.map((entry) => entry.name)
       .filter((name) => !headings.has(name))
       .sort();
     expect(
       undocumented,
-      `These tools have no "### <tool name>" heading in docs/mcp-server.md (the exhaustive `
-        + `reference). Give each its own heading so its docs anchor resolves:\n`
+      `These tools have no "## <tool name>" heading in any docs/integrations/mcp-server/ concept `
+        + `(the exhaustive reference). Give each its own heading in the concept for its family so `
+        + `its docs anchor resolves:\n`
         + `${undocumented.join('\n')}`,
     ).toEqual([]);
   });

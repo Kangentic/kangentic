@@ -2,7 +2,7 @@
 /**
  * Replays the review-pack corpus: builds the pack for each merged PR with a control script and
  * with the working-copy scripts/build-review-pack.mjs, and prints the comparison table that
- * docs/code-review-fanout-audit.md sections 13.3 and 14.2 carry. A pack is a pure function of a
+ * docs/audits/code-review-fanout-audit.md sections 13.3 and 14.2 carry. A pack is a pure function of a
  * ref pair, so the numbers reproduce on any machine with network access and an authenticated gh.
  *
  * Usage: node scripts/replay-review-pack-corpus.mjs [--control <ref-or-path>] [--keep] [<pr>...]

@@ -1,10 +1,13 @@
 ---
 type: Reference
 title: Droid
-description: How Kangentic detects Factory's Droid, builds its command, captures the session id, maps permission modes, and sets up its MCP config.
+description: Factory's Droid, a bare droid --cwd command since autonomy is set in its TUI, session ids polled from ~/.factory/sessions cwd-slug files, a project .factory/mcp.json holding only an environment reference for the token, and why live telemetry is unsupported.
 tags: [agents, adapter, droid]
 sources:
-  - resource: src/main/agent/adapters/droid/
+  - resource: src/main/agent/adapters/droid/droid-adapter.ts
+  - resource: src/main/agent/adapters/droid/detector.ts
+  - resource: src/main/agent/adapters/droid/command-builder.ts
+  - resource: src/main/agent/adapters/droid/session-id-capture.ts
 ---
 # Droid
 

@@ -311,7 +311,7 @@ Run `scripts/release-changelog.mjs` in main, with the tag Step 0 captured and th
   prefix, and inserts the entry after the `<!-- releases -->` marker in CHANGELOG.md's existing
   shape.
 - **What it leaves out.** `/code-review` bookkeeping: a commit whose only change is
-  `docs/code-review-fanout-audit.md`, and a single-parent commit that changes nothing, which is
+  `docs/audits/code-review-fanout-audit.md`, and a single-parent commit that changes nothing, which is
   how a pass's Refuted and Decisions ledger rides. They were 22 of v0.48.0's 136 commits and tell
   a reader nothing about the release.
 - **What it prints.** The entry, then one line with the count per section and how many commits it

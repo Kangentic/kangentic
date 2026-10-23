@@ -622,7 +622,7 @@
    cards. A precaution, not a measured win: at 100 cards, in runs that tried
    both, a pan missed 12 or more refreshes once in 15 without it and never
    with it, and the layer cost nothing measurable and stays sharp at 2x zoom.
-   The runs are in docs/board-drag-perf-audit.md. */
+   The runs are in docs/audits/board-drag-perf-audit.md. */
 .workflow-canvas .react-flow__edges > svg:has(.workflow-link-flow) {
   will-change: transform;
 }
@@ -1074,7 +1074,7 @@
 
    Registered so it does not inherit: it is written on each shifted card, and an
    inherited custom property restyles every element under it (the drop
-   highlight's `--drop-color` did, docs/board-drag-perf-audit.md). */
+   highlight's `--drop-color` did, docs/audits/board-drag-perf-audit.md). */
 @property --drop-gap {
   syntax: '<length>';
   inherits: false;

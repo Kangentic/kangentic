@@ -84,7 +84,7 @@ export function resolveResumeLineage(params: {
  *
  * ## Why this is not the guard that was reverted in #255
  *
- * The `canResumeSession` guard (see docs/adapter-session-history.md) gated
+ * The `canResumeSession` guard (see docs/integrations/agents/session-history.md) gated
  * EVERY resume on a path Kangentic COMPUTED by slugifying the cwd, and a false
  * miss discarded a real conversation. This one differs on every count:
  *

@@ -40,7 +40,7 @@ import { truncationNoticeText } from '../../../shared/conversation-history';
  *
  * 16MB of source is roughly 32MB of string. On eight real Claude transcripts of
  * 32MB to 548MB it held 528 to 2,371 entries and peaked at 66 to 70MB of RSS in
- * 40 to 53ms (docs/conversation-history-paging-audit.md). For Claude, the
+ * 40 to 53ms (docs/audits/conversation-history-paging-audit.md). For Claude, the
  * omitted head is still covered by the conversation index, which walks the
  * whole file in windows through `parseTranscriptWindow`. Every other agent's
  * index falls back to this same bounded read, so it stops where this read does.

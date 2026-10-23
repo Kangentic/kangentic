@@ -13,7 +13,7 @@ description: |
   Exists so universal finders do not spawn as `general-purpose`: the restricted roster
   drops the ~22k-token tool/MCP manifest from every finder's fixed floor, and the pinned
   medium effort keeps ten parallel finders from inheriting the driver session's xhigh
-  (measured in docs/code-review-fanout-audit.md). Not for general searching - use the
+  (measured in docs/audits/code-review-fanout-audit.md). Not for general searching - use the
   built-in agents for that.
 tools: Read, Glob, Grep
 ---

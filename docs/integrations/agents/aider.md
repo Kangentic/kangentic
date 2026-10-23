@@ -1,10 +1,10 @@
 ---
 type: Reference
 title: Aider
-description: How Kangentic detects Aider, builds its command and maps permission modes, and what the integration leaves out.
+description: Aider's --message prompt delivery, --chat-mode ask, --architect and --yes for the permission modes, --no-auto-commits because Kangentic manages git, an idle signal from --notifications-command, and what it lacks (no resume, hooks, settings merge or trust).
 tags: [agents, adapter, aider]
 sources:
-  - resource: src/main/agent/adapters/aider/
+  - resource: src/main/agent/adapters/aider/aider-adapter.ts
 ---
 # Aider
 
