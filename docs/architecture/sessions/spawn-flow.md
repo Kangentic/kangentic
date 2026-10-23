@@ -92,7 +92,7 @@ sessions bypass all of this (not task agents).
 
 ## Isolated Sessions (Per-Column Session Model)
 
-A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`. Only the first is offered in the UI, on the Column Manager's Conversation card: `session_spawn_strategy` is derived from it by `resolveForceFresh` and is settable by hand in `kangentic.json` only (see [configuration.md](../../configuration.md#swimlane-level-configuration) for why the two combinations that derivation does not reach are both bad).
+A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`. Only the first is offered in the UI, on the Column Manager's Conversation card: `session_spawn_strategy` is derived from it by `resolveForceFresh` and is settable by hand in `kangentic.json` only (see [configuration.md](../../settings/cascade.md#swimlane-level-configuration) for why the two combinations that derivation does not reach are both bad).
 
 - **`session_target`** (`main` | `isolated`, default `main`) - which session track a task runs on. `main` is the task's shared main conversation (resumed as the task moves between normal columns); `isolated` is this column's own separate, context-isolated session, keyed by the swimlane id. Resolved by `resolveSessionTarget` / `resolveIsolatedSwimlaneId`; the discriminator is `sessions.isolated_swimlane_id` (`NULL` = main, swimlane id = isolated).
 - **`session_spawn_strategy`** (`create_or_resume` | `always_spawn_new`, default `create_or_resume`) - what to do with that track on entry. `create_or_resume` resumes the track's session if one exists, else spawns it; `always_spawn_new` always spawns fresh, retiring the prior session for that `(task, target)`. Read by `resolveForceFresh`, which is a plain comparison for any stored column: the DB column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the context-aware fallback in that function never evaluates for a real lane and survives only for a partial object.
@@ -127,7 +127,7 @@ Lifecycle on task move (`task-move.ts`, the session switch branch inside Priorit
 
 When a task moves to a column where `resolveTargetAgent()` returns a different agent than the current session:
 
-1. The current session is suspended (Priority 3a in the [Transition Engine](../../transition-engine.md))
+1. The current session is suspended (Priority 3a in the [Transition Engine](../automations/transition-engine.md))
 2. `spawnAgent()` (`src/main/ipc/helpers/agent-spawn.ts`) asks the source agent's adapter for its native session history file (`locateSessionHistoryFile`)
 3. `buildSessionHistoryReference()` turns that path into a `handoffPromptPrefix` that tells the target agent to read the file, and the target agent is spawned with it prepended to the task prompt
 4. A `handoffs` record tracks the from and to agents and sessions

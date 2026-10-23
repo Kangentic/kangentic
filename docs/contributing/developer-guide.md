@@ -1,4 +1,20 @@
-# Developer Guide
+---
+type: Guide
+title: Developer guide
+description: "How to run, build and test Kangentic from source: the dev server and esbuild watch, worktree previews and their data isolation, the production and web demo builds, the unit, UI, E2E and demo test tiers, project structure, environment variables, and packaging notes."
+tags: [development, build, testing, worktrees]
+sources:
+  - resource: scripts/dev.js
+  - resource: scripts/build.js
+  - resource: scripts/worktree-preview.js
+  - resource: scripts/worktree-vite-config.js
+  - resource: scripts/dogfood-launcher.ps1
+  - resource: demo/vite.config.mts
+  - resource: vitest.config.mts
+  - resource: playwright.config.ts
+  - resource: electron-builder.yml
+---
+# Developer guide
 
 ## Prerequisites
 
@@ -448,7 +464,7 @@ npm run test:demo
 | Real IPC, PTY spawning, terminal output, file I/O | E2E |
 | The web build boots and stays embeddable | Demo smoke |
 
-Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
+Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](../releases/release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
 
 ### Run All
 
@@ -530,16 +546,16 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 
 ## Further Reading
 
-- [Architecture](architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
-- [Session Lifecycle](architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume
-- [Transition Engine](transition-engine.md) -- Action types, templates, execution flow
-- [Database](database/index.md) -- Full schema reference, migrations, connection management
-- [Agent Integration](integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
-- [Configuration](configuration.md) -- Config cascade, all settings keys, permission modes
-- [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging, fuses
-- [Activity Detection](architecture/activity/index.md) -- Event pipeline, thinking/idle state
-- [Worktree Strategy](architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
-- [User Guide](user-guide.md) -- End-user feature walkthrough
+- [Architecture](../architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
+- [Session Lifecycle](../architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume
+- [Transition Engine](../architecture/automations/transition-engine.md) -- Action types, templates, execution flow
+- [Database](../database/index.md) -- Full schema reference, migrations, connection management
+- [Agent Integration](../integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
+- [Configuration](../settings/index.md) -- Config cascade, all settings keys, permission modes
+- [Cross-Platform](../platforms/index.md) -- Shell resolution, path handling, packaging, fuses
+- [Activity Detection](../architecture/activity/index.md) -- Event pipeline, thinking/idle state
+- [Worktree Strategy](../architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
+- [User Guide](../user-guide.md) -- End-user feature walkthrough
 
 ## Documentation Maintenance
 
@@ -562,7 +578,7 @@ electron-builder handles platform-specific packaging via `electron-builder.yml`:
 | macOS | Disk image + ZIP | DMG |
 | Linux | Package | deb, rpm |
 
-The NSIS installer includes `build/installer.nsh`, which grants ALL APPLICATION PACKAGES read access on a per-user install folder; see [Windows install-folder ACL grant](cross-platform.md#windows-install-folder-acl-grant).
+The NSIS installer includes `build/installer.nsh`, which grants ALL APPLICATION PACKAGES read access on a per-user install folder; see [Windows install-folder ACL grant](../platforms/packaging-and-security.md#windows-install-folder-acl-grant).
 
 Native modules:
 - `better-sqlite3` - Node-API (13+), shipping every platform's addon in the package as `prebuilds/<platform>-<arch>.node`, no rebuild needed. The same binary loads under Electron and under plain Node, which is what lets the unit tier open real databases with it. `build/afterPack.js` deletes every prebuild but the target's before its load probes run
@@ -575,7 +591,7 @@ Native modules:
 - `@huggingface/transformers` and `onnxruntime-web` - pure JavaScript, but both shipped and unpacked so the embed worker resolves them from the unpacked tree
 - `onnxruntime-common`, `sharp` (with its `@img/*` platform binding), `detect-libc`, `semver` - what transformers.js requires at module scope; unpacked for the same reason, since the worker never looks inside the asar. `build/afterPack.js` loads the worker's externals from the unpacked tree after packing and fails the build if any of this closure is missing (`build/verify-unpacked-worker.js`)
 
-Security fuses: every fuse is set explicitly with `strictlyRequireAllFuses`, so a new Electron fuse fails the build. The full list and each value is in [Security Fuses](cross-platform.md#security-fuses).
+Security fuses: every fuse is set explicitly with `strictlyRequireAllFuses`, so a new Electron fuse fails the build. The full list and each value is in [Security Fuses](../platforms/packaging-and-security.md#security-fuses).
 
 ```bash
 npm run package    # Package for current platform

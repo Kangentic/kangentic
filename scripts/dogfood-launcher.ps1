@@ -6,7 +6,7 @@ A process tree killer that follows recorded parent PIDs without checking creatio
 any process whose parent has exited, once the dead parent's PID is reused inside the tree it is
 killing. Windows does not reuse a PID while a handle to that process is open, so this script
 keeps one open on the exited launcher above the dev server. See "Dogfooding on Windows" in
-docs/developer-guide.md for the mechanism and the measurements.
+docs/contributing/developer-guide.md for the mechanism and the measurements.
 
 Usage (Windows PowerShell 5.1 or later):
   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dogfood-launcher.ps1 -CreateShortcut

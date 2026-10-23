@@ -130,8 +130,8 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 ## Analytics (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Analytics](../../analytics.md). |
-| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Analytics](../../analytics.md). |
+| `analytics:trackRendererError` | send | Report a renderer-side error to main, with a `RendererErrorContext` (`boundary`, `panel?`) saying where it came from. See [Analytics](../../telemetry/index.md). |
+| `analytics:trackFeatureUsed` | send | Report one use of a curated adoption feature; main re-validates against `ANALYTICS_FEATURES` and dedups to once per feature per day. See [Analytics](../../telemetry/index.md). |
 
 ## App (1 channel)
 | Channel | Pattern | Purpose |
@@ -179,7 +179,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 | `updater:check` | invoke | Check for application updates |
 | `updater:install` | invoke | Install downloaded update (quit and install) |
 | `updater:downloaded` | on | Event: update has been downloaded and is ready to install |
-| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/analytics.md` |
+| `updater:blocked` | push | This install cannot update itself until the user acts, today only the macOS read-only-volume case (Sentry DESKTOP-1A). Carries the whole user-facing sentence, composed and latched in main so the renderer toasts it verbatim and a condition every 4-hour check rediscovers still toasts once per run. Every OTHER updater failure stays silent by design; see the "counted, not reported" family in `docs/telemetry/error-reporting.md` |
 
 ## Leftover processes (4 channels)
 | Channel | Pattern | Purpose |

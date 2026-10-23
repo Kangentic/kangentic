@@ -1253,7 +1253,7 @@ describe('a turn end and the rows it may run', () => {
 
   // A turn whose terminal never stays quiet before the wait runs out. The CLI
   // paints a status line for its own background work (the repaint rate is in
-  // docs/transition-engine.md), and its own agents can run for minutes after
+  // docs/architecture/automations/transition-engine.md), and its own agents can run for minutes after
   // the Stop. The session is idle throughout, so the turn is over and the rows
   // go on; the warning records the give-up.
   describe('a turn that never settles', () => {

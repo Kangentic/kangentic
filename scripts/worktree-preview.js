@@ -17,7 +17,7 @@
  * command to the platform's terminal, which decides what environment the new
  * tab gets. Terminal.app and gnome-terminal start it from their own
  * long-running process, so a variable merely set here does not reach dev.js
- * there, and the analytics rig (docs/analytics.md, "Local verification")
+ * there, and the analytics rig (docs/telemetry/usage-analytics.md, "Local verification")
  * silently lost its variables before this flag existed. Windows Terminal 1.24
  * does pass this process's environment into the new tab (measured: a variable
  * set in the launching shell reached it), which is also how a task's

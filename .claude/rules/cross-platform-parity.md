@@ -56,7 +56,7 @@ breaks on the next platform.
   `env: process.env`. Never delete the variable from main's own `process.env`. Kangentic's
   renderer, GPU and utility processes find the handler through it. A deliberate exception carries
   `// crashpad-env-ok: <reason>`. What still inherits it by decision is listed in
-  `docs/cross-platform.md`, "Windows: the handler's pipe name".
+  `docs/platforms/windows.md`, "Windows: the handler's pipe name".
 
 ### Tests (unit, UI, E2E)
 

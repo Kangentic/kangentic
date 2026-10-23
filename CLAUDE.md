@@ -171,7 +171,7 @@ open):
 ### Testing
 
 Three test tiers (unit / UI / E2E). Setup, commands, the headless mock, and tier
-guidance live in [docs/developer-guide.md](docs/developer-guide.md). The scoped-run discipline
+guidance live in [docs/contributing/developer-guide.md](docs/contributing/developer-guide.md). The scoped-run discipline
 below is the part that must stay in context.
 
 #### The board test gate (Testing and Merge columns)

@@ -21,7 +21,7 @@ import { redactHomeDirectory } from '../utility-process/stderr-tail';
  * process reports, renderer events included, comes from the same user profile. A native crash is
  * the case this cannot reach. Its stack, module paths and crashpad annotations are built on
  * Sentry's servers from the minidump after upload, so those need a Sentry Advanced Data Scrubbing
- * rule (docs/analytics.md, "Native crash fields").
+ * rule (docs/telemetry/error-reporting.md, "Native crash fields").
  *
  * Mutates and returns the event. Never drops one, and never throws out of `redactEventHomeDirectory`.
  */

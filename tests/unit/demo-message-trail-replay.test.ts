@@ -13,7 +13,7 @@
  *
  * Two things this file deliberately does NOT cover: `replayOpensAt` (untouched by this change's
  * gaps) and the demo/UI tiers (message-trail scheduling against a live page and a mounted xterm,
- * which needs a browser and the `demo` tier's build; see docs/developer-guide.md and
+ * which needs a browser and the `demo` tier's build; see docs/contributing/developer-guide.md and
  * static-demo.spec.ts's message-trail assertions for that layer).
  */
 import fs from 'node:fs';

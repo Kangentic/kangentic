@@ -28,7 +28,7 @@
  * privacy filter.
  *
  * No node or electron imports: the renderer bundles this module.
- * docs/analytics.md ("Breadcrumbs are filtered at the source") is the prose.
+ * docs/telemetry/error-reporting.md ("Breadcrumbs are filtered at the source") is the prose.
  */
 
 /**

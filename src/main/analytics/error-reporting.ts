@@ -34,7 +34,7 @@ let active = false;
  * Decide whether Sentry error reporting should be enabled, as a pure function
  * of the two env switches and the packaged state.
  *
- * The contract (docs/analytics.md):
+ * The contract (docs/telemetry/error-reporting.md):
  * - KANGENTIC_TELEMETRY=0/false is the superset kill switch: it disables ALL
  *   telemetry egress, Aptabase and Sentry both. Users who set it were promised
  *   "disables analytics entirely" before Sentry existed; that promise holds.
@@ -70,7 +70,7 @@ export function isErrorReportingActive(): boolean {
  * analytics attaches to app_launch - see analytics/client-id.ts) as the
  * Sentry user id. This is what makes the per-issue "Users" count real
  * (how many installs an issue affects), with no new data class: the id is
- * already disclosed in docs/analytics.md and contains no personal data.
+ * already disclosed in docs/telemetry/error-reporting.md and contains no personal data.
  */
 export function setErrorReportingUser(clientId: string): void {
   if (!active) return;
@@ -247,7 +247,7 @@ export const SENTRY_STACK_FRAME_LIMIT = 50;
  *
  * That is not hypothetical. Every event on DESKTOP-19 ("Illegal value for
  * lineNumber") carried exactly 50 monaco-editor frames and no in-app frame,
- * which is what made it look like a pure upstream bug (docs/analytics.md says
+ * which is what made it look like a pure upstream bug (docs/telemetry/error-reporting.md says
  * which frames were cut and where they now arrive). This tag makes the
  * difference between "no app frames" and "no app frames survived" visible in
  * the issue stream instead of leaving it to be rediscovered by hand.

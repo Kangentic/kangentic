@@ -465,7 +465,7 @@ describe('TerminalSubmit', () => {
    * The #682 shape: the command DID submit on the first Enter, but the
    * transcript only shows it later than the first attempt's window. Claude
    * stamps the turn at submit and flushes the JSONL ~780ms or ~1830ms after
-   * (docs/command-injection.md, "Measured flush latency"). Four of four
+   * (docs/architecture/automations/command-injection-measurements.md, "Measured flush latency"). Four of four
    * observed live skill injections were reported `failed` and then re-run by
    * the escalation restart.
    */

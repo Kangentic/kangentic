@@ -191,7 +191,7 @@ const MAX_SUBMIT_ATTEMPTS = 5;
  * tying the second to the first is what made a delivered command read as
  * `failed`. Claude stamps a user turn at submit but flushes the JSONL later,
  * measured bimodal at ~780ms or ~1830ms after Enter in 2026-08 and ~330ms
- * typical on 2.1.276 (docs/command-injection.md, "Measured flush latency");
+ * typical on 2.1.276 (docs/architecture/automations/command-injection-measurements.md, "Measured flush latency");
  * a skill invocation adds its expansion before the stamp.
  * Five 400ms windows total 2000ms, which the slow mode alone exceeds once
  * expansion is added. Pressing Enter a sixth time would buy nothing (the

@@ -86,7 +86,7 @@ reasoned exception rather than oversight:
   "throws on I/O errors, callers decide"; it is the shared primitive `safeWriteJson` itself
   mirrors, not a site this rule governs.
 - `src/main/announcements-archive.ts` - already guarded with its own try/catch, and deliberately
-  reports nothing (`docs/configuration.md`: announcements "never emit error telemetry"; losing the
+  reports nothing (`docs/releases/announcements.md`: announcements "never emit error telemetry"; losing the
   local archive costs a badge count, never a user action). Routing it through `safeWriteJson`
   would wire a badge count into the same Sentry report and user-facing toast this rule exists to
   add for state that actually matters - do not "fix" it into scope.

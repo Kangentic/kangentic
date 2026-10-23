@@ -1,4 +1,11 @@
-# Release Smoke Checklist
+---
+type: Guide
+title: Release smoke checklist
+description: The manual smoke test run against a packaged build with a real authenticated OpenCode CLI (create, plan, finish, resume, conversation continuity), the macOS launch overlay check, and what to do when a step fails.
+tags: [release, smoke-test, opencode, manual]
+sources: []
+---
+# Release smoke checklist
 
 Manual validation against real, authenticated agent CLIs, run against a release's built artifacts. Automated tests use mock fixtures (`tests/fixtures/mock-*.{js,cmd}`) which exercise spawn, capture, and resume mechanics but do not exercise real model latency, real tool calls, or conversation continuity across resume. This checklist closes that gap.
 

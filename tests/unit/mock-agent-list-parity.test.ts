@@ -2,7 +2,7 @@
  * Self-maintaining guard for a gap that let 'qwen' silently go missing from
  * the UI mock's `agents.list()` fixture: `agent-registry.ts` registers an
  * adapter, but `tests/ui/mock-electron-api.js` (the headless mock every UI
- * spec runs against - `docs/developer-guide.md`'s UI tier) is a hand-authored
+ * spec runs against - `docs/contributing/developer-guide.md`'s UI tier) is a hand-authored
  * fixture with no mechanical tie to the registry, so a new adapter can ship
  * with zero UI-tier coverage and nothing fails until a real launch surfaces
  * the missing agent in the dropdown.

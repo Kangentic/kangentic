@@ -8,7 +8,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 |----------|-----------|
 | New user | [Installation](installation.md) |
 | Evaluating the product | [Overview](overview.md) |
-| Contributing code | [Developer Guide](developer-guide.md) |
+| Contributing code | [Developer Guide](contributing/developer-guide.md) |
 | Understanding the system | [Architecture](architecture/system-overview.md) |
 
 ## Reference
@@ -23,7 +23,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 ### Architecture
 - [Architecture](architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
 - [Session Lifecycle](architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
-- [Transition Engine](transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
+- [Transition Engine](architecture/automations/transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
 - [Database](database/index.md) -- Schema (including session_transcript_chunks and handoffs tables), migrations, repository pattern, connection management
 - [Command Terminal](architecture/renderer/command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
 - [Activity Marks](architecture/renderer/activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
@@ -31,7 +31,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 ### Integration
 - [Agent Integration](integrations/agents/index.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
 - [Adapter Session History](integrations/agents/session-history.md) - Native session-history file formats Kangentic reads for real-time telemetry; the authoritative reference for the sessionHistory hook
-- [Command Injection](command-injection.md) - How a column's message to its agent and its model/effort settings reach a live session, the verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
+- [Command Injection](architecture/automations/command-injection.md) - How a column's message to its agent and its model/effort settings reach a live session, the verifier contract, retry semantics, and the measured per-agent support matrix (plus how to graduate an agent)
 - [Board Integration](integrations/boards.md) -- BoardAdapter interface, registry, GitHub/Azure DevOps/Jira/Linear/etc., how to add a new provider
 - [PR Integration](integrations/pull-requests/index.md) - PRConnector interface, registry and its remote-ownership gate, GitHub/Azure DevOps connectors, the confidence-ladder linker, background refresh, where PR state is stored
 - [Mobile Bridge](integrations/mobile-bridge/index.md) - Desktop half of the mobile companion app: `@kangentic/protocol` package, pairing ceremony, signed device roster, capability verbs, relay transport
@@ -42,12 +42,12 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Worktree Strategy](architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery, cleanup
 
 ### Operations
-- [Analytics](analytics.md) -- Telemetry events, opt-out, privacy
-- [Configuration](configuration.md) -- Config cascade, all settings keys, permission modes
-- [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging, security fuses
-- [Deployment](deployment.md) -- Release pipeline, code signing, auto-update, npx launcher
-- [Developer Guide](developer-guide.md) -- Setup, build system, testing, conventions
-- [Release Smoke Checklist](release-checklist.md) -- Manual real-LLM validation gate run against draft builds before publish
+- [Analytics](telemetry/index.md) -- Telemetry events, opt-out, privacy
+- [Configuration](settings/index.md) -- Config cascade, all settings keys, permission modes
+- [Cross-Platform](platforms/index.md) -- Shell resolution, path handling, packaging, security fuses
+- [Deployment](releases/deployment.md) -- Release pipeline, code signing, auto-update, npx launcher
+- [Developer Guide](contributing/developer-guide.md) -- Setup, build system, testing, conventions
+- [Release Smoke Checklist](releases/release-checklist.md) -- Manual real-LLM validation gate run against draft builds before publish
 
 ### Historical
 

@@ -68,7 +68,7 @@ agy stores workspace trust as `trustedWorkspaces: string[]` (exact absolute path
 
 Each conversation writes a parseable JSONL transcript at `~/.gemini/antigravity-cli/brain/<conversationId>/.system_generated/logs/transcript.jsonl` (steps: `USER_INPUT` with the prompt wrapped in `<USER_REQUEST>`, `PLANNER_RESPONSE` with `thinking` / `content` / `tool_calls`, `ERROR_MESSAGE`, `CHECKPOINT`). `parseTranscript` maps it into `TranscriptEntry[]` and `transcriptToolCounts` counts its tool calls. The conversation store itself (`conversations/<uuid>.db`) is SQLite with opaque protobuf step payloads and is not read.
 
-The transcript flushes ON SUBMIT (measured: 84ms worst append latency across short and long turns), which is what qualifies the command-injection verifier - see [command-injection.md](../../command-injection.md).
+The transcript flushes ON SUBMIT (measured: 84ms worst append latency across short and long turns), which is what qualifies the command-injection verifier - see [command-injection.md](../../architecture/automations/command-injection.md).
 
 ## Limitations
 

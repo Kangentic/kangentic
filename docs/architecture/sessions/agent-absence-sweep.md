@@ -278,7 +278,7 @@ returns no pid once the exit code is set.
 The **WSL exclusion covers a different failure than the others**: there the tree signal is
 UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32
 descendant of it either way - a distro-native CLI is a Linux process in another PID namespace, and
-the interop path Kangentic actually uses ([cross-platform.md](../../cross-platform.md#wsl-runs-the-windows-binary-interop))
+the interop path Kangentic actually uses ([cross-platform.md](../../platforms/shells-and-paths.md#wsl-runs-the-windows-binary-interop))
 launches the Windows binary through WSL's binfmt host rather than under this `wsl.exe`. Since the
 Windows probe enumerates `Win32_Process`, a perfectly HEALTHY WSL agent presents an empty descendant
 set and passes every other arm, so the sweep would force-kill live work. Refusing to judge it fails

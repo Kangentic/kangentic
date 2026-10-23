@@ -266,7 +266,7 @@ export async function resolveShimLaunch(
 
   if (isUnixLikeShell(shell) && !isWslShell(shell)) {
     // Git Bash. WSL is excluded: it cannot launch a `.cmd` at all (documented
-    // in docs/cross-platform.md), and the sh shim would run a Windows bundle
+    // in docs/platforms/shells-and-paths.md), and the sh shim would run a Windows bundle
     // under a Linux node, so that route stays as it is.
     const siblingPath = shimSibling(agentPath, '');
     const readFileHead = dependencies.readFileHead ?? readFileHeadFromDisk;

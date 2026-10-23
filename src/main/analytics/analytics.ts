@@ -7,7 +7,7 @@ import { initialize as aptabaseInit, trackEvent as aptabaseTrack } from '@aptaba
  * production project: the SDK picks its host from the key's middle segment,
  * and an `A-DEV-<digits>` key routes to http://localhost:3000. That is the
  * verification rig for anything in the quit path or the once-per-run events
- * (scripts/aptabase-sink.mjs; docs/analytics.md, "Local verification"). An
+ * (scripts/aptabase-sink.mjs; docs/telemetry/usage-analytics.md, "Local verification"). An
  * env var rather than a source edit, so the rig never needs a change that
  * could be committed by accident.
  */

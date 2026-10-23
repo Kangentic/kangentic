@@ -754,7 +754,7 @@ async function runRows(
  * painting, not the turn. The CLI repaints its status line while its own
  * background agents run, and those can run for minutes after the Stop with no
  * `SubagentStart` and no transcript. The repaint rate is measured in
- * docs/transition-engine.md, under the turn-end trigger. A pass that dropped
+ * docs/architecture/automations/transition-engine.md, under the turn-end trigger. A pass that dropped
  * the turn there left the rows for a user prompt to bring. Nothing here writes
  * to the terminal: a Condition check reads the transcript, a move needs no
  * terminal, and a message's own delivery waits for its own quiet window and

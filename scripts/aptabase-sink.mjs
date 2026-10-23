@@ -17,7 +17,7 @@
  * properties.
  * This is the acceptance test for anything in the quit path (nothing sent
  * from there can land, which is why app_launch reports the previous run) and
- * for the once-per-run events. See docs/analytics.md, "Local verification".
+ * for the once-per-run events. See docs/telemetry/usage-analytics.md, "Local verification".
  */
 import http from 'node:http';
 

@@ -232,7 +232,7 @@ and drives the timers with fake time:
 - Skips a tick when the project is no longer the current one
 
 `fetch-throttle.test.ts` pins the env the fetch runs under: the default hands the child main's
-environment (without Crashpad's pipe name, see `docs/cross-platform.md`) so a user-driven fetch can
+environment (without Crashpad's pipe name, see `docs/platforms/windows.md`) so a user-driven fetch can
 still prompt, and `nonInteractive` hands BOTH git calls (the common-dir probe
 and the fetch) an env with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`.
 

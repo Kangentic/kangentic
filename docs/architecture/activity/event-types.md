@@ -180,7 +180,7 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   the stamp it was keyed to is the one the turn end reports. A turn with no anchor (no trail
   read yet, a fresh spawn, or an agent with no window read) reads the newest reply in the
   transcript instead. See
-  [Transition engine](../../transition-engine.md#on-agent-turn-end).
+  [Transition engine](../automations/triggers.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
   Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode and Kimi (whose
   wire protocol emits `TurnEnd`); false for agents whose only signal is

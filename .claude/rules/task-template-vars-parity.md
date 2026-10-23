@@ -7,7 +7,7 @@ paths:
   - "src/main/transition-engine/transition-engine.ts"
   - "src/renderer/components/dialogs/BoardManagerDialog.tsx"
   - "src/renderer/components/TemplateVariablePicker.tsx"
-  - "docs/transition-engine.md"
+  - "docs/architecture/automations/transition-engine.md"
   - "docs/architecture/system-overview.md"
 ---
 # Rule: task-template-variable parity (chips + resolvers + docs track one catalog)
@@ -43,7 +43,7 @@ When you add, rename, or remove a task-template keyword:
    Manager's automation fields use `'automation'`, and Settings' Workflow agent prompt uses
    `'workflow'`. Because it shows the description too, a new keyword's `description` is
    user-facing copy, not just a docs string: keep it to one line (the menu clamps it).
-4. **Docs:** document the new keyword in both `docs/transition-engine.md` (Template Variables)
+4. **Docs:** document the new keyword in both `docs/architecture/automations/transition-engine.md` (Template Variables)
    and `docs/architecture/system-overview.md` (Transition Engine > Automation adapters). This
    couples to [[docs-stay-in-sync]].
 5. **Resolution semantics are per-keyword, not a blanket rule.** `{{baseBranch}}` resolves to the
@@ -74,7 +74,7 @@ When you add, rename, or remove a task-template keyword:
 - **Test (mechanical, CI):** `tests/unit/task-template-vars-parity.test.ts` asserts (a) every
   catalog name has a resolver and vice versa; (b) `TASK_TEMPLATE_VARS` covers exactly the catalog
   names, and that the dialog maps the catalog rather than hardcoding chips of its own; (c) every
-  chip is documented in both `docs/transition-engine.md` and
+  chip is documented in both `docs/architecture/automations/transition-engine.md` and
   `docs/architecture/system-overview.md`; plus red-green coverage of the `{{baseBranch}}` effective-default fix
   and the `interpolateTaskTemplate` drop-and-collapse semantics (including that a substituted
   value containing literal `{{...}}` text is never re-scanned). Runs in CI via `npm run test:unit`.

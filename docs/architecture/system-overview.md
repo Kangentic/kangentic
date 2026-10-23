@@ -189,7 +189,7 @@ build on a spawn-path file that reads a lane's strategy fields without folding t
 Because a profile and the task's Advanced pins are mutually exclusive (enforced in
 `TaskRepository`), a profile task has no pins - so `lockAdvancedOverridesOnFirstSpawn` never fires
 for it and the ladder survives the task's whole life. See
-[Configuration > Board Profiles](../configuration.md#board-profiles).
+[Configuration > Board Profiles](../settings/board-config.md#board-profiles).
 
 ## Transition Engine
 
@@ -200,8 +200,8 @@ When a task moves between swimlanes, the IPC handler checks priorities in order:
 1. **Target is To Do** → Forget the PR link of a task that did its own work as the move commits, then kill the session, reap what the task left running, and remove the worktree (and the branch when `git.autoCleanup` is on)
 2. **Target is Done** → Suspend session (resumable), archive task
 3. **Target has auto_spawn=false** → Suspend session
-4. **Task has active session** → A model or effort change to a concrete value suspends and respawns so the new `--model` / `--effort` / `--permission-mode` land as CLI flags (never a typed `/model` or `/effort`). Otherwise live-inject the column's message, or keep the session alive (a permission-only change never restarts). Either keep-alive return then runs the destination's On enter group, with the already-delivered message named to the runner so it is not sent twice. See [Transition Engine](../transition-engine.md) Priority 3 for the full sub-case order.
-5. **Task has no session** → Create worktree (if enabled), run the destination's On enter group with the fallback spawn handed in, so the agent starts right before the first automation that needs it. For resumed sessions, the column's message is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn message stops at `failed`. See [Command Injection](../command-injection.md) for the delivery ladder.
+4. **Task has active session** → A model or effort change to a concrete value suspends and respawns so the new `--model` / `--effort` / `--permission-mode` land as CLI flags (never a typed `/model` or `/effort`). Otherwise live-inject the column's message, or keep the session alive (a permission-only change never restarts). Either keep-alive return then runs the destination's On enter group, with the already-delivered message named to the runner so it is not sent twice. See [Transition Engine](automations/transition-engine.md) Priority 3 for the full sub-case order.
+5. **Task has no session** → Create worktree (if enabled), run the destination's On enter group with the fallback spawn handed in, so the agent starts right before the first automation that needs it. For resumed sessions, the column's message is preloaded as the resume prompt. For fresh spawns, it is injected via `TerminalSubmitScheduler.scheduleKeystrokes`. Note that escalation to a restart-with-prompt is wired ONLY on the warm-session column move (`task-move.ts`); neither fresh-spawn call site passes an `escalate` handler, so an unconfirmed fresh-spawn message stops at `failed`. See [Command Injection](automations/command-injection.md) for the delivery ladder.
 
 The SOURCE column's On exit group runs ahead of all five, in Phase 1 inside the short lock, after
 the DB write and before the priority branches: Priority 1 kills the session, so an exit automation
@@ -213,7 +213,7 @@ outcome in `automation_runs` and the next row still runs.
 The column's On agent turn end group is not part of a move: `automations/turn-end/turn-end-runner.ts`
 runs it when the agent working a task finishes a turn there (`SessionManager`'s `'turn-ended'`),
 outside the task lock, one pass per task, and a Move to column row in it moves the task through
-`handleTaskMove` like any other mover. See [Transition Engine](../transition-engine.md#on-agent-turn-end).
+`handleTaskMove` like any other mover. See [Transition Engine](automations/triggers.md#on-agent-turn-end).
 
 ### Automation adapters
 
@@ -242,9 +242,9 @@ takes the same warn-and-skip path without being named in that list.
 an alias for `message`, by the board-config reader (`apply-automations.ts`), the MCP and command
 paths, and the legacy-action migration alike, so a hand-written file that predates the rename still
 opens. Neither alias is written back. See
-[Configuration](../configuration.md#column-automations).
+[Configuration](../settings/cascade.md#column-automations).
 
-Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{workflow_xml}}` (a workflow task's `<workflow>` block, empty for any other task), `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. A workflow agent's first message (Settings > Workflows) has no task: it offers `{{projectName}}`, `{{projectPath}}` and `{{baseBranch}}`, plus its own `{{columns}}` (what each column runs, and how recent tasks went through it) and `{{brief_xml}}` (what the workflow was made from). One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](../transition-engine.md#template-variables).
+Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{{workflow_xml}}` (a workflow task's `<workflow>` block, empty for any other task), `{{taskId}}`, `{{taskNumber}}`, `{{projectPath}}`, `{{projectName}}`, `{{worktreePath}}`, `{{branchName}}`, `{{baseBranch}}`, `{{prUrl}}`, `{{prNumber}}`, `{{prState}}`, `{{issueKey}}`, `{{issueUrl}}`, `{{labels}}`, `{{attachments}}`, `{{port}}`, plus `{{column}}`, `{{fromColumn}}`, `{{toColumn}}`, `{{trigger}}` and `{{agentReply}}` in a column automation, where there is a move to read them from. A workflow agent's first message (Settings > Workflows) has no task: it offers `{{projectName}}`, `{{projectPath}}` and `{{baseBranch}}`, plus its own `{{columns}}` (what each column runs, and how recent tasks went through it) and `{{brief_xml}}` (what the workflow was made from). One declaration (`src/shared/task-template-vars.ts`) drives the `auto_command` field, the `spawn_agent` promptTemplate, and the Automation section's "Template variable" picker, which lists each variable with its description - see [Transition Engine](automations/transition-engine.md#template-variables).
 
 ## PTY Session Manager
 
@@ -427,9 +427,9 @@ Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-defau
 - [Agent Integration](../integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Board Integration](../integrations/boards.md) -- BoardAdapter interface, registry, how to add a new provider
 - [Mobile Bridge](../integrations/mobile-bridge/index.md) - Pairing ceremony, signed device roster, capability verbs, relay transport
-- [Transition Engine](../transition-engine.md) -- Automation adapters, triggers, template variables, priority rules
+- [Transition Engine](automations/transition-engine.md) -- Automation adapters, triggers, template variables, priority rules
 - [Database](../database/index.md) -- Full schema reference, migrations, repository pattern
-- [Configuration](../configuration.md) -- Config cascade, all settings keys
-- [Cross-Platform](../cross-platform.md) -- Shell resolution, path handling, packaging
+- [Configuration](../settings/index.md) -- Config cascade, all settings keys
+- [Cross-Platform](../platforms/index.md) -- Shell resolution, path handling, packaging
 - [Activity Detection](activity/index.md) -- Event pipeline, thinking/idle state derivation
 - [Worktree Strategy](worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery

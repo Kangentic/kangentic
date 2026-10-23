@@ -101,7 +101,7 @@ This setting uses the `\\?\` extended-length path prefix on Windows. macOS and L
 `core.longpaths` covers git itself. Node and the JVM handle long paths on their own (measurement:
 1,958 files past MAX_PATH in a real worktree, with `npm install` and Gradle both succeeding), so the
 toolchains that run inside a worktree are largely unaffected too. See
-[cross-platform.md](../../cross-platform.md#windows-max_path-is-mostly-not-the-wall-people-expect) for the
+[cross-platform.md](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect) for the
 measurements and for the one limit that does bind, which is CMake's own object-path policy rather
 than the operating system.
 

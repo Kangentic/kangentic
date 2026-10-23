@@ -188,11 +188,11 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 |---------|---------|---------|
 | `boardConfig:exists` | invoke | Check if `kangentic.json` exists for the active project |
 | `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open, AFTER the open-time apply below) |
-| `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB). The same apply also runs unprompted on project open when the file exists, before the export - see [Board Config Sync](../../configuration.md#board-config-sync-kangenticjson) |
+| `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB). The same apply also runs unprompted on project open when the file exists, before the export - see [Board Config Sync](../../settings/board-config.md#board-config-sync-kangenticjson) |
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
 | `boardConfig:warnings` | on | Event: the project-open reconcile's warnings for the board's warning banner, sent on every open (an empty list clears it) |
 | `boardConfig:getLastWarnings` | invoke | The warnings of a project's last apply. The renderer fetches them each time a project becomes current, for the push it drops when it lands first (a launch restore, an open by folder path) |
-| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](../../configuration.md#board-profiles)). An optional `projectId` reads another registered project's board |
+| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](../../settings/board-config.md#board-profiles)). An optional `projectId` reads another registered project's board |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |
