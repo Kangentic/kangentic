@@ -97,8 +97,10 @@ source file maps to.
 ### Data Flow
 1. User drags a task between columns (swimlanes)
 2. `TASK_MOVE` IPC handler fires in main process
-3. Transition engine checks for actions attached to that lane transition
-4. `spawn_agent` action builds a Claude CLI command and spawns a PTY session
+3. The priority ladder decides the task's session (reset, suspend, keep, or respawn), and the
+   destination column's automations run
+4. A column that runs an agent starts it through `spawnAgent`: the agent's adapter builds its
+   CLI command, and the PTY session runs in the pty host
 5. Terminal output streams to renderer via IPC
 
 ### Key Patterns

@@ -308,4 +308,4 @@ When a suspended task moves to an active column:
   suppressed row is recorded `skipped` with the reason, rather than being
   allowed to run against a `deliverToAgent` that silently does nothing and then
   report a success for a message nobody received. See
-  [Transition Engine](../automations/transition-engine.md#command-injection).
+  [The column's message on a move](../automations/transition-engine.md#the-columns-message-on-a-move).

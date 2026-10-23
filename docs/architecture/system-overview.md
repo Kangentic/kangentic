@@ -111,46 +111,20 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 
 ## Database
 
-Two SQLite databases using better-sqlite3 with WAL mode and foreign keys enabled.
+Two SQLite databases through better-sqlite3, in WAL mode with foreign keys on. The global
+database (`<configDir>/index.db`, `KANGENTIC_DATA_DIR` overrides the folder) holds the project list,
+project groups and global config. Each project's database (`<configDir>/projects/<projectId>.db`,
+created on project open and kept outside the project folder) holds its columns, tasks, column
+automations and their runs, workflows and task links, sessions, transcripts, handoff records, the
+usage ledger, and the Knowledge Graph's index and transcript archive, which only the retrieval
+worker reads and writes. Repositories are one class per table with synchronous queries.
 
-### Global DB (`<configDir>/index.db`)
-
-Platform-dependent config directory:
-- **Windows:** `%APPDATA%/kangentic/`
-- **macOS:** `~/Library/Application Support/kangentic/`
-- **Linux:** `$XDG_CONFIG_HOME/kangentic/` (defaults to `~/.config/kangentic/`)
-
-Overridable via `KANGENTIC_DATA_DIR` env var.
-
-Stores the project list. Tables:
-
-- **projects** -- id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, last_opened, created_at
-- **global_config** -- key/value store for app-wide settings
-- **project_groups** -- sidebar grouping for projects. Fields: id, name, position, is_collapsed
-
-### Per-Project DB (`<configDir>/projects/<projectId>.db`)
-
-Created on project open. Stored in the global config directory (not inside the project). Tables:
-
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null, set only at create, narrowed on read via `normalizeSwimlaneRole` and normalized when applied from `kangentic.json`, with an unconditional migration repairing any stray value already on disk. See [Database](../database/index.md)), position, color, icon, is_archived, permission_mode, auto_spawn, agent_override, model_override, effort_override, handoff_context, plan_exit_target_id, session_target, session_spawn_strategy, is_ghost, created_at, description (plus the retired `auto_command` / `auto_command_mode`, which the column's message automation replaced)
-- **tasks** - Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, agent_override, model_override, effort_override, permission_mode, auto_command, auto_command_state, auto_command_text, auto_command_error, auto_command_at, profile_id, run_mode, session_id, worktree_path, worktree_folder, worktree_skip_reason, branch_name, pushed_branch, pr_number, pr_url, pr_state, pr_merge_readiness, head_sha, base_branch, resolved_base_branch, use_worktree, labels, priority, external_id, external_source, external_url, detail_view_state, workflow_id, workflow_project_id, route_start_swimlane_id, route_last_swimlane_id, skipped_swimlane_ids, canvas_x, canvas_y, archived_at, created_at, updated_at (the canonical column table lives in [Database](../database/index.md); this list is a pointer, not a second source of truth)
-- **column_automations** - What runs when a task enters a column, when its agent finishes a turn there, and when the task leaves. Fields: id, swimlane_id, name, type (`send_message`, `run_script`, `webhook`, `notify`, `move_to_column`, plus the legacy `spawn_agent`), trigger (`enter`/`turn_end`/`exit`), position, enabled, config_json, condition (the row's Condition in plain words, answered by the Automation agent; NULL runs always), final_line (the other Condition kind, a Text match against the agent's last line checked in code, on a turn_end row only; a row holds one kind), max_runs (Frequency, the most runs per task since it last left Done; NULL is no limit), created_at, updated_at. One list per column, numbered per trigger, with names unique per column
-- **automation_runs** - One row per execution, so an outcome survives a restart and a rename. Fields: id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status (`running`/`succeeded`/`failed`/`skipped`/`interrupted`), detail, attempts, started_at, finished_at, condition_met, condition_reason (the Automation agent's yes or no and its one-line reason, NULL for a row without a Condition), background_call_id, final_line_met, final_line_reason (a Text match's result and the line it read, NULL for a row without one). Swept on project open: stale `running` rows become `interrupted`, then the newest 200 are kept, plus every counted run of an automation with a Frequency limit on a task that is not archived
-- **task_moves** - One row per column a task entered: id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at. Written by `TaskRepository` in the move's own transaction. It is the visit boundary turn-end automations count from, read through `TaskMoveRepository`. See [Database](../database/index.md)
-- **workflows** - A set of linked tasks that runs on its own, in the project it was made in. Fields: id, title, brief, source_task_id, state (`draft`/`running`/`paused`/`done`), draft_json (the plan until Start), color_slot, revision, created_at, started_at, finished_at, paused_at, plus the workflow agent's conversation, grid and read access (agent_name, agent_session_id, agent_cwd, agent_read_project_ids, agent_pty_cols, agent_pty_rows). See [Workflows](workflows/workflow-engine.md) and [Database](../database/index.md)
-- **task_links** - "This task waits for that one to reach Done", kept in the workflow's home database. Fields: id, workflow_id, blocker_project_id, blocker_task_id, blocked_project_id, blocked_task_id, created_at. No foreign key to `tasks`, since an end can sit in another project's database
-- **actions**, **swimlane_transitions** -- Retired by the migration that created `column_automations`. Left on disk only so an older build can still read the file; nothing reads them after the migration. See [Database](../database/index.md)
-- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, agent_session_id, isolated_swimlane_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, started_at, suspended_at, exited_at, suspended_by, total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, applied_model, applied_effort, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed, tool_breakdown, compaction_count, last_pty_cols, last_pty_rows, result_tokens_read_at, transcript_path (the canonical column table lives in [Database](../database/index.md); this list is a pointer, not a second source of truth)
-- **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
-- **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
-- **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
-- **session_transcript_chunks** -- ANSI-stripped PTY output per session, one row per flush. Written by `TranscriptWriter` with a 30s debounced flush (early-flushed at 64KB pending) to the session's own project database. Used for cross-agent handoff context and raw `kangentic_get_transcript`. No FK and no delete trigger: a transcript outlives its session row. The legacy `session_transcripts` table (one value per session, rewritten whole on each flush) is read until the retrieval worker converts its rows.
-- **memory_\*, conversation_turn_usage, turn_spawn_links, session_activity_intervals** -- The retrieval index (chunks, full-text and vector tables, per-document state and sums, task summaries) and the durable usage, subagent-spawn and activity ledgers. The index is read and written only by the retrieval worker. Their column tables live in [Database](../database/index.md).
-- **transcript_archive_state, transcript_archive_rows** -- The structured transcript archive: each conversation's parsed entries, Brotli-compressed, kept after the agent deletes its own file. Read and written only by the retrieval worker, whatever the Knowledge Graph indexing switch says. See [Database](../database/index.md).
-- **handoffs** -- Cross-agent handoff records. Tracks from/to agents and sessions, stores serialized `ContextPacket` (transcript excluded). FK on task_id with CASCADE delete.
-- **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model, agent). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the usage dashboard's period totals, cost-per-day series, and by-model / by-agent breakdowns (Live/Today/Week/Month/All Time) via `usage:getDashboardStats` and the `kangentic_get_usage_stats` MCP tool. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitChurn` (`src/main/ipc/handlers/git-stats-capture.ts`, fired on every session finalization - suspend, move, handoff, respawn, natural exit - not just move-to-Done; writes to exactly one record per task lineage via `setTaskGitStats` to avoid double-counting branch-cumulative churn across `--resume` records, and writes nothing once the task's PR is merged or the task is archived with a capture stored). The dashboard's SESSIONS KPI and Live view additionally merge in-flight sessions from the live `SessionManager` (deduped by `session_record_id` against the ledger) so running sessions are not undercounted before they finalize.
-
-Repositories follow a simple pattern -- one class per table, all queries are synchronous (better-sqlite3). Transactions used for position shifts (task move, task reorder, swimlane reorder). Task reorder (`reorderWithinSwimlane`) is a dense 0..N-1 rewrite that heals the position gaps `move()`'s arithmetic shift leaves behind.
+Where each database lives and how a connection opens is in
+[Storage model](../database/storage-model.md). Every table's columns are in
+[Board tables](../database/board-tables.md), [Session tables](../database/session-tables.md) and
+[Knowledge Graph tables](../database/knowledge-graph-tables.md), each repository's methods in
+[Repositories](../database/repositories.md), and every schema change in
+[Migrations](../database/migrations.md).
 
 ## Agent Resolution
 

@@ -32,6 +32,8 @@ Agents read it back through the `kangentic_get_transcript` MCP tool's `raw` form
 Everything in this section runs in the [pty host](crash-recovery.md#pty-host); main relays what a renderer or a
 phone needs and reads the rest by request.
 
+### Buffering and the scrollback ring
+
 - PTY `onData` accumulates into a per-session buffer.
 - A 16ms flush interval (~60fps) sends buffered data to main for a session in the focused union,
   which main forwards via IPC `session:data`. A phone's stream gets every flushed byte as `tap`, for
@@ -95,6 +97,9 @@ phone needs and reads the rest by request.
   not a byte-offset heuristic; and since the byte path now serves stable-geometry normal-buffer
   sessions, a trim there would discard genuine user-scrollable history, not just a TUI's redraw
   bytes.
+
+### Grid width and fit
+
 - **One grid width per mount (deterministic fit).** `describeProposedDimensions`
   (`src/renderer/addons/fit-addon.ts`, the single implementation that both `proposeDimensions` and
   `fit` read) is a pure function of two inputs and no others: the container geometry, and the ACTIVE
@@ -148,6 +153,9 @@ phone needs and reads the rest by request.
   resume), and `handleRendererChange` answers it: an unheld terminal re-measures, while a held one
   rescales its remembered natural cell by how far its conformed cell moved across the swap and
   re-conforms the held grid for the new metrics.
+
+### The resting grid and phone-streamed sessions
+
 - **A session nobody is showing goes to the resting grid.** A PTY has ONE
   grid and every surface fits it to its own box, so a session last shown in the bottom panel was
   left at that panel's strip - measured live at 306x14 - with nothing to give it back. The agent
@@ -248,6 +256,9 @@ phone needs and reads the rest by request.
   `tests/unit/mobile-bridge/read-stream.test.ts`, the change-hook test in
   `tests/unit/mobile-bridge/subscription-registry.test.ts`, and `panelTerminalSessionIdFor` in
   `tests/unit/focused-sessions.test.ts`.
+
+### Width self-heal and geometry re-assert
+
 - **The width-drift self-heal (PTY dims echo + owner re-assert).** xterm re-sends its dimensions
   only when its OWN size changes, so a PTY reshaped under a mounted xterm (a lost or overridden
   resize on a surface flip, a respawn at stashed dims, any last-writer-wins race - `resize()`
@@ -345,6 +356,9 @@ phone needs and reads the rest by request.
   block in `tests/unit/session-manager.test.ts` and the respawn latch-cleanup tests in
   `tests/unit/session-spawn-flow.test.ts`; the diagnostic is exercised by
   `tests/unit/composed-width.test.ts` and `tests/unit/devtools-terminal-state.test.ts`.
+
+### Scrollback replay
+
 - **Repaint-settled scrollback sampling.** A session with no better grid spawns at a default
   120x30 (a respawn takes its predecessor's grid and a resume takes its recorded one, see below).
   A PTY that does start at the default, such as an auto-resume whose record carries no grid, sits
@@ -525,6 +539,9 @@ phone needs and reads the rest by request.
   replay lifecycle is traced (`replay-start` / `-write` / `-abort` / `-done` / `-error` /
   `-watchdog`, each with its generation) and surfaces in `kangentic_devtools_terminal_state`, so an
   abandoned replay is readable directly instead of inferred from a missing later event.
+
+### Focus catch-up, input pacing and repaint
+
 - **Focus-edge catch-up, the wider sibling of park/reveal.** Main gates PTY emission on its focused
   union, but the only catch-up repaint used to be `onTerminalReveal`, which fires on the PARKED
   edge. Parking implies unfocus, not the reverse, so every session that left the union WITHOUT
@@ -591,6 +608,7 @@ phone needs and reads the rest by request.
   CLI renderer's, not the host's. Every host-side workaround site carries an
   `UNWIND(claude-code#83714)` marker; grep for it and sweep them out when upstream fixes the
   renderer.
+
 - **Trace vocabulary for the two mechanisms above.** `focus-union-gained` / `focus-union-lost`
   (main, `recomputeFocusedUnion`), `terminal-unfocus` / `terminal-refocus` (renderer,
   `focused-terminals.ts`), and `repaint-repaired` / `repaint-verified` (renderer,
@@ -610,6 +628,8 @@ phone needs and reads the rest by request.
   `kangentic_devtools_terminal_state`'s timeline alongside the resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
   companion: renderer viewport rows, main's re-parsed grid, and the raw byte ring side by side,
   which is what separates "the agent never sent these rows" from "we lost them".
+### Traces and the launch overlay
+
 - **The main trace survives a restart (dev builds).** Both rings live in memory, and the usual
   response to a stuck terminal is to restart, which erased the only record of one: two task
   windows whose agents painted full-width rows for the bottom panel's 306x19 grid inside a 210x48
