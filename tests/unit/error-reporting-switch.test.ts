@@ -890,6 +890,32 @@ describe('error reporting runtime behavior (module-state gated)', () => {
       expect(result).toBe(event);
       expect(event.message).toBe('failed in ~');
     });
+
+    it('rewrites a registered project root on another drive through the REAL Sentry.init() wiring (DESKTOP-21)', async () => {
+      // A project off the home directory's drive was out of the home rewrite's
+      // reach, so a spawn's session directory reached Sentry whole. The ledger
+      // is imported AFTER initAndGetBeforeSend's module reset, so this writes
+      // the same instance the hook reads.
+      const beforeSend = await initAndGetBeforeSend();
+      const { rememberProjectRoots } = await import('../../src/main/shared/project-roots');
+      rememberProjectRoots(['D:\\work\\client-app']);
+      const sessionDirectory = 'D:\\work\\client-app\\.kangentic\\sessions\\abc';
+
+      const result = beforeSend(
+        {
+          exception: {
+            values: [{ type: 'Error', value: `Cannot create session directory at ${sessionDirectory}: ENOSPC` }],
+          },
+          tags: { source: 'spawn' },
+        },
+        {}
+      ) as ErrorEvent | null;
+
+      const exceptionValue = result?.exception?.values?.[0].value;
+      expect(exceptionValue).not.toContain('client-app');
+      expect(exceptionValue).toContain('[project]\\.kangentic\\sessions\\abc');
+      expect(result?.tags?.source).toBe('spawn');
+    });
   });
 });
 

@@ -116,6 +116,54 @@ describe('redactHomeDirectory', () => {
     expect(redactHomeDirectory('/home/dev/x', '', false)).toBe('/home/dev/x');
     expect(redactHomeDirectory('', POSIX_HOME, false)).toBe('');
   });
+
+  // A file URL writes a space as `%20`, and some encoders write `C:` as `C%3A` or encode the
+  // separators too. Matching only the raw spelling let a home folder with a space through.
+  it('replaces a percent-encoded spelling of a home path, hex digits in either case', () => {
+    const home = 'C:\\Users\\Dev User';
+    expect(redactHomeDirectory('file:///C:/Users/Dev%20User/AppData/x.js', home, true)).toBe('file:///~/AppData/x.js');
+    expect(redactHomeDirectory('file:///c%3a/Users/Dev%20User/y.js', home, true)).toBe('file:///~/y.js');
+    expect(redactHomeDirectory('?path=C%3A%5CUsers%5CDev%20User%5Cz', home, true)).toBe('?path=~%5Cz');
+    expect(redactHomeDirectory('?p=%2Fhome%2Fd%C3%A9v%2Fx and /home/d%c3%a9v/y', '/home/dév', false)).toBe(
+      '?p=~%2Fx and ~/y',
+    );
+  });
+
+  // URLSearchParams.toString() writes a space as `+`, not `%20`.
+  it('replaces a form-encoded spelling of a home path, where a space is a plus', () => {
+    const home = 'C:\\Users\\Dev User';
+    expect(redactHomeDirectory('?path=C%3A%5CUsers%5CDev+User%5Cz', home, true)).toBe('?path=~%5Cz');
+    expect(redactHomeDirectory(`?${new URLSearchParams({ path: `${home}\\z` }).toString()}`, home, true)).toBe(
+      '?path=~%5Cz',
+    );
+  });
+
+  // `encodeURIComponent` leaves `~` alone but `URLSearchParams` writes it `%7E`, and a Windows
+  // short-name home (`DEVUSE~1`) carries one.
+  it('replaces a home path whose tilde is percent-encoded as %7E, hex digits in either case', () => {
+    const home = 'C:\\Users\\DEVUSE~1';
+    expect(redactHomeDirectory('C%3A%5CUsers%5CDEVUSE%7E1%5Cx', home, true)).toBe('~%5Cx');
+    expect(redactHomeDirectory('c%3a%5cusers%5cdevuse%7e1%5cx', home, true)).toBe('~%5cx');
+    expect(redactHomeDirectory('C:\\Users\\DEVUSE~1\\x', home, true)).toBe('~\\x');
+  });
+
+  // `!`, `'`, `(`, `)` and `*` are raw in `encodeURIComponent`; `URLSearchParams` encodes all but `*`.
+  it('replaces a home path holding punctuation in its raw, encodeURIComponent and URLSearchParams spellings', () => {
+    const home = "C:\\Users\\Dev (1)\\App's!*";
+    const formEncoded = new URLSearchParams({ path: home }).toString();
+    expect(formEncoded).toBe('path=C%3A%5CUsers%5CDev+%281%29%5CApp%27s%21*');
+
+    expect(redactHomeDirectory("C:\\Users\\Dev (1)\\App's!*\\z", home, true)).toBe('~\\z');
+    expect(redactHomeDirectory(`${encodeURIComponent(home)}%5Cz`, home, true)).toBe('~%5Cz');
+    expect(redactHomeDirectory(`${formEncoded}%5Cz`, home, true)).toBe('path=~%5Cz');
+    // A third encoder writes the `*` too.
+    expect(redactHomeDirectory('C%3A%5CUsers%5CDev%20%281%29%5CApp%27s%21%2A%5Cz', home, true)).toBe('~%5Cz');
+  });
+
+  it('replaces a home path whose separators are percent-encoded in lowercase hex', () => {
+    expect(redactHomeDirectory('C%3a%5cUsers%5cDev%20User%5cz', 'C:\\Users\\Dev User', true)).toBe('~%5cz');
+    expect(redactHomeDirectory('%2fhome%2fdev%2fx', POSIX_HOME, false)).toBe('~%2fx');
+  });
 });
 
 describe('summarizeStderrTail', () => {
