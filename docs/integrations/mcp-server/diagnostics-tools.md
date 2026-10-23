@@ -8,8 +8,6 @@ sources:
   - resource: src/main/agent/mcp-http/session-tools.ts
     title: kangentic_query_db registration
   - resource: src/main/agent/commands/inspect-commands.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Diagnostics tools
 

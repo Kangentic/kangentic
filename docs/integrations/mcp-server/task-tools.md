@@ -9,8 +9,6 @@ sources:
   - resource: src/main/agent/commands/task-commands.ts
   - resource: src/main/agent/commands/task-ordering.ts
   - resource: src/main/agent/commands/move-message-limit.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Task tools
 

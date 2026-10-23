@@ -41,7 +41,7 @@ src/main/boards/
   index.ts
 ```
 
-The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agents](agents/index.md) for the analogous agent system.
+The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agent adapter interface](agents/adapter-interface.md) for the analogous agent system.
 
 ## BoardAdapter Interface
 

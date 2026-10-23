@@ -12,7 +12,7 @@ sources:
 ---
 # Background commands
 
-A background command the agent starts (a build, a test run, a dev server) holds its task `thinking` until the command exits, so a task never reads idle while its work runs. A command that is meant to stay up, a server or a watcher, is released by the agent with `kangentic_mark_background_service`, or kept out of the hold from the start by `--kangentic-no-activity-hold` in its command. Both end the hold without stopping the process. The engine side is in [Activity Detection](../../architecture/activity/index.md), "Opting a background shell out of the hold".
+A background command the agent starts (a build, a test run, a dev server) holds its task `thinking` until the command exits, so a task never reads idle while its work runs. A command that is meant to stay up, a server or a watcher, is released by the agent with `kangentic_mark_background_service`, or kept out of the hold from the start by `--kangentic-no-activity-hold` in its command. Both end the hold without stopping the process. The engine side is in [Background shells](../../architecture/activity/background-shells.md#opting-a-background-shell-out-of-the-hold).
 
 An agent takes part only when it declares `backgroundCommands`. A declaration is a measured claim with four conditions. `tests/unit/background-commands-declaration.test.ts` pins the list and checks the first two; the other two were measured against the real CLI:
 

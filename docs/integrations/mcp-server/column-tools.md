@@ -11,8 +11,6 @@ sources:
   - resource: src/main/agent/commands/analytics-commands.ts
   - resource: src/main/agent/commands/column-enums.ts
   - resource: src/main/agent/commands/column-resolver.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Column tools
 

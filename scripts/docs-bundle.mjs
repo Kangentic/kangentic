@@ -1,15 +1,16 @@
 /**
- * Helpers for the Open Knowledge Format v0.2 concepts under docs/: frontmatter, the GitHub heading
- * slug, heading and link extraction, and the concept list. A folder with an `index.md` is a concept
- * folder (today docs/integrations/agents/); the rest of docs/ is flat markdown with no frontmatter
- * (docs/log.md says why). The conformance test (tests/unit/okf-docs-conformance.test.ts) and
+ * Helpers for the Open Knowledge Format v0.2 bundle under docs/: frontmatter, the GitHub heading
+ * slug, heading and link extraction, and the concept list. Every markdown file but index.md and
+ * log.md is a concept. The conformance test (tests/unit/okf-docs-conformance.test.ts) and
  * /sync-docs read the docs through these, so the two cannot disagree about what a heading's anchor
  * is or what a concept's sources are.
  *
  *   node scripts/docs-bundle.mjs sources <repo path>...
  *
  * prints, for each path, the concepts whose `sources:` cover it: an entry that names the file, or a
- * directory the file sits under. /sync-docs uses it to map a changed source file to its docs.
+ * directory the file sits under. A concept that lists the file only for some of its parts is
+ * followed by those parts in brackets, from the entries' `title`. /sync-docs uses it to map a
+ * changed source file to its docs.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -265,15 +266,36 @@ export function sourcePathOf(entry) {
   return typeof entry === 'string' ? entry : entry?.resource ?? '';
 }
 
+function normalizeRepoPath(repoPath) {
+  return repoPath.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+/** Whether one `sources:` entry covers `target`: the file itself, or a directory above it. */
+function entryCovers(entry, target) {
+  const source = sourcePathOf(entry).replace(/\\/g, '/');
+  if (source.length === 0) return false;
+  if (source.endsWith('/')) return target.startsWith(source);
+  return target === source || target.startsWith(`${source}/`);
+}
+
 /** The concepts whose sources cover `repoPath`: the file itself, or a directory above it. */
 export function conceptsForSource(repoPath, concepts) {
-  const target = repoPath.replace(/\\/g, '/').replace(/^\.\//, '');
-  return concepts.filter((concept) => (concept.frontmatter?.sources ?? []).some((entry) => {
-    const source = sourcePathOf(entry).replace(/\\/g, '/');
-    if (source.length === 0) return false;
-    if (source.endsWith('/')) return target.startsWith(source);
-    return target === source || target.startsWith(`${source}/`);
-  }));
+  const target = normalizeRepoPath(repoPath);
+  return concepts.filter((concept) => (concept.frontmatter?.sources ?? []).some((entry) => entryCovers(entry, target)));
+}
+
+/**
+ * The parts of `repoPath` a concept documents, from the `title` of each entry that covers it, or
+ * null when an untitled entry covers it whole. A shared file such as `src/shared/types.ts` is listed
+ * by many concepts, each for its own symbols, so a change that touches none of a concept's parts
+ * does not concern that concept.
+ */
+export function coveredPartsOf(repoPath, concept) {
+  const target = normalizeRepoPath(repoPath);
+  const titles = (concept.frontmatter?.sources ?? [])
+    .filter((entry) => entryCovers(entry, target))
+    .map((entry) => (typeof entry === 'string' ? '' : String(entry?.title ?? '').trim()));
+  return titles.length > 0 && titles.every((title) => title.length > 0) ? titles.join('; ') : null;
 }
 
 function main(argv) {
@@ -284,8 +306,11 @@ function main(argv) {
   }
   const concepts = listConcepts();
   for (const repoPath of paths) {
-    const covering = conceptsForSource(repoPath, concepts);
-    console.log(`${repoPath}: ${covering.length === 0 ? '(no concept lists it)' : covering.map((concept) => concept.path).join(', ')}`);
+    const covering = conceptsForSource(repoPath, concepts).map((concept) => {
+      const parts = coveredPartsOf(repoPath, concept);
+      return parts === null ? concept.path : `${concept.path} [${parts}]`;
+    });
+    console.log(`${repoPath}: ${covering.length === 0 ? '(no concept lists it)' : covering.join(', ')}`);
   }
   return 0;
 }

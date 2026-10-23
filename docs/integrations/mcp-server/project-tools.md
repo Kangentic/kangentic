@@ -8,8 +8,6 @@ sources:
   - resource: src/main/agent/mcp-http/project-resolver.ts
   - resource: src/main/agent/mcp-http/task-tools.ts
     title: kangentic_move_task_to_project registration
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Project tools
 

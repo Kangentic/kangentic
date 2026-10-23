@@ -131,7 +131,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 > reconciliation warning naming that column: a toast and a board banner when the edit is applied to
 > an open project, console-only for a role already present at project open. An explicit
 > `"role": null` is simply a custom column and warns about nothing. See
-> [Database](../database/index.md) for the full validation chain.
+> [Board tables](../database/board-tables.md#swimlanes-table) for the full validation chain.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

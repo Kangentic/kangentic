@@ -8,8 +8,6 @@ sources:
   - resource: src/main/browser/browser-pane-driver.ts
   - resource: src/main/browser/guest-drive-queue.ts
   - resource: src/main/browser/dev-server-error.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Browser actions
 

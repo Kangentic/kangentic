@@ -6,8 +6,6 @@ tags: [mcp, profiles, board]
 sources:
   - resource: src/main/agent/mcp-http/profile-tools.ts
   - resource: src/main/agent/commands/profile-commands.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Board profile tools
 

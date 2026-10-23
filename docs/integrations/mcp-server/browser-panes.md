@@ -12,8 +12,6 @@ sources:
   - resource: src/main/browser/browser-pane-detach.ts
   - resource: src/main/browser/viewport-override.ts
   - resource: src/main/browser/browser-automation-config.ts
-  - resource: src/shared/mcp-tool-manifest.ts
-    title: MCP_TOOL_MANIFEST
 ---
 # Browser panes
 
@@ -81,7 +79,7 @@ With no arguments it resolves the caller's own pane through the same precedence 
 
 Scope is the caller's project by default, and the response always names the scope it applied (`this-project` / `all-projects`) plus `otherProjectPaneCount` for what it left alone, so a partial close is never reported as complete. `includeOtherProjects: true` is the explicit opt-in for a genuinely global close; it is off by default because another project may have an agent mid-verification in its pane. The response's `closed` and `skipped` arrays report what actually happened rather than what was attempted: a pane detached into its own pop-out window is the expected straggler, since it is mutually exclusive with the in-app mount and clearing the open flag does not unmount it.
 
-Cookie isolation is per task (`persist:kng-<projectId>-<taskId>`) so concurrent tasks' dev environments never share a `localhost` cookie jar, while the per-project identity jar (`persist:kng-<projectId>-identity`) shares non-localhost (IdP) logins across tasks. See [Embedded browser](../../architecture/embedded-browser/index.md).
+Cookie isolation is per task (`persist:kng-<projectId>-<taskId>`) so concurrent tasks' dev environments never share a `localhost` cookie jar, while the per-project identity jar (`persist:kng-<projectId>-identity`) shares non-localhost (IdP) logins across tasks. See [Embedded browser pane](../../architecture/embedded-browser/browser-pane.md#security-model).
 
 ### An agent's browser survives the window closing
 
