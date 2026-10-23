@@ -33,7 +33,7 @@ Click **Priorities** in the toolbar to manage the priority scale. The default sc
 
 ## Filtering
 
-Click **Filter** to filter by priority level and/or label. Active filters show a count badge on the Filter button. Use the search bar to filter items by title, description, or label text.
+Click **Filter** to filter by priority level and/or label. While filters are active, the Filter button shows how many, right after its label. Use the search bar to filter items by title, description, or label text.
 
 ## Multi-Selection & Bulk Operations
 

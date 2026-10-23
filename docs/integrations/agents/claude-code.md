@@ -82,7 +82,7 @@ A `plan` spawn whose approved plan would continue in `bypassPermissions` (`planA
 
 ### Permission Mode Resolution (Priority Order)
 
-See [Permission Mode Resolution](../../settings/cascade.md#permission-mode-resolution-priority-order) in configuration.md.
+See [Permission Mode Resolution](../../settings/cascade.md#permission-mode-resolution-priority-order).
 
 ## Non-Interactive Mode
 
@@ -114,13 +114,13 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 
 | Hook Event | Event Type | Purpose |
 |------------|-----------|---------|
-| `PreToolUse` (blank) | `tool_start` | Agent began using a tool. `agent_id`, when the tool ran in an agent of its own, goes to `subagentId`; see [Activity Detection](../../architecture/activity/predicate.md#internal-cli-agents-tools) |
+| `PreToolUse` (blank) | `tool_start` | Agent began using a tool. `agent_id`, when the tool ran in an agent of its own, goes to `subagentId`; see [Activity predicate](../../architecture/activity/predicate.md#internal-cli-agents-tools) |
 | `PostToolUse` (blank) | `tool_end` | Tool execution completed (remaps to `background_shell_start` when the `tool_response` carries an id-shaped detail: a backgrounded or auto-backgrounded Bash's shell id, or a `Monitor` wait's `taskId`). `agent_id` goes to `subagentId` as on `PreToolUse` |
 | `PostToolUseFailure` (blank) | `tool_end` | Tool execution failed (remaps to `interrupted` when `is_interrupt` is true). `agent_id` goes to `subagentId` as on `PreToolUse` |
 | `UserPromptSubmit` | `prompt` | User submitted a prompt. Carries `planMode`, whether the payload's `permission_mode` is `plan` (`extractPlanMode`), as `Stop` does; see [Activity Detection](../../architecture/activity/index.md). A Command Terminal's settings also copy the payload's `prompt` into `detail` (capped at the bridge's `FIELD_CAP`, 2000 characters, `capturePromptText`), which is what names the terminal; a task session's events carry no prompt text |
 | `Stop` | `idle` | Agent stopped naturally. Carries `planMode`, as `UserPromptSubmit` does, except on a subagent's Stop, which arrives through the same hook with an `agent_id` (`unlessField`). The tool and subagent hooks carry none: a subagent can run in its own mode while the session plans |
 | `StopFailure` | `turn_failed` or `turn_retrying` | Fires instead of `Stop` on a service/API error; carries the error type in `detail`. A TERMINAL error stays `turn_failed` (routed through the Interrupted bypass to reset stale counters and idle at once); a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error) is reclassified to `turn_retrying`, which holds the session thinking through a live retry instead of force-idling it - see [Activity Detection](../../architecture/activity/index.md) |
-| `PermissionRequest` | `idle` | Agent hit a permission wall. The payload's `tool_name` goes to `tool`, which is how the plan approval gate tells the plan prompt, and a tool the plan approval hook may answer, from every other one (see [Activity Detection](../../architecture/activity/event-types.md#plan-approval-gate)) |
+| `PermissionRequest` | `idle` | Agent hit a permission wall. The payload's `tool_name` goes to `tool`, which is how the plan approval gate tells the plan prompt, and a tool the plan approval hook may answer, from every other one (see [Activity event types](../../architecture/activity/event-types.md#plan-approval-gate)) |
 | `SessionStart` | `session_start` | Session began |
 | `SessionEnd` | `session_end` | Session ended |
 | `SubagentStart` | `subagent_start` | Main agent launched a subagent; `agent_type` goes to `detail` and `agent_id` to `subagentId`. A start for a `subagentId` that is still live takes no second slot - see [Activity Detection](../../architecture/activity/index.md) |

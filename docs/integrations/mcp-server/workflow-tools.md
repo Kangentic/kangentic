@@ -29,7 +29,7 @@ cards move by hand except into To Do.
 A workflow lives in the project it was made in (pass `project` to reach another). Its tasks can sit
 on other registered projects' boards: name the project on the planned task. Of these tools the
 phone's board-tool path reaches only list, get, pause and resume; planning, Start and Delete stay
-on the desktop (see [Mobile Bridge](../mobile-bridge/capability-verbs.md#board-tool-surface)).
+on the desktop (see [Capability verbs](../mobile-bridge/capability-verbs.md#board-tool-surface)).
 
 ## kangentic_list_workflows
 

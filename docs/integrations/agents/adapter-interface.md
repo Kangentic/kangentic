@@ -17,7 +17,7 @@ Kangentic supports fifteen AI coding agents: Claude Code, Codex CLI, Gemini CLI,
 
 `src/main/agent/agent-adapter.ts`
 
-Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/main/agent/adapters/<name>/`. TUI agents also have a `transcript-cleanup.ts` file for handoff transcript processing (see [Handoff - Per-Agent Transcript Cleanup](handoff.md#per-agent-transcript-cleanup)).
+Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/main/agent/adapters/<name>/`. TUI agents also have a `transcript-cleanup.ts` file for handoff transcript processing (see [Per-Agent Transcript Cleanup](handoff.md#per-agent-transcript-cleanup)).
 
 | Method | Purpose |
 |--------|---------|
@@ -25,7 +25,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `invalidateDetectionCache()` | Reset cached detection (e.g. after user changes CLI path) |
 | `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust, plus any other pre-spawn global-config state the adapter needs (see [Global Config Writes](claude-code.md#global-config-writes-claudejson)) |
 | `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented by Kimi (see [Kimi Code -> Authentication](kimi-code.md#authentication)) and Grok (`grok models`, whose output says "not authenticated" from local state). |
-| `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [cross-platform.md](../../platforms/shells-and-paths.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
+| `buildCommand(options)` | Build the shell command string to spawn the agent. `options.agentPath` is what `detect()` returned, except that on Windows a `.cmd` / `.bat` head is swapped by the spawn chokepoint for the sibling shim the PTY shell can run before the builder sees it (`resolveShimLaunch`, see [npm .cmd shims under PowerShell and Git Bash](../../platforms/shells-and-paths.md#npm-cmd-shims-under-powershell-and-git-bash)); builders never inspect the extension |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
 | `removeHooks(directory, sessionId?)` | Remove the per-directory config an adapter injected, on cleanup. `directory` is the cwd the session's command was built for (`ManagedSession.commandCwd`), not the PTY's start dir. `sessionId` is the session releasing its hold: adapters that write a file every session in a folder shares (Gemini, Qwen, Cursor, Droid, Antigravity, Grok, OpenCode, Codex) hold it per session in a `SharedFolderHolds` (`src/main/agent/shared/shared-folder-holds.ts`) and strip it when the folder's last session releases, from the folder the hold was taken in. Keyed by session, never by task: a task's sessions overlap while a killed young session's PTY exits. No `sessionId` (project delete's sweep) strips the folder whoever holds it. The payload is not only hooks: Gemini also strips its `mcpServers.kangentic` entry (which carries the per-launch token), and Droid's hold guards `<cwd>/.factory/mcp.json` rather than a hooks file. |
@@ -94,12 +94,12 @@ When a task moves to a column, `resolveTargetAgent()` determines which agent to 
 
 `task.agent` is intentionally NOT in the resolution chain. It records which agent last ran on the task (for resume and handoff detection), but column and project settings are the authority for which agent should run. Including `task.agent` caused bugs where tasks that previously ran Claude would always resolve to Claude even when moved to a Codex column.
 
-**Handoff detection:** When `task.agent` is set and differs from the resolved agent, a cross-agent handoff is triggered. See [Handoff](handoff.md) for the full context transfer flow.
+**Handoff detection:** When `task.agent` is set and differs from the resolved agent, a cross-agent handoff is triggered. See [Cross-agent handoff](handoff.md) for the full context transfer flow.
 
 ## First-Output Detection
 
 Each adapter implements `detectFirstOutput(data)` to spot its first output. A match times the
-boot geometry re-assert (see [session-lifecycle.md](../../architecture/sessions/index.md)'s "Post-boot geometry
+boot geometry re-assert (see [Sessions](../../architecture/sessions/index.md)'s "Post-boot geometry
 re-assert"). It does not lift the launch overlay for an agent session; see "The launch overlay"
 below for what does.
 
@@ -171,9 +171,9 @@ from the hidden terminal.
 
 ## Exit Sequences
 
-Graceful exit sequences written to the PTY before a force-kill, for every agent that is typed into. `SessionManager.suspend()` writes one for each such session; `kill()` writes one for a young one (inside the agent's boot window, see the `kill()` grace in [session-lifecycle.md](../../architecture/sessions/index.md)); the quit path's `killAll()` writes one best-effort for each such session; the pty host writes one to an agent whose shell died on its own. An agent whose console close is its graceful exit (see below) gets no sequence on kill, suspend or quit. A step may be a pause (`{ delayMs }`), so keys the TUI must read apart never share a burst.
+Graceful exit sequences written to the PTY before a force-kill, for every agent that is typed into. `SessionManager.suspend()` writes one for each such session; `kill()` writes one for a young one (inside the agent's boot window, see the `kill()` grace in [Sessions](../../architecture/sessions/index.md)); the quit path's `killAll()` writes one best-effort for each such session; the pty host writes one to an agent whose shell died on its own. An agent whose console close is its graceful exit (see below) gets no sequence on kill, suspend or quit. A step may be a pause (`{ delayMs }`), so keys the TUI must read apart never share a burst.
 
-An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed into on that platform: kill, suspend and quit close its console at once, and its sequence serves only the dead-shell ask. Claude Code answers true on Windows, measured on 2.1.302 in every state a session can be in, and on Linux, where the close is node-pty's hangup, measured on 2.1.304 in the same states ([session-lifecycle.md](../../architecture/sessions/index.md), the 2.1.302 table and the Linux table after it).
+An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed into on that platform: kill, suspend and quit close its console at once, and its sequence serves only the dead-shell ask. Claude Code answers true on Windows, measured on 2.1.302 in every state a session can be in, and on Linux, where the close is node-pty's hangup, measured on 2.1.304 in the same states ([Sessions](../../architecture/sessions/index.md), the 2.1.302 table and the Linux table after it).
 
 | Agent | Sequence | Notes |
 |-------|----------|-------|
@@ -209,7 +209,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Codex CLI | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl` | Directory scan with polling |
 | Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` **or** `.jsonl` | Directory scan with polling. Both extensions are live (Gemini cut over on 2026-04-28); an anchored `\.json$` matches nothing on a current install |
 | Qwen Code | `~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl` | Direct path construction (the session id is caller-owned via `--session-id`). Despite being a gemini-cli fork, Qwen does NOT inherit Gemini's `tmp/<basename>/chats/session-<timestamp><shortId>.json` scheme |
-| Cursor CLI | N/A | Returns null - the location IS known (`~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl`, see [Command Injection](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified)) but is not wired in: the records carry no timestamp and the stored text is wrapped |
+| Cursor CLI | N/A | Returns null - the location IS known (`~/.cursor/projects/<cwd-slug>/agent-transcripts/<id>/<id>.jsonl`, see [Command injection support matrix](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified)) but is not wired in: the records carry no timestamp and the stored text is wrapped |
 | GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
 | Aider | `<cwd>/.aider.chat.history.md` | Direct path in the working directory, returned only when the file exists. One history file per project directory, with no session id in its name |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
@@ -242,7 +242,7 @@ A typical prompt:
 /path/to/screenshot.png
 ```
 
-Shortcut commands use a separate set of template variables. See [Configuration](../../settings/board-config.md#shortcuts) for the full list.
+Shortcut commands use a separate set of template variables. See [Board config files](../../settings/board-config.md#shortcuts) for the full list.
 
 ## CWD Strategy
 
@@ -254,8 +254,8 @@ This ensures agents load project-level configuration (`.claude/`, `.gemini/`, `C
 
 ## See Also
 
-- [Handoff](handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
+- [Cross-agent handoff](handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
 - [Activity Detection](../../architecture/activity/index.md) - Event processing, state derivation, subagent-aware transitions
-- [Session Lifecycle](../../architecture/sessions/index.md) - Spawn flow, resume, crash recovery
-- [Worktree Strategy](../../architecture/worktrees/index.md) - Worktree creation, sparse-checkout, hook delivery
-- [Configuration](../../settings/index.md) - Permission modes
+- [Sessions](../../architecture/sessions/index.md) - Spawn flow, resume, crash recovery
+- [Worktrees](../../architecture/worktrees/index.md) - Worktree creation, sparse-checkout, hook delivery
+- [Settings](../../settings/index.md) - Permission modes

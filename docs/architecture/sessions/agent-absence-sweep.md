@@ -249,7 +249,7 @@ the shell's own lifetime: the host holds a handle on every Windows PTY root from
 node-pty sets its pid until it handles the exit (`pinRoot`), reads the exact creation and exit
 times off it, and runs no cleanup without both, so a child of an earlier or later owner of the
 shell's pid is never taken for the shell's (see "Parent pids Windows reuses" in
-[worktree-strategy.md](../worktrees/index.md)). What outlives the
+[Worktrees](../worktrees/index.md)). What outlives the
 grace, a dev server the agent started included, is terminated, as a crashed pty host's tree stop
 does. On POSIX the kernel hangs up the terminal's foreground process group when the shell exits.
 On Linux that ends Claude gracefully: with its shell killed outright (`shell-killed` in the Linux
@@ -278,7 +278,7 @@ returns no pid once the exit code is set.
 The **WSL exclusion covers a different failure than the others**: there the tree signal is
 UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32
 descendant of it either way - a distro-native CLI is a Linux process in another PID namespace, and
-the interop path Kangentic actually uses ([cross-platform.md](../../platforms/shells-and-paths.md#wsl-runs-the-windows-binary-interop))
+the interop path Kangentic actually uses ([WSL runs the Windows binary (interop)](../../platforms/shells-and-paths.md#wsl-runs-the-windows-binary-interop))
 launches the Windows binary through WSL's binfmt host rather than under this `wsl.exe`. Since the
 Windows probe enumerates `Win32_Process`, a perfectly HEALTHY WSL agent presents an empty descendant
 set and passes every other arm, so the sweep would force-kill live work. Refusing to judge it fails

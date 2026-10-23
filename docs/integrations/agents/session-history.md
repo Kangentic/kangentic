@@ -50,7 +50,7 @@ Runtime flow:
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
 
-   See [Agent Integration](index.md) for the full table.
+   See [Agents](index.md) for the full table.
 4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless.
 5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
@@ -373,7 +373,7 @@ Reading the table by class:
 > holding the file. Absence of evidence is never evidence, so a missing report leaves today's
 > behavior untouched, which is exactly what keeps the mocked resumes below passing. A wrong
 > verdict costs a new conversation, never data: the old record is kept and the new one opens on a
-> recap. See "A resume the CLI cannot serve starts fresh instead" in session-lifecycle.md. The
+> recap. See [A resume the CLI cannot serve starts fresh instead](../../architecture/sessions/resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead). The
 > rejection below still stands for the BLANKET form described in this section.
 
 A natural-looking robustness idea is an optional `canResumeSession(agentSessionId, cwd)` adapter

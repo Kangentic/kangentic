@@ -85,6 +85,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | head_sha | TEXT | | NULL |
 | pushed_branch | TEXT | | NULL |
 | resolved_base_branch | TEXT | | NULL |
+| fork_point_sha | TEXT | | NULL |
 | external_id | TEXT | | NULL |
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
@@ -131,7 +132,7 @@ list: `setWorkflowMembership`, `setRoute` and `setCanvasPosition` write them wit
 (`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get
 `String(display_id)`; tasks predating that scheme keep their legacy `<slug>-<taskId8>` name. Whenever
 `worktree_path` is non-null, `basename(worktree_path)` equals it. See
-[Worktree Strategy](../architecture/worktrees/worktree-lifecycle.md#worktree-directory-naming) for why the name has to be
+[Worktree lifecycle](../architecture/worktrees/worktree-lifecycle.md#worktree-directory-naming) for why the name has to be
 stored rather than recomputed.
 
 `worktree_skip_reason` records WHY the task's last spawn ran without a worktree, i.e. in the shared
@@ -144,10 +145,21 @@ the generic `update()` never touches it. It is the ground truth for any surface 
 today it is recorded and exposed with no renderer reader: the 12px card glyph that drew it was
 reviewed out as too small to tell apart. The task card's marker and the detail header's "Project
 folder" chip still read `worktree_path`.
-See [Worktree Strategy](../architecture/worktrees/worktree-lifecycle.md#when-a-worktree-is-not-created).
+See [Worktree lifecycle](../architecture/worktrees/worktree-lifecycle.md#when-a-worktree-is-not-created).
+
+`fork_point_sha` is the commit the task's branch was cut from, read from the branch tip right after
+`createWorktree` cuts it (null when the worktree attached to a branch that already existed, since
+that branch's start is not this task's). `recordWorktree` writes it in the same transaction as the
+worktree, and clears it when it records a different branch with no fork point of its own.
+`update()` clears it, in the same statement, whenever `branch_name` is set to null, so it follows
+the branch's lifecycle: cleared at a To Do reset and a missing-worktree cleanup, kept at Done and
+through a rename. Main reads it only
+through `getForkPointSha`: `rowToTask` strips it, so it is not on the shared `Task`. The completed
+task resolver (`git:taskChanges`) uses it as one candidate start of an unmerged branch's range,
+beside the merge-base and the reflog's creation point.
 
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
-settings the task rides as it moves (see [Configuration > Board Profiles](../settings/board-config.md#board-profiles)).
+settings the task rides as it moves (see [Board Profiles](../settings/board-config.md#board-profiles)).
 There is deliberately **no foreign key**: profile *definitions* live in `kangentic.json`, not this
 database, so the profile is team-shared while the assignment stays per-machine runtime state. NULL
 means "Default" - every column uses its own settings - and Default is synthetic: there is no stored

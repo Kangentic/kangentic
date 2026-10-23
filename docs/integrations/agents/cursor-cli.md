@@ -74,5 +74,5 @@ The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"
   `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` plus a per-session
   `store.db` - but two things block wiring it in: the records carry NO timestamp, and the stored
   text is WRAPPED (`<user_query>...</user_query>`) rather than the raw submitted text. See
-  [Command Injection - Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified). Cursor was
+  [Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified). Cursor was
   also measured as turn-end flushed, so it gets no `command-injection` verifier either.

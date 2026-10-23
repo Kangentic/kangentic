@@ -547,15 +547,15 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 
 ## Further Reading
 
-- [Architecture](../architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
-- [Session Lifecycle](../architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume
+- [System overview](../architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
+- [Sessions](../architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume
 - [Transition Engine](../architecture/automations/transition-engine.md) -- Action types, templates, execution flow
 - [Database](../database/index.md) -- Full schema reference, migrations, connection management
-- [Agent Integration](../integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
-- [Configuration](../settings/index.md) -- Config cascade, all settings keys, permission modes
-- [Cross-Platform](../platforms/index.md) -- Shell resolution, path handling, packaging, fuses
+- [Agents](../integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
+- [Settings](../settings/index.md) -- Config cascade, all settings keys, permission modes
+- [Platforms](../platforms/index.md) -- Shell resolution, path handling, packaging, fuses
 - [Activity Detection](../architecture/activity/index.md) -- Event pipeline, thinking/idle state
-- [Worktree Strategy](../architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
+- [Worktrees](../architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
 - [User Guide](../user-guide/index.md) -- End-user feature walkthrough
 
 ## Documentation Maintenance

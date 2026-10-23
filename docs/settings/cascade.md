@@ -131,7 +131,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 > reconciliation warning naming that column: a toast and a board banner when the edit is applied to
 > an open project, console-only for a role already present at project open. An explicit
 > `"role": null` is simply a custom column and warns about nothing. See
-> [database.md](../database/index.md) for the full validation chain.
+> [Database](../database/index.md) for the full validation chain.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -265,4 +265,4 @@ On load, the ConfigManager auto-migrates legacy permission mode values:
 - `manual` → `acceptEdits` (removed as a separate mode)
 - `project-settings` → `acceptEdits`
 
-A parallel normalization runs on swimlane and session records in the DB. Note the swimlane normalization maps the removed `manual` and `project-settings` values to `default` rather than `acceptEdits` (see [Database - Migration Strategy](../database/migrations.md)).
+A parallel normalization runs on swimlane and session records in the DB. Note the swimlane normalization maps the removed `manual` and `project-settings` values to `default` rather than `acceptEdits` (see [Migration Strategy](../database/migrations.md)).

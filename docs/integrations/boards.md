@@ -41,7 +41,7 @@ src/main/boards/
   index.ts
 ```
 
-The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agent Integration](agents/index.md) for the analogous agent system.
+The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agents](agents/index.md) for the analogous agent system.
 
 ## BoardAdapter Interface
 
@@ -173,4 +173,4 @@ The registry enumerates all 7 providers. Stable providers dispatch normally. Stu
 
 ## See Also
 
-- [Agent Integration](agents/index.md) - the analogous adapter system for AI coding agents.
+- [Agents](agents/index.md) - the analogous adapter system for AI coding agents.

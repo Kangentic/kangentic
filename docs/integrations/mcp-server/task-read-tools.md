@@ -186,7 +186,7 @@ series, kept only with `includeSeries`. None of it is added to any session figur
 
 Get session metrics for a specific task or across all tasks. Across all tasks, each row starts with the task's `#N`, so the agent can follow one up.
 
-Cost and agent runtime are the completed task view's: each conversation's running total read once, then added across conversations, so a resumed task is not counted once per `--resume` (see [database.md](../../database/index.md), the `sessions` table). With a `taskId`, the runtime line reads `Agent runtime`.
+Cost and agent runtime are the completed task view's: each conversation's running total read once, then added across conversations, so a resumed task is not counted once per `--resume` (see [Database](../../database/index.md), the `sessions` table). With a `taskId`, the runtime line reads `Agent runtime`.
 
 With a `taskId`, the response also carries `bySubagentType`: the task's Task-tool
 subagent fan-out from `conversation_turn_usage`, one row per subagent type with its

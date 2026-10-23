@@ -101,6 +101,6 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
   It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.
   It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
-  [worktree-strategy.md](../worktrees/process-reaping.md).
+  [Process reaping](../worktrees/process-reaping.md).
 
 See `.claude/rules/pty-host-out-of-process.md`.

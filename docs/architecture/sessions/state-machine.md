@@ -86,7 +86,7 @@ Sessions from non-active projects must not interfere with the active project's t
 
 ## See Also
 
-- [Configuration](../../settings/index.md) -- permission modes and session limits
-- [Agent Integration](../../integrations/agents/index.md) -- command building, hook injection, per-agent CLI details
+- [Settings](../../settings/index.md) -- permission modes and session limits
+- [Agents](../../integrations/agents/index.md) -- command building, hook injection, per-agent CLI details
 - [Transition Engine](../automations/transition-engine.md) -- what triggers spawns and suspends
 - [Activity Detection](../activity/index.md) -- thinking/idle state from hooks

@@ -102,7 +102,7 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
   mobile-bridge-service.ts    # top-level service: identity, roster, pairing, sessions, attachContext()
 ```
 
-The desktop service is constructed in `src/main/ipc/register-all.ts` and torn down synchronously in `src/main/index.ts`'s `clearPendingTimers` (see [Synchronous Shutdown](../../../.claude/rules/synchronous-shutdown.md)). It is wired to the renderer through the full 7-layer IPC bridge - channels in `src/shared/ipc-channels.ts` (`MOBILE_*`, see [Architecture > Mobile Bridge](../../architecture/ipc/app-channels.md#mobile-bridge-14-channels)), types in `src/shared/types.ts` ("Mobile Bridge" section), the `mobile:` namespace in `src/preload/preload.ts`, the handler in `src/main/ipc/handlers/mobile-bridge.ts`, the `useMobileStore` renderer store, and the Mobile Devices settings tab.
+The desktop service is constructed in `src/main/ipc/register-all.ts` and torn down synchronously in `src/main/index.ts`'s `clearPendingTimers` (see [Synchronous Shutdown](../../../.claude/rules/synchronous-shutdown.md)). It is wired to the renderer through the full 7-layer IPC bridge - channels in `src/shared/ipc-channels.ts` (`MOBILE_*`, see [Mobile Bridge](../../architecture/ipc/app-channels.md#mobile-bridge-14-channels)), types in `src/shared/types.ts` ("Mobile Bridge" section), the `mobile:` namespace in `src/preload/preload.ts`, the handler in `src/main/ipc/handlers/mobile-bridge.ts`, the `useMobileStore` renderer store, and the Mobile Devices settings tab.
 
 ## Why a separate package
 
@@ -122,6 +122,6 @@ Its version and release cadence are **deliberately decoupled from Kangentic's ow
 ## See Also
 
 - [Mobile Companion App Research](../../research/mobile-companion-app.md) - Full product rationale, transport decision (relay-first), security architecture, notification design, and phasing this doc summarizes.
-- [Architecture > Mobile Bridge](../../architecture/ipc/app-channels.md#mobile-bridge-14-channels) - IPC channel table.
-- [Configuration](../../settings/index.md) - `AppConfig.mobileBridge` (`enabled`, `relayMode`, `relayUrl`) and `src/shared/relay.ts`'s resolver/validator.
+- [Mobile Bridge](../../architecture/ipc/app-channels.md#mobile-bridge-14-channels) - IPC channel table.
+- [Settings](../../settings/index.md) - `AppConfig.mobileBridge` (`enabled`, `relayMode`, `relayUrl`) and `src/shared/relay.ts`'s resolver/validator.
 - [Board Integration](../boards.md) - The analogous per-provider adapter pattern this bridge's `Transport` swap point mirrors in spirit.

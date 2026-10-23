@@ -85,7 +85,7 @@ The setup phase, steps 10 to 12, runs after the job ends (`setUpWorktree`). The 
 
 Each step logs its time in the removal path's format, `[WORKTREE] create step=<name> done in <n>ms`: `stale-node-modules` (before the job), `fetch`, `stale-dir`, `worktree-add` and `configure` (in it), then `copy-files`, `link-node-modules` and `init-script` (after it). The job's own `[GIT_QUEUE] done create-worktree:<id8> in <n>ms` line is the git phase's total.
 
-Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Agent Integration](../../integrations/agents/claude-code.md#trust-management)).
+Creation writes no `~/.claude.json` trust entry. The adapter's `ensureTrust` writes it before each spawn, for whatever directory the agent runs in (see [Claude Code](../../integrations/agents/claude-code.md#trust-management)).
 
 ## Windows Long Paths
 
@@ -101,7 +101,7 @@ This setting uses the `\\?\` extended-length path prefix on Windows. macOS and L
 `core.longpaths` covers git itself. Node and the JVM handle long paths on their own (measurement:
 1,958 files past MAX_PATH in a real worktree, with `npm install` and Gradle both succeeding), so the
 toolchains that run inside a worktree are largely unaffected too. See
-[cross-platform.md](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect) for the
+[Windows MAX_PATH is mostly not the wall people expect](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect) for the
 measurements and for the one limit that does bind, which is CMake's own object-path policy rather
 than the operating system.
 

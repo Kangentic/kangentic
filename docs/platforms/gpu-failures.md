@@ -177,4 +177,4 @@ What ships now, on every platform:
   no cause and suggests no cure. Changing the setting restarts Kangentic behind a confirmation,
   because the mode is fixed before the app is ready in both directions.
 
-See "Error Reporting" in [analytics.md](../telemetry/index.md) for the reporting half.
+See [Error reporting (Sentry)](../telemetry/error-reporting.md) for the reporting half.
