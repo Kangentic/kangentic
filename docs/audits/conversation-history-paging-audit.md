@@ -19,7 +19,7 @@ while the user scrolls up. One 8 MiB page costs the worker about half of today's
 records the options, the measurements behind them and the recommended design. C was then built,
 together with the scrollbar half of D (a whole-transcript scrollbar, a far drag that loads the page
 under it, jumps to the start and to a search hit, and column tabs that cover their column's whole
-history), for every agent whose transcript Kangentic reads; `docs/architecture.md` (Transcript) and
+history), for every agent whose transcript Kangentic reads; `docs/architecture/ipc/session-channels.md` (Transcript) and
 `docs/integrations/agents/optional-properties.md` (`readTranscriptPage`) describe what shipped. The rows marked pending
 stay pending until they are read in the running app.
 

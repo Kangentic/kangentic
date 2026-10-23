@@ -29,10 +29,21 @@ sources:
   - resource: src/main/browser/agent-input-signal.ts
   - resource: src/main/browser/drive-telemetry.ts
   - resource: src/main/browser/viewport-override-store.ts
+  - resource: src/main/browser/viewport-override.ts
+  - resource: src/main/browser/browser-lane-manager.ts
+  - resource: src/main/browser/browser-lane-handoff.ts
+  - resource: src/main/browser/browser-pane-detach.ts
+  - resource: src/main/browser/guest-drive-queue.ts
+  - resource: src/main/browser/jar-seeder.ts
+  - resource: src/main/browser/cookie-seed.ts
+  - resource: src/main/browser/browser-automation-config.ts
+  - resource: src/main/browser/dev-server-error.ts
 ---
 # Embedded browser pane
 
 A side-pane in the modeless task-detail window (`TaskDetailWindow`) that hosts an Electron `<webview>`, captures the rendered frame plus user annotations + DOM context, and submits it to the active agent as a multi-modal prompt.
+
+A "decision N" below is entry N of the [decision log](decision-log.md).
 
 ## User-facing flow
 
@@ -211,7 +222,7 @@ Two facts make the difference, and both bite silently:
 
 1. **`kangentic_browser_open_pane` refuses a connection with no caller session** (`no-caller-task`).
    That is deliberate - the tool takes no `taskId` argument at all, so it can only ever target the
-   caller's own task ([[browser-automation-driver]]). Connecting to `/mcp/<projectId>` gets the
+   caller's own task (`.claude/rules/browser-automation-driver.md`). Connecting to `/mcp/<projectId>` gets the
    refusal on a preview AND on the dogfooding app; connecting to
    `/mcp/<projectId>/<callerSessionId>` works on both.
 2. **A Browser pane needs a live session to exist**, because the session is recorded as the

@@ -208,21 +208,34 @@ function decodeFragment(fragment) {
 
 /**
  * Every inline markdown link or image outside code fences and inline code:
- * `{ url, path, fragment, line }`, with `path` empty for a same-file `#fragment` link.
+ * `{ url, path, fragment, line }`, with `path` empty for a same-file `#fragment` link. A link whose
+ * text wraps onto the next line of its paragraph is read whole and reported at the line it starts on.
  */
 export function linksOf(text) {
   const links = [];
   let fenced = false;
+  // An open `[` with no `]` after it on its line: the start of link text that wraps onto the next line.
+  let carried = null;
   text.split(/\r?\n/).forEach((line, lineIndex) => {
     if (FENCE.test(line)) {
       fenced = !fenced;
+      carried = null;
       return;
     }
     if (fenced) return;
     // Blank each inline code span (a backtick run to the next run of the same length) to spaces of
     // the same width, so a link written inside backticks is not read and columns stay put.
     const outsideCode = line.replace(/(`+)[\s\S]*?\1/g, (span) => ' '.repeat(span.length));
-    for (const match of outsideCode.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
+    if (outsideCode.trim().length === 0) {
+      carried = null;
+      return;
+    }
+    const prefix = carried ? `${carried.text} ` : '';
+    const joined = prefix + outsideCode;
+    const positionOf = (index) => (index < prefix.length
+      ? { line: carried.line, column: carried.column + index }
+      : { line: lineIndex + 1, column: index - prefix.length });
+    for (const match of joined.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)) {
       const url = match[1];
       if (/^[a-z][a-z0-9+.-]*:/i.test(url)) continue;
       const hash = url.indexOf('#');
@@ -230,11 +243,12 @@ export function linksOf(text) {
         url,
         path: hash === -1 ? url : url.slice(0, hash),
         fragment: hash === -1 ? null : decodeFragment(url.slice(hash + 1)),
-        line: lineIndex + 1,
-        column: match.index,
+        ...positionOf(match.index),
         length: match[0].length,
       });
     }
+    const open = joined.lastIndexOf('[');
+    carried = open !== -1 && !joined.includes(']', open) ? { text: joined.slice(open), ...positionOf(open) } : null;
   });
   return links;
 }
@@ -263,7 +277,8 @@ export function listConcepts(docsRoot = DOCS_ROOT) {
 
 /** A `sources:` entry's repo path: an entry is `{ resource, title? }`, or a bare string. */
 export function sourcePathOf(entry) {
-  return typeof entry === 'string' ? entry : entry?.resource ?? '';
+  if (typeof entry === 'string') return entry;
+  return typeof entry?.resource === 'string' ? entry.resource : '';
 }
 
 function normalizeRepoPath(repoPath) {
@@ -272,7 +287,7 @@ function normalizeRepoPath(repoPath) {
 
 /** Whether one `sources:` entry covers `target`: the file itself, or a directory above it. */
 function entryCovers(entry, target) {
-  const source = sourcePathOf(entry).replace(/\\/g, '/');
+  const source = normalizeRepoPath(sourcePathOf(entry));
   if (source.length === 0) return false;
   if (source.endsWith('/')) return target.startsWith(source);
   return target === source || target.startsWith(`${source}/`);
@@ -295,7 +310,7 @@ export function coveredPartsOf(repoPath, concept) {
   const titles = (concept.frontmatter?.sources ?? [])
     .filter((entry) => entryCovers(entry, target))
     .map((entry) => (typeof entry === 'string' ? '' : String(entry?.title ?? '').trim()));
-  return titles.length > 0 && titles.every((title) => title.length > 0) ? titles.join('; ') : null;
+  return titles.length > 0 && titles.every((title) => title.length > 0) ? [...new Set(titles)].join('; ') : null;
 }
 
 function main(argv) {

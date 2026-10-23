@@ -145,7 +145,7 @@ auditors run on. They are `adoptFinderModel`, `pickFinderModel` and `adoptAudito
   scoring ledger and scored blind beside the two Haiku arms. It re-scored to exactly the recorded
   baseline (1.5 late hits, S2-N1 and S2-N2, 117 raised), so the scorer did not drift.
 - **E6 plants** went into a detached scratch worktree of HEAD. doc-auditor: a channel constant with
-  no row in `docs/architecture/system-overview.md`, and a row for a channel that does not exist. ipc-auditor: a
+  no row in the IPC channel tables (under `docs/architecture/ipc/` today), and a row for a channel that does not exist. ipc-auditor: a
   preload method the mock no longer provides, and a mock method with no channel behind it.
 - **The Knowledge Graph half** ran through `scripts/eval-answer-models.mjs` over calls captured
   from a `/preview` seeded with `dev.seedKnowledgeGraphReal`, its `agent.cliPaths.claude` pointed

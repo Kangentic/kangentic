@@ -19,7 +19,7 @@ Kangentic links each task to its pull request and keeps that link fresh: it dete
 
 Which connector answers is decided by the repository's git remote, not by array order: see [Ownership and dispatch](#ownership-and-dispatch), which is what lets a second provider exist without the first one pre-empting it.
 
-This doc covers the connector system, the confidence ladder that picks the strongest anchor, the background refresh (an on-open sweep, then a per-PR queue), and how to add a new hosting provider.
+This doc covers the connector system and how to add a new hosting provider ([Connector Status](#connector-status)). The confidence ladder that picks the strongest anchor is in [PR linking](pr-linking.md#the-confidence-ladder), and the background refresh (an on-open sweep, then a per-PR queue) is in [PR refresh and scheduler](refresh-and-scheduler.md).
 
 ## Layout
 
@@ -63,7 +63,7 @@ Every hosting provider implements this contract. The registry calls it without k
 | `resolveForBranch?(repoCwd, branchName, baseBranch?, options?)` | optional | Authoritatively resolve the PR for a branch via the platform API, run inside the repo/worktree at `repoCwd`. Returns null when no PR matches the head ref; throws `PRResolverUnavailableError` when the CLI is unavailable. `options` is the `PRResolveOptions` below. |
 | `resolveByNumber?(repoCwd, prNumber, options?)` | optional | Resolve a PR by its number, the most exact anchor and immune to branch renames. Used to refresh an already-linked PR's state. `options` is the `PRResolveOptions` below. |
 | `resolveByCommit?(repoCwd, commitSha, branchHint?)` | optional | Resolve the PR associated with a commit SHA, an immutable anchor that survives worktree deletion and branch renames. `branchHint` disambiguates when a commit belongs to several PRs. Takes no `options`, deliberately: the commit tier cannot judge merge readiness on any shipped connector, so there is nothing an option could change there. |
-| `verifiesCommitOwnership?: boolean` | required WITH `resolveByCommit` | A property, not a method: the only non-callable row in this table. Declares that a `resolveByCommit` hit proves the commit is that PR's OWN work rather than history it inherited from its base. Optional in TypeScript, but `commitAnchorSelfVerifies` requires `=== true` from every commit-capable owning connector, so omitting it switches the commit tier OFF for that repo rather than defaulting it on. Declare it only if the connector establishes ownership itself (see the commit-ownership section below); `tests/unit/pr-connector-gate.test.ts` fails a commit-capable connector that declares neither way. |
+| `verifiesCommitOwnership?: boolean` | required WITH `resolveByCommit` | A property, not a method: the only non-callable row in this table. Declares that a `resolveByCommit` hit proves the commit is that PR's OWN work rather than history it inherited from its base. Optional in TypeScript, but `commitAnchorSelfVerifies` requires `=== true` from every commit-capable owning connector, so omitting it switches the commit tier OFF for that repo rather than defaulting it on. Declare it only if the connector establishes ownership itself (see the commit tier in [GitHub connector](github.md) and [Azure DevOps connector](azure-devops.md)); `tests/unit/pr-connector-gate.test.ts` fails a commit-capable connector that declares neither way. |
 | `commitWebUrl?(remoteUrls, sha)` | optional | The commit's page on the platform's web host, built from the remote URLs alone: pure, no subprocess, no network, null when this connector does not own the remote. `commitWebLinks` in `pr-registry.ts` calls it on the connector that claims the repository's PRIMARY remote, and `git:commitGraph` and `git:taskChanges` stamp the result on each commit the remote has, which is what the Changes panel's History hashes link to. GitHub builds it from the parsed host, owner and repo (https, scp-style, ssh://, and GitHub Enterprise remotes); Azure DevOps constructs it as it does the PR URL, since the API returns no web link. |
 
 ### Verb taxonomy
@@ -127,7 +127,7 @@ Both errors are platform-agnostic (a leaf module with no connector imports) so `
 
 | Error | Meaning | Caller behavior |
 |-------|---------|-----------------|
-| `PRResolverUnavailableError` | The resolver could not CHECK. Four paths reach it for every provider: the CLI is missing or unauthenticated; no connector matches the remote; the remotes could not be read at all; an owning connector implements no resolver of that kind. The Azure connector adds a fifth (see the asymmetry below). | Degrade to `detectPR` scrollback scraping; preserve any existing link; log a hint (see below). |
+| `PRResolverUnavailableError` | The resolver could not CHECK. Four paths reach it for every provider: the CLI is missing or unauthenticated; no connector matches the remote; the remotes could not be read at all; an owning connector implements no resolver of that kind. The Azure connector adds a fifth (see the asymmetry below). | Degrade to `detectPR` scrollback scraping; preserve any existing link; log a hint (see [Persist and degrade behavior](refresh-and-scheduler.md#persist-and-degrade-behavior)). |
 | `PRResolverTransientError` | Resolution failed transiently (network / 5xx / rate-limit / timeout) rather than because there is no PR. | Preserve the existing link and report `transient-error` instead of `not-found`. |
 
 **Known asymmetry: an unreadable CLI answer.** `classifyAzError` treats a `SyntaxError` or `TypeError` raised while parsing `az`'s own output as `unavailable`, so a malformed answer degrades instead of reporting a clean miss. That branch is load-bearing rather than defensive: the throw is absorbed inside the connector and never escapes the ladder, so `resolveFailed` cannot see it, and the `not-found` default would clear the task's link.
@@ -187,7 +187,7 @@ Being required is not the same as being safe: a connector can still write `match
 | Provider | Status | CLI dependency | Notes |
 |----------|--------|----------------|-------|
 | GitHub | stable | `gh` | PRs via `gh pr` / `gh api` (the commit tier's REST commit-pulls, and the merge-bypass GraphQL probe behind `git.prBypassCountsAsReady`), reusing the board importer's `gh` client. |
-| Azure DevOps | stable | `az` + the `azure-devops` extension | PRs via `az repos pr` plus two `az rest` calls (the commit tier's `pullrequestquery`, and the branch-policy evaluations for a PR whose preview merge succeeded), reusing the board importer's `az` client. The commit tier sees completed PRs only (see above). |
+| Azure DevOps | stable | `az` + the `azure-devops` extension | PRs via `az repos pr` plus two `az rest` calls (the commit tier's `pullrequestquery`, and the branch-policy evaluations for a PR whose preview merge succeeded), reusing the board importer's `az` client. The commit tier sees completed PRs only (see [Azure DevOps connector](azure-devops.md)). |
 | GitLab | planned | - | Noted in the `pr-registry.ts` connectors comment; not implemented. |
 | Bitbucket | planned | - | Noted in the `pr-registry.ts` connectors comment; not implemented. |
 

@@ -305,7 +305,7 @@ export class GrokAdapter implements AgentAdapter {
   /**
    * CONFIRM-ONLY: the verifier confirms deliveries and drives
    * retry-on-Enter, but never authorizes a session restart. Escalation
-   * needs the mock-CLI end-to-end proof (docs/architecture/automations/command-injection.md), and
+   * needs the mock-CLI end-to-end proof (docs/architecture/automations/command-injection-support-matrix.md), and
    * grok's history records carry no timestamps to bound the match window -
    * see command-injection-verifier.ts.
    */

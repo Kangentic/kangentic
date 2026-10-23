@@ -124,7 +124,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 > This table covers the automation and behavior overrides only. A column's identity fields on
 > `BoardColumnConfig` (`id`, `name`, `role`, `icon`, `color`, `archived`) are not listed here:
 > they are set in the Board Manager UI and round-trip through `kangentic.json`. See
-> [Board Configuration](board-config.md#board-configuration) below.
+> [Board Configuration](board-config.md#board-configuration).
 >
 > `role` is the one identity field with a closed set of values: `todo`, `done`, or omitted. A
 > hand-edited `kangentic.json` naming anything else is treated as a custom column and raises a
@@ -188,7 +188,7 @@ evaluation of a group at once; at a turn end it reads the task and the agent's f
 enter or exit the task and the move. Until an Automation agent is set up, a row with an Agent
 evaluation is skipped (a Condition written earlier is kept). A **Text match** (`finalLine`) is
 checked in code against the agent's last line at a turn end, needs no Automation agent and makes no
-call; see [Column automations](#column-automations). A row's
+call; see [Condition and Frequency](../architecture/automations/triggers.md#condition-and-frequency). A row's
 **Frequency** is the most times it may run on one task, counted across every visit; a row past it
 is skipped. The count starts over when the task leaves Done, so a reopened task can loop and
 advance again. Both are off on every row unless set, so a board from before them runs as it did.

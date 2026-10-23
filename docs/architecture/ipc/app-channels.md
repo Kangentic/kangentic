@@ -13,7 +13,7 @@ sources:
 # App IPC channels
 
 ## Dev-only (preview)
-Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in the production channel totals above.
+Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimination); present only in `npm start` and `/preview` builds, never in shipped installers. Registered from `src/devtools/`, so it is not counted in any group's channel count below.
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

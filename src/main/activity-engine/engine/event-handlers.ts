@@ -307,7 +307,7 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       // slot and the continuation's own stop reads as a duplicate. The stream
       // cannot tell the two stops apart, so the depth reads 0 for the rest of
       // the continuation. See "Re-started live subagent" in
-      // docs/architecture/activity/index.md.
+      // docs/architecture/activity/predicate.md.
       if (event.subagentId && state.subagentLifecycleById.get(event.subagentId) === 'live') {
         state.compensationCounters.duplicateSubagentStart += 1;
       } else {

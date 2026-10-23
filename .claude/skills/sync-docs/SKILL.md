@@ -172,7 +172,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Per-agent CLI flag mappings | `src/main/agent/adapters/codex/command-builder.ts`, `src/main/agent/adapters/gemini/command-builder.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | Each adapter's concept in integrations/agents/ (its Permission Modes table) |
 | Per-agent capability discovery | `src/main/agent/adapters/*/capability-discovery.ts` | integrations/agents/adapter-types.md (model/effort tables) |
 | First-output detection strategies | All adapter files (`detectFirstOutput` method) | integrations/agents/adapter-interface.md (first-output detection table) |
-| Exit sequences | All adapter files (`getExitSequence` method) | integrations/agents/optional-properties.md (exit sequences table) |
+| Exit sequences | All adapter files (`getExitSequence` method) | integrations/agents/adapter-interface.md (Exit Sequences table) |
 | Session history file location | All adapter files (`locateSessionHistoryFile` method) | integrations/agents/adapter-interface.md (session history file location table) |
 | Per-agent transcript cleanup | `src/main/agent/handoff/transcript-cleanup.ts`, `src/main/agent/adapters/*/transcript-cleanup.ts` | integrations/agents/handoff.md (per-agent transcript cleanup section) |
 | Handoff DB columns | `src/main/db/repositories/handoff-repository.ts` | integrations/agents/handoff.md (database storage table) |
@@ -277,7 +277,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: command-injection precedence rules (per-task model/effort overrides, swimlane defaults) are described in architecture/automations/command-injection.md and architecture/system-overview.md.
 
 - `src/main/transition-engine/terminal-submit-scheduler.ts`
-  WHY: keystroke submission lifecycle wrapper enumerated in architecture/automations/command-injection.md's pipeline table.
+  WHY: keystroke submission lifecycle wrapper enumerated in architecture/automations/command-injection.md's delivery ladder and its `'paste'` vs `'command-injection'` table.
 
 - `src/main/transition-engine/session-lifecycle.ts`
   WHY: session state transitions enumerated in architecture/sessions/state-machine.md.

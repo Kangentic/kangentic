@@ -252,8 +252,9 @@ unapplied.
    Points 2 and 3 are separate mandates and the auditor's prose-versus-anchor label governs point
    2 only. A feature can be fully enumerated somewhere in `docs/` (so point 2 correctly reports no
    gap) and still be undocumented where a user would look, which is point 3's job. v0.41.0's PR
-   merge-readiness pill was exactly this: `pr-integration.md` enumerated all six readiness values
-   and both settings that drive them, while `user-guide.md` never said the pill exists or where it
+   merge-readiness pill was exactly this: the PR integration doc (now the
+   `docs/integrations/pull-requests/` concepts) enumerated all six readiness values and both
+   settings that drive them, while the user guide (now `docs/user-guide/`) never said the pill exists or where it
    renders, so a user could read the setting that flips a PR to `ready` and not know what changed
    on screen. Point 3 covers that; point 2 does not.
 

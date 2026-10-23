@@ -21,7 +21,7 @@ A workflow's own agent is the other transient session. It shares the first two a
 not the third: its Pause is a suspend that keeps its row, and Resume brings back its conversation.
 Everything in this section that is a Command Terminal's alone (the slot, the cap, the end) is
 decided by `isCommandTerminalSession`, never by `transient`. See
-[System overview](../system-overview.md) (Workflows) for the workflow agent.
+[Workflow agent](../workflows/workflow-agent.md) for the workflow agent.
 
 ## Identity survives a renderer reload
 

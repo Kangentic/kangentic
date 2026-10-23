@@ -135,7 +135,7 @@ That configured value is then **verified against the repo's actual refs** by
   `remote.origin.fetch` refspec can exit 0 without ever writing `refs/remotes/origin/<branch>`.
   `resolveWorktreeBase` re-verifies the ref locally after the fetch before accepting it - the
   same re-verification `createWorktree`'s own `verifiedStartPoint` fallback relies on (see
-  Creation Flow below).
+  [Creation Flow](worktree-creation.md#creation-flow)).
 
 **Known gap:** only source 1 (the task's `base_branch`) counts as "explicit". Sources 2 and 3 are
 both `defaultBaseBranch` and therefore DO fall through to `main` / `master`. So a project
@@ -219,7 +219,18 @@ items. See [Task tools](../../integrations/mcp-server/task-tools.md#kangentic_cr
 
 ## When worktree creation fails with a written error
 
-Two distinct failure modes raise an actionable `Error` rather than falling back silently. Where
+Two distinct failure modes raise an actionable `Error` rather than falling back silently:
+
+- **A stale directory** at the computed worktree path could not be removed and is not an empty,
+  reusable husk (see [Creation Flow](worktree-creation.md#creation-flow) step 4) - `staleWorktreeError` in `worktree-manager.ts`.
+- **The base branch does not resolve**, even after the fallback chain and a fetch retry described
+  under [Base Branch Resolution](#base-branch-resolution) above - `describeUnresolvableBase` in `src/main/git/base-branch.ts`.
+  Distinguishes an explicit per-task base (names the branch, suggests picking a different one) from
+  an exhausted default chain (lists every candidate tried and points at Settings > Git). The listed
+  branches are capped at 10 (`MAX_LISTED_BRANCHES`) so a repo with hundreds of branches doesn't
+  produce an unreadable toast.
+
+Both name what failed and what to do about it, rather than surfacing git's raw error text. Where
 that error goes depends on the entry point:
 
 - **Task move** (`handleTaskMove` in `src/main/ipc/handlers/task-move.ts`) and **`SESSION_RESUME`**
@@ -309,19 +320,6 @@ current while the action stays explicit ("Update from base").
 Only the focused project is swept. Sweeping every registered repo multiplies network cost by the
 project count and risks prompting on repos the user is not looking at; it is deferred, not
 forgotten.
-
-The two failure modes:
-
-- **A stale directory** at the computed worktree path could not be removed and is not an empty,
-  reusable husk (see Creation Flow step 4) - `staleWorktreeError` in `worktree-manager.ts`.
-- **The base branch does not resolve**, even after the fallback chain and a fetch retry described
-  under Base Branch Resolution above - `describeUnresolvableBase` in `src/main/git/base-branch.ts`.
-  Distinguishes an explicit per-task base (names the branch, suggests picking a different one) from
-  an exhausted default chain (lists every candidate tried and points at Settings > Git). The listed
-  branches are capped at 10 (`MAX_LISTED_BRANCHES`) so a repo with hundreds of branches doesn't
-  produce an unreadable toast.
-
-Both name what failed and what to do about it, rather than surfacing git's raw error text.
 
 ## Hook Delivery
 
@@ -439,8 +437,8 @@ App closed
   → All sessions marked suspended in DB (synchronous)
   → PTYs force-killed at once for a mature session; a young session of an agent that is typed
     into gets its exit sequence and a 1500 ms grace first, inside the quit's own PTY drain.
-    A Claude session on Windows or Linux is closed at once, with nothing typed (see Session
-    Lifecycle > Shutdown)
+    A Claude session on Windows or Linux is closed at once, with nothing typed (see Shutdown
+    in ../sessions/shutdown.md)
   → Session files persist
 
 App reopened

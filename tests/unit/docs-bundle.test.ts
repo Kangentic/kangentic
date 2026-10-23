@@ -1,5 +1,5 @@
 /**
- * Unit tests for scripts/docs-bundle.mjs, the helpers behind the docs concept folder: frontmatter,
+ * Unit tests for scripts/docs-bundle.mjs, the helpers behind the docs bundle: frontmatter,
  * GitHub heading slugs, heading and link extraction, the concept list, the parts a titled source
  * entry covers, and the `sources` CLI.
  *
@@ -369,6 +369,21 @@ describe('linksOf', () => {
   it('counts lines on CRLF input', () => {
     expect(linkSummaries('one\r\n\r\n[x](a.md)\r\n')).toEqual([{ url: 'a.md', path: 'a.md', fragment: null, line: 3 }]);
   });
+
+  it('reads a link whose text wraps onto the next line, at the line and column it starts on', () => {
+    // The shape a moved doc left broken and unchecked: wrapped link text in a reflowed paragraph.
+    const text = joinLines(['see [Disabling automations for one', 'task](../triggers.md#disabling) and [y](b.md)']);
+    expect(linkSummaries(text)).toEqual([
+      { url: '../triggers.md#disabling', path: '../triggers.md', fragment: 'disabling', line: 1 },
+      { url: 'b.md', path: 'b.md', fragment: null, line: 2 },
+    ]);
+    expect((linksOf(text) as LinkRecord[]).map((link) => link.column)).toEqual([4, 36]);
+  });
+
+  it('does not carry an open bracket across a blank line or into a fence', () => {
+    expect(linkSummaries(joinLines(['an [unclosed bracket', '', 'text](a.md)']))).toEqual([]);
+    expect(linkSummaries(joinLines(['an [unclosed bracket', '```', 'text](a.md)', '```', 'more](b.md)']))).toEqual([]);
+  });
 });
 
 describe('conceptsForSource', () => {
@@ -413,6 +428,15 @@ describe('conceptsForSource', () => {
     expect(conceptPaths('src/main/foo.ts', concepts)).toEqual([]);
   });
 
+  it('reads a source written with a leading ./ or backslashes, and skips a resource that is not a string', () => {
+    const concepts: ConceptRecord[] = [
+      { path: 'docs/dotted.md', frontmatter: { sources: [{ resource: './src/main/foo.ts' }, '.\\src\\shared\\'] } },
+      { path: 'docs/numeric.md', frontmatter: { sources: [{ resource: 123 } as unknown as SourceEntry] } },
+    ];
+    expect(conceptPaths('src/main/foo.ts', concepts)).toEqual(['docs/dotted.md']);
+    expect(conceptPaths('src/shared/types.ts', concepts)).toEqual(['docs/dotted.md']);
+  });
+
   it('lists a concept once when two of its sources match', () => {
     const concepts: ConceptRecord[] = [
       { path: 'docs/twice.md', frontmatter: { sources: ['src/main/', { resource: 'src/main/foo.ts' }] } },
@@ -434,6 +458,14 @@ describe('coveredPartsOf', () => {
       frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'Swimlane' }, { resource: 'src/shared/', title: 'shared helpers' }] },
     };
     expect(coveredPartsOf('src/shared/types.ts', concept)).toBe('Swimlane; shared helpers');
+  });
+
+  it('names a title once when two entries with the same title cover the path', () => {
+    const concept: ConceptRecord = {
+      path: 'docs/repeated.md',
+      frontmatter: { sources: [{ resource: 'src/shared/types.ts', title: 'Swimlane' }, { resource: 'src/shared/', title: 'Swimlane' }] },
+    };
+    expect(coveredPartsOf('src/shared/types.ts', concept)).toBe('Swimlane');
   });
 
   it('is null when an untitled entry, a bare string or a blank title covers the path whole', () => {
@@ -546,6 +578,22 @@ describe('the sources CLI', () => {
     const result = runCli(['sources', 'src/shared/types.ts']);
     expect(result.status).toBe(0);
     expect(outputLines(result.stdout)[0]).toContain('docs/settings/app-config.md [AppConfig, DEFAULT_CONFIG]');
+  });
+
+  it('prints a concept that lists a shared file whole with no brackets, beside a concept that prints its parts', () => {
+    // src/shared/external-url.ts is listed by browser-pane.md with an untitled entry (the whole file)
+    // and by terminal-ownership.md with a titled one (its TERMINAL_LINK_SCHEMES part), so both
+    // forms land on the one output line. A titled part can hold a comma, so the line is not split on it.
+    const result = runCli(['sources', 'src/shared/external-url.ts']);
+    expect(result.status).toBe(0);
+    const lines = outputLines(result.stdout);
+    expect(lines).toHaveLength(1);
+    const wholeConcept = 'docs/architecture/embedded-browser/browser-pane.md';
+    expect(lines[0]).toContain(wholeConcept);
+    const afterWholeConcept = lines[0].slice(lines[0].indexOf(wholeConcept) + wholeConcept.length);
+    expect(afterWholeConcept === '' || afterWholeConcept.startsWith(', ')).toBe(true);
+    expect(lines[0]).not.toContain(`${wholeConcept} [`);
+    expect(lines[0]).toContain('docs/architecture/sessions/terminal-ownership.md [TERMINAL_LINK_SCHEMES]');
   });
 
   it('exits 2 and prints the usage line on stderr when given no paths, no mode or another mode', () => {

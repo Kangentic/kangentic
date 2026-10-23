@@ -37,7 +37,8 @@
  * The second round (`--questions scripts/eval-docs-reads-questions-v2.json`) asks what the first could
  * not: questions with no keyword to grep for, and questions that span several concepts. Its prompt
  * prefix names the docs index, the same in both arms. Each record also carries `trace` (every call's
- * tool, target relative to the checkout, and result bytes) and `contextTokens` (every input token the
+ * tool, target relative to the checkout, and gate bytes: its result less any `<system-reminder>`
+ * blocks) and `contextTokens` (every input token the
  * run's requests carried). `compare` on such a set prints `pairedComparison`: per-measure
  * candidate-over-baseline ratios with a 95% bootstrap interval. How to read it was fixed in
  * docs/log.md before the runs.
@@ -140,7 +141,8 @@ export function callTarget(name, input, checkout) {
     if (typeof value !== 'string' || value.length === 0) return null;
     const resolved = path.resolve(checkout, value.replace(/\\/g, '/'));
     const inside = path.relative(path.resolve(checkout), resolved);
-    if (inside.startsWith('..') || path.isAbsolute(inside)) return path.basename(resolved);
+    // `..` as a whole first segment, so a folder named `..foo` inside the checkout stays inside.
+    if (/^\.\.(?:[\\/]|$)/.test(inside) || path.isAbsolute(inside)) return path.basename(resolved);
     return inside.replace(/\\/g, '/') || '.';
   };
   const where = relative(input?.file_path ?? input?.path ?? null);
@@ -154,7 +156,8 @@ export function callTarget(name, input, checkout) {
 /**
  * One run's numbers from its stream-json stdout. Tool calls come from assistant lines and their
  * results from user lines; a line with a `parent_tool_use_id` is a subagent's and is left out.
- * `trace` lists each call in order with what it aimed at and the bytes it returned, so a run can show
+ * `trace` lists each call in order with what it aimed at and the gate bytes it returned (reminders
+ * left out, as in `gateBytes`), so a run can show
  * whether the agent read an index, grepped, or opened a concept.
  */
 export function tallyStream(stdout, checkout) {
@@ -344,7 +347,13 @@ export function pairedComparison(baselineRecords, candidateRecords, { draws = 20
     const row = { questionId: id, group: before.get(id).group };
     for (const [arm, groups] of [['baseline', before], ['candidate', after]]) {
       const records = groups.get(id).records;
-      row[arm] = { runs: records.length, passes: records.filter((record) => record.passed).length };
+      row[arm] = {
+        runs: records.length,
+        passes: records.filter((record) => record.passed).length,
+        // A run with no `result` line (timed out, crashed) has stream measures but no token or cost
+        // ones, so each measure's mean can rest on a different set of runs. Counted so it shows.
+        incompleteRuns: records.filter((record) => PAIRED_MEASURES.some((measure) => typeof record[measure] !== 'number')).length,
+      };
       for (const measure of PAIRED_MEASURES) {
         row[arm][measure] = mean(records.map((record) => record[measure]).filter((value) => typeof value === 'number'));
       }
@@ -377,7 +386,14 @@ export function pairedComparison(baselineRecords, candidateRecords, { draws = 20
   return { questions: questionMeans, measures, groups, passRate: { baseline: passRate('baseline'), candidate: passRate('candidate') } };
 }
 
+/** The flags parseArgs reads. Each takes a value. */
+const KNOWN_FLAGS = ['--ref', '--label', '--out', '--baseline', '--candidate', '--only', '--questions', '--cli', '--runs', '--concurrency', '--model', '--effort'];
+
 export function parseArgs(argv) {
+  // Every run is a paid agent call, so a mistyped flag (`--question` for `--questions`) fails here
+  // instead of running the default question set.
+  const unknown = argv.slice(1).filter((token) => token.startsWith('--') && !KNOWN_FLAGS.includes(token));
+  if (unknown.length > 0) throw new Error(`${unknown.join(', ')}: not a flag this script takes (${KNOWN_FLAGS.join(', ')})`);
   const value = (flag) => {
     const at = argv.indexOf(flag);
     return at === -1 ? null : argv[at + 1] ?? null;
@@ -544,21 +560,27 @@ async function run(options) {
   return summary({ out: labelDirectory });
 }
 
-/** Every question `options.runs` times, `options.concurrency` at once, each record appended as it lands. */
-async function runQuestions({ options, questions, promptPrefix, commit, checkout, settingsPath, recordsPath }) {
+/** Every question `runs` times, attempt by attempt, each with the prompt its set gives both arms. */
+export function planRuns({ questions, promptPrefix, runs }) {
   const jobs = [];
-  for (let attempt = 1; attempt <= options.runs; attempt += 1) {
-    for (const question of questions) jobs.push({ question, attempt });
+  for (let attempt = 1; attempt <= runs; attempt += 1) {
+    for (const question of questions) jobs.push({ question, attempt, prompt: `${promptPrefix}${question.question}` });
   }
+  return jobs;
+}
+
+/** Every planned run, `options.concurrency` at once, each record appended as it lands. */
+async function runQuestions({ options, questions, promptPrefix, commit, checkout, settingsPath, recordsPath }) {
+  const jobs = planRuns({ questions, promptPrefix, runs: options.runs });
   console.log(`${jobs.length} runs queued at ${commit.slice(0, 9)} (${options.model}:${options.effort})`);
   const modelId = MODEL_IDS[options.model];
   let next = 0;
   let done = 0;
   const worker = async () => {
     while (next < jobs.length) {
-      const { question, attempt } = jobs[next];
+      const { question, attempt, prompt } = jobs[next];
       next += 1;
-      const outcome = await runOnce(options.cli, runArgs({ settingsPath, model: modelId, effort: options.effort }), `${promptPrefix}${question.question}`, checkout);
+      const outcome = await runOnce(options.cli, runArgs({ settingsPath, model: modelId, effort: options.effort }), prompt, checkout);
       const tally = tallyStream(outcome.stdout, checkout);
       const record = {
         questionId: question.id,
@@ -658,6 +680,8 @@ function comparePaired(baselineRecords, candidateRecords) {
     ].join(' | '));
   }
   console.log(`\npass rate ${format(result.passRate.baseline, 3)} -> ${format(result.passRate.candidate, 3)}`);
+  const incomplete = (arm) => result.questions.reduce((sum, row) => sum + row[arm].incompleteRuns, 0);
+  console.log(`runs missing a measure (left out of that measure's mean only) ${incomplete('baseline')} -> ${incomplete('candidate')}`);
   for (const [measure, { ratio, low, high }] of Object.entries(result.measures)) {
     console.log(`${measure}: candidate/baseline ${format(ratio, 3)} (95% interval ${format(low, 3)} to ${format(high, 3)})`);
   }

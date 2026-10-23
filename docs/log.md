@@ -2,6 +2,12 @@
 
 ## 2026-10-22
 
+**Review note** on the second-round question set, before the end-to-end run. Five `expect` patterns
+pass an answer that only restates its question or names the agents it asks about:
+`codex-no-quotes`, `which-agent-starts`, `folder-trust-compared`, `mcp-delivery-compared` and
+`agents-without-hooks`. The set stays as registered, so that run's pass-rate check is weaker on
+those five than it reads. Tighten them to the mechanism each answer must name before a later round.
+
 **Rollout.** The pilot's measurements did not show an agent reading less, and the decision to roll
 out anyway was made on the design argument in `research/okf-knowledge-format.md`: as the docs grow,
 an agent should reach the one concept that answers a question by reading descriptions, not by
@@ -16,7 +22,9 @@ Content moved verbatim except where the split left duplicate or orphaned heading
 references that now cross files, key tables that moved to `settings/app-config.md` beside the
 behavior concepts that link them, and a few stale facts corrected on the way (handoff passes the
 source agent's session file; a To Do move resets a task; Asana is an import source). The four audits
-keep their bodies: their citations of retired paths are history, and the citation test skips them.
+keep their bodies. The code review fan-out audit's citations of retired paths are history, and the
+citation test skips that file; the other three are scanned, since one line in them pointed at a
+deleted doc as the description of what shipped.
 CLAUDE.md now points at `index.md` and lost three sections to `settings/settings-panel.md` and
 `contributing/`, 28,571 to 23,086 characters in every session's load.
 

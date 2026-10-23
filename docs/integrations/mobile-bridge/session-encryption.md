@@ -23,7 +23,7 @@ Once a device is paired, `src/main/mobile-bridge/session/bridge-session.ts` mana
 - Once established, application traffic (the `BridgeMessage` envelope from `wire/messages.ts`) is sealed with **libsodium-style secretstream framing** (`crypto/secretstream.ts`, `deriveSecretstreamPair`) keyed off the Noise session's chaining key. Secretstream framing gives truncation, reorder, and replay detection out of the box, distinct per direction (`SecretstreamDirectionPair`).
 - No Double Ratchet: it solves offline-queued asynchronous messaging, which this interactive, always-connected link does not have.
 
-`src/main/mobile-bridge/wire/session-frame.ts` (re-exported from the protocol package) tags every frame as either a `Handshake` frame (routed to the in-progress `HandshakeState`) or an `Application` frame (routed to the established secretstream pair), so handshake and application traffic can share one transport connection without ambiguity.
+`packages/protocol/src/wire/session-frame.ts` (the protocol package, which the desktop bridge imports) tags every frame as either a `Handshake` frame (routed to the in-progress `HandshakeState`) or an `Application` frame (routed to the established secretstream pair), so handshake and application traffic can share one transport connection without ambiguity.
 
 ## Per-device connection state
 

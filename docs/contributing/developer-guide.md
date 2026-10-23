@@ -561,7 +561,7 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 ## Documentation Maintenance
 
 Run `/sync-docs` to review and update documentation after code changes. This command:
-- Maps changed source files to affected docs using the source-to-doc mapping in `.claude/skills/sync-docs/SKILL.md`
+- Maps changed source files to the concepts that list them in `sources:` frontmatter, through `node scripts/docs-bundle.mjs sources <file>` (see `.claude/skills/sync-docs/SKILL.md`)
 - Checks for stale facts (schema, config keys, constants, types)
 - Updates docs in-place and reports what changed
 

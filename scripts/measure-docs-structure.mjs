@@ -2,9 +2,12 @@
  * What the docs concept layout buys without an agent run (task 889, second round). Spends no quota.
  *
  *   node scripts/measure-docs-structure.mjs drift [--flat <commit>:<path>] [--concepts docs/integrations/agents]
+ *     [--preamble <concept file name>] [--verbose]
  *
  * `--flat` names the flat file as a git object, the last commit that still had it and its path there
- * (default `492f0c474:docs/agent-integration.md`, the agent doc before the split).
+ * (default `492f0c474:docs/agent-integration.md`, the agent doc before the split). `--preamble` names
+ * the concept that now holds the flat file's text above its first H2 (default `adapter-interface.md`,
+ * the agent folder's); a name no concept in the folder has is an error.
  *
  * DRIFT replays history: every commit up to that commit that changed the flat doc together with a
  * file under src/. The doc lines each commit changed are mapped
@@ -20,7 +23,7 @@
  * or removed since) is counted as unmapped and left out.
  *
  *   node scripts/measure-docs-structure.mjs retrieval --questions scripts/eval-docs-reads-questions-v2.json
- *     [--flat <commit>:<path>] [--concepts <folder>] [--device cpu|dml]
+ *     [--flat <commit>:<path>] [--concepts <folder>] [--preamble <concept file name>] [--device cpu|dml] [--verbose]
  *
  * (`--questions` has no default, so this script names the eval harness's question file only here:
  * tests/unit/eval-harness-on-demand-only.test.ts allows no other script to name it in code.)
@@ -31,6 +34,8 @@
  * reference rank them. A flat passage counts as relevant when any of its lines sits in a section a
  * question's gold concept now holds; a concept passage when it comes from a gold concept. It reports
  * MRR@10 and recall@5 per layout. Weights download once into a cache under the OS temp directory.
+ * The flat file must have no frontmatter: `codeChunks` cuts a markdown body after its frontmatter, so
+ * its passages would no longer map to the flat file's lines.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -38,9 +43,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
-import { conceptsForSource, headingsOf, headingText, parseFrontmatter } from './docs-bundle.mjs';
+import { conceptsForSource, headingsOf, headingText, parseFrontmatter, stripFrontmatter } from './docs-bundle.mjs';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** The concept that holds the agent doc's preamble, its text above the first H2. */
+const DEFAULT_PREAMBLE = 'adapter-interface.md';
 /** The sync-docs row that mapped agent source files to the flat agent-integration.md. */
 export const FLAT_AUTHORITY = [
   /^src\/main\/agent\/agent-adapter\.ts$/,
@@ -53,7 +60,11 @@ function git(args) {
   return execFileSync('git', ['-C', PROJECT_ROOT, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
 
-/** The 1-based new-side lines a zero-context diff changed; a pure deletion counts the line it sits at. */
+/**
+ * The 1-based new-side lines a zero-context diff changed. A pure deletion (`+N,0`) counts line N, the
+ * new-side line just above the removed text, so a deleted section's lines count against the section
+ * above it.
+ */
 export function changedLines(diffText) {
   const lines = [];
   for (const match of diffText.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
@@ -104,6 +115,36 @@ export function conceptForHeadingPath(headingPath, concepts, preambleConcept) {
   return null;
 }
 
+/** The concept that holds a flat file's line now. `pathsByLine` has a slot past the last line too. */
+export function conceptAtLine(pathsByLine, line, concepts, preambleConcept) {
+  return conceptForHeadingPath(pathsByLine[Math.min(line, pathsByLine.length - 1)] ?? [], concepts, preambleConcept);
+}
+
+/** The concept named `fileName` in a folder, which holds the flat file's preamble; it must exist. */
+export function preambleConceptOf(concepts, fileName) {
+  const concept = concepts.find((entry) => path.posix.basename(entry.path) === fileName);
+  if (!concept) throw new Error(`--preamble: ${fileName} is not a concept in the --concepts folder`);
+  return concept.path;
+}
+
+/** The concepts one commit's edit of the flat file touched, and how many of its lines mapped to one. */
+export function touchedConceptsOf({ diffText, text, concepts, preambleConcept }) {
+  const pathsByLine = headingPathsByLine(text);
+  const touched = new Set();
+  let mappedLines = 0;
+  let unmappedLines = 0;
+  for (const line of changedLines(diffText)) {
+    const concept = conceptAtLine(pathsByLine, line, concepts, preambleConcept);
+    if (concept) {
+      touched.add(concept);
+      mappedLines += 1;
+    } else {
+      unmappedLines += 1;
+    }
+  }
+  return { touched, mappedLines, unmappedLines };
+}
+
 /** The concepts in a folder, with their frontmatter, rendered heading texts, H1 and size. */
 export function loadConcepts(folder) {
   const absolute = path.join(PROJECT_ROOT, folder);
@@ -148,7 +189,7 @@ export function driftCase({ sourceFiles, touchedConcepts, concepts }) {
 
 function drift(options) {
   const concepts = loadConcepts(options.concepts);
-  const preambleConcept = concepts.find((concept) => concept.path.endsWith('/adapter-interface.md'))?.path ?? null;
+  const preambleConcept = preambleConceptOf(concepts, options.preamble);
   const commits = git(['rev-list', '--no-merges', options.before, '--', options.source]).split('\n').filter(Boolean);
   const cases = [];
   let docsOnly = 0;
@@ -168,18 +209,9 @@ function drift(options) {
       continue;
     }
     const diffText = git(['diff', '-U0', `${commit}^`, commit, '--', options.source]);
-    const pathsByLine = headingPathsByLine(text);
-    const touched = new Set();
-    for (const line of changedLines(diffText)) {
-      const headingPath = pathsByLine[Math.min(line, pathsByLine.length - 1)] ?? [];
-      const concept = conceptForHeadingPath(headingPath, concepts, preambleConcept);
-      if (concept) {
-        touched.add(concept);
-        mappedLines += 1;
-      } else {
-        unmappedLines += 1;
-      }
-    }
+    const { touched, mappedLines: mapped, unmappedLines: unmapped } = touchedConceptsOf({ diffText, text, concepts, preambleConcept });
+    mappedLines += mapped;
+    unmappedLines += unmapped;
     if (touched.size === 0) continue;
     cases.push({ commit: commit.slice(0, 9), wholeBytes: Buffer.byteLength(text, 'utf8'), ...driftCase({ sourceFiles, touchedConcepts: touched, concepts }) });
   }
@@ -228,13 +260,16 @@ async function loadChunker() {
 /**
  * Each chunk's body as a character range of `text`. `codeChunks` rebuilds a file line by line with a
  * newline after each, so its bodies laid end to end are the text plus one newline, and each body's
- * offset is the sum of the bodies before it.
+ * offset is the sum of the bodies before it. A chunk that does not start with `<header>` and a blank
+ * line was cut under another header (a frontmatter description adds a line to it), and its offsets
+ * would be wrong, so it throws rather than mislabel passages.
  */
 export function chunkRanges(chunks, header) {
   let offset = 0;
+  const prefix = `${header}\n\n`;
   return chunks.map((chunk) => {
-    const prefix = `${header}\n\n`;
-    const body = chunk.text.startsWith(prefix) ? chunk.text.slice(prefix.length) : chunk.text;
+    if (!chunk.text.startsWith(prefix)) throw new Error(`chunkRanges: a chunk of ${header} does not start with its header`);
+    const body = chunk.text.slice(prefix.length);
     const range = { start: offset, end: offset + body.length };
     offset += body.length;
     return range;
@@ -285,15 +320,21 @@ export function bm25(passages) {
   });
 }
 
-/** The 1-based rank of the first relevant passage under `scores`, or null when none is relevant. */
+/**
+ * The 1-based rank of the first relevant passage under `scores`, or null when none is relevant. Ties
+ * keep file order, so when BM25 scores every passage 0 (no passage shares a term with the question)
+ * the first relevant passage still ranks by its position. The BM25 numbers in docs/log.md were
+ * measured this way; dropping zero-score passages would change them.
+ */
 export function firstRelevantRank(scores, relevant) {
   const order = scores.map((score, index) => ({ score, index })).sort((left, right) => right.score - left.score || left.index - right.index);
   const position = order.findIndex((entry) => relevant[entry.index]);
   return position === -1 ? null : position + 1;
 }
 
-/** MRR@10 and recall@5 over the first-relevant ranks of a question set. */
+/** MRR@10 and recall@5 over the first-relevant ranks of a question set; null for an empty set. */
 export function rankScores(ranks) {
+  if (ranks.length === 0) return { mrr: null, recall5: null };
   const mrr = ranks.reduce((sum, rank) => sum + (rank !== null && rank <= 10 ? 1 / rank : 0), 0) / ranks.length;
   const recall5 = ranks.filter((rank) => rank !== null && rank <= 5).length / ranks.length;
   return { mrr, recall5 };
@@ -303,17 +344,19 @@ async function retrieval(options) {
   const { codeChunks } = await loadChunker();
   const questionSet = JSON.parse(fs.readFileSync(path.resolve(PROJECT_ROOT, options.questions), 'utf8'));
   const questions = Array.isArray(questionSet) ? questionSet : questionSet.questions;
+  if (!Array.isArray(questions) || questions.length === 0) throw new Error(`${options.questions}: the question file holds no questions`);
   const concepts = loadConcepts(options.concepts);
-  const preambleConcept = concepts.find((concept) => concept.path.endsWith('/adapter-interface.md'))?.path ?? null;
+  const preambleConcept = preambleConceptOf(concepts, options.preamble);
 
   const flatText = git(['show', `${options.before}:${options.source}`]);
+  if (stripFrontmatter(flatText) !== flatText) throw new Error(`--flat: ${options.source} has frontmatter, which codeChunks cuts away from its line offsets`);
   const flatChunks = codeChunks(options.source, flatText);
   const starts = lineStarts(flatText);
   const pathsByLine = headingPathsByLine(flatText);
   const flatPassages = chunkRanges(flatChunks, options.source).map((range, index) => {
     const held = new Set();
     for (let line = lineOf(starts, range.start); line <= lineOf(starts, Math.max(range.start, range.end - 1)); line += 1) {
-      const concept = conceptForHeadingPath(pathsByLine[Math.min(line, pathsByLine.length - 1)] ?? [], concepts, preambleConcept);
+      const concept = conceptAtLine(pathsByLine, line, concepts, preambleConcept);
       if (concept) held.add(concept);
     }
     return { text: flatChunks[index].text, concepts: held };
@@ -374,7 +417,10 @@ export function parseArgs(argv) {
     mode: argv[0],
     before: flat.slice(0, separator),
     source: flat.slice(separator + 1),
-    concepts: value('--concepts', 'docs/integrations/agents'),
+    // Concept paths are built as `<folder>/<name>` and compared with forward-slash paths, so a folder
+    // typed with Windows separators or a trailing slash is normalized first.
+    concepts: value('--concepts', 'docs/integrations/agents').replace(/\\/g, '/').replace(/\/+$/, ''),
+    preamble: value('--preamble', DEFAULT_PREAMBLE),
     questions: value('--questions', null),
     device: value('--device', 'cpu'),
     verbose: argv.includes('--verbose'),
@@ -386,9 +432,9 @@ async function main(argv) {
   if (options.mode === 'drift') return drift(options);
   if (options.mode === 'retrieval' && options.questions) return retrieval(options);
   console.error([
-    'usage: node scripts/measure-docs-structure.mjs drift [--flat <commit>:<path>] [--concepts <folder>] [--verbose]',
+    'usage: node scripts/measure-docs-structure.mjs drift [--flat <commit>:<path>] [--concepts <folder>] [--preamble <concept file name>] [--verbose]',
     '       node scripts/measure-docs-structure.mjs retrieval --questions <second-round question file>',
-    '         [--flat <commit>:<path>] [--concepts <folder>] [--device cpu|dml] [--verbose]',
+    '         [--flat <commit>:<path>] [--concepts <folder>] [--preamble <concept file name>] [--device cpu|dml] [--verbose]',
   ].join('\n'));
   return 2;
 }

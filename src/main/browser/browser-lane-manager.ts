@@ -29,7 +29,7 @@ import { markBrowserGuestWebContents } from '../analytics/renderer-classificatio
  * could not close it, and every supervision guard built for the pane - the veil,
  * the ring, the label, the pointer block - lives on the pane and reached none of
  * it. An agent completed a whole verification run in a lane with no browser
- * anywhere on screen. See `docs/architecture/embedded-browser/index.md`.
+ * anywhere on screen. See `docs/architecture/embedded-browser/decision-log.md` decision 39.
  *
  * What replaces it: the offscreen surface is now pushed to the renderer, so the
  * card globe and the header pill light up for it exactly as they do for a pane,

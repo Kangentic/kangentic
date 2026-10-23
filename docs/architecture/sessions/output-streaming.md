@@ -145,7 +145,7 @@ phone needs and reads the rest by request.
   renderer trace ring, because the specs that read terminal CONTENT pass `--disable-webgl` and so
   cannot reproduce a renderer swap at all.
 
-  A terminal CONFORMED to a held grid (above) needs a third answer here, because the two above
+  A terminal CONFORMED to a held grid (below, in [Width self-heal and geometry re-assert](#width-self-heal-and-geometry-re-assert)) needs a third answer here, because the two above
   cannot reach it: it runs at a derived font, so it cannot simply re-measure its natural cell at
   the configured size the way an unheld terminal does, and the grid it probes main with would
   drift by that same ~10% across a swap. `attachWebglRenderer` therefore takes an
@@ -431,7 +431,7 @@ phone needs and reads the rest by request.
   while a surface still holds the old session, so a successor nothing shows never starts in that
   letterbox. A caller-supplied grid (`input.cols/rows`) and a same-id stash both win over it. Below
   it sits one more source, the grid recorded on the replaced session record
-  (`SpawnSessionInput.restoredGrid`, see Crash Recovery step 7). It covers the resumes no in-memory
+  (`SpawnSessionInput.restoredGrid`, see [Crash Recovery](crash-recovery.md#crash-recovery-session-recovery) step 7). It covers the resumes no in-memory
   row can speak for: after a desktop restart the registry is empty, and after a pty host crash the
   lost row is exited, which `successorGridFor` refuses. The record is written at every grid change
   by the `pty-resize` listener (`session-grid-persistence.ts`); the spawn's own announcement fires
@@ -557,8 +557,8 @@ phone needs and reads the rest by request.
   batcher (`src/renderer/utils/write-batcher.ts`) that coalesces synchronous onData bursts into
   one IPC write - byte-safe, but not semantics-safe for a fullscreen TUI, which treats a chunk
   as one input batch: a run of wheel reports delivered together becomes one multi-line jump, and
-  the TUI's differential frame for a multi-line jump intermittently mis-assembles (the
-  missing-entries family below). Verified by controlled injection (2026-08-23): ten spaced
+  the TUI's differential frame for a multi-line jump intermittently mis-assembles, splicing
+  rows so entries go missing from the frame. Verified by controlled injection (2026-08-23): ten spaced
   reports produced ten clean frames and ~29KB of output; the same ten in one chunk produced one
   ~2KB spliced frame. Unbatching alone is NOT enough - a pipe preserves no message boundaries,
   so reports written back-to-back still land in one read while the TUI renders the previous
@@ -624,7 +624,7 @@ phone needs and reads the rest by request.
   positive fact rather than as a missing entry. Together they are the only record of WHY a terminal
   did or did not take focus, which a "typed into the wrong terminal" report otherwise leaves to
   guesswork - and an ABSENT `arrival-focus` entry is itself a diagnosis, meaning nothing ever asked
-  (see the arrival-obligation bullet above). All nine merge into
+  (see the [arrival-obligation bullet](terminal-ownership.md#terminal-ownership-handoff)). All nine merge into
   `kangentic_devtools_terminal_state`'s timeline alongside the resize and replay events above. `kangentic_devtools_terminal_forensics` is the session-scoped
   companion: renderer viewport rows, main's re-parsed grid, and the raw byte ring side by side,
   which is what separates "the agent never sent these rows" from "we lost them".

@@ -28,7 +28,9 @@ All git-mutating operations (create, remove, branch delete, prune, checkout, ren
 
 `thorough` is the only profile with a clock, because it was the only one whose budget was otherwise unbounded. Its retry ladder looks bounded but is not: Node applies `{ maxRetries, retryDelay }` per locked path and the ladder compounds through the recursion, so the ceiling scales with the tree rather than with time. One observed create-worktree ground for 402716ms on a directory pinned by a live process, holding the queue the whole time. Measured directly against a two-directory tree pinned by a live process's cwd on Windows, the unbudgeted call took 668215ms against the budgeted call's 29832ms, so the incident's number was not an outlier. Under a budget, `removeWithRetry` turns Node's per-path retry off and drives every retry itself until the deadline, which caps the worst case at one fast tree walk past it. The budget covers a whole removal attempt (node_modules, `git worktree remove`, manual rm), and the retry that follows a successful reap gets a shorter 10s one, since a removal that is still stuck after the holder is dead will not be fixed by grinding. The node_modules step is capped again at the smaller of 10s and half the remaining budget: it runs first and `removeNodeModulesPath` swallows its own errors, so a locked node_modules would otherwise grind to the deadline, return normally, and leave the two steps that matter running on the 1s floor with git's real verdict replaced by a timeout abort. A job past 60s logs its `[GIT_QUEUE] ... still running` heartbeat at `warn` rather than `log`, so it survives into a production log tail.
 
-The bound matters beyond the wait: it is what makes the reap below reachable at all. The reap runs only on `tryGitRemoval`'s failure, and without a clock attempt 1 never returned, so the recovery code sat behind a call that never came back.
+The bound matters beyond the wait: it is what makes the [reap](process-reaping.md) reachable at all. The reap runs only on `tryGitRemoval`'s failure, and without a clock attempt 1 never returned, so the recovery code sat behind a call that never came back.
+
+The move-failure stale cleanup in `handleTaskMove` runs at `moderate`, not the default `thorough`. Creation just failed on that same path, so a second full-budget grind re-proves what is already known while the user waits on a failure toast and the git queue stays held: measured in a preview, the two thorough passes put the toast about 62s out against about 34s with this profile.
 
 ### Creation holds the queue for its git phase only
 
@@ -75,7 +77,7 @@ The git phase, steps 1 to 9, is one `create-worktree:<id8>` job on the per-proje
 7. On Windows: enable `core.longpaths` (see below)
 8. Set up sparse-checkout (see below)
 9. `git config --worktree kangentic.baseBranch <baseBranch>`, after sparse-checkout because that
-   step enables per-worktree config (see the base-branch section above)
+   step enables per-worktree config (see [Base Branch Resolution](worktree-lifecycle.md#base-branch-resolution))
 
 The setup phase, steps 10 to 12, runs after the job ends (`setUpWorktree`). The worktree is recorded on its task only once step 12 succeeds:
 

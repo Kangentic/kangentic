@@ -12,6 +12,8 @@ sources:
   - resource: src/main/analytics/settings-snapshot.ts
     title: SETTINGS_SNAPSHOT_ALLOWLIST
   - resource: scripts/aptabase-sink.mjs
+  - resource: src/main/diagnostics/gpu-health.ts
+  - resource: src/main/diagnostics/async-file-queue.ts
 ---
 # Usage analytics
 
@@ -99,7 +101,7 @@ the embed client rebuilds its policy on every model change and project switch.
 mirroring Chromium's own judgment of GPU health: three deaths inside five minutes is also the point
 at which Chromium falls back to software compositing on its own
 (`GpuProcessHost::RecordProcessCrash`). `first` fires on the first death, `latched` on the third,
-counting FAULT deaths only (`isGpuFaultDeath`, see "Error Reporting" below): a kill or a Windows
+counting FAULT deaths only (`isGpuFaultDeath`, see [Counted, not reported](error-reporting.md#counted-not-reported)): a kill or a Windows
 session-teardown exit is written to the record but never ticks, or every shutdown with the app open
 would read as a GPU death on the dashboard. Neither fires again for the rest of the RUN, even across a later decay reset and a fresh escalation -
 the phase gate is per-run, not per-window, which is what keeps this at exactly two Aptabase events no
@@ -107,7 +109,7 @@ matter how many separate incidents one launch has. `exitCode`'s `-1` sentinel do
 meaning it does for `utility_worker_crashed` above: there `cause` says why no code exists, but here it
 means Electron's `child-process-gone` event reported no exit code, a routine and more common case.
 The latch governs this Aptabase tick ONLY. The durable escalation record is written on every death
-from the first (see "Error Reporting" below), because the death that actually kills the app is one
+from the first (see [Counted, not reported](error-reporting.md#counted-not-reported)), because the death that actually kills the app is one
 JS never hears about: Chromium calls `RecordProcessCrash`, and the `LOG(FATAL)` under it, from the
 delegate rather than from the observer notification Electron emits `child-process-gone` from. Live
 reporting is impossible here for the same reason - the browser process is gone before an async
@@ -211,7 +213,7 @@ minification. The React component stack never crosses IPC: a production stack fr
 `file://` URL containing the user's home directory, and a trail of component names reduced from it
 arrived mangled anyway (React takes frame names from `fn.name` and the packaged renderer bundle is
 minified), so that property was dropped. Sentry receives the real, symbolicated stack instead, with
-paths normalized (see Error Reporting below); `boundary` is the field to reach for first on the
+paths normalized (see [Initialization and scrubbing](error-reporting.md#initialization-and-scrubbing)); `boundary` is the field to reach for first on the
 Aptabase side.
 
 Aptabase truncates any string property at 180 characters server-side, so `message` and `panel`
@@ -241,8 +243,8 @@ Aptabase's own identity model rotates daily (see "How It Works" below), so it ca
   machine's home directory is rewritten to `~` in event text, before they leave the machine)
 - Console output in Sentry breadcrumbs, except lines under a short list of diagnostic tags, which
   are rebuilt without error text and with paths redacted. Click breadcrumbs lose their title and
-  label text, and request breadcrumbs lose any URL that is not Kangentic's own (see "Breadcrumbs
-  are filtered at the source" above)
+  label text, and request breadcrumbs lose any URL that is not Kangentic's own (see [Tags, sessions
+  and breadcrumbs](error-reporting.md#tags-sessions-and-breadcrumbs))
 - Usernames, emails, or any personally identifiable information
 - Task creation, task start, or mid-board task moves (only done-entry is tracked)
 - Per-feature content: `feature_used` says a feature was touched that day, never what it was

@@ -87,7 +87,8 @@ frontmatter at the top of a concept is metadata, never part of the enumeration b
 
 ### Seed Data
 1. In the migration files (especially `default-data.ts`), find all `INSERT` statements in migration functions
-2. Extract default swimlanes (name, role, position), actions, and transitions
+2. Extract the default swimlanes (name, role, position, `is_archived`). No actions, transitions or
+   automations are seeded, so there is nothing else to extract
 3. Read `docs/database/storage-model.md`
 4. Find the seed data section
 5. Compare: report missing or changed seed entries
