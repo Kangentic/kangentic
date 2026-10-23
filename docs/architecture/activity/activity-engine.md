@@ -100,7 +100,6 @@ Surrounding infrastructure:
 | `src/main/activity-engine/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
 | `src/main/activity-engine/background-shell/watcher.ts` | Process-tree-based natural-exit detector |
 | `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
-| `src/main/activity-engine/background-shell/resume.ts` | Resume-time orphan adoption |
 | `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
 | `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |

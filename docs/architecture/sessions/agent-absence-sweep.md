@@ -23,11 +23,13 @@ survives, the PTY never fires `onExit`, and nothing marks the session finished. 
 reads active, and the bottom panel keeps a tab (its tab set is `status === 'running'`,
 `derivePanelSessions`).
 
-`assessResumeConversation` (above) removed the two common triggers. The general case is closed by an
+`assessResumeConversation` (see [Resume](resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead)) removed the two common triggers. The general case is closed by an
 **agent-absence sweep**, a third tier of the bg-shell watcher
 (`src/main/activity-engine/background-shell/watcher.ts`). The watcher is already registered for
 every spawned session, already holds each session's root PID, and already takes one shared process
 snapshot per cycle, so the sweep adds no new subsystem.
+
+## Deciding the agent is gone
 
 **No descendant process means no agent.** That is agent-agnostic, so it needs no adapter
 capability and no agent-name branching. Two things make it correct rather than merely plausible:
@@ -56,6 +58,8 @@ shell (`parseWslShellSpec`, the same detector the spawn uses), and an elapsed sp
 slow-STARTING agent is not excluded by the grace and does not need to be - its process exists, it
 just has not drawn yet, which is exactly why the process tree is a safer signal than a first-output
 timeout. A slow-starting SHELL is another matter, and only a Command Terminal pays for it (below).
+
+## Command Terminals
 
 **Command Terminals are judged too, and ended rather than kept.** A Command Terminal runs the
 project's agent CLI in a shell at the project root, the same shape as a task session, so the tree
@@ -116,10 +120,14 @@ row through the same exit, suspended after a Pause or exited, as a task's agent 
 (`isCommandTerminalSession` decides which). That removal is skipped while
 SessionManager is shutting down, which keeps it out of the bounded quit drain.
 
+## A shell that exits while its agent runs
+
 The inverse case, a shell that exits while its agent keeps running, is the pty host's to clean up,
 for task sessions and Command Terminals alike. On Windows node-pty never closes the pseudoconsole
 after a natural exit (microsoft/node-pty#965), so nothing ended the agent: measured in a preview, a
 killed shell's `claude.exe` was still running a minute later.
+
+### How Claude Code ends on Windows, measured
 
 How Claude Code itself takes each way of ending it, measured on 2.1.294 (Windows 11 build 26200,
 node-pty 1.1.0, a mature idle session, a SessionEnd hook recording when it ran; reproduce with
@@ -184,6 +192,8 @@ more; a dead Windows shell's agent still gets it, and so does macOS, on purpose:
 ways, the Esc sequence is the one that ended every state, and the Ctrl+C-only ways that leave no
 record failed the thinking state.
 
+### How Claude Code ends on Linux, measured
+
 On Linux the kill is node-pty's `UnixTerminal.kill()`: a SIGHUP to the shell pid, with the
 terminal's master left open while the host keeps reading it. Bash passes the hangup on to its
 foreground job, Claude. `scripts/probe-claude-exit-paths-linux.py` measured it on 2.1.304 in WSL2
@@ -219,6 +229,8 @@ it, and two Linux cells passed that way), so one run on a Mac answers it. That r
 launch Claude under bash, where a Mac user's shell is usually zsh; the shell-killed cells cover
 the difference the same way.
 
+### The fullscreen renderer
+
 `CLAUDE_CODE_NO_FLICKER=1` (`--renderer no-flicker`) brought the fullscreen renderer up and never
 wrote a boot record, in two runs on 2.1.302 and one on 2.1.303, and a young close left nothing
 behind. That is the documented behavior: Claude's settings reference names the variable the
@@ -240,6 +252,8 @@ Kangentic itself runs inside a Claude session (`CLAUDECODE` set): they are that 
 So Claude on Windows is closed, never typed into (`consoleCloseIsGraceful`, see "SessionManager.kill()
 and the young-session grace"), and the Esc sequence is its exit sequence where a console cannot
 be closed (below) and on macOS, which neither probe has measured.
+
+### Asking the orphaned agent to exit
 
 So the host asks first (`src/main/pty/host/dead-root-orphans.ts`): it writes the session's exit
 sequence into the dead shell's console, waits up to 10 s for the processes it found to exit, and
@@ -275,6 +289,8 @@ Windows. With that kill the same 100 exits ended at 62 MB. The kill frees the wo
 else, since node-pty's native side forgot the PTY at the exit and the console-list shortcut
 returns no pid once the exit code is set.
 
+## WSL
+
 The **WSL exclusion covers a different failure than the others**: there the tree signal is
 UNREADABLE, not empty. A WSL session's PTY root is `wsl.exe`, and the agent is not a Win32
 descendant of it either way - a distro-native CLI is a Linux process in another PID namespace, and
@@ -285,6 +301,8 @@ set and passes every other arm, so the sweep would force-kill live work. Refusin
 safe to the pre-existing phantom instead. Note this arm is a DENYLIST and closes only the known
 case; an allowlist (require that the tree showed a non-console descendant at least once before
 absence can be concluded) would close the whole class of structurally invisible subtrees.
+
+## Cadence and what a retirement does
 
 **Cadence.** The sweep runs on its own 60s clock (`AGENT_ABSENCE_SWEEP_INTERVAL_MS`), decoupled from
 the watcher's 2s/4s/6s poll backoff, and evaluates for free on any cycle that already enumerated for
