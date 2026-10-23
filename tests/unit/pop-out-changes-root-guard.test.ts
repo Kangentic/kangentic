@@ -181,14 +181,19 @@ describe('PopOutChangesRoot worktree_path guard', () => {
     expect(collectText(output)).not.toContain('No changes on this branch');
   });
 
-  it('shows the empty state when the task lookup misses', () => {
+  it('hands a task the board does not hold to the row read, which picks its commits or the empty state', () => {
     resetMockState();
     mockState.tasks = [];
 
     const output = PopOutChangesRoot({ params: { taskId: 'missing-task', projectId: 'proj-1' } });
 
+    // The row read runs hooks of its own, so this direct call stops at its
+    // element: whether the task is archived (its commits) or not (the empty
+    // state) is decided inside it, never by a panel mounted here.
     expect(findByType(output, PanelErrorBoundary)).toBeNull();
-    expect(collectText(output)).toContain('No changes on this branch');
+    const handedTo = isElementLike(output) && typeof output.type === 'function' ? output.type.name : null;
+    expect(handedTo).toBe('UnboardedTaskRoot');
+    expect(isElementLike(output) ? output.props.params : null).toEqual({ taskId: 'missing-task', projectId: 'proj-1' });
   });
 
   it('shows the empty state when projectPath is null', () => {

@@ -26,8 +26,9 @@ import { useWindowStore } from '../store/window-store';
 export function useConversationWindowBridge(): void {
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
   // Every open request bumps this, so asking again for a conversation that is
-  // already open (a second Route pill) re-runs the effect below and switches
-  // the window's tab. `?? 0`: an instance pinned across a Fast Refresh predates it.
+  // already open re-runs the effect below, which focuses the window and
+  // switches its tab when the request names one. `?? 0`: an instance pinned
+  // across a Fast Refresh predates it.
   const conversationRequestId = useSessionStore((state) => state.conversationRequestId ?? 0);
   const windows = useWindowStore((state) => state.windows);
 

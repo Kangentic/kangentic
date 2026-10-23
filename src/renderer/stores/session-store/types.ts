@@ -93,14 +93,14 @@ export interface CoreSessionSlice {
    *  search palette when a hit is selected. */
   scrollToEventKey: string | null;
   /** The Kangentic session id whose conversation viewer should be open. Set by the
-   *  search palette (conversation hit), the completed task view's "View
-   *  conversation" button, and the task-detail kebab. The conversation window bridge opens/focuses
+   *  search palette (conversation hit), the task-detail header's Conversation
+   *  pill, and the task-detail kebab. The conversation window bridge opens/focuses
    *  a window for it, and mirrors the window's close back to null. Mirrors
    *  `detailTaskId` for the task-detail bridge. */
   conversationSessionId: string | null;
-  /** One-shot: the tab the latest open asked for (a Route pill's column, or
-   *  All). The bridge hands it to the window and clears it here. Null leaves an
-   *  open window's tab as it is. */
+  /** One-shot: the tab the latest open asked for (a column, or All). The bridge
+   *  hands it to the window and clears it here. Null leaves an open window's
+   *  tab as it is. */
   conversationTab: ConversationTabRequest | null;
   /** Bumped by every non-null `setConversationSessionId`, so asking again for a
    *  conversation that is already open still reaches the bridge, which then
