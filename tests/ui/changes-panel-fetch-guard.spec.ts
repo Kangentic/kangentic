@@ -10,13 +10,12 @@
  * LATEST scope/selection rather than the params captured when it was queued.
  * See src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx.
  *
- * `fetchUncommittedCount` also calls `diffFiles` (a separate, unguarded call
- * fired whenever scope isn't 'working' or a commit is selected), so a scope
- * switch legitimately adds its OWN diffFiles traffic alongside fetchFiles's.
- * That call never includes a `commitOid` key, while fetchFiles always does
- * (even when its value is undefined) - the mock's `hasCommitOidKey` flag
- * (tests/ui/mock-electron-api.js) lets this spec isolate fetchFiles's own
- * call sequence from that unrelated, expected traffic.
+ * fetchFiles is the panel's ONLY `diffFiles` call site: the separate count of
+ * uncommitted files that used to ride the History section's Uncommitted row
+ * is gone with that row, so a scope switch adds no traffic of its own. The
+ * mock's `hasCommitOidKey` flag (tests/ui/mock-electron-api.js) still marks
+ * fetchFiles's calls, which always carry a `commitOid` key (even when its
+ * value is undefined), so the helpers below can tell them apart.
  *
  * This spec locks two properties, using only fetchFiles-origin calls
  * (`hasCommitOidKey === true`):
@@ -36,7 +35,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, settleFrames } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -214,10 +213,7 @@ test.describe('ChangesPanel - fetchFiles overlapping-fetch guard', () => {
 
     // Opening Changes mounts ChangesPanel, whose mount effect fires the
     // initial fetchFiles() - the first diffFiles call, held open by the
-    // deferred hook above. Scope defaults to 'working' with no commit
-    // selected, so fetchUncommittedCount's separate call is NOT triggered
-    // yet (see ChangesPanel's mount-effect guard) - only fetchFiles's own
-    // call site is exercised so far.
+    // deferred hook above.
     await expect.poll(async () => (await getFetchFilesCalls(page)).length, { timeout: 8000 }).toBe(1);
     expect((await getFetchFilesCalls(page))[0].scope).toBe('working'); // diffDefaultScope
 
@@ -237,22 +233,21 @@ test.describe('ChangesPanel - fetchFiles overlapping-fetch guard', () => {
     // ran in, well under this window.
     await page.waitForTimeout(500);
     expect((await getFetchFilesCalls(page)).length).toBe(1);
-    // Also zero unrelated traffic at this point: scope is still 'working'
-    // throughout the burst, so fetchUncommittedCount never fires either.
+    // And no other diffFiles traffic of any kind.
     expect((await getAllCalls(page)).length).toBe(1);
 
     // Now change scope while the ORIGINAL fetchFiles call is still in
-    // flight - a third trigger of fetchFiles's call site (again just
-    // coalesced into the same pending flag), plus fetchUncommittedCount's
-    // own (separate, unguarded, by-design) call for the new non-working
-    // scope.
+    // flight - a third trigger of fetchFiles's call site, again just
+    // coalesced into the same pending flag.
     const scopeSelect = page.locator('[data-testid="changes-scope-select"]');
     await scopeSelect.waitFor({ state: 'visible', timeout: 8000 });
     await page.locator('[data-testid="changes-scope-staged"]').click();
-    await expect.poll(async () => (await getAllCalls(page)).length, { timeout: 8000 }).toBe(2);
-    // Still exactly one fetchFiles-origin call outstanding - the scope
-    // change did not spawn a second one despite being the third trigger
-    // received while the first call was in flight.
+    await expect(page.locator('[data-testid="changes-scope-staged"]')).toHaveAttribute('aria-checked', 'true');
+    await settleFrames(page);
+    // Still exactly one diffFiles call outstanding - the scope change did not
+    // spawn a second one despite being the third trigger received while the
+    // first call was in flight, and nothing else asks for one.
+    expect((await getAllCalls(page)).length).toBe(1);
     expect((await getFetchFilesCalls(page)).length).toBe(1);
 
     // Resolve the in-flight (first, 'working') fetchFiles call. Its `finally`
@@ -268,9 +263,8 @@ test.describe('ChangesPanel - fetchFiles overlapping-fetch guard', () => {
     const fetchFilesCalls = await getFetchFilesCalls(page);
     expect(fetchFilesCalls[1].scope).toBe('staged');
 
-    // Resolve every remaining outstanding call (fetchUncommittedCount's
-    // 'staged' call, and the coalesced fetchFiles rerun) so the panel
-    // settles fully.
+    // Resolve every remaining outstanding call (the coalesced fetchFiles
+    // rerun) so the panel settles fully.
     const resolverCount = await page.evaluate(() => ((window as unknown as { __mockGitDiffFilesResolvers?: unknown[] }).__mockGitDiffFilesResolvers ?? []).length);
     for (let index = 0; index < resolverCount; index++) {
       if (index === originalFetchFilesIndex) continue; // already resolved above

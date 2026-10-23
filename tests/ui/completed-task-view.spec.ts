@@ -22,7 +22,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, settleFrames } from './helpers';
+import { waitForViteReady, gotoVite, settleFrames, toastCountRightNow } from './helpers';
 import {
   launch as launchMonitorSeed,
   openMonitor,
@@ -710,7 +710,7 @@ test.describe('Completed task view', () => {
       await openCompletedTask(page);
       await page.getByRole('tab', { name: 'Conversation' }).click();
       await expect(page.locator('[data-testid="completed-conversation-empty"]')).toHaveText('This task has no conversation history');
-      await expect(page.locator('[data-testid="toast"]')).toHaveCount(0);
+      expect(await toastCountRightNow(page)).toBe(0);
       await expect(page.getByTestId('conversation-window')).toHaveCount(0);
     } finally {
       await browser.close();
