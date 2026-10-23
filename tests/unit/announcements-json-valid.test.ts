@@ -7,7 +7,7 @@
  * the PR that introduces it - every content-only announcement PR runs it via
  * the unit tier in CI.
  *
- * Publishing contract reminder (docs/configuration.md): edits to this file on
+ * Publishing contract reminder (docs/releases/announcements.md): edits to this file on
  * main reach every released client within one poll cycle. Ids are dismissal
  * keys - never reuse or rename one.
  */
@@ -72,7 +72,7 @@ describe('committed announcements.json', () => {
     expect(new Set(ids).size).toBe(ids.length);
 
     for (const announcement of parsed) {
-      // Every entry carries an expiry (docs/configuration.md): a forgotten
+      // Every entry carries an expiry (docs/releases/announcements.md): a forgotten
       // announcement must age out on its own, not linger for years.
       expect(announcement.expiresAt, `announcement "${announcement.id}" needs expiresAt`).toBeDefined();
       // Unparseable dates fail closed (the entry never shows); catch at author time.

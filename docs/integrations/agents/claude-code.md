@@ -82,7 +82,7 @@ A `plan` spawn whose approved plan would continue in `bypassPermissions` (`planA
 
 ### Permission Mode Resolution (Priority Order)
 
-See [Permission Mode Resolution](../../configuration.md#permission-mode-resolution-priority-order) in configuration.md.
+See [Permission Mode Resolution](../../settings/cascade.md#permission-mode-resolution-priority-order) in configuration.md.
 
 ## Non-Interactive Mode
 

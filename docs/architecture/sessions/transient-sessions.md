@@ -97,4 +97,4 @@ and the end settle do, and throws for a session that is not a Command Terminal.
 2. Once the process has exited, delete the session directory from disk (best-effort). This is the only delete, so the agent's SessionEnd hook still has a directory to write into
 
 Transient sessions are counted by the `session_spawn` analytics event with `isTransient: true`
-(volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](../../analytics.md).
+(volume) and by `feature_used: command_terminal` (adoption); see [analytics.md](../../telemetry/index.md).

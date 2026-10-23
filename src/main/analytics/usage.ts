@@ -4,7 +4,7 @@ import { trackEvent, getAnalyticsClientId } from './analytics';
 /**
  * The curated feature vocabulary for adoption tracking. Deliberately curated:
  * each feature adds up to one `feature_used` event per user per day, so the
- * list is a budget decision, not a free enum (see docs/analytics.md's event
+ * list is a budget decision, not a free enum (see docs/telemetry/usage-analytics.md's event
  * budget; at the measured rate each entry costs roughly twelve events a day
  * fleet-wide). Renderer-reported features arrive over IPC and are validated
  * against this list, so a compromised or drifted renderer cannot invent

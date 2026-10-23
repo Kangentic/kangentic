@@ -1039,7 +1039,7 @@ export interface AgentAdapter {
    * Example (Gemini, Droid, Cursor, Warp, Ollama, Goose):
    *   - Both contexts: returns null. For the first three that is a MEASURED
    *     verdict - their history flushes at turn-end or too variably to bound a
-   *     ~4s delivery budget (numbers in `docs/command-injection.md`) - not an
+   *     ~4s delivery budget (numbers in `docs/architecture/automations/command-injection.md`) - not an
    *     unexplored gap. Warp and Ollama expose no usable history at all, and
    *     Goose parses none.
    */
@@ -1114,7 +1114,7 @@ export interface AgentAdapter {
    *
    *   1. Flush latency measured live inside the delivery budget
    *      (`scripts/measure-injection-flush.mjs`, numbers recorded in
-   *      `docs/command-injection.md`). This answers "does the CLI write the
+   *      `docs/architecture/automations/command-injection.md`). This answers "does the CLI write the
    *      record fast enough?"
    *   2. This adapter's OWN verifier proven end to end in a running app: it
    *      confirmed a real submission, and a forced miss escalated. This answers
@@ -1127,7 +1127,7 @@ export interface AgentAdapter {
    * so a green measurement says nothing about whether the adapter's resolver
    * points at that file or whether the CLI wrapped the stored text (Cursor
    * stores `<user_query>...</user_query>`, which would never trim-equal the
-   * submitted text). `docs/command-injection.md` has the mock-CLI recipe for
+   * submitted text). `docs/architecture/automations/command-injection.md` has the mock-CLI recipe for
    * (2); it costs no agent quota.
    *
    * Do not remove this override on the strength of the parser tests passing.

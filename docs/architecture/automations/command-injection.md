@@ -1,6 +1,24 @@
-# Command Injection
+---
+type: Reference
+title: Command injection
+description: "How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, outcomes, awaited exit delivery, test coverage and the file map."
+tags: [command-injection, keystrokes, verifier, delivery]
+sources:
+  - resource: src/main/transition-engine/injection-plan.ts
+  - resource: src/main/transition-engine/terminal-submit-scheduler.ts
+  - resource: src/main/transition-engine/turn-completion.ts
+  - resource: src/main/pty/terminal-submit.ts
+  - resource: src/main/pty/prompt-draft-ledger.ts
+  - resource: src/main/pty/output-settle.ts
+  - resource: src/main/ipc/helpers/auto-command-outcome.ts
+  - resource: src/main/ipc/helpers/exit-message-delivery.ts
+  - resource: src/main/automations/turn-end/agent-message-delivery.ts
+  - resource: src/main/agent/adapters/claude/slash-command-verifier.ts
+  - resource: src/main/agent/shared/submitted-text-verifier.ts
+---
+# Command injection
 
-Kangentic injects a column's message to its agent into a live agent session when a task moves between columns. The column's model and effort settings are never typed into a task session. A change to either restarts the session with the new launch flags (see the next section). Only the Command Terminal, which has no session to `--resume`, still switches model and effort live with a typed `/model` or `/effort`. The message comes from a **Send message to agent** automation on the column (see [Column automations](configuration.md#column-automations)); it used to be the `auto_command` field, and this document still uses that name for the delivery machinery, which did not change: the scheduler, the verifier contract, and the four `auto_command_*` outcome columns on `tasks` are all as they were. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
+Kangentic injects a column's message to its agent into a live agent session when a task moves between columns. The column's model and effort settings are never typed into a task session. A change to either restarts the session with the new launch flags (see the next section). Only the Command Terminal, which has no session to `--resume`, still switches model and effort live with a typed `/model` or `/effort`. The message comes from a **Send message to agent** automation on the column (see [Column automations](../../settings/cascade.md#column-automations)); it used to be the `auto_command` field, and this document still uses that name for the delivery machinery, which did not change: the scheduler, the verifier contract, and the four `auto_command_*` outcome columns on `tasks` are all as they were. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst, decides WHEN it is delivered, and records the outcome. `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level sequence (`Ctrl+U? → text → Esc? → Enter` per command), where the leading `Ctrl+U` clears any draft on a warm session and the `Esc` fires only for a `/`-prefixed command, at most once, and never during a live turn. Each step is a drain plus output-settle handshake rather than a fixed sleep. This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
 
 ## What a move does to a live session (the settings delta)
 
@@ -180,7 +198,7 @@ Rung 3 is what makes the guarantee falsifiable rather than aspirational. It rout
 - While that gate waits, the verifier is re-polled every second against each command's original first-Enter watermark (its `CommandDelivery.firstSentAt` on the burst result), and once more when the turn completes. A confirmation anywhere in that wait cancels the restart and the outcome becomes `confirmed`. A restart re-runs the command, and it did: every observed live injection of a skill command (`/merge-pull-request`, four of four moves) was reported `failed` by the burst and then run a second time by the restart (#682). The poll runs during the wait rather than only after it because the verifier reads a bounded tail; a long turn can push the entry out of reach of a single check at the end. Turn completion on its own is never taken as delivery evidence: the turn that completes may be the one that was already running when the command was typed. A verifier that throws is a miss on both looks (logged, then the restart proceeds), never a reason to abandon the restart: the gate is the one path that re-sends a swallowed command.
 - It is attempted at most once. If the restart's argv prompt still does not confirm, the outcome is `failed`.
 - It carries **only** the user's message. An adapter-emitted settings write joined into an argv prompt stops being a slash invocation and becomes literal message text, and `--resume` preserves already-applied settings anyway.
-- It emits the `resending-command` spawn-progress phase ("Re-sending command...") before the suspend, through `restartSessionForSettingsChange`'s required `phase`, so the card names the swap and the mobile bridge can attach the label to the suspend's `session-ended` (see [Mobile Bridge](integrations/mobile-bridge/index.md)).
+- It emits the `resending-command` spawn-progress phase ("Re-sending command...") before the suspend, through `restartSessionForSettingsChange`'s required `phase`, so the card names the swap and the mobile bridge can attach the label to the suspend's `session-ended` (see [Mobile Bridge](../../integrations/mobile-bridge/index.md)).
 
 ### The exit path is rung 2 only, and it is AWAITED
 
@@ -235,7 +253,7 @@ Three details are load-bearing:
 
 For a verifiable command, each attempt polls the verifier for 400ms; up to 5 attempts. **Retries re-press Enter alone.** Esc is sent at most once, on the first attempt only, because it is not a picker-scoped key: Claude Code documents it as "stop Claude while it is generating output", and on a non-empty prompt with no picker the first press prints "Esc again to clear", so a second press would delete the very command being submitted.
 
-**The watermark is the first Enter, for every poll of that command.** It used to be re-stamped on each retry, and that made every later attempt blind to the first one's success. The backward scan stops at the first entry older than its watermark, and a submission stamped between two Enters has newer siblings between it and the tail (Claude writes a `command_permissions` attachment in the same instant as a skill invocation's user turn, and a `pr-link` a moment later), so a retry's scan returned false on a sibling before it could reach the entry. Claude also stamps the user turn at submit but flushes it ~780ms or ~1830ms later (see [Measured flush latency](#measured-flush-latency)), which is why attempt 1's 400ms window rarely saw it in the first place. The two together turned a delivered `/merge-pull-request` into `failed` on every observed move (#682).
+**The watermark is the first Enter, for every poll of that command.** It used to be re-stamped on each retry, and that made every later attempt blind to the first one's success. The backward scan stops at the first entry older than its watermark, and a submission stamped between two Enters has newer siblings between it and the tail (Claude writes a `command_permissions` attachment in the same instant as a skill invocation's user turn, and a `pr-link` a moment later), so a retry's scan returned false on a sibling before it could reach the entry. Claude also stamps the user turn at submit but flushes it ~780ms or ~1830ms later (see [Measured flush latency](command-injection-measurements.md#measured-flush-latency)), which is why attempt 1's 400ms window rarely saw it in the first place. The two together turned a delivered `/merge-pull-request` into `failed` on every observed move (#682).
 
 **After the last retry the burst keeps polling for a 2000ms grace without pressing Enter** (`LATE_FLUSH_GRACE_MS`). The retry cadence answers "did a picker eat the Enter?" and the evidence horizon answers "has the transcript caught up?"; tying the second to the first is what made the budget 2000ms when the slow flush mode plus a skill's expansion exceeds it. A sixth Enter would buy nothing (the prompt is empty if the command went in) and risks answering whatever the started turn has since put on screen. The horizon is now ~4s.
 
@@ -308,225 +326,6 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 
 - `'paste'` runs the verifier **in parallel** with the activity-event listener and post-`\r` data path. The first signal to resolve wins. A verifier resolving `false` does not short-circuit the fallbacks - they remain active for the rest of the wait window. This matches the "best-effort confirmation" model: a verifier strengthens evidence but cannot weaken the existing fallback path.
 - `'command-injection'` runs the verifier in a **tight poll loop** inside `TerminalSubmit.pollForConfirmation`. On each iteration the verifier is invoked with the command's first-Enter `sentAt`; if it returns `false`, the loop sleeps `pollMs` and retries. Past the retry interval (with no confirmation), Enter is re-fired and the watermark stays where it was. This matches the "deterministic chain" model: each command must be confirmed before the next.
-
-## Why a verifier must be measured before it is written
-
-A verifier is what AUTHORIZES escalation, and escalation restarts the session with the command as an argv prompt. That makes the two failure modes wildly asymmetric:
-
-- **No verifier** - the outcome is `unconfirmed`, escalation never fires, and nothing destructive happens.
-- **A too-slow verifier** - a false `failed` escalates, and the restart **destroys live work.**
-
-So a wrong verifier is worse than no verifier, and `getSubmissionVerifier` returning `null` is a declared answer (pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`), not an omission.
-
-Measurement is the gate on WRITING a verifier. It is not on its own the gate on letting one escalate: see [Why escalation takes two proofs](#why-escalation-takes-two-proofs-and-measurement-is-only-the-first).
-
-The trap is that the obvious measurement gives the wrong answer. A trivial prompt ends its turn in under a second, so an agent that flushes its history at TURN-END still reads sub-second and looks like a pass. The discriminator is a **paired short/long trial**: if append latency tracks turn duration, the agent is turn-end flushed and fails the gate. `scripts/measure-injection-flush.mjs` runs that pairing (plus a slash-command trial) against the real CLI under node-pty, and the numbers below come from it.
-
-Two further rules the harness enforces, both learned the hard way here:
-
-- **Measure the file the VERIFIER reads.** Qwen's probe text reaches `~/.qwen/tmp/<hash>/logs.json` in ~130ms but its `chats/<sessionId>.jsonl` in ~500ms. Reporting the first number would have credited the verifier with a latency belonging to a file it never opens.
-- **An offline run can never establish a pass.** With credentials stripped there is no turn to flush at turn-end, so a fast append proves nothing. Offline yields only "absent" or "needs live confirmation".
-
-## Measured flush latency
-
-Live runs, 2026-08-08, Windows. "Worst" is the slowest observation across trials, because the safety-relevant statistic for a restart-authorizing signal is the worst case, never the mean.
-
-| Agent | Short turn | Long turn (turn length) | Worst | Slash recorded? | Verdict |
-|---|---|---|---|---|---|
-| Copilot | 36ms, 37ms | 38ms, 37ms (32.3s, 23.3s) | **38ms** | yes (37ms, 53ms) | **implement** |
-| Codex | 64ms, 108ms | 62ms, 61ms (4.6s, 4.4s) | **108ms** | no | **implement** |
-| OpenCode | 64ms, 64ms | 95ms, 64ms (5.0s, 7.3s) | **95ms** | no | **implement** |
-| Qwen | 443ms, 519ms | 696ms, 479ms (13.5s, 14.1s) | **696ms** | yes (306ms, 355ms) | **implement** |
-| Claude (control) | 775ms, 1876ms | 791ms, 1828ms (11.4s, 6.3s) | **1876ms** | yes | **implement** |
-| Claude (control, 2026-09-18, 2.1.276, haiku) | 895ms, 888ms | 871ms, 1032ms (9.4s, 9.3s) | **1032ms** | yes (930ms, 914ms) | **implement** |
-| Droid | 3202ms, 941ms | 661ms, 636ms (4.5s, 9.9s) | **3202ms** | yes (580ms, 564ms) | **stop** |
-| Cursor | login-gated | 5766ms, 5446ms (5.8s, 5.4s) | **5766ms** | yes (2614ms) | **stop** |
-| Gemini | 5504ms, never (>25s) | never (>25s), 6302ms (16.9s) | **>25s** | not reached | **stop** |
-| Grok Build | 313ms, 32ms (2.1s, ~4s turns) | (not yet paired-long measured) | **313ms** | n/a (slash never recorded, by design) | **implement (confirm-only)** |
-| Antigravity (2026-08-16, agy 1.1.13, 1 trial) | 84ms | 74ms (4.1s) | **84ms** | never recorded (rejected client-side: "Unknown command") | **implement** |
-
-Grok's two numbers come from `scripts/probe-grok.js`'s interactive PTY leg (2026-08-16, grok
-1.0.0, Windows) rather than `measure-injection-flush.mjs` - a typed submit polled against
-`chat_history.jsonl` at 25ms cadence. Both landed well inside the single-attempt 400ms window
-and far below the turn end, which is the flush-on-submit signature; the formal paired
-short/long trial has not been run, which (together with the missing in-app proof and the
-records carrying no timestamps) is why its verifier ships confirm-only rather than verified.
-
-**The bar is the delivery BUDGET, not a margin.** `submitKeystrokes` retries up to 5 times polling 400ms each and then polls a further 2000ms without pressing, so a submission has ~4000ms to become visible before the outcome is `failed`, all of it measured from the FIRST Enter. Two earlier attempts to hold reserve (1000ms, then 1500ms) both failed the CLAUDE CONTROL - the reference implementation whose verifier ships and works. Any bar that rejects the known-good adapter is measuring the wrong thing. (The budget was 2000ms until #682, and the watermark advanced on every retry, which meant the second half of that budget could never confirm an entry stamped in the first half; the control's slow mode alone consumed 1876ms of it.)
-
-**Run the control after touching the harness.** Claude's 2026-08-08 numbers were bimodal (775/791/779ms or 1812/1828/1876ms, nothing between - a periodic flush caught either side of its interval), which is also why "typical" latency is meaningless here and only the upper mode matters. The 2026-09-18 re-run on 2.1.276 (haiku, a trusted scratch directory no session was using) read 871 to 1032ms on all six trials, one mode this time and uncorrelated with turn length. A same-day run from inside the live checkout read 323 to 373ms with a 1401ms outlier and is discarded: its probes shared this session's `~/.claude/projects/<slug>/` directory, and a run whose numbers a neighbour can move in either direction measures nothing. The 4000ms delivery budget covers the clean worst about four times over, and with the fixed first-Enter watermark a 900 to 1000ms flush confirms on attempt 3 (Enter at 800ms, window to 1200ms). If `--agent claude` does not pass, the instrument is broken and no other verdict from it can be trusted.
-
-**The harness needs a trusted workspace on current Claude Code.** A fresh temp directory raises the workspace trust dialog, and since 2.1.x the dialog parks its cursor on "No, exit"; `maybeAnswerPrompt` now reads the selected row off the frame and moves it before confirming, and answering restarts the ready-quiet window so the probe is never typed into the dialog. Accepting trust for a brand-new directory was still observed to redraw the dialog and end the CLI when the harness ran inside another Claude Code session, so `--workspace <dir>` runs every probe in a directory the CLI already trusts. Do not point it at a directory a live agent session is running in: the probe's transcripts then share that session's `~/.claude/projects/<slug>/` directory, which is how the 1401ms outlier above was produced. Trust a scratch directory once from an interactive `claude` and reuse it. Model the run with `ANTHROPIC_MODEL=claude-haiku-4-5-20251001` to keep the control cheap.
-
-**Cursor is the clearest turn-end flush after Gemini.** Its appends landed 40ms and 42ms either side of the turn ENDING - not correlated with turn length, essentially identical to it. Its first two probes were also login-gated (the harness's auth-gate detector did not recognise Cursor's wording, since phrase matching lags vendors), but that contamination changes nothing: the trials that DID land are disqualifying on their own, 5.4 to 5.8 seconds against a 4000ms budget.
-
-OpenCode is measured through a read-only SQL query rather than a file scan, because a SQLite page is not observable as text. Getting that number took three runs and exposed a harness bug worth recording: some TUIs drop the first characters of typed input while they finish becoming interactive (OpenCode ate between 6 and 40 of them), which destroyed a front-anchored nonce and read as "never landed". The probe marker now sits at the END of the prompt and the harness settles before typing. Production does not hit this - `submitKeystrokes` runs its own Ctrl+U handshake and settle first - but any future probe must keep the marker trailing.
-
-That contamination only ever produced false NEGATIVES, and it does not touch the verdicts above: Gemini and Droid failed on the latency of trials that DID land (5504ms/6302ms and 3202ms respectively), and every Codex and Qwen trial landed with an exact match.
-
-Codex's append latency is flat against a turn 70x longer, which is what proves the write happens on submit. A read-only pre-screen agreed before any quota was spent: of 114 rollout files on a real machine, five ended in a TORN JSON line and one ended mid-turn on `exec_command_end` - only possible if the process died mid-append, which rules out a turn-end buffer.
-
-Gemini is the case the gate exists for. It writes on message completion (its own parser says so), so two of four probes never landed within 25 seconds. A verifier built on it by analogy with Codex would have reported `failed` on healthy sessions and escalated them into restarts.
-
-A note for anyone re-running this: Droid's numbers below are exactly as measured, but the verdict was corrected by hand afterwards. The saved report from that run records `implement`, because the gate itself had the bug described below and was fixed after the run. The measurement did not change; only the rule applied to it did. A fresh run on the current harness reports `stop`.
-
-Droid fails for a different and more instructive reason: it is not turn-end flushed at all (its LONG turns appended fastest, at ~640ms), it is simply **unreliable** - 564ms at best and 3202ms at worst, with no relation to turn length. 3202ms exceeded the whole 2000ms budget that applied when it was measured, so those submissions were reported `failed` while the agent was working normally. The budget has been 4000ms since the fixed watermark and the grace landed, which would put that one trial inside it with under 800ms to spare; two trials on a 2026-08 build are not a re-measurement, so the verdict stands until the harness is re-run against a current Droid. This is why the bar is the WORST observation rather than the mean, and why the harness gates on every trial rather than only the long-turn ones: an earlier revision checked only the long runs and returned "implement" for Droid while printing a 3202ms worst case.
-
-Qwen passes but with far less margin than Codex, and lands ABOVE the 400ms single-attempt window, so it typically confirms on the second Enter attempt. That is well inside the 4000ms budget, but it means any future tightening of `VERIFY_WINDOW_MS` puts Qwen at risk first.
-
-## Per-adapter support matrix
-
-There are three tiers, and the line between the first two is a safety property, not a quality judgement.
-
-- **Verified** - flush latency measured live, AND this adapter's own verifier watched confirming a real submission inside a running app. Confirms, retries, and may escalate to a restart.
-- **Confirm-only** - has a working verifier that confirms and drives retry-on-Enter, but **never escalates**. Each one records exactly which of the two proofs it is missing.
-- **None** - no usable signal at all.
-
-| Adapter | `'paste'` | `'command-injection'` | Tier | What it has, and what it lacks |
-|---------|-----------|----------------------|------|-------|
-| Claude | `null` | JSONL-polling verifier | **verified** | the shipped reference implementation; records slash invocations and user turns on submit |
-| Codex | `null` | verifier (`submitted` only) | **verified** | 108ms worst, proven in-app both ways (confirmed a real record, escalated a forced miss), and its extractor pinned to a real rollout capture; declines SLASH commands, see below |
-| Copilot | `null` | verifier | confirm-only | 38ms worst, the fastest measured. Lacks a real capture of `command-history-state.json` to pin its exact-match extractor against |
-| OpenCode | `null` | verifier (SQL) | confirm-only | 95ms worst via a read-only query. Has a KNOWN wrong answer for remote sessions, below; declines SLASH commands, same as Codex |
-| Qwen | `null` | verifier | confirm-only | 696ms worst, slash included. Builds its path from a CAPTURED session id and has never run against a live Qwen session in-app |
-| Kimi | `null` | verifier | confirm-only | `wire.jsonl` shape pinned to real captures. Unmeasured: never reached a usable TUI |
-| Grok Build | `null` | verifier | confirm-only | 313ms/32ms flush-on-submit measured live; extractor unwraps the stored `<user_query>` wrapper and skips `synthetic_reason` records. Lacks the in-app proof, and `chat_history.jsonl` records carry NO timestamps so the scan cannot bound a `sentAt` window - a byte-identical PRIOR submission could false-confirm, harmless for confirm-only, disqualifying for escalation. Declines SLASH commands (TUI palette, never a recorded turn) |
-| Aider | `null` | verifier | confirm-only | markdown shape from a real fixture. Unmeasured: not installed on the measuring machine |
-| Antigravity | `null` | verifier (`submitted` semantics) | confirm-only | 84ms worst against the brain-dir transcript (`USER_INPUT` steps, `<USER_REQUEST>` unwrapped, whole-second timestamps with a 5s tolerance). Lacks the in-app confirmation proof; declines SLASH commands (rejected client-side, never recorded) |
-| Gemini | `null` | `null` | none | measured turn-end flushed and highly variable |
-| Droid | `null` | `null` | none | measured unreliable: 564ms best, 3202ms worst |
-| Cursor | `null` | `null` | none | measured turn-end flushed: appends land within ~40ms of the turn ending |
-| Warp | `null` | `null` | none | no history file accessible via CLI |
-| Ollama | `null` | `null` | none | `ollama run` keeps no session history |
-| Goose | `null` | `null` | none | `getSubmissionVerifier` returns null for every context; no transcript is parsed |
-
-### Why escalation takes two proofs, and measurement is only the first
-
-A verifier does two separable things, and they carry very different risk:
-
-- **Rung 2, retry-on-Enter.** A `false` re-presses Enter. Pure upside: it recovers a submission a picker swallowed, and it is what closes the measured 92.9% -> 100% delivery gap. This is where nearly all the delivery win lives.
-- **Rung 3, escalation.** Exhausting the retries restarts the session with the command as an argv prompt. That **destroys live work** if the verifier was wrong.
-
-The harness answers one question: *does the CLI write the record fast enough?* It hunts a unique nonce with its own file reader, deliberately agent-agnostic so it stays honest even when the app's resolver is broken. That independence is also its limit. It says nothing about:
-
-- whether **this adapter's resolver** points at the file the harness read (a path built from a session id that was never captured resolves to nothing, forever);
-- whether the CLI **wraps or decorates** the stored text. Cursor stores `<user_query>\n<task>...</task>\n</user_query>`, which a nonce substring search finds happily and exact trim-equality never matches.
-
-Both of those produce a **permanent** false negative rather than an intermittent one, so they would escalate *every* auto_command the adapter ever receives. That is why the second proof is a run inside the app, and why an adapter stays confirm-only until it has one, even with a clean measurement.
-
-The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot, OpenCode, Grok, and Antigravity do not, and adding one is the cheapest single contribution toward graduating any of them.
-
-Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
-
-### Graduating an adapter (the contributor recipe)
-
-This is written for someone who already uses the agent in question - the numbers below could not be taken here for exactly the agents you may have installed. Do the steps in order; step 2 is the one that has actually caught bugs.
-
-**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the 4000ms delivery budget (five 400ms windows plus the 2000ms grace, from the first Enter), applied to the WORST observation.
-
-**2. Prove the adapter's own verifier in the app.** Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB. Expect `confirmed`. With the real CLI installed that is the whole of it, and it costs one ordinary turn.
-
-To force the negative case, or to avoid spending a turn at all, point `agent.cliPaths.<agent>` at a mock CLI that writes a real-shaped record into that agent's real history location, then run the same move twice - once with the record write on, once off. One caveat if you write a mock: read the working directory off the CLI's own argument rather than `process.cwd()`. Codex records the `-C` value, and getting that wrong silently writes to the wrong slug and looks like a verifier bug.
-
-   - Record write on: expect `confirmed`.
-   - Record write off: a confirm-only adapter must land on `failed` with the session still alive; an escalating one must land on `escalated` with a restart.
-
-**3. Add a real capture, if the adapter has none.** Sanitize one of that agent's own history files into `tests/fixtures/` and extend `tests/unit/command-injection-real-capture-extractors.test.ts`. This is what proves the CLI does not wrap or decorate the stored text, and it is the cheapest single contribution for Copilot or OpenCode.
-
-**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part.
-
-Any subset of this is worth a PR. Step 1 alone puts numbers in the table; step 3 alone strengthens an adapter without touching its tier. And if an adapter simply misbehaves for you, the useful bug report is the agent, the task's `auto_command_state`, and whether the session was local or remote.
-
-Run to date, against a mock CLI writing a real rollout file, driving actual column moves:
-
-| Adapter | Tier | Verifier outcome | `auto_command_state` | Session restarted? |
-|---|---|---|---|---|
-| Codex | verified | confirmed 1ms after the record landed | `confirmed` | no |
-| Codex | verified | never recorded (forced) | `escalated` | **yes** |
-| OpenCode | confirm-only | never confirmed | `failed` | **no** |
-
-The last two rows are the whole point of the tier split: identical verifier behaviour, opposite consequences.
-
-### Known limitations, per adapter
-
-Each confirm-only adapter carries a guard standing in for what could not be measured, or a documented wrong answer:
-
-- **OpenCode remote sessions are reported `failed` however well they were delivered.** A remote session keeps no local row, so the query finds nothing on every poll. `locateSessionHistoryFile` guards this case via `remoteTargetsByCwd`, but `getSubmissionVerifier` receives only a context type and has no `cwd` to check it with; and once running, the verifier's boolean contract cannot distinguish "cannot observe" from "observed absence" - both must return false so the caller keeps polling through the normal post-spawn gap. Escalation being off is the containment: a spurious notice instead of a restart on every delivery. Widening the verifier contract is the real fix and is not attempted here.
-- **Copilot's history is GLOBAL** across every session and project, with no timestamps and no session id, so a concurrent injection from another task can push our entry down the list. The verifier accepts a match from the newest few entries rather than strictly `[0]`, which biases the residual error toward a harmless false POSITIVE instead of a false negative. That mitigation is reasoning, not measurement.
-- **Aider** has no per-entry timestamps and one file per project, appended forever, so a previously-run auto_command would otherwise confirm from a months-old entry. It requires the FILE's mtime to be at/after `sentAt` AND matches only the LAST user block. It is also the one adapter with NO session id at all, so it declares `requiresAgentSessionIdForVerification() === false`; without that the shared wrapper short-circuits on the missing id and the verifier can never confirm, which is worse than having none (the burst still retries, then reports `failed` where it would have stayed silently `unconfirmed`).
-- **Kimi** records `timestamp` in unix SECONDS; it is scaled to milliseconds, without which every record reads ~56 years stale and nothing would ever confirm.
-
-**Unmeasured is a real verdict, distinct from a measured "no".** Two adapters have no number yet, and neither has been shown to flush late:
-
-- **Kimi** never reached a usable TUI (it hung past the harness's four-minute per-probe ceiling on a single trial).
-- **Aider** is not installed on the measuring machine.
-
-OpenCode used to sit here too, and how it left is the instructive part: nothing about OpenCode changed, the INSTRUMENT did. Its storage is a SQLite database, so a byte scan of the page file proved nothing either way; once the harness gained a read-only query mode it measured 64-95ms. Treat "unmeasured" as a statement about the harness as much as about the agent.
-
-### Cursor: located, not yet verified
-
-Cursor's entry used to read "session history location is not known". It is now known, and the reason it stayed unknown is worth recording: Cursor was **undetectable** on any machine that also had xAI's Grok CLI, because both publish a PATH shim named `agent` and Grok's `agent.exe` wins PATHEXT order. Nobody could investigate an agent the app could not find. That is fixed (`binaryName: 'cursor-agent'` with `agent` as an alias; see `tests/unit/cursor-grok-binary-collision.test.ts`).
-
-What exists on disk:
-
-- `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` - per-session JSONL, records `{"role":"user","message":{"content":[{"type":"text","text":...}]}}`.
-- `~/.cursor/chats/<hash>/<sessionId>/store.db` - a per-session SQLite store alongside it.
-
-Three things must be settled before Cursor earns a verifier, and none is done:
-
-1. **Flush latency is unmeasured.** The harness has no Cursor entry yet.
-2. **The records carry no timestamp.** The shared scan bounds itself with a `sentAt` watermark read off each record; with none, the same guards Aider needs apply (file mtime at/after `sentAt`, and match only the LAST user block). The per-session file at least bounds staleness to one session, unlike Aider's per-project log.
-3. **The stored text is WRAPPED.** The captured turn reads `<user_query>\n<task>...</task>\n</user_query>`, not the raw submitted text, so exact trim-equality would fail unless the extractor unwraps it. Whether a keystroke-injected auto_command is wrapped the same way is itself unverified.
-
-Droid is different: it WAS measured, on an authenticated session, and failed on variance rather than on being unmeasurable. Do not re-litigate it without new numbers.
-
-The harness distinguishes these cases automatically. It detects a CLI parked on a login or device-code prompt and reports `unmeasurable-here` rather than a measured "no" - without that check, Droid drew a confident `stop` verdict while it was actually sitting on a Factory login screen, which is a fabricated measurement.
-
-### Codex declines slash commands specifically
-
-Codex handles slash input in the TUI. A probe of `/kng-probe-<nonce>` printed `Unrecognized command` and produced no record at all, so absence from the rollout file cannot distinguish:
-
-- the CLI **rejected** it (nothing ran), from
-- the CLI **ran it client-side** (`/status`, `/compact`) and simply never made it a conversation turn.
-
-Treating the second as a failure would escalate a command that actually worked into a session restart. So `CodexAdapter.canVerifySlashSubmission()` returns `false`, and `prepareInjectionPlan` tags a slash `auto_command` `verify: 'none'` for it - neither retried nor escalated, outcome `unconfirmed`. Prose auto_commands on Codex are still fully verified. This is a declared capability rather than an agent-name check, per `agent-adapters-boundary`.
-
-Antigravity declares the same `false` for the same measured reason: its slash probe printed `Unknown command` in the TUI and appended nothing to the brain-dir transcript, so absence there is equally ambiguous. Prose auto_commands on Antigravity remain fully verified.
-
-When an adapter returns `null`, the caller falls back to:
-- `'paste'`: activity event or any post-`\r` data byte (within 3s).
-- `'command-injection'`: the handshake chain alone, with an outcome of `unconfirmed`.
-
-An adapter with no verifier cannot reach 100% delivery: with no confirmation signal there is nothing to retry against, and no failure to escalate. Measured on the load rig it reaches ~93% against Claude's 100%, and its safety property still holds absolutely (a delivery may be missed, but a wrong one is never submitted). An adapter closes that gap by implementing `'command-injection'` verification once measurement shows its CLI flushes history on submit.
-
-## Delivery modes
-
-A column declares WHEN its message fires, via the `mode` field on its **Send message to agent**
-automation. That used to be `Swimlane.auto_command_mode`, a per-column field; the message is an
-automation now (see [Column automations](configuration.md#column-automations)), so the choice
-belongs to the row that supplies the text. The two values and their meanings are unchanged:
-
-- **`immediate`** (default) - inject as soon as the task lands, interrupting the agent's current turn if there is one. The interruption is reported, not silent.
-- **`deferred`** - hold until the agent's current turn genuinely finishes.
-
-"Finishes" is the two-signal predicate in `src/main/transition-engine/turn-completion.ts`: activity is `idle` **and** the PTY has produced no output for a quiet window. A bare `idle` is not enough, because the catalogued sustained false idles (an API 529 retry backoff, a `Monitor` wait) report idle for minutes while the CLI keeps painting - a stability window expires inside both. Note the direction: output *present* holds delivery back; output *absent* is never taken as proof of anything on its own. `permission` is excluded from the completion set, since injecting there would answer the prompt with the command text.
-
-That single predicate is shared with rung-3 escalation; there is deliberately no second idle check.
-
-## Measured delivery rate
-
-`tests/unit/injection-load-rig.test.ts` drives the real `TerminalSubmit` against a TUI model that can fail the way the real one fails (a picker with a render delay that eats Enter, a prompt buffer that survives, a startup window that swallows Ctrl+C, an asynchronous write queue, and reads that coalesce so Meta sequences form). Before and after the rebuild:
-
-| Scenario | before | after |
-|---|---|---|
-| picker-render sweep | 57.1% | 100% |
-| loaded sweep (seeded jitter) | 57.5% | 100% |
-| draft present, warm session | 64.3% | 100% |
-| fresh spawn, user typed during wait | 0% | 100% |
-| startup render swallows the clear | 64.3% | 100% |
-| adapter with no verifier | 57.1% | 92.9% |
-
-Every "before" failure in the picker sweep fell in the 100-200ms band - exactly `KEYPRESS_DELAY < pickerRender < 2 * KEYPRESS_DELAY`. The fresh-spawn row is the reported bug verbatim: all 14 trials submitted `instead can we/code-review` as a single message.
 
 ## Test coverage
 

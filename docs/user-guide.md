@@ -924,7 +924,7 @@ Applies to every project (Settings > Dictation, not a per-project override). Voi
 | Live model | Transcription | Custom only. The preview while you speak. A streaming model is instant and a chunked one is more accurate |
 | Refinement model | Transcription | Custom only. Re-reads the clip on release for the final text, and None keeps the live text. **Cloud endpoint** sends the final clip to an OpenAI-compatible `/v1/audio/transcriptions` URL, with an optional API key and model, while the live preview stays on this machine |
 
-Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Configuration](configuration.md#dictation) lists the models behind each Mode.
+Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Configuration](architecture/dictation.md#dictation) lists the models behind each Mode.
 
 ### MCP Server
 
@@ -954,7 +954,7 @@ Kangentic can export your board layout to a `kangentic.json` file in the project
 
 When you open a project, Kangentic automatically writes `kangentic.json` with the current board state. Commit and push this file. When teammates pull it, Kangentic detects the change and shows a banner offering to apply the new configuration.
 
-The sync runs both ways. Opening a project also reads an existing `kangentic.json` back INTO your database first, before that write - so editing the file by hand is a genuine way to change the board, not just a record of it. That read happens with no banner and no prompt, and the file wins where the two disagree. A file that cannot be read, such as one with git merge conflict markers, is never overwritten: the board loads from the database and a banner says the file needs fixing. See [Board Config Sync](configuration.md#board-config-sync-kangenticjson) for the full rules.
+The sync runs both ways. Opening a project also reads an existing `kangentic.json` back INTO your database first, before that write - so editing the file by hand is a genuine way to change the board, not just a record of it. That read happens with no banner and no prompt, and the file wins where the two disagree. A file that cannot be read, such as one with git merge conflict markers, is never overwritten: the board loads from the database and a banner says the file needs fixing. See [Board Config Sync](settings/board-config.md#board-config-sync-kangenticjson) for the full rules.
 
 ### Personal Overrides
 
@@ -1045,7 +1045,7 @@ open it.
 Announcements are fetched from a static file on the public GitHub repo - no account, no tracking,
 and if the feed is unreachable (offline or self-hosted setups) no new ones appear, though your
 history stays available. See
-[Configuration - In-App Announcements](configuration.md#in-app-announcements) for the feed
+[Configuration - In-App Announcements](releases/announcements.md#in-app-announcements) for the feed
 mechanics.
 
 ### Mobile Devices
@@ -1227,7 +1227,7 @@ The structured transcript of each session: user turns, assistant replies (includ
 
 ### Keyword and Semantic Search
 
-Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once and then runs fully offline (it is unavailable on Intel Macs, see [Knowledge Graph](configuration.md#knowledge-graph)). The **Search quality** row picks it: **Best** is IBM's Granite embedding English R2 (153 MB), **Light** is bge-small (33 MB). The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red, and a **License** line links the model's license. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+Keyword (full-text) search is always available while indexing is on. Turning on the **Knowledge Graph** in Settings > Knowledge Graph downloads a small embedding model once and then runs fully offline (it is unavailable on Intel Macs, see [Knowledge Graph](architecture/knowledge-graph.md)). The **Search quality** row picks it: **Best** is IBM's Granite embedding English R2 (153 MB), **Light** is bge-small (33 MB). The status row under it reads **Downloading** over a progress track, then **Local model** with the model's name, size and where it runs, or **Download failed** in red, and a **License** line links the model's license. It powers the [Knowledge Graph](#knowledge-graph) and hybrid `kangentic_search` for agents; Quick Find stays keyword-only. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Model acceleration** setting (Auto / GPU / CPU). Changing Search quality re-indexes in the background by itself. **Rebuild the index**, in the Index card, reads every source again in every project without deleting anything: the open project now, every other one the next time you open it. It is only needed if search misses something you know is there, or after a new agent or model, when it also rewrites the task summaries written the old way. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
 
 ### Where It Surfaces
 

@@ -98,7 +98,7 @@ export function AnnouncementDialog() {
       }
     >
       {/* An announcement must fit WITHOUT scrolling (authoring contract, see
-          docs/configuration.md); the cap here is the dialog's height minus
+          docs/releases/announcements.md); the cap here is the dialog's height minus
           header + footer chrome, and overflow-y-auto is only a safety valve
           for very small windows, never a layout feature. Pinned by the
           no-scrollbar assertion in tests/ui/announcements.spec.ts. */}

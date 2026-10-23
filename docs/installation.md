@@ -94,7 +94,7 @@ instead of being installed.
 
 Linux has built-in auto-updates: the app downloads the new deb/rpm and installs it when you click
 "Restart to update", asking for your password once. Unlike Windows and macOS there is no
-install-on-quit. See [Linux auto-update](deployment.md#linux-auto-update).
+install-on-quit. See [Linux auto-update](releases/deployment.md#linux-auto-update).
 
 ### WSL Note
 

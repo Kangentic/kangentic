@@ -46,7 +46,7 @@ enumeration being compared.
 2. Find the `AppConfig` interface and `DEFAULT_CONFIG` object
 3. Recursively flatten to dot-paths (e.g., `terminal.fontSize`, `board.columns`)
 4. Note default values from `DEFAULT_CONFIG`
-5. Read `docs/configuration.md`
+5. Read `docs/settings/app-config.md`
 6. Find the config keys table
 7. Compare: report missing dot-paths and any default values that differ
 
@@ -54,7 +54,7 @@ enumeration being compared.
 1. Read `src/shared/types.ts`
 2. Find the `BoardConfig` and `BoardColumnConfig` interfaces
 3. Extract each field name and type
-4. Read `docs/configuration.md`
+4. Read `docs/settings/board-config.md`
 5. Find the board config section
 6. Compare: report missing fields
 
@@ -101,14 +101,14 @@ enumeration being compared.
 1. Read `src/renderer/components/settings/settings-tabs.ts`
 2. Find the `SETTINGS_TABS` array definition
 3. Extract each tab's label/id and note its `category` ('project' vs 'system') and `tier`
-4. Read `docs/user-guide.md` and `docs/configuration.md`
+4. Read `docs/user-guide.md` and `docs/settings/settings-panel.md`
 5. Verify all tabs are documented and the project/shared split is described correctly
 6. Compare: report missing tabs
 
 ### Settings Registry
 1. Read `src/renderer/components/settings/settings-registry.ts`
 2. Extract each registered setting entry (key, type, label, tab)
-3. Read `docs/configuration.md`
+3. Read `docs/settings/settings-panel.md`
 4. Find the settings section
 5. Compare: report missing registry entries
 
@@ -117,15 +117,15 @@ enumeration being compared.
 1. Read `src/shared/template-vars.ts`
 2. Extract all exported template variable names (`{{cwd}}`, `{{branchName}}`, `{{taskTitle}}`,
    `{{projectPath}}`) and their descriptions
-3. Read `docs/configuration.md#shortcuts` (canonical)
-4. Compare: report missing variables. `docs/transition-engine.md` and `docs/integrations/agents/adapter-interface.md`
+3. Read `docs/settings/board-config.md#shortcuts` (canonical)
+4. Compare: report missing variables. `docs/architecture/automations/transition-engine.md` and `docs/integrations/agents/adapter-interface.md`
    only cross-reference this system with a link - they do not enumerate it.
 
 ## Task Template Variable Anchors (auto_command / spawn_agent promptTemplate)
 
 1. Read `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` / `TASK_TEMPLATE_VARS`)
 2. Extract every keyword name (currently 26) and their `chip`/`description` fields
-3. Read `docs/transition-engine.md` ("## Template Variables", canonical) and
+3. Read `docs/architecture/automations/transition-engine.md` ("## Template Variables", canonical) and
    `docs/architecture/system-overview.md` (the "Template variables available" line, cross-reference)
 4. Compare: report any chip missing from either doc, or documented with stale prose (e.g.
    describing `{{baseBranch}}` as resolving empty rather than falling back to the effective

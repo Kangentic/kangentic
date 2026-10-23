@@ -7,7 +7,7 @@ import { SENTRY_DATA_COLLECTION } from '../shared/sentry-data-collection';
  * path of its own: every event it captures is forwarded to the main process
  * over the SDK's internal IPC and leaves through main's transport, so the
  * documented invariant that all telemetry egress happens in the main process
- * holds with this initialized (docs/analytics.md).
+ * holds with this initialized (docs/telemetry/error-reporting.md).
  *
  * Init is gated on `analytics.errorReportingEnabled`, a synchronous boot value
  * preload reads from additionalArguments that mirrors main's single decision

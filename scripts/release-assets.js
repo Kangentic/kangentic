@@ -27,7 +27,7 @@
  * (scripts/merge-mac-update-feeds.js).
  *
  * Adding or dropping an arch changes the asset count the test and the docs
- * hardcode (tests/unit/release-asset-manifest.test.ts, docs/deployment.md,
+ * hardcode (tests/unit/release-asset-manifest.test.ts, docs/releases/deployment.md,
  * .claude/skills/release/SKILL.md). Those say 18 BUILD assets, and the docs also
  * say a finished release carries 19: release.yml's demo-posters job attaches the
  * docs poster set after publishing, deliberately outside this list, since this

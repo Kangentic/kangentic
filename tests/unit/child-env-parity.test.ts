@@ -20,7 +20,7 @@ import { hasOptOutMarker } from './helpers/opt-out-marker';
 //
 // Not covered: a spawn that passes no env at all and so inherits main's. The
 // chokepoints (buildSpawnEnv, the off-main runners, spawnWithAbort) each set an
-// env, and the rest are decided case by case in docs/cross-platform.md.
+// env, and the rest are decided case by case in docs/platforms/windows.md.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIR = path.join(REPO_ROOT, 'src', 'main');

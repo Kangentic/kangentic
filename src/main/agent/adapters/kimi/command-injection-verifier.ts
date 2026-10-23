@@ -22,7 +22,7 @@ import { kimiSessionsRoot } from './work-dir-hash';
  * performs, because a false negative here would be a guess and that restart
  * destroys live work.
  *
- * Graduating it takes both halves of the recipe in `docs/command-injection.md`:
+ * Graduating it takes both halves of the recipe in `docs/architecture/automations/command-injection.md`:
  * the harness against an authenticated Kimi session for the timing, AND the
  * in-app mock run proving THIS resolver finds THAT record. Do not drop the
  * override merely because these tests pass; they cover the shape, which was

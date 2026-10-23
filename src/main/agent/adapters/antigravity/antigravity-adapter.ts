@@ -246,7 +246,7 @@ export class AntigravityAdapter implements AgentAdapter {
    * measured submit-time flush (scripts/measure-injection-flush.mjs,
    * 2026-08-16 vs agy 1.1.13: worst observed append latency 84ms across
    * short AND long turns, so the transcript flushes on submit, not turn-end;
-   * recorded in docs/command-injection.md). Both `mode`s verify with
+   * recorded in docs/architecture/automations/command-injection.md). Both `mode`s verify with
    * submitted semantics - the text became a USER_INPUT turn - because this
    * adapter never emits settings slash-commands (`command-match`'s discrete
    * invocation contract has no Antigravity producer).

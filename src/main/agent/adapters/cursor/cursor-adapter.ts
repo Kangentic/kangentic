@@ -387,7 +387,7 @@ export class CursorAdapter implements AgentAdapter {
     // plus a per-session `store.db`. It stays unwired because the records carry
     // NO timestamp and the stored text is WRAPPED (`<user_query>...</user_query>`)
     // rather than the raw submitted text, so neither a staleness bound nor an
-    // exact match is possible yet. See docs/command-injection.md, "Cursor:
+    // exact match is possible yet. See docs/architecture/automations/command-injection.md, "Cursor:
     // located, not yet verified".
     return null;
   }

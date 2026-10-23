@@ -104,7 +104,7 @@ export const TASK_TEMPLATE_RESOLVERS: Record<TaskTemplateVarName, TaskTemplateRe
   taskNumber: ({ task }) => String(task.display_id),
   // Coalesced here rather than at each call site so every consumer sees the
   // same '' for "no project open". That empty value is flag-shaped under
-  // drop-and-collapse (clause 6); docs/transition-engine.md documents how it
+  // drop-and-collapse (clause 6); docs/architecture/automations/transition-engine.md documents how it
   // fails, below the Template Variables table.
   projectPath: ({ projectPath }) => projectPath ?? '',
   projectName: ({ projectName }) => projectName ?? '',

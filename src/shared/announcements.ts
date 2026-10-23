@@ -11,7 +11,7 @@
  *
  * Publishing contract: edits to `announcements.json` on `main` reach every
  * released client within one poll cycle (about 4 hours, plus ~5 minutes of
- * raw.githubusercontent CDN cache). See docs/configuration.md.
+ * raw.githubusercontent CDN cache). See docs/releases/announcements.md.
  */
 
 export const ANNOUNCEMENTS_URL =

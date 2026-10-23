@@ -55,7 +55,7 @@ Two names are accepted but not offered:
   runs. Starting an agent is the column's own "Start an agent here" setting, not an automation.
 
 Every text field takes the template variables listed in
-[transition-engine.md](../../transition-engine.md), substituted literally: an unknown name is sent as
+[transition-engine.md](../../architecture/automations/transition-engine.md), substituted literally: an unknown name is sent as
 written rather than dropped. A script also receives each one as a `KANGENTIC_*` environment
 variable, which is the quoting-safe way to read one.
 
@@ -122,7 +122,7 @@ Each entry takes `name` (required, unique within the column ignoring case), `typ
 optional `condition` or `finalLine` and an optional `maxRuns` (all off by default), an optional
 `id`, and the type's own fields flat on the object. The `on` key belongs to this tool's input
 only: `kangentic.json` stores the same rows in one array per trigger and has no `on` key (see
-[configuration.md](../../configuration.md)).
+[configuration.md](../../settings/index.md)).
 
 ```json
 {

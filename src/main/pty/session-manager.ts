@@ -2830,7 +2830,7 @@ export class SessionManager extends EventEmitter {
     // A WSL session's PTY root is `wsl.exe`, and the agent is NOT a Win32
     // descendant of it either way: a distro-native CLI is a Linux process in
     // another PID namespace, and the interop path Kangentic actually uses (see
-    // docs/cross-platform.md) launches the Windows binary through WSL's binfmt
+    // docs/platforms/shells-and-paths.md) launches the Windows binary through WSL's binfmt
     // host rather than under this `wsl.exe`. The Windows probe enumerates
     // `Win32_Process`, so a perfectly healthy WSL agent presents an EMPTY
     // descendant set - indistinguishable from a phantom, and every guard above

@@ -31,7 +31,7 @@ The CLA is modeled after the [Apache Individual Contributor License Agreement](h
 
 Every native module ships prebuilt binaries for Windows and macOS. On Linux, node-pty compiles on
 install, so you need `build-essential` and `python3`; a macOS package build needs the Xcode Command
-Line Tools. See [docs/developer-guide.md](docs/developer-guide.md) for the full setup.
+Line Tools. See [docs/contributing/developer-guide.md](docs/contributing/developer-guide.md) for the full setup.
 
 ### Setup
 
@@ -107,7 +107,7 @@ is enforced. The full set lives in [.claude/rules/](.claude/rules/).
 
 ### Testing
 
-Tests run in three tiers. See [docs/developer-guide.md](docs/developer-guide.md) for the full
+Tests run in three tiers. See [docs/contributing/developer-guide.md](docs/contributing/developer-guide.md) for the full
 description of each tier and the headless mock.
 
 - **Unit** (`tests/unit/`, Vitest, sub-second, pure logic): `npm run test:unit`
@@ -220,7 +220,7 @@ The clearest example is auto_command delivery. Kangentic confirms that an inject
 became a user turn, and an agent only earns the last-resort recovery (restarting the session) once
 two things have been proven for it. The per-agent status, what each one is still missing, and a
 step-by-step recipe are in
-[docs/command-injection.md](docs/command-injection.md#per-adapter-support-matrix). Partial results
+[docs/architecture/automations/command-injection.md](docs/architecture/automations/command-injection-support-matrix.md#per-adapter-support-matrix). Partial results
 are welcome: measuring an agent and reporting the numbers is a useful PR on its own.
 
 Bug reports for this area are most useful with the agent name, the task's `auto_command_state`, and

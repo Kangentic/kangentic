@@ -581,7 +581,7 @@ describe('allowlisted breadcrumb tags carry no interpolated user content', () =>
     expect(
       violations,
       'A line under a breadcrumb tag reaches Sentry. Pass an Error as its own argument, drop the user '
-        + 'content from the line, or add `// breadcrumb-ok: <why it is safe>` (docs/analytics.md).',
+        + 'content from the line, or add `// breadcrumb-ok: <why it is safe>` (docs/telemetry/error-reporting.md).',
     ).toEqual([]);
   });
 
@@ -593,7 +593,7 @@ describe('allowlisted breadcrumb tags carry no interpolated user content', () =>
   // Both docs write the allowlist out as a parenthesized list of backticked
   // tags. The one holding any allowlisted tag must hold exactly the allowlist,
   // so a tag added or removed on either side fails here.
-  it.each(['docs/analytics.md', '.claude/skills/sentry/SKILL.md'])('%s lists exactly the allowlisted tags', (docPath) => {
+  it.each(['docs/telemetry/error-reporting.md', '.claude/skills/sentry/SKILL.md'])('%s lists exactly the allowlisted tags', (docPath) => {
     const docText = fs.readFileSync(path.join(REPO_ROOT, docPath), 'utf-8');
     const tagLists = [...docText.matchAll(/\((`\[[^\]`]+\]`(?:,\s*`\[[^\]`]+\]`)*)\)/g)]
       .map((match) => [...match[1].matchAll(/`(\[[^\]`]+\])`/g)].map((tagMatch) => tagMatch[1]))

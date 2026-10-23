@@ -147,7 +147,7 @@ folder" chip still read `worktree_path`.
 See [Worktree Strategy](../architecture/worktrees/worktree-lifecycle.md#when-a-worktree-is-not-created).
 
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
-settings the task rides as it moves (see [Configuration > Board Profiles](../configuration.md#board-profiles)).
+settings the task rides as it moves (see [Configuration > Board Profiles](../settings/board-config.md#board-profiles)).
 There is deliberately **no foreign key**: profile *definitions* live in `kangentic.json`, not this
 database, so the profile is team-shared while the assignment stays per-machine runtime state. NULL
 means "Default" - every column uses its own settings - and Default is synthetic: there is no stored

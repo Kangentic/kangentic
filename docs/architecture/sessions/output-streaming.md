@@ -566,7 +566,7 @@ phone needs and reads the rest by request.
   (Ack-clocking each report to the TUI's answer was tried and reverted: the TUI coalesces
   repaints onto its own frame clock, so input-clocking capped scrolling at ~10Hz.) The jump a
   coalesced read still produces is bounded by keeping `CLAUDE_CODE_SCROLL_SPEED` at the CLI
-  default of 1 - see [docs/cross-platform.md](../../cross-platform.md) for why Kangentic no longer
+  default of 1 - see [Shells and paths](../../platforms/shells-and-paths.md) for why Kangentic no longer
   raises it. This targets the wheel-scroll flavor at the source; single-report multi-line jumps
   the CLI performs internally (Ctrl+End, PageUp/Down) remain exposed and are what the repaint
   nudge below repairs.

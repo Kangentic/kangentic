@@ -15,7 +15,7 @@ import { DevToolsSections } from '../../../../devtools/renderer/DevToolsSections
  * when `__KANGENTIC_DEV__` is true at compile time.
  *
  * One card of switches, each explained in its info tooltip. The verbose
- * explanations live in `docs/configuration.md` and the MCP tool descriptions;
+ * explanations live in `docs/settings/app-config.md` and the MCP tool descriptions;
  * this surface is for skim + flip-toggle, not learn-everything-about-each-flag.
  */
 export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {

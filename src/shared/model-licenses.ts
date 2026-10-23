@@ -29,7 +29,7 @@ export const MODEL_LICENSES: Readonly<Record<ModelLicenseId, ModelLicense>> = {
   MIT: { name: 'MIT', url: 'https://opensource.org/license/mit' },
   'CC-BY-4.0': { name: 'CC-BY-4.0', url: 'https://creativecommons.org/licenses/by/4.0/' },
   // NVIDIA asks redistributors to carry the notice "Licensed by NVIDIA
-  // Corporation under the NVIDIA Open Model License" (docs/configuration.md).
+  // Corporation under the NVIDIA Open Model License" (docs/architecture/dictation.md).
   'NVIDIA-Open-Model-License': {
     name: 'NVIDIA Open Model License',
     url: 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/',

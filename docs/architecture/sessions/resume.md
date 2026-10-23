@@ -24,7 +24,7 @@ workflow's Resume, launch recovery, recovery after a pty host crash) emits `'ses
 with the session, task and project ids, the conversation it resumed, and its work serial as it
 came back. A resume begins no turn, so the payload carries neither a turn start nor a transcript
 anchor. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
-cut short (see [Transition Engine](../../transition-engine.md), "A resume catches up the workflow step").
+cut short (see [Transition Engine](../automations/transition-engine.md), "A resume catches up the workflow step").
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
 from `'activity'`; see [Activity Detection](../activity/index.md), "Turn ends".
 
@@ -287,7 +287,7 @@ When a suspended task moves to an active column:
   happened on every observed Tests-to-Ship-It move before #682. Unlike the
   ordinary settings-change restart it does NOT assert idle-authoritative
   afterwards, because a resume with a prompt starts a real turn. See
-  [Command Injection](../../command-injection.md) for the full delivery ladder.
+  [Command Injection](../automations/command-injection.md) for the full delivery ladder.
 - The **first move OUT of Done** (the recovery / restore move, whatever the
   destination column) resumes the session WITHOUT delivering the destination
   column's message. Restoring a Done task is usually to inspect the
@@ -308,4 +308,4 @@ When a suspended task moves to an active column:
   suppressed row is recorded `skipped` with the reason, rather than being
   allowed to run against a `deliverToAgent` that silently does nothing and then
   report a success for a message nobody received. See
-  [Transition Engine](../../transition-engine.md#command-injection).
+  [Transition Engine](../automations/transition-engine.md#command-injection).

@@ -62,7 +62,7 @@ stable, because the old name was derived from the task title, so renaming a task
 it would be recreated in.
 
 How much that matters in practice is measured in
-[cross-platform.md](../../cross-platform.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
+[cross-platform.md](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
 also records why there is no path-length warning and no configurable worktree root. In short: a
 shorter root does help a native Windows toolchain, but it can never be a guarantee, because
 Kangentic controls neither the project's own location nor how deep a build runs beneath it. The

@@ -121,12 +121,12 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     }
   });
 
-  it('every chip is documented in docs/transition-engine.md', () => {
-    const docContent = fs.readFileSync(path.join(REPO_ROOT, 'docs/transition-engine.md'), 'utf-8');
+  it('every chip is documented in docs/architecture/automations/transition-engine.md', () => {
+    const docContent = fs.readFileSync(path.join(REPO_ROOT, 'docs/architecture/automations/transition-engine.md'), 'utf-8');
     const undocumented = TASK_TEMPLATE_VARS.map((entry) => entry.chip).filter((chip) => !docContent.includes(chip));
     expect(
       undocumented,
-      `These chips are not documented in docs/transition-engine.md:\n${undocumented.join('\n')}`,
+      `These chips are not documented in docs/architecture/automations/transition-engine.md:\n${undocumented.join('\n')}`,
     ).toEqual([]);
   });
 
