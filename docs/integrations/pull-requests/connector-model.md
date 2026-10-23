@@ -11,6 +11,7 @@ sources:
   - resource: src/main/git/git-remotes.ts
   - resource: src/shared/types.ts
     title: PRState, PRMergeReadiness, PR_MERGE_READINESS_VALUES
+  - resource: src/main/pr/adapters/
 ---
 # PR connector model
 

@@ -3,7 +3,10 @@ type: Guide
 title: Release smoke checklist
 description: The manual smoke test run against a packaged build with a real authenticated OpenCode CLI (create, plan, finish, resume, conversation continuity), the macOS launch overlay check, and what to do when a step fails.
 tags: [release, smoke-test, opencode, manual]
-sources: []
+sources:
+  - resource: .claude/skills/release/SKILL.md
+  - resource: .github/workflows/release.yml
+  - resource: scripts/verify-release-assets.js
 ---
 # Release smoke checklist
 

@@ -4,24 +4,7 @@ title: Repositories
 description: Every repository class and its methods, including Project, Task (move, recordWorktree, archive, workflow membership), Swimlane, Automation and AutomationRun, Session, UsageHistory (per-leg delta SQL), Handoff, Transcript, attachments, backlog and DevPort (fails soft).
 tags: [database, repositories, queries]
 sources:
-  - resource: src/main/db/repositories/project-repository.ts
-  - resource: src/main/db/repositories/task-repository.ts
-  - resource: src/main/db/repositories/swimlane-repository.ts
-  - resource: src/main/db/repositories/automation-repository.ts
-  - resource: src/main/db/repositories/automation-run-repository.ts
-  - resource: src/main/db/repositories/background-call-repository.ts
-  - resource: src/main/db/repositories/task-move-repository.ts
-  - resource: src/main/db/repositories/workflow-repository.ts
-  - resource: src/main/db/repositories/task-link-repository.ts
-  - resource: src/main/db/repositories/action-repository.ts
-  - resource: src/main/db/repositories/session-repository.ts
-  - resource: src/main/db/repositories/attachment-repository.ts
-  - resource: src/main/db/repositories/backlog-repository.ts
-  - resource: src/main/db/repositories/transcript-repository.ts
-  - resource: src/main/db/repositories/handoff-repository.ts
-  - resource: src/main/db/repositories/backlog-attachment-repository.ts
-  - resource: src/main/db/repositories/usage-history-repository.ts
-  - resource: src/main/db/repositories/dev-port-repository.ts
+  - resource: src/main/db/repositories/
 ---
 # Repositories
 

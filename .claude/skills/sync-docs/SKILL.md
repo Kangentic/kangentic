@@ -1,100 +1,100 @@
 ---
 description: Review and update documentation to match current source code
-allowed-tools: Read, Edit, Write, Glob, Grep, Bash(git:*), Agent
+allowed-tools: Read, Edit, Write, Glob, Grep, Bash(git:*), Bash(node scripts/docs-bundle.mjs:*), Agent
 ---
 
 # Sync Docs
 
-Review and update `docs/` to match the current source code. This skill contains the source-to-doc mapping, anchor point definitions, doc conventions, and the executable workflow for keeping documentation in sync.
+Review and update `docs/` to match the current source code. This skill holds how a changed source
+file finds its docs, the anchor point definitions, doc conventions, and the executable workflow for
+keeping documentation in sync. Doc paths below are relative to `docs/`.
 
 ## Source-to-Doc Mapping
 
-The one concept folder, `docs/integrations/agents/` (a `docs/` folder with an `index.md`), holds
-Open Knowledge Format concepts, and each concept names its own authority files in its `sources:`
-frontmatter. For those, `node scripts/docs-bundle.mjs sources <changed file>...` prints the
-concepts whose sources list the file or a folder above it. The table below covers the flat docs,
-which carry no frontmatter.
+`docs/` is one Open Knowledge Format bundle, and every concept names the code it documents in its
+`sources:` frontmatter: a file, or a folder ending in `/` when every file in it is documented there.
+To find the concepts a change affects, run
 
-| Doc | Primary Source Files |
-|-----|---------------------|
-| `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts`, `src/main/retrieval/retrieval-service.ts` and `src/main/retrieval/graph-facade.ts` (the `knowledgeGraph:*` rows) |
-| `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
-| `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, BoardConfig, BoardColumnConfig), `src/main/config/config-manager.ts` (`pickOverridableSubset` - the project/global split), `src/main/retrieval/summary/**` and `src/main/retrieval/retrieval-service.ts` (the Knowledge Graph section: when summary passes run, their backoff, Rebuild) |
-| `integrations/agents/*.md` | Each concept's `sources:` (the adapter contract, registry and resolver for `adapter-interface.md`; `src/main/agent/adapters/<agent>/` for each adapter's concept) |
-| `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
-| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/main/automations/**` (the adapter registry, the runner, per-field escaping), `src/shared/template-escape.ts` (stripShellMetacharacters), `src/shared/automation-manifest.ts`, `src/shared/types.ts` (AutomationType, AutomationTrigger, AutomationRunStatus, AutomationConfig) |
-| `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
-| `database.md` | `src/main/db/migrations/**`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
-| `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/shared/paths.ts` (adaptCommandForShell, convertWindowsExePath, quoteArg, isPowerShellShell; called from `src/main/pty/lifecycle/session-spawn-flow.ts`), `src/shared/shell-quote.ts` (escapeForDoubleQuotedShell, escapePercentForCmd, quoteCmdExecutable, escapeForPowerShellSingleQuoted, isBareShellToken, and the shell predicates, shared with the renderer), `src/main/pty/spawn/pty-spawn.ts` (resolveSpawnCwd fixups), `src/main/agent/shared/cli-print.ts` (quoteForCmdShell), `src/main/agent/shared/exec-version.ts` (quoteCmdExecutable head), `src/main/agent/shared/shim-launch.ts`, `electron-builder.yml`, `scripts/build.js` |
-| `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts` |
-| `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent), `src/main/activity-engine/engine/shapes.ts` (TransitionTrigger, default thresholds), `src/main/activity-engine/engine/watchdog.ts` (hold table) |
-| `mcp-server.md` | `src/main/agent/mcp-http-server.ts`, `src/main/agent/mcp-http/**`, `src/main/agent/commands/`, `src/main/ipc/handlers/sessions.ts`, `src/shared/types.ts` (MCP types), `src/main/agent/adapters/*/` (the Discovery table: each adapter's MCP wiring and its `kangenticMcp` declaration) |
-| `board-integration.md` | `src/main/boards/board-registry.ts`, `src/main/boards/shared/**`, `src/main/boards/adapters/**`, `src/shared/types.ts` (ExternalSource) |
-| `pr-integration.md` | `src/main/pr/pr-registry.ts`, `src/main/pr/shared/**`, `src/main/pr/adapters/**`, `src/main/pr/pr-linking.ts`, `src/main/pr/pr-refresh.ts`, `src/main/pr/pr-refresh-scheduler.ts`, `src/shared/types.ts` (PR types) |
-| `embedded-browser.md` | `src/main/browser/**` (pane driver, lane manager, guest-drive queue, dev-server-error), `src/renderer/components/browser/**`, `src/main/agent/mcp-http/browser-tools.ts`, `src/main/db/migrations/global-schema.ts` (the `dev_ports` ledger) |
-| `mobile-bridge.md` | `src/main/mobile-bridge/**` (identity, pairing, capability router, transport, push), `packages/protocol/src/**` |
-| `adapter-session-history.md` | `src/main/agent/adapters/*/session-history-parser.ts`, `src/main/pty/readers/session-history-reader.ts`, `src/main/agent/handoff/session-history-reference.ts` |
-| `transcript-pipeline-audit.md` | `src/main/agent/transcript-service.ts`, `src/main/agent/transcript-cache.ts`, `src/main/agent/shared/transcript-truncation.ts`, `src/main/agent/adapters/*/transcript-parser.ts`, `src/shared/transcript-format.ts` |
-| `analytics.md` | `src/main/analytics/analytics.ts`, `src/main/analytics/usage.ts` (ANALYTICS_FEATURES, ONBOARDING_MILESTONES), `src/main/analytics/run-uptime.ts`, `src/main/analytics/settings-snapshot.ts` (SETTINGS_SNAPSHOT_ALLOWLIST) |
-| `deployment.md` | `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/release-assets.js`, `scripts/verify-release-assets.js`, `scripts/merge-mac-update-feeds.js`, `src/main/updater.ts`, `src/main/updater-release-notes.ts` |
-| `installation.md` | `packages/launcher/**`, `electron-builder.yml`, `README.md`, `src/shared/embedding-runtime-gaps.json` |
-| `release-checklist.md` | `.claude/skills/release/SKILL.md`, `.github/workflows/release.yml`, `scripts/verify-release-assets.js` |
-| `overview.md` | `README.md`, high-level features |
-| `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts`, `src/shared/index-summary.ts` (what the Index card and the map's Index panel count, and the line each source reads) |
-| `developer-guide.md` | `scripts/`, `tests/`, `electron-builder.yml`, `package.json` |
-| `docs/README.md` | All other docs (index) |
+```
+node scripts/docs-bundle.mjs sources <changed file>...
+```
+
+which prints, per file, each concept whose sources list the file or a folder above it. That lookup
+replaces a hand-kept mapping table. When a change touches a file no concept lists, decide which
+concept documents it and add the file to that concept's `sources:` in the same change, so the next
+lookup finds it.
+
+Two areas map by judgment instead, because no source list can name them:
+
+- **User-facing behavior** (`src/renderer/components/`, `src/renderer/stores/`) belongs in the
+  `user-guide/` concept for the feature, found from `user-guide/index.md`.
+- **`README.md`** and high-level features belong in `user-guide/overview.md`.
 
 ## Website Cross-Reference
 
-The marketing website (`../kangentic.com/`) mirrors much of `docs/` as MDX pages. When updating internal docs, note which changes also affect the website. The website's `/sync-docs` command handles the actual website updates, but flagging drift here saves a round trip.
+The marketing website (`../kangentic.com/`) mirrors much of `docs/` as MDX pages. When updating
+internal docs, note which changes also affect the website. The website's `/sync-docs` command
+handles the actual website updates, but flagging drift here saves a round trip.
 
-| Internal Doc | Website Page(s) |
-|-------------|-----------------|
-| `user-guide.md` | Multiple: `guide/creating-tasks.mdx`, `guide/backlog.mdx`, `guide/command-terminal.mdx`, `features/agent-orchestration.mdx`, `features/sessions.mdx`, `features/notifications.mdx`, `features/settings.mdx` |
-| `configuration.md` | `configuration.mdx`, `features/settings.mdx` |
-| `activity-detection.md` | `features/activity-detection.mdx` |
-| `transition-engine.md` | `features/workflows.mdx` |
-| `worktree-strategy.md` | `features/git-worktrees.mdx` |
-| `session-lifecycle.md` | `features/sessions.mdx` |
-| `cross-platform.md` | `dev/shell-support.mdx` |
-| `architecture.md` | `architecture.mdx` |
-| `developer-guide.md` | `dev/contributing.mdx`, `dev/testing.mdx`, `dev/packaging.mdx` |
-| `mcp-server.md` | `features/agent-orchestration.mdx` (MCP section) |
+| Internal concepts | Website Page(s) |
+|-------------------|-----------------|
+| `user-guide/` | Multiple: `guide/creating-tasks.mdx`, `guide/backlog.mdx`, `guide/command-terminal.mdx`, `features/agent-orchestration.mdx`, `features/sessions.mdx`, `features/notifications.mdx`, `features/settings.mdx` |
+| `settings/` | `configuration.mdx`, `features/settings.mdx` |
+| `architecture/activity/` | `features/activity-detection.mdx` |
+| `architecture/automations/transition-engine.md`, `triggers.md` | `features/workflows.mdx` |
+| `architecture/worktrees/` | `features/git-worktrees.mdx` |
+| `architecture/sessions/` | `features/sessions.mdx` |
+| `platforms/shells-and-paths.md` | `dev/shell-support.mdx` |
+| `architecture/system-overview.md`, `architecture/ipc/` | `architecture.mdx` |
+| `contributing/developer-guide.md` | `dev/contributing.mdx`, `dev/testing.mdx`, `dev/packaging.mdx` |
+| `integrations/mcp-server/` | `features/agent-orchestration.mdx` (MCP section) |
 
 When the Step 7 report lists updated docs, append a note: "Website may need update: [list of affected website pages from this table]".
 
 ## Doc Conventions
 
-- Most docs are flat files in `docs/`. The one concept folder, `docs/integrations/agents/`, holds
-  one Open Knowledge Format concept per file instead. A concept's YAML frontmatter and its line in
-  the folder's `index.md` take the shape `tests/unit/okf-docs-conformance.test.ts` enforces: `type`
-  is one of `CONCEPT_TYPES` in `scripts/docs-bundle.mjs`, and `sources:` names the files, or
-  folders ending in `/`, the concept describes. `docs/log.md` records dated changes to the docs
-  layout, newest first. The pilot split saved an agent no reading
-  (`docs/log.md`), so never split another flat doc into a concept folder from this skill. That is
-  a person's decision, measured first with `scripts/eval-docs-reads.mjs`, which spends agent quota
-  and is run by hand only, never by an agent or a pipeline
+The bundle's shape is enforced by `tests/unit/okf-docs-conformance.test.ts`; the reasons behind
+each rule are in `research/okf-knowledge-format.md`.
+
+- Every markdown file but `index.md` and `log.md` is a concept with YAML frontmatter: `type` (one
+  of `CONCEPT_TYPES` in `scripts/docs-bundle.mjs`), `title`, a one-line `description`, `tags`, and
+  `sources:`.
+- The `description` is the routing key an agent picks the concept by. Name what only this concept
+  holds (the specific mechanisms, values and names), never a summary that would fit its siblings.
+  No two concepts may share one.
+- `sources:` stay narrow: the files the concept documents, or a folder only when every file in it
+  is documented there. A whole subsystem folder or a shared mega-file (`src/shared/types.ts`)
+  flags the concept on unrelated changes; name the symbols in `title` when a shared file is unavoidable.
+- Every folder holding markdown has an `index.md` listing each concept as
+  `* [Title](file.md) - description` with the concept's exact description, and linking each
+  subfolder's `index.md`. Only `docs/index.md` carries frontmatter (`okf_version: "0.2"`).
+- A concept's H1 is its `title`. Headings are specific enough to grep for (`## kangentic_move_task`,
+  not `## Usage`), and one concept covers one topic.
+- `docs/log.md` records dated changes to the bundle's layout, newest first (`## YYYY-MM-DD`).
 - Never name a docs file like an agent instruction file (`claude.md`, `gemini.md`, `agents.md`,
-  `warp.md`): on a case-insensitive filesystem the agent loads it as instructions
-- Each doc has a clear H1 title and opening paragraph stating purpose
-- Cross-reference other docs with relative links (`[Title](filename.md)`, or `../` out of a concept folder)
-- Technical docs include "See Also" sections at the bottom
-- No emojis
-- Tables for structured data (schema, config keys, constants)
-- Code blocks for CLI commands and file structures
+  `warp.md`): on a case-insensitive filesystem the agent loads it as instructions.
+- Cross-reference other concepts with relative links (`[Title](file.md)`, `../area/file.md`).
+- No emojis. Tables for structured data (schema, config keys, constants). Code blocks for CLI
+  commands and file structures.
 
-## When to Create a New Doc
+## When to Create a New Concept
 
-- A new major subsystem is added (new directory under `src/main/`)
-- An existing doc exceeds ~500 lines and covers two distinct topics
-- A new integration point is added (new agent type, new build target)
+- A new major subsystem is added (new directory under `src/main/`): give it a concept, or a folder
+  of concepts with an `index.md`, under the area it belongs to.
+- A concept grows past about 40 KB and its headings fall into two topics a question would ask
+  separately: split it along those headings.
+- A new integration point is added (new agent type, new MCP tool family, new build target).
 
-## When to Delete a Doc
+Every new concept gets frontmatter, a line in its folder's `index.md`, and its sources; a new
+folder also gets its parent index's link.
 
-- The subsystem it documents has been removed entirely
-- Its content has been fully merged into another doc
-- Always update `docs/README.md` and `README.md` when adding/removing, and a concept folder's
-  `index.md` when adding or removing one of its concepts
+## When to Delete a Concept
+
+- The subsystem it documents has been removed entirely.
+- Its content has been fully merged into another concept.
+
+Remove its `index.md` line, and update every link and `docs/<path>.md` citation to it
+(`tests/unit/docs-path-citations.test.ts` fails on a citation of a missing doc).
 
 ## Anchor Points
 
@@ -104,52 +104,52 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
-| `PermissionMode` | Union variants | configuration.md (canonical, the user-facing setting), database.md (the same variants again as stored column values; both must enumerate all of them) |
-| `TaskRunMode` | Union variants | database.md |
-| `AutomationType` | Union variants | transition-engine.md (canonical, one heading per adapter), configuration.md and mcp-server.md (the 5 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
-| `AutomationTrigger` | Union variants | transition-engine.md |
-| `AutomationRunStatus` | Union variants | transition-engine.md (canonical), database.md (the same variants as stored column values) |
-| `ColumnAutomation` | Interface fields | database.md (schema table) |
-| `AutomationRun` | Interface fields | database.md (schema table) |
-| `ActionType` | Union variants | RETIRED. The engine no longer branches on it; it survives only for the retired `actions` / `swimlane_transitions` tables and legacy `kangentic.json` reads. database.md and configuration.md mark it retired; do not report it as a missing-doc gap against transition-engine.md |
-| `SessionStatus` | Union variants | session-lifecycle.md |
-| `SessionRecordStatus` | Union variants | session-lifecycle.md (canonical, the state machine), database.md (the same variants again as stored column values; both must enumerate all of them) |
-| `SwimlaneRole` | Union variants | database.md |
-| `SuspendedBy` | Union variants | database.md |
-| `ThemeMode` | Union variants | configuration.md |
-| `EventType` | Object keys | activity-detection.md |
-| `EventTypeActivity` | Mapping entries | activity-detection.md |
-| `ActivityDetectionStrategy` | Discriminated union variants | activity-detection.md |
+| `PermissionMode` | Union variants | settings/cascade.md (canonical, the user-facing setting and its resolution order), database/session-tables.md and database/board-tables.md (the same variants again as stored column values; each must enumerate all of them) |
+| `TaskRunMode` | Union variants | database/board-tables.md (`tasks.run_mode`) |
+| `AutomationType` | Union variants | architecture/automations/transition-engine.md (canonical, one heading per adapter), settings/cascade.md and integrations/mcp-server/automation-tools.md (the 5 stable types plus the `send_command` alias and the legacy `spawn_agent`) |
+| `AutomationTrigger` | Union variants | architecture/automations/triggers.md |
+| `AutomationRunStatus` | Union variants | architecture/automations/transition-engine.md (canonical), database/board-tables.md (the same variants as stored column values) |
+| `ColumnAutomation` | Interface fields | database/board-tables.md (`column_automations` table) |
+| `AutomationRun` | Interface fields | database/board-tables.md (`automation_runs` table) |
+| `ActionType` | Union variants | RETIRED. The engine no longer branches on it; it survives only for the retired `actions` / `swimlane_transitions` tables and legacy `kangentic.json` reads. database/board-tables.md and settings/board-config.md mark it retired; do not report it as a missing-doc gap against architecture/automations/transition-engine.md |
+| `SessionStatus` | Union variants | architecture/sessions/state-machine.md |
+| `SessionRecordStatus` | Union variants | architecture/sessions/state-machine.md (canonical), database/session-tables.md (the same variants again as stored column values; both must enumerate all of them) |
+| `SwimlaneRole` | Union variants | database/board-tables.md |
+| `SuspendedBy` | Union variants | database/session-tables.md |
+| `ThemeMode` | Union variants | settings/app-config.md |
+| `EventType` | Object keys | architecture/activity/event-types.md |
+| `EventTypeActivity` | Mapping entries | architecture/activity/event-types.md |
+| `ActivityDetectionStrategy` | Discriminated union variants | architecture/activity/activity-engine.md |
 | `AdapterRuntimeStrategy` | Interface fields | integrations/agents/adapter-types.md |
-| `AppConfig` / `DEFAULT_CONFIG` | Flattened dot-paths + defaults | configuration.md |
-| `BoardConfig` | Interface fields | configuration.md |
-| `BoardColumnConfig` | Interface fields | configuration.md |
-| `KnowledgeGraphStatus` | Interface fields | architecture.md (`knowledgeGraph:status` row) |
-| `KnowledgeGraphSummaryCounts` / `KnowledgeGraphSummaryStatus` | Interface fields | architecture.md (`knowledgeGraph:status` and `knowledgeGraph:graphSnapshot` rows), user-guide.md (the Task summaries line's states) |
-| `KnowledgeGraphIndexCounts` / `KnowledgeGraphIndexSummary` | Interface fields | architecture.md (`knowledgeGraph:graphSnapshot` row's `index`), configuration.md (what the Index card and the map's Index panel sum) |
+| `AppConfig` / `DEFAULT_CONFIG` | Flattened dot-paths + defaults | settings/app-config.md (every key, the Knowledge Graph, dictation, workflows and automation keys included) |
+| `BoardConfig` | Interface fields | settings/board-config.md |
+| `BoardColumnConfig` | Interface fields | settings/board-config.md |
+| `KnowledgeGraphStatus` | Interface fields | architecture/ipc/session-channels.md (`knowledgeGraph:status` row) |
+| `KnowledgeGraphSummaryCounts` / `KnowledgeGraphSummaryStatus` | Interface fields | architecture/ipc/session-channels.md (`knowledgeGraph:status` and `knowledgeGraph:graphSnapshot` rows), user-guide/knowledge-graph.md (the Task summaries line's states) |
+| `KnowledgeGraphIndexCounts` / `KnowledgeGraphIndexSummary` | Interface fields | architecture/ipc/session-channels.md (`knowledgeGraph:graphSnapshot` row's `index`), architecture/knowledge-graph.md (what the Index card and the map's Index panel sum) |
 
 ### IPC Anchors (src/shared/ipc-channels.ts)
 
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
-| IPC channels | All string values from `IPC` object | architecture.md (per-group tables) |
-| IPC group counts | Count per section header | architecture.md (section headers) |
+| IPC channels | All string values from `IPC` object | architecture/ipc/board-channels.md, session-channels.md and app-channels.md (per-group tables; each group lives in exactly one) |
+| IPC group counts | Count per section header | the same three concepts (section headers) |
 
 ### Database Anchors (src/main/db/migrations/)
 
 | Anchor | What to extract | Target doc |
 |--------|----------------|------------|
-| Table schemas | All `CREATE TABLE` columns + `ALTER TABLE ADD COLUMN` | database.md (schema tables) |
-| Seed data | Default swimlanes, actions, transitions | database.md |
-| Migration list | Numbered migrations with descriptions | database.md (migration history) |
+| Table schemas | All `CREATE TABLE` columns + `ALTER TABLE ADD COLUMN` | database/board-tables.md, session-tables.md and knowledge-graph-tables.md (per-project tables), database/storage-model.md (global tables) |
+| Seed data | Default swimlanes, actions, transitions | database/storage-model.md (Default Seed Data) |
+| Migration list | Numbered migrations with descriptions | database/migrations.md |
 
 ### UI Anchors
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide.md (canonical prose), configuration.md (cross-reference only) |
-| Settings registry | `src/renderer/components/settings/settings-registry.ts` entries | configuration.md |
-| Pop-out surfaces | `src/shared/pop-out.ts` (`PopOutKind`) | architecture.md (Pop-out Windows section) |
+| Settings tabs | `src/renderer/components/settings/settings-tabs.ts` (`SETTINGS_TABS` array) | user-guide/settings.md (canonical prose), settings/settings-panel.md (groups, tiers and what each tab holds) |
+| Settings registry | `src/renderer/components/settings/settings-registry.ts` entries | settings/app-config.md |
+| Pop-out surfaces | `src/shared/pop-out.ts` (`PopOutKind`) | architecture/ipc/app-channels.md (Pop-out Windows section) |
 
 ### Agent Adapter Anchors
 
@@ -164,26 +164,26 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Per-agent CLI flag mappings | `src/main/agent/adapters/codex/command-builder.ts`, `src/main/agent/adapters/gemini/command-builder.ts`, `src/main/agent/adapters/aider/aider-adapter.ts` | Each adapter's concept in integrations/agents/ (its Permission Modes table) |
 | Per-agent capability discovery | `src/main/agent/adapters/*/capability-discovery.ts` | integrations/agents/adapter-types.md (model/effort tables) |
 | First-output detection strategies | All adapter files (`detectFirstOutput` method) | integrations/agents/adapter-interface.md (first-output detection table) |
-| Exit sequences | All adapter files (`getExitSequence` method) | integrations/agents/adapter-interface.md (exit sequences table) |
+| Exit sequences | All adapter files (`getExitSequence` method) | integrations/agents/optional-properties.md (exit sequences table) |
 | Session history file location | All adapter files (`locateSessionHistoryFile` method) | integrations/agents/adapter-interface.md (session history file location table) |
-| Per-agent transcript cleanup | `src/main/agent/handoff/transcript-cleanup.ts`, `src/main/agent/adapters/*/transcript-cleanup.ts` | handoff.md (per-agent transcript cleanup section) |
-| Handoff DB columns | `src/main/db/repositories/handoff-repository.ts` | handoff.md (database storage table) |
+| Per-agent transcript cleanup | `src/main/agent/handoff/transcript-cleanup.ts`, `src/main/agent/adapters/*/transcript-cleanup.ts` | integrations/agents/handoff.md (per-agent transcript cleanup section) |
+| Handoff DB columns | `src/main/db/repositories/handoff-repository.ts` | integrations/agents/handoff.md (database storage table) |
 
 ### Template Anchors
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| Template variables | `src/shared/template-vars.ts` | configuration.md (canonical), transition-engine.md and integrations/agents/adapter-interface.md (cross-reference only) |
-| Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | transition-engine.md (canonical, "Template Variables"), architecture.md (cross-reference only) |
+| Template variables | `src/shared/template-vars.ts` | settings/board-config.md (canonical, the Shortcuts section), user-guide/settings.md and integrations/agents/adapter-interface.md (cross-reference only) |
+| Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | architecture/automations/transition-engine.md (canonical, "Template Variables"), architecture/system-overview.md (cross-reference only) |
 
 ### Integration Anchors
 
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
-| MCP tool manifest | `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`) | mcp-server.md (one heading per tool). Also enforced mechanically by `tests/unit/mcp-tool-list-parity.test.ts`. |
-| Automation adapters | `src/shared/automation-manifest.ts` (`AUTOMATION_MANIFEST`) and `src/main/automations/automation-registry.ts` | transition-engine.md (canonical, one heading per type with its fields, escaping, timeout and retry), architecture.md (the folder layout beside `pr/` and `boards/`), configuration.md and mcp-server.md (type summary tables). Registry-to-manifest parity is enforced by `tests/unit/automation-adapter-parity.test.ts`; the DOCS side is not mechanically checked. |
-| Board adapters | `src/main/boards/board-registry.ts` (registered providers) | board-integration.md (provider table, including each provider's stable/stub status) |
-| PR adapters | `src/main/pr/pr-registry.ts` (`connectors`) | pr-integration.md (provider list; keep planned-but-unimplemented providers marked as such) |
+| MCP tool manifest | `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`) | integrations/mcp-server/ (one heading per tool, in the concept for its family). Also enforced mechanically by `tests/unit/mcp-tool-list-parity.test.ts`. |
+| Automation adapters | `src/shared/automation-manifest.ts` (`AUTOMATION_MANIFEST`) and `src/main/automations/automation-registry.ts` | architecture/automations/transition-engine.md (canonical, one heading per type with its fields, escaping, timeout and retry), architecture/system-overview.md (the folder layout beside `pr/` and `boards/`), settings/cascade.md and integrations/mcp-server/automation-tools.md (type summary tables). Registry-to-manifest parity is enforced by `tests/unit/automation-adapter-parity.test.ts`; the DOCS side is not mechanically checked. |
+| Board adapters | `src/main/boards/board-registry.ts` (registered providers) | integrations/boards.md (provider table, including each provider's stable/stub status), user-guide/backlog.md (the sources a user can import from) |
+| PR adapters | `src/main/pr/pr-registry.ts` (`connectors`) | integrations/pull-requests/connector-model.md (Connector Status; keep planned-but-unimplemented providers marked as such) |
 | External scripts registry | `scripts/copy-external-scripts.js` (`EXTERNAL_SCRIPTS`) | No `docs/` target by design. Enforced by `tests/unit/external-scripts-parity.test.ts` and `.claude/rules/external-scripts-parity.md`; listed here so an auditor does not report it as a missing-doc gap. |
 
 ### Deliberately Not Anchored
@@ -193,7 +193,7 @@ them as a missing-doc gap:
 
 | Structure | Source | Why it is not a docs anchor |
 |-----------|--------|------------------------------|
-| Activity marks (`ACTIVITY_MARK_NAMES`) | `src/renderer/components/ActivityMark.tsx` | The nine names are owned upstream in `@kangentic/branding`, so no `docs/` file enumerates them and a table of them would drift from the package. `docs/architecture/renderer/activity-marks.md` exists but records design history and measurements, deliberately not the name list; the contract is `.claude/rules/activity-marks.md` and the geometry is pinned by `tests/unit/activity-mark.test.ts`. Do not report the missing name table as a gap. |
+| Activity marks (`ACTIVITY_MARK_NAMES`) | `src/renderer/components/ActivityMark.tsx` | The nine names are owned upstream in `@kangentic/branding`, so no `docs/` file enumerates them and a table of them would drift from the package. `architecture/renderer/activity-marks.md` exists but records design history and measurements, deliberately not the name list; the contract is `.claude/rules/activity-marks.md` and the geometry is pinned by `tests/unit/activity-mark.test.ts`. Do not report the missing name table as a gap. |
 
 ### Verification Procedures
 
@@ -223,8 +223,8 @@ Determine what source files changed:
    - Run `git describe --tags --abbrev=0` to find the latest release tag
    - Run `git diff --name-only <tag>..HEAD` to get all files changed since that release
 3. Filter to source files only (exclude `docs/`, `.claude/`, `tests/`)
-4. Map changed source files to affected docs using the Source-to-Doc Mapping above, and run
-   `node scripts/docs-bundle.mjs sources <changed source files>` for the concept folders
+4. Run `node scripts/docs-bundle.mjs sources <changed source files>` to map them to concepts; map
+   renderer and README changes by judgment (see Source-to-Doc Mapping)
 5. If no source files changed (docs-only or config-only commit), report "No source changes detected - skipping doc review" and stop
 
 ### Step 2 - Anchor Point Verification
@@ -236,19 +236,19 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 **Single-file anchors:**
 
 - `src/shared/types.ts`
-  WHY: union types, interfaces, and config defaults (PermissionMode, ActionType, SessionStatus, AppConfig, BoardConfig, EventType, etc.) are enumerated across configuration.md, database.md, session-lifecycle.md, transition-engine.md, integrations/agents/adapter-types.md, activity-detection.md.
+  WHY: union types, interfaces, and config defaults (PermissionMode, ActionType, SessionStatus, AppConfig, BoardConfig, EventType, etc.) are enumerated across settings/, database/, architecture/sessions/state-machine.md, architecture/automations/, integrations/agents/adapter-types.md, and architecture/activity/ (see the Type System Anchors table for which concept holds which).
 
 - `src/shared/ipc-channels.ts`
-  WHY: every IPC channel string is enumerated by group in architecture.md (per-group tables, group counts in section headers).
+  WHY: every IPC channel string is enumerated by group in architecture/ipc/ (per-group tables, group counts in section headers).
 
 - `src/shared/template-vars.ts`
-  WHY: template variable list is mirrored in configuration.md (canonical) and cross-referenced in transition-engine.md and integrations/agents/adapter-interface.md.
+  WHY: the Shortcut template variable list is mirrored in settings/board-config.md (canonical) and cross-referenced in user-guide/settings.md and integrations/agents/adapter-interface.md.
 
 - `src/shared/task-template-vars.ts`
-  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (26 names: task_xml, workflow_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 5 automation-only names column, fromColumn, toColumn, trigger, agentReply, plus the 2 workflow-agent-only names columns and brief_xml) is tabulated in transition-engine.md "Template Variables" and cross-referenced in architecture.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). integrations/agents/adapter-interface.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
+  WHY: the template-variable catalog every automation field, the per-task auto_command, and the legacy spawn_agent promptTemplate read (26 names: task_xml, workflow_xml, title, description, taskId, taskNumber, projectPath, projectName, worktreePath, branchName, baseBranch, prUrl, prNumber, prState, issueKey, issueUrl, labels, attachments, port, plus the 5 automation-only names column, fromColumn, toColumn, trigger, agentReply, plus the 2 workflow-agent-only names columns and brief_xml) is tabulated in architecture/automations/transition-engine.md "Template Variables" and cross-referenced in architecture/system-overview.md. Each entry's `contexts` decides where it is offered, and `availability` flags the ones that are usually empty; the table's PROSE (the keyword count, which context uses which interpolator) is not mechanically checked and is where this anchor has drifted before. Mechanically enforced by tests/unit/task-template-vars-parity.test.ts; see .claude/rules/task-template-vars-parity.md. Distinct from src/shared/template-vars.ts (the unrelated Shortcut command system). integrations/agents/adapter-interface.md's "Prompt Templates" section also names the full keyword list in prose (linking back to transition-engine.md as canonical) - not mechanically checked, spot-check it by hand on a keyword add/rename.
 
 - `src/shared/automation-manifest.ts`
-  WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
+  WHY: each automation type declares itself once here (label, icon, `status`, `needs`, fields with their per-field `escape`, `timeoutMs`, `retry`), and architecture/automations/transition-engine.md tabulates all of it. Also holds `RETIRED_ACTION_TYPES`, `EXIT_GROUP_BUDGET_MS` and `DEFAULT_SCRIPT_TIMEOUT_MINUTES`, each of which is quoted as a number in the docs. Registry-to-manifest parity is mechanical (`tests/unit/automation-adapter-parity.test.ts`); the docs side is not, so an added type or a changed budget needs a hand pass. See .claude/rules/automation-adapters.md.
 
 - `src/main/agent/agent-adapter.ts`
   WHY: AgentAdapter interface methods (discoverCapabilities, getInjectionSequence, getSubmissionVerifier, summarize, answerFromContext, openAnswerSession, locateSessionHistoryFile, getExitSequence, detectFirstOutput) are tabulated in integrations/agents/adapter-interface.md and integrations/agents/optional-properties.md. Catches drift that types.ts re-exports miss.
@@ -257,90 +257,90 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: canonical list of registered adapters; adding/removing an adapter is a docs-affecting event for integrations/agents/adapter-interface.md's "Supported Agents" table, and for a concept of its own in integrations/agents/ (listed in that folder's index.md).
 
 - `src/main/agent/mcp-http-server.ts`
-  WHY: MCP server entry point and tool registration; backs mcp-server.md component table.
+  WHY: MCP server entry point and tool registration; backs integrations/mcp-server/how-it-works.md's components table.
 
 - `src/main/db/repositories/handoff-repository.ts`
-  WHY: handoff DB column list is tabulated in handoff.md "Database Storage" table.
+  WHY: handoff DB column list is tabulated in integrations/agents/handoff.md "Database Storage" table.
 
 - `src/main/transition-engine/transition-engine.ts`
-  WHY: spawn/transition/handoff state machine is described in transition-engine.md and architecture.md. Action types and transition flow are enumerated here.
+  WHY: spawn/transition/handoff state machine is described in architecture/automations/transition-engine.md and architecture/system-overview.md. Action types and transition flow are enumerated here.
 
 - `src/main/transition-engine/injection-plan.ts`
-  WHY: command-injection precedence rules (per-task model/effort overrides, swimlane defaults) are described in command-injection.md and architecture.md.
+  WHY: command-injection precedence rules (per-task model/effort overrides, swimlane defaults) are described in architecture/automations/command-injection.md and architecture/system-overview.md.
 
 - `src/main/transition-engine/terminal-submit-scheduler.ts`
-  WHY: keystroke submission lifecycle wrapper enumerated in command-injection.md pipeline table.
+  WHY: keystroke submission lifecycle wrapper enumerated in architecture/automations/command-injection.md's pipeline table.
 
 - `src/main/transition-engine/session-lifecycle.ts`
-  WHY: session state transitions enumerated in session-lifecycle.md.
+  WHY: session state transitions enumerated in architecture/sessions/state-machine.md.
 
 - `src/main/pty/session-manager.ts`
-  WHY: session lifecycle states, events, and shell adaptations are enumerated in session-lifecycle.md, architecture.md, cross-platform.md.
+  WHY: session lifecycle states, events, and shell adaptations are enumerated in architecture/sessions/, architecture/system-overview.md and platforms/shells-and-paths.md.
 
 - `src/main/pty/spawn/shell-resolver.ts`
-  WHY: per-platform shell detection order is enumerated in cross-platform.md.
+  WHY: per-platform shell detection order is enumerated in platforms/shells-and-paths.md.
 
 - `src/main/git/worktree-manager.ts`
-  WHY: worktree lifecycle (create, cleanup, slug generation) is described in worktree-strategy.md.
+  WHY: worktree lifecycle (create, cleanup, slug generation) is described in architecture/worktrees/worktree-lifecycle.md and worktree-creation.md.
 
 - `src/main/config/config-manager.ts`
-  WHY: config load/save/merge logic backs configuration.md.
+  WHY: config load/save/merge logic backs settings/cascade.md.
 
 - `src/main/agent/event-bridge.js`
-  WHY: hook → JSONL → store pipeline backs activity-detection.md.
+  WHY: hook → JSONL → store pipeline backs architecture/activity/activity-engine.md and event-types.md.
 
 - `src/main/activity-engine/engine/shapes.ts`
-  WHY: the TransitionTrigger label vocabulary and ActivityEngineOptions default thresholds are enumerated in activity-detection.md ("Reading a transition trace", "Configuration").
+  WHY: the TransitionTrigger label vocabulary and ActivityEngineOptions default thresholds are enumerated in architecture/activity/activity-engine.md ("Reading a transition trace", "Configuration").
 
 - `src/main/activity-engine/engine/watchdog.ts`
-  WHY: the five watchdog holds (predicates, thresholds, anchors) are enumerated in activity-detection.md "Five safety nets (the watchdog table)".
+  WHY: the five watchdog holds (predicates, thresholds, anchors) are enumerated in architecture/activity/watchdog.md.
 
 - `src/renderer/components/settings/settings-tabs.ts`
-  WHY: settings tab order, category/tier grouping, separator position, and visibility rules are mirrored in user-guide.md and configuration.md. This is the file that DECLARES `SETTINGS_TABS`; `AppSettingsPanel.tsx` only imports it, so anchoring on the panel misses a tab added or reordered here.
+  WHY: settings tab order, category/tier grouping, separator position, and visibility rules are mirrored in user-guide/settings.md and settings/settings-panel.md. This is the file that DECLARES `SETTINGS_TABS`; `AppSettingsPanel.tsx` only imports it, so anchoring on the panel misses a tab added or reordered here.
 
 - `src/renderer/components/settings/settings-registry.ts`
-  WHY: settings registry entries and their defaults are enumerated in configuration.md.
+  WHY: settings registry entries and their defaults are enumerated in settings/app-config.md.
 
 - `src/main/retrieval/retrieval-service.ts`
-  WHY: when task summary passes are asked for (project open, board change, the once-a-launch ask of every project, a settings change that resolves a writer, Rebuild), what the Settings Index card counts (every indexed project), and Rebuild's reach are described in configuration.md's Knowledge Graph section, user-guide.md's Index card paragraphs, and architecture.md's `knowledgeGraph:status` and `knowledgeGraph:rebuildIndex` rows. None of those are enumerable, so this is a prose check: the open-project wording survived a change to all projects once before.
+  WHY: when task summary passes are asked for (project open, board change, the once-a-launch ask of every project, a settings change that resolves a writer, Rebuild), what the Settings Index card counts (every indexed project), and Rebuild's reach are described in architecture/knowledge-graph.md, user-guide/knowledge-graph.md's Index card paragraphs, and architecture/ipc/session-channels.md's `knowledgeGraph:status` and `knowledgeGraph:rebuildIndex` rows. None of those are enumerable, so this is a prose check: the open-project wording survived a change to all projects once before.
 
 - `src/shared/index-summary.ts`
-  WHY: one fold and one set of line rules for both Index views, the Settings card and the map's Index panel (`sumIndexCounts` and the panel's `sumIndex`, `summaryStatusOf`, `sourceStatusOf`, and `isIndexedProject`, the set "All projects" means). user-guide.md and configuration.md say what each view counts and that the two read the same; a change here changes both.
+  WHY: one fold and one set of line rules for both Index views, the Settings card and the map's Index panel (`sumIndexCounts` and the panel's `sumIndex`, `summaryStatusOf`, `sourceStatusOf`, and `isIndexedProject`, the set "All projects" means). user-guide/knowledge-graph.md and architecture/knowledge-graph.md say what each view counts and that the two read the same; a change here changes both.
 
 - `electron-builder.yml`
-  WHY: native deps allowlist, asarUnpack, signing, and packaging targets are described in cross-platform.md and developer-guide.md.
+  WHY: native deps allowlist, asarUnpack, signing, and packaging targets are described in platforms/packaging-and-security.md and contributing/developer-guide.md.
 
 - `package.json`
-  WHY: version, native deps, build scripts surface in developer-guide.md.
+  WHY: version, native deps, build scripts surface in contributing/developer-guide.md.
 
 **Glob anchors** (any file in the directory tree):
 
 - `src/main/db/migrations/**`
-  WHY: every CREATE TABLE column, ALTER TABLE, and seed data block is enumerated in database.md schema tables and migration history. Glob covers global-schema.ts, project-schema.ts, default-data.ts, spawn-agent-config-migration.ts, and any future migration file. (Note: `src/main/db/migrations.ts` is a 2-line re-export shim - do not rely on it.)
+  WHY: every CREATE TABLE column, ALTER TABLE, and seed data block is enumerated in the database/ table concepts and database/migrations.md. Glob covers global-schema.ts, project-schema.ts, default-data.ts, spawn-agent-config-migration.ts, and any future migration file. (Note: `src/main/db/migrations.ts` is a 2-line re-export shim - do not rely on it.)
 
 - `src/main/agent/adapters/**`
-  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive the per-adapter concepts in integrations/agents/ and the per-adapter tables in adapter-session-history.md, command-injection.md, and handoff.md. Glob covers all 15 adapters and all their internal files.
+  WHY: per-adapter capability declarations (claude-adapter.ts, codex-adapter.ts, etc.), command-builders, capability-discovery.ts, detectors, hook-managers, trust-managers, transcript-cleanup.ts all drive the per-adapter concepts in integrations/agents/, integrations/agents/session-history.md, architecture/automations/command-injection-support-matrix.md, and integrations/agents/handoff.md. Glob covers all 15 adapters and all their internal files.
 
 - `src/main/agent/handoff/**`
-  WHY: handoff orchestration (session-history-reference.ts, transcript-cleanup.ts) backs handoff.md sections. Small directory; safe to glob.
+  WHY: handoff (session-history-reference.ts, transcript-cleanup.ts) backs integrations/agents/handoff.md. Small directory; safe to glob.
 
 - `src/main/agent/shared/**`
-  WHY: shared agent helpers (cli-print.ts, cli-answer.ts, auto-name.ts, prompt-xml.ts, agent-detector.ts, bridge-utils.ts, hook-utils.ts, exec-version.ts) back multiple feature docs (configuration.md, the integrations/agents/ concepts, cross-platform.md). Small directory; safe to glob.
+  WHY: shared agent helpers (cli-print.ts, cli-answer.ts, auto-name.ts, prompt-xml.ts, agent-detector.ts, bridge-utils.ts, hook-utils.ts, exec-version.ts) back multiple concepts (settings/app-config.md, the integrations/agents/ concepts, platforms/shells-and-paths.md). Small directory; safe to glob.
 
 - `src/main/agent/mcp-http/**`
-  WHY: MCP tool registrations (task-tools.ts, session-tools.ts, search-tools.ts, project-tools.ts, diagnostics-tools.ts, browser-tools.ts) are enumerated in mcp-server.md. Adding a new tool is a docs-affecting event. The settings panel renders the same tools from `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`); `tests/unit/mcp-tool-list-parity.test.ts` asserts every registered tool is in both the manifest and mcp-server.md (see `.claude/rules/mcp-tool-list-parity.md`).
+  WHY: MCP tool registrations (task-tools.ts, session-tools.ts, search-tools.ts, project-tools.ts, diagnostics-tools.ts, browser-tools.ts) are enumerated in the integrations/mcp-server/ concepts. Adding a new tool is a docs-affecting event. The settings panel renders the same tools from `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`); `tests/unit/mcp-tool-list-parity.test.ts` asserts every registered tool is in the manifest and has a heading in one of those concepts (see `.claude/rules/mcp-tool-list-parity.md`).
 
 - `src/main/agent/commands/**`
-  WHY: MCP command implementations (column-resolver.ts, handoff-commands.ts, task-commands.ts, backlog-commands.ts, search-commands.ts, etc.) are cited in mcp-server.md component table and architecture.md board-integration section. Adding or renaming a command file is a docs-affecting event. Small directory (13 files); safe to glob.
+  WHY: MCP command implementations (column-resolver.ts, handoff-commands.ts, task-commands.ts, backlog-commands.ts, search-commands.ts, etc.) are cited in integrations/mcp-server/how-it-works.md's components table and the tool concepts. Adding or renaming a command file is a docs-affecting event. Small directory; safe to glob.
 
 - `src/main/ipc/handlers/**`
   WHY: handler files register IPC channels, emit event payloads, and define handler-level behavior. A new handler that registers a channel without changing ipc-channels.ts (e.g., event-only ipcMain.on) would slip through the channel-constants anchor. The glob avoids list-rot as handlers are added.
 
 - `src/main/retrieval/summary/**`
-  WHY: the summary scheduler and pass (one pass at a time, three calls of ten, the gap, the app-wide backoff after a failed agent call, the per-project one after a failed read, the one-task-per-call retry of a reply with no usable label, the reply-gap log line) are described in configuration.md's `knowledgeGraph.taskSummaries` row and user-guide.md's Task summaries paragraph, with their numbers. Small directory; safe to glob.
+  WHY: the summary scheduler and pass (one pass at a time, three calls of ten, the gap, the app-wide backoff after a failed agent call, the per-project one after a failed read, the one-task-per-call retry of a reply with no usable label, the reply-gap log line) are described in settings/app-config.md's `knowledgeGraph.taskSummaries` row, architecture/knowledge-graph.md, and user-guide/knowledge-graph.md's Task summaries paragraph, with their numbers. Small directory; safe to glob.
 
 - `src/main/analytics/**`
-  WHY: analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets). An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide.md and configuration.md's Privacy paragraphs describe the same collection.
+  WHY: telemetry/usage-analytics.md tabulates every event name, every property, and the closed vocabularies behind them (usage.ts's ANALYTICS_FEATURES and ONBOARDING_MILESTONES, settings-snapshot.ts's SETTINGS_SNAPSHOT_ALLOWLIST, run-uptime.ts's exit kinds and uptime buckets), and telemetry/error-reporting.md the Sentry side. An added event or a renamed property is a docs-affecting event with no other mechanical check. The allowlist in particular is a privacy control the doc enumerates for users, so drift there is worse than stale: user-guide/settings.md's and settings/settings-panel.md's Privacy paragraphs describe the same collection.
 
 If any anchor source files appear in the changed-file list:
 
@@ -352,10 +352,10 @@ If no anchor source files changed, skip this step.
 
 ### Step 3 - Prose Audit
 
-For each affected doc (from Step 1 mapping):
+For each affected concept (from Step 1):
 
-1. Read the doc file
-2. Read the source files it references (from the mapping)
+1. Read the concept
+2. Read the source files its `sources:` lists
 3. Check for prose staleness - details that are no longer accurate:
    - Changed behavior or algorithm descriptions
    - Stale default value explanations
@@ -368,7 +368,7 @@ This step focuses on prose accuracy only. Enumerable completeness is handled by 
 
 ### Step 4 - Update Pass
 
-For each doc with stale content (from Steps 2 and 3):
+For each concept with stale content (from Steps 2 and 3):
 
 1. Fix all anchor gaps reported by the doc-auditor:
    - Add missing items to tables/lists
@@ -378,8 +378,9 @@ For each doc with stale content (from Steps 2 and 3):
    - Update stale facts (numbers, type names, default values, descriptions)
    - Add sections for significant new features not yet documented
    - Remove sections for removed features
-3. Update cross-references if docs were added/removed
-4. Update `docs/README.md` index if docs were added/removed
+3. When a change alters what a concept holds, update its frontmatter `description` and its line in
+   the folder's `index.md` to match (the conformance test compares them), and its `sources:`
+4. Update cross-references and indexes if concepts were added, split, or removed
 
 **Constraints:**
 - Only edit files in `docs/` and `README.md` (Documentation section only)
@@ -394,33 +395,33 @@ Scan for undocumented features and determine where to document them:
 2. List `feat:` and `feat!:` commits since that tag: `git log <tag>..HEAD --oneline --grep="^feat"` (use `--grep` flag, not a pipe)
 3. For each feature commit:
    - Extract the feature description from the commit message
-   - Check if it appears in `docs/user-guide/index.md` or `docs/user-guide/overview.md`
+   - Check whether the `user-guide/` concept for that feature (from `user-guide/index.md`) or `user-guide/overview.md` covers it
 4. For each undocumented feature, determine placement:
    - Read the source files touched by the commit to understand the feature scope
-   - Use the Source-to-Doc Mapping above to identify the target doc
-   - Identify the specific section within the target doc where the feature belongs (e.g., "user-guide.md > Task Detail Dialog")
-   - Only create a new doc when the feature introduces a new subsystem or integration point (per "When to Create a New Doc" above). Otherwise append to the existing doc.
-5. For each undocumented feature, write the documentation into the target doc in the identified section. Use the Edit tool to add content inline, matching the existing style and level of detail.
-6. Report what was written in the Step 7 report (feature, target doc, section, what was added).
+   - Run `node scripts/docs-bundle.mjs sources` on them to find the concepts that document that code
+   - Identify the specific section within the target concept where the feature belongs (e.g., "user-guide/task-detail.md > Completed task view")
+   - Only create a new concept when the feature introduces a new subsystem or integration point (per "When to Create a New Concept" above). Otherwise append to the existing concept.
+5. For each undocumented feature, write the documentation into the target concept in the identified section. Use the Edit tool to add content inline, matching the existing style and level of detail.
+6. Report what was written in the Step 7 report (feature, target concept, section, what was added).
 
 ### Step 6 - Structural Review
 
 Check overall doc health:
 
-1. Verify all internal links between docs resolve: run `npx vitest run tests/unit/okf-docs-conformance.test.ts`,
-   which resolves every relative link and `#fragment` in `docs/`, checks concept frontmatter and
-   `sources:`, and checks each concept folder's `index.md` against its concepts' descriptions
-2. Check that `docs/README.md` lists all docs in `docs/` (a concept folder through its `index.md`)
-3. Check that the `README.md` Documentation section is current
-4. Flag any doc over 500 lines that could benefit from splitting
+1. Run `npx vitest run tests/unit/okf-docs-conformance.test.ts tests/unit/docs-path-citations.test.ts`:
+   the first resolves every relative link and `#fragment` in `docs/`, checks every concept's
+   frontmatter and `sources:`, and checks each `index.md` against its concepts and subfolders; the
+   second checks every docs path the repo cites
+2. Check that the `README.md` Documentation section is current
+3. Flag any concept over about 40 KB whose headings split into two topics
 
 ### Step 7 - Report
 
 Summarize what was done:
 
 - Anchor audit results (if run): anchors checked, gaps found, gaps fixed
-- Prose updates: list of docs updated with brief change descriptions
-- Docs created or deleted (if any)
+- Prose updates: list of concepts updated with brief change descriptions
+- Concepts created, split, or deleted (if any)
 - Feature documentation: list of features documented, where they were placed, and what was written
 - Items that need human review (ambiguous changes, major restructuring)
 - "No changes needed" if everything is current

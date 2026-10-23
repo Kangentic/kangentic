@@ -9,6 +9,7 @@ sources:
   - resource: src/main/config/paths.ts
     title: "--data-dir and KANGENTIC_DATA_DIR resolution"
   - resource: src/shared/embedding-runtime-gaps.json
+  - resource: packages/launcher/
 ---
 # Installation
 
