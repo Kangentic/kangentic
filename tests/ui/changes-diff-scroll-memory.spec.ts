@@ -641,9 +641,8 @@ test.describe('Changes view: diff scroll memory', () => {
     await expect
       .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
       .toBe(DELTA_CHANGE_LINE);
-    // One delta.ts result landing does not mean none is left in flight, and one
-    // that lands after the swap to beta.ts throws against beta's one-line models
-    // (the same race the asymmetric test pins; see waitForDiffToSettle).
+    // One delta.ts result landing does not mean none is left in flight, so
+    // settle before scrolling and switching away (see waitForDiffToSettle).
     await waitForDiffToSettle(page);
 
     await scrollModifiedToBottom(page);
@@ -779,9 +778,8 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect
         .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
         .toBe(GAMMA_CHANGE_LINE);
-      // That line proves one gamma result landed, not that the last one did. Do
-      // not leave for beta.ts until none is left in flight: a gamma result that
-      // lands after the swap throws against beta's one-line models (see
+      // That line proves one gamma result landed, not that the last one did, so
+      // settle before driving deep and leaving for beta.ts (see
       // waitForDiffToSettle). Page errors stay collected from the start of the
       // test, so this narrows nothing the final assertion covers.
       await waitForDiffToSettle(page);
@@ -801,8 +799,8 @@ test.describe('Changes view: diff scroll memory', () => {
       await expect(page.locator('.view-line', { hasText: 'const b = 2;' })).toBeVisible({ timeout: 10000 });
       // The visible text proves the model swapped, not that beta's diff landed:
       // until it does, the editor still reports gamma's changes. Turning
-      // collapse on, or swapping back to gamma, inside that window is the same
-      // stale-result race in the other direction.
+      // collapse on, or swapping back to gamma, inside that window acts on a
+      // diff that is about to be replaced.
       await expect
         .poll(() => readModifiedFirstChangeLine(page), { timeout: 10000 })
         .toBe(BETA_CHANGE_LINE);
@@ -865,16 +863,15 @@ test.describe('Changes view: diff scroll memory', () => {
    * sibling left it in, and wait for the diff it opened on to settle.
    *
    * The panel reopens on the file a sibling left selected, and a first line
-   * rendering does not mean its diff has landed. A test that clicks another file
-   * right away swaps new text into the models while that compute is still in
-   * flight. Monaco disposes the outgoing diff view model one timer tick after
-   * `setModel(null)`, so a worker reply queued behind the swap lands on the
-   * outgoing view model against the incoming file's line counts and
-   * `UnchangedRegion.fromDiffs` throws. It surfaced as "startLineNumber 2001
-   * cannot be after endLineNumberExclusive 1501" in the identical-text test,
-   * which opens on epsilon.ts (2000 lines) and switches to a 1500-line twin. The
-   * product swap cannot close that tick, so the test must not start a swap
-   * while a compute is pending.
+   * rendering does not mean its diff has landed, so this settles it before the
+   * test clicks another file. A compute still in flight at that swap used to
+   * land on the outgoing view model, which monaco never disposed, against the
+   * incoming file's line counts, and `UnchangedRegion.fromDiffs` threw
+   * "startLineNumber 2001 cannot be after endLineNumberExclusive 1501" (the
+   * identical-text test, which opens on epsilon.ts at 2000 lines and switches
+   * to a 1500-line twin). DiffViewer disposes the outgoing view model before
+   * the swap's flush now (Sentry DESKTOP-22), and the settle stays so each test
+   * starts from a finished diff.
    */
   async function openDiffScrollTask(): Promise<void> {
     await page.locator('[data-swimlane-name="Code Review"]').locator('text=Diff Scroll Task').first().click();
