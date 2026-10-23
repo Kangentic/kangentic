@@ -559,7 +559,7 @@ reduced motion (`prefers-reduced-motion: reduce`) gets the rest, held, with no p
 2.2.2 asks for a way to pause motion that starts by itself, and that setting is the one a frame can
 read before anything moves. The desktop app does the opposite on purpose: it forces Chromium's
 no-preference switch and stops motion only through its Animations setting, because a stale cached
-`reduce` once froze every activity mark (`docs/activity-marks.md`). The renderer's reduced-motion
+`reduce` once froze every activity mark (`docs/architecture/renderer/activity-marks.md`). The renderer's reduced-motion
 styles therefore apply only here, in a visitor's own browser. The host owes its loop frames a
 visible stop control, since an `inert` frame takes no click (Where it runs, above). And a cycle
 starts only while the frame is on screen: its tab in front and, embedded, some of it inside the

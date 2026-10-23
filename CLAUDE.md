@@ -110,13 +110,13 @@ and the column's On agent turn end automations never run.
   from the board task-detail layer. Windows are keyed by a durable SLOT, geometry is global
   but population is per-project (reconciled before the layer mounts), a reattach NEVER fetches
   or checks out, and the branch is a per-project fact re-derived by one layer bridge.
-  Rules: `.claude/rules/command-terminal.md`. Design history: [docs/command-terminal.md](docs/command-terminal.md).
+  Rules: `.claude/rules/command-terminal.md`. Design history: [docs/architecture/renderer/command-terminal.md](docs/architecture/renderer/command-terminal.md).
 - **Activity marks** - The nine agent/terminal activity glyphs are owned upstream in
   `@kangentic/branding`, NOT hand-authored here, and render only through
   `components/ActivityMark.tsx`. Motion is always on a COMPOSITED property, marks are
   `currentColor` only (the call site supplies the tone), and an icon that changes ELEMENT TYPE
   between states must render through `components/IconSlot.tsx` or it swallows the click.
-  Rules: `.claude/rules/activity-marks.md`. Design history: [docs/activity-marks.md](docs/activity-marks.md).
+  Rules: `.claude/rules/activity-marks.md`. Design history: [docs/architecture/renderer/activity-marks.md](docs/architecture/renderer/activity-marks.md).
 - **Settings tab separator** - Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a
   `category`. `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) are per-project
   settings, saved to `.kangentic/config.json`, and hidden when no project is selected.
@@ -187,7 +187,7 @@ wired to a column.
 
 Upstream of both, the **Code Review** column runs `/code-review` as an isolated column agent in the
 task's OWN worktree (`isolated` isolates the conversation, not the filesystem - see
-[docs/session-lifecycle.md](docs/session-lifecycle.md)). Entering the column suspends the task
+[docs/architecture/sessions/index.md](docs/architecture/sessions/index.md)). Entering the column suspends the task
 agent's session and kills its PTY, so the two never overlap - but it leaves that agent's
 UNCOMMITTED work in the shared tree, which is why the review pass commits by set math over
 `git status` and never `git add -A`. It fixes every finding it verifies (Lows included), applies its
@@ -230,8 +230,8 @@ validation is CI's job (the PR checks), or the `/test` command for a manual loca
 Terminal ownership handoff (one xterm per session, enforced via `dialogSessionIds`), the
 activity-log event pipeline (hook -> event-bridge.js -> JSONL -> store, replacing an aggregate
 terminal), WebGL rendering with automatic canvas fallback, and 200ms PTY resize debouncing.
-Details: [docs/session-lifecycle.md](docs/session-lifecycle.md) and
-[docs/architecture.md](docs/architecture.md).
+Details: [docs/architecture/sessions/index.md](docs/architecture/sessions/index.md) and
+[docs/architecture/system-overview.md](docs/architecture/system-overview.md).
 
 ## Conventions
 

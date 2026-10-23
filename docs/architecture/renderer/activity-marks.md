@@ -1,9 +1,20 @@
-# Activity Marks
+---
+type: Design
+title: Activity marks
+description: Why the nine activity glyphs live upstream in @kangentic/branding, why motion must be composited, the cascade and swallowed-click incidents, why the OS reduced-motion preference never stops motion, mark sizing, color, and what stays lucide.
+tags: [activity-marks, branding, motion, design]
+sources:
+  - resource: src/renderer/components/ActivityMark.tsx
+  - resource: src/renderer/components/IconSlot.tsx
+  - resource: src/renderer/utils/icon-registry.ts
+  - resource: src/renderer/utils/icon-catalog.ts
+---
+# Activity marks
 
 The nine glyphs that express agent and terminal activity. This document records why they look
 and move the way they do, and the measurements behind each choice. The prescriptive version,
 which is what you need when editing a mark consumer, is
-[`.claude/rules/activity-marks.md`](../.claude/rules/activity-marks.md).
+[`.claude/rules/activity-marks.md`](../../../.claude/rules/activity-marks.md).
 
 ## Why they live upstream
 
@@ -130,7 +141,7 @@ browser, where no Electron switch exists, and it autoplays on a public page, whe
 reduced-motion request is one WCAG 2.2.2 asks the page to respect. So the reduced-motion CSS is
 live there and is not dead code, and the UI tier's reduced-motion specs exercise it through
 `emulateMedia`. The split comes from the switch, not from a renderer branch, so the web build is
-still the real renderer ([`web-demo-parity.md`](../.claude/rules/web-demo-parity.md)).
+still the real renderer ([`web-demo-parity.md`](../../../.claude/rules/web-demo-parity.md)).
 
 One consequence for `.no-motion`: it zeroes `animation-duration` for every element, but it does
 not touch transitions. Every transition the reduced-motion styles stopped needs its own

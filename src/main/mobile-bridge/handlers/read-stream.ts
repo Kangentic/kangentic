@@ -451,7 +451,7 @@ function subscribeReadStream(
   // branches clear it before suspending. The five parks that do NOT clear it
   // (a manual pause, the idle-timeout suspend, the `kill_session` action,
   // project-relocate, auto-spawn-reconcile - named in
-  // docs/session-lifecycle.md) can send a stale label on a real park until
+  // docs/architecture/sessions/resume.md) can send a stale label on a real park until
   // the 120s TTL sweeps it, so the label is a strong hint, not proof. See
   // the doc comment on ActivityEventPayload's session-ended variant in
   // @kangentic/protocol.

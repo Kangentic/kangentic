@@ -3986,7 +3986,7 @@ describe('Post-boot geometry re-assert', () => {
   });
 
   /**
-   * `traceTerminal` carries the forensics contract docs/session-lifecycle.md
+   * `traceTerminal` carries the forensics contract docs/architecture/sessions/output-streaming.md
    * promises ("names the trigger"), but it is otherwise unobserved anywhere
    * in this file - its `__KANGENTIC_DEV__` gate is pinned off by
    * vitest.config.mts's `define`, so the real implementation is a no-op here.

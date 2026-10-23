@@ -43,7 +43,7 @@ import {
  * interval. Its remedy is a session-status
  * change via `onAgentProcessAbsent`, not a bg-shell drain. Note the contrast
  * with `onRootProcessDied` below: there the root is GONE, here it is ALIVE and
- * only its agent child is missing. See docs/session-lifecycle.md, "A session
+ * only its agent child is missing. See docs/architecture/sessions/agent-absence-sweep.md, "A session
  * whose agent exited under a surviving shell".
  *
  * Failure modes:

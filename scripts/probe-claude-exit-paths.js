@@ -6,7 +6,7 @@
  * its SessionEnd hook run, does it exit by itself and when, is its transcript's
  * last line whole, and is its boot-canary record withdrawn. It is the evidence
  * behind `src/main/pty/host/dead-root-orphans.ts` and the timing notes in
- * `.claude/rules/pty-teardown-grace.md` and `docs/session-lifecycle.md`.
+ * `.claude/rules/pty-teardown-grace.md` and `docs/architecture/sessions/agent-absence-sweep.md`.
  *
  * Each run spawns a shell through node-pty (with the app's console-list patch,
  * as the pty host runs it), launches Claude with a settings file whose hooks

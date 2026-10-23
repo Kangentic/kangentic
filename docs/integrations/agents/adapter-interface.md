@@ -99,7 +99,7 @@ When a task moves to a column, `resolveTargetAgent()` determines which agent to 
 ## First-Output Detection
 
 Each adapter implements `detectFirstOutput(data)` to spot its first output. A match times the
-boot geometry re-assert (see [session-lifecycle.md](../../session-lifecycle.md)'s "Post-boot geometry
+boot geometry re-assert (see [session-lifecycle.md](../../architecture/sessions/index.md)'s "Post-boot geometry
 re-assert"). It does not lift the launch overlay for an agent session; see "The launch overlay"
 below for what does.
 
@@ -171,9 +171,9 @@ from the hidden terminal.
 
 ## Exit Sequences
 
-Graceful exit sequences written to the PTY before a force-kill, for every agent that is typed into. `SessionManager.suspend()` writes one for each such session; `kill()` writes one for a young one (inside the agent's boot window, see the `kill()` grace in [session-lifecycle.md](../../session-lifecycle.md)); the quit path's `killAll()` writes one best-effort for each such session; the pty host writes one to an agent whose shell died on its own. An agent whose console close is its graceful exit (see below) gets no sequence on kill, suspend or quit. A step may be a pause (`{ delayMs }`), so keys the TUI must read apart never share a burst.
+Graceful exit sequences written to the PTY before a force-kill, for every agent that is typed into. `SessionManager.suspend()` writes one for each such session; `kill()` writes one for a young one (inside the agent's boot window, see the `kill()` grace in [session-lifecycle.md](../../architecture/sessions/index.md)); the quit path's `killAll()` writes one best-effort for each such session; the pty host writes one to an agent whose shell died on its own. An agent whose console close is its graceful exit (see below) gets no sequence on kill, suspend or quit. A step may be a pause (`{ delayMs }`), so keys the TUI must read apart never share a burst.
 
-An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed into on that platform: kill, suspend and quit close its console at once, and its sequence serves only the dead-shell ask. Claude Code answers true on Windows, measured on 2.1.302 in every state a session can be in, and on Linux, where the close is node-pty's hangup, measured on 2.1.304 in the same states ([session-lifecycle.md](../../session-lifecycle.md), the 2.1.302 table and the Linux table after it).
+An adapter whose `consoleCloseIsGraceful(platform)` answers true is never typed into on that platform: kill, suspend and quit close its console at once, and its sequence serves only the dead-shell ask. Claude Code answers true on Windows, measured on 2.1.302 in every state a session can be in, and on Linux, where the close is node-pty's hangup, measured on 2.1.304 in the same states ([session-lifecycle.md](../../architecture/sessions/index.md), the 2.1.302 table and the Linux table after it).
 
 | Agent | Sequence | Notes |
 |-------|----------|-------|
@@ -256,6 +256,6 @@ This ensures agents load project-level configuration (`.claude/`, `.gemini/`, `C
 
 - [Handoff](handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
 - [Activity Detection](../../architecture/activity/index.md) - Event processing, state derivation, subagent-aware transitions
-- [Session Lifecycle](../../session-lifecycle.md) - Spawn flow, resume, crash recovery
+- [Session Lifecycle](../../architecture/sessions/index.md) - Spawn flow, resume, crash recovery
 - [Worktree Strategy](../../architecture/worktrees/index.md) - Worktree creation, sparse-checkout, hook delivery
 - [Configuration](../../configuration.md) - Permission modes

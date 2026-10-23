@@ -19,7 +19,7 @@ resizable, maximizable, snappable window over a slight backdrop blur. Several of
 non-obvious properties were each settled against a bug: a window-local branch pill that
 disagreed with the Monitor row, a reconcile that ran too late and spawned a PTY under the wrong
 project, and a pending-open flag armed on a project switch that never landed. Design history and
-the rejected alternatives live in [docs/command-terminal.md](../../docs/command-terminal.md).
+the rejected alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs/architecture/renderer/command-terminal.md).
 
 ## The rule
 

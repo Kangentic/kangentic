@@ -129,7 +129,8 @@ grace and the close still matter for SessionEnd hooks and the transcript, and fo
   another process by then. The pseudoconsole itself stays open until the host exits (#965): one
   console host per natural exit, and 1,500 of them in one process measured no failure. Restarting
   the host to close them was the alternative, rejected because it ends every terminal it holds.
-  Background and measurements: `docs/session-lifecycle.md`.
+  Background: `docs/architecture/sessions/suspend-and-cleanup.md` (the kill and the young-session
+  grace). Measurements of each way Claude Code exits: `docs/architecture/sessions/agent-absence-sweep.md`.
 - **A reap, a suspend and `awaitExit` wait for the agent a closed shell left running.** A PTY's
   exit is its shell's: a kill ends the shell at once, and the agent the shell started is still
   running its own exit (SessionEnd hooks, transcript, boot record) when the PTY's exit lands.

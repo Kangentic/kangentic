@@ -487,7 +487,7 @@ describe('syncShutdownCleanup history wire-up', () => {
    * from the former jumped straight to the outer catch and `closeAll()` was
    * never reached - leaking the open SQLite handles that keep the libuv loop
    * alive past a clean quit, until the 6s hard failsafe force-exits with code
-   * 1. docs/session-lifecycle.md's "Steps 7 and 8 are wrapped too" note names
+   * 1. docs/architecture/sessions/shutdown.md's "Steps 7 and 8 are wrapped too" note names
    * exactly this case. No existing test asserts the database `closeAll()`
    * (imported from db/database) is ever called at all.
    */
