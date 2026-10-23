@@ -8,6 +8,7 @@ sources:
   - resource: src/main/boards/shared/
   - resource: src/shared/types.ts
     title: ExternalSource, FileAttachmentRef
+  - resource: src/main/boards/adapters/
 ---
 # Board integration
 

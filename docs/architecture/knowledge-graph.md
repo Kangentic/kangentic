@@ -12,6 +12,7 @@ sources:
     title: sumIndexCounts, isIndexedProject
   - resource: src/shared/embedding-models.ts
     title: EMBEDDING_MODELS
+  - resource: src/main/retrieval/graph-facade.ts
 ---
 # Knowledge Graph index and workers
 

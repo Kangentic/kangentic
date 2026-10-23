@@ -2,6 +2,24 @@
 
 ## 2026-10-22
 
+**Rollout.** The pilot's measurements did not show an agent reading less, and the decision to roll
+out anyway was made on the design argument in `research/okf-knowledge-format.md`: as the docs grow,
+an agent should reach the one concept that answers a question by reading descriptions, not by
+grepping 100 KB files. Every doc in `docs/` is now a concept, 137 of them under 24 indexes rooted at
+`index.md`, which alone carries `okf_version: "0.2"`. The median concept is 14.6 KB. Three are over
+60 KB: the code review fan-out audit (a running record), the browser decision log (now one heading
+per decision) and `settings/app-config.md` (kept whole as the one key reference, with a heading per
+key group). `telemetry/error-reporting.md` (57 KB) had no headings and now has eight. Each concept's
+H1 is its title, every `sources:` path exists, and no two descriptions match
+(`tests/unit/okf-docs-conformance.test.ts`).
+Content moved verbatim except where the split left duplicate or orphaned headings, "see above"
+references that now cross files, key tables that moved to `settings/app-config.md` beside the
+behavior concepts that link them, and a few stale facts corrected on the way (handoff passes the
+source agent's session file; a To Do move resets a task; Asana is an import source). The four audits
+keep their bodies: their citations of retired paths are history, and the citation test skips them.
+CLAUDE.md now points at `index.md` and lost three sections to `settings/settings-panel.md` and
+`contributing/`, 28,571 to 23,086 characters in every session's load.
+
 **Correction** to the drift numbers below, and a post-hoc rerun. `headingsOf` reports 1-based lines,
 and `measure-docs-structure.mjs` read them as 0-based, so a changed heading line was charged to the
 section before it. Fixed, the same concepts give recall 0.802 (89 commits fully predicted, 18 with

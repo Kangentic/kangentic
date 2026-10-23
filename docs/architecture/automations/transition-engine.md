@@ -17,6 +17,7 @@ sources:
   - resource: src/main/agent/shared/task-template-resolvers.ts
   - resource: src/main/ipc/handlers/auto-spawn-reconcile.ts
   - resource: src/main/ipc/helpers/plan-exit-target.ts
+  - resource: src/shared/template-escape.ts
 ---
 # Transition engine
 

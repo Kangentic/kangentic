@@ -61,7 +61,7 @@ tests/
   unit/           # Vitest unit tests (fast, pure logic)
   ui/             # Headless Playwright tests (no Electron)
   e2e/            # Real Electron tests (opens windows)
-docs/             # Architecture, developer guide, subsystem docs
+docs/             # Docs as concepts by topic; start at docs/index.md
 ```
 
 ## Making Changes
@@ -220,7 +220,7 @@ The clearest example is auto_command delivery. Kangentic confirms that an inject
 became a user turn, and an agent only earns the last-resort recovery (restarting the session) once
 two things have been proven for it. The per-agent status, what each one is still missing, and a
 step-by-step recipe are in
-[docs/architecture/automations/command-injection.md](docs/architecture/automations/command-injection-support-matrix.md#per-adapter-support-matrix). Partial results
+[docs/architecture/automations/command-injection-support-matrix.md](docs/architecture/automations/command-injection-support-matrix.md#per-adapter-support-matrix). Partial results
 are welcome: measuring an agent and reporting the numbers is a useful PR on its own.
 
 Bug reports for this area are most useful with the agent name, the task's `auto_command_state`, and

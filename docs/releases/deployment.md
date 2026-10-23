@@ -12,6 +12,7 @@ sources:
   - resource: scripts/verify-release-assets.js
   - resource: scripts/merge-mac-update-feeds.js
   - resource: scripts/patch-mac-update-info.js
+  - resource: src/main/updater-release-notes.ts
 ---
 # Deployment
 

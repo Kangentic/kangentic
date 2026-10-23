@@ -13,6 +13,7 @@ sources:
   - resource: vitest.config.mts
   - resource: playwright.config.ts
   - resource: electron-builder.yml
+  - resource: package.json
 ---
 # Developer guide
 

@@ -8,12 +8,14 @@ When an anchor maps to multiple target docs, one doc is the **canonical** locati
 
 ## Concept Folder Targets
 
-Some anchors target the one concept folder, `docs/integrations/agents/`, rather than one file. A
-target such as "each adapter's concept in integrations/agents/" means: Glob
-`docs/integrations/agents/*.md`, skip `index.md`, and read every concept whose `sources:` names the
-adapter you are checking. The per-agent tables (Permission Modes, Command Building) live in that
-adapter's own concept. The YAML frontmatter at the top of a concept is metadata, never part of the
-enumeration being compared.
+Every doc in `docs/` is a concept, and some anchors are split across several of them rather than
+one file. A target that names a folder (`architecture/ipc/`, `integrations/mcp-server/`) or a set
+of concepts means: Glob that folder's `*.md`, skip `index.md`, and read every concept the anchor
+table names, or every concept whose `sources:` names the file you are checking. The per-agent
+tables (Permission Modes, Command Building) live in each adapter's own concept under
+`docs/integrations/agents/`, each IPC group in exactly one of the `docs/architecture/ipc/`
+concepts, and each table's schema in one of the `docs/database/` table concepts. The YAML
+frontmatter at the top of a concept is metadata, never part of the enumeration being compared.
 
 ## Type Union Anchors
 
@@ -63,8 +65,8 @@ enumeration being compared.
 1. Read `src/shared/ipc-channels.ts`
 2. Extract all string values from the `IPC` object, preserving the comment-header grouping
 3. Count channels per group
-4. Read `docs/architecture/system-overview.md`
-5. Find the IPC channel tables (grouped by section)
+4. Read `docs/architecture/ipc/board-channels.md`, `session-channels.md` and `app-channels.md`
+5. Find the IPC channel tables (one section per group, each group in exactly one of the three)
 6. Compare per group:
    - Missing channels (in source but not in doc table)
    - Extra channels (in doc but not in source)
@@ -78,8 +80,9 @@ enumeration being compared.
 3. For each `CREATE TABLE`, extract all column definitions (name, type, constraints)
 4. For each `ALTER TABLE ... ADD COLUMN`, add the column to the table
 5. Build cumulative schema per table
-6. Read `docs/database/index.md`
-7. Find each table's schema section
+6. Read `docs/database/board-tables.md`, `session-tables.md` and `knowledge-graph-tables.md` (the
+   per-project tables) and `docs/database/storage-model.md` (the global tables)
+7. Find each table's schema section (one heading per table)
 8. Compare: report missing columns, extra columns, type mismatches
 
 ### Seed Data
@@ -108,8 +111,8 @@ enumeration being compared.
 ### Settings Registry
 1. Read `src/renderer/components/settings/settings-registry.ts`
 2. Extract each registered setting entry (key, type, label, tab)
-3. Read `docs/settings/settings-panel.md`
-4. Find the settings section
+3. Read `docs/settings/app-config.md`
+4. Find the key tables (one section per key group)
 5. Compare: report missing registry entries
 
 ## Shortcut Template Variable Anchors

@@ -11,6 +11,9 @@ sources:
   - resource: src/main/agent/shared/shim-launch.ts
   - resource: src/main/agent/shared/npm-shim-target.ts
   - resource: src/main/config/paths.ts
+  - resource: src/main/agent/shared/exec-version.ts
+  - resource: src/main/pty/lifecycle/session-spawn-flow.ts
+    title: the adaptCommandForShell call site
 ---
 # Shells and paths
 

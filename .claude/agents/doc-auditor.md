@@ -38,7 +38,7 @@ If a changed file does not map to any anchor, skip it.
 For each anchor to check:
 
 1. **Extract from source:** Read the source file, extract all enumerable items using the procedure from `references/verification-procedures.md`
-2. **Extract from doc:** Read the target doc file, find the section that should enumerate these items. When the target is a concept folder (a per-adapter table lives in each adapter's own concept under `docs/integrations/agents/`), read every concept it names, as `references/verification-procedures.md` "Concept Folder Targets" describes, and ignore each concept's YAML frontmatter
+2. **Extract from doc:** Read the target concept (the anchor table's doc paths are relative to `docs/`), find the section that should enumerate these items. When the target names several concepts or a folder of them (the IPC groups across `architecture/ipc/`, the tables across `database/`, a per-adapter table in each adapter's own concept under `integrations/agents/`), read every concept it names, as `references/verification-procedures.md` "Concept Folder Targets" describes, and ignore each concept's YAML frontmatter
 3. **Compare:** Report items in source but not in doc (missing) and items in doc but not in source (extra)
 
 ## Output Format

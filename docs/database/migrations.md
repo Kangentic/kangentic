@@ -4,10 +4,7 @@ title: Migrations
 description: How project and global migrations run on open, then the numbered history of every schema change, including guarded column adds, table recreations, backfills, the one-way actions-to-automations conversion, and the unconditional role and permission-mode repairs.
 tags: [database, migrations, schema]
 sources:
-  - resource: src/main/db/migrations/project-schema.ts
-  - resource: src/main/db/migrations/global-schema.ts
-  - resource: src/main/db/migrations/automations-migration.ts
-  - resource: src/main/db/migrations/spawn-agent-config-migration.ts
+  - resource: src/main/db/migrations/
 ---
 # Migrations
 
