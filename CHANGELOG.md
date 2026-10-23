@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.49.0] - 2026-10-23
+
+### Features
+- Inspect a completed task's changes from git (4d0d3a6b)
+- Drop markdown frontmatter from code passages (95716da8)
+- Upgrade xterm.js to the 6.1.0 beta line with exact pins (87b917e5)
+
+### Fixes
+- Redact every registered project root from event text (9f48689a)
+- Own and dispose the diff view model across a content swap (b27518c7)
+- Point split-doc citations at the concept that holds each fact (2e31ac76)
+- Carry main's launch overlay into the split and harden frontmatter reads (3453ecf3)
+- Hold the launch overlay until the agent is on screen (492f0c47)
+- Keep a task's automations disabled when it leaves Done (b50cbbd9)
+- Keep GIT_CEILING_DIRECTORIES for simple-git reads (0fa61033)
+- Keep process-exit messages grouped by message (0b4f7d9d)
+- Clear npm audit advisories with in-range updates (18f012bd)
+- Fail the demo deploy smoke on a flake and pin the Vite goto retry (51ecdbae)
+
+### Other
+- Wait out the conversation window's entrance before reading its scrollbar (da835753)
+- Retry a launch whose page is slow to load or render (a240e1cf)
+- Scope the collected-data path line to Sentry event text (075a294b)
+- Grep a bracketed concept before skipping it, and list five unlisted files (040fe57c)
+- Link prose to the concept that holds a fact and narrow shared sources (ca0991b4)
+- Fix stale handoff and data-flow facts, add headings, drop a duplicate (15103e72)
+- Port main's completed-task Changes docs and fix stale labels (ba2d8f7b)
+- Map changes to concepts by their sources and retarget every anchor (bf2afefa)
+- Point CLAUDE.md at the docs bundle and trim three sections (6a80f925)
+- Split the user guide and root the bundle at docs/index.md (1e5f8263)
+- Split settings, telemetry, platform and release docs into concepts (66a2dfa7)
+- Split architecture and session docs into concepts (b6ee7e4b)
+- Split database, browser, activity and worktree docs into concepts (3c41e283)
+- Split integrations and audits into OKF concepts (7639f8e3)
+- Measure drift, retrieval and routing for the concept layout (4c62939f)
+- Pre-register the second docs-reads round (3dbb9f61)
+- Follow the skeleton move, the dropped uncommitted count and the toast scan (eeeb2b34)
+- Pin completed-view requests, escape ownership and pop-out hand-off (f9a125ef)
+- Name all four quota-spending harnesses in the scan header (eae04b61)
+- Keep the docs-reads harness a manual step (e27b77b3)
+- Stop the OKF rollout at the pilot and check the concept folder (09058ae9)
+- Split agent-integration.md into OKF concepts (5c089904)
+- Add a harness that measures what an agent reads from docs/ (9cca1a93)
+- Pin the launch overlay's first-output routes and fix the monitor mock (f11cf136)
+- Pin a held restore in the UI mock and drop stale Done-clear notes (69c2f7fc)
+- Allow clock skew in the Windows PTY root pin test (cef3677d)
+- Pin the dompurify override floor at 3.4.17 (bd071f43)
+- Upgrade Sentry to 8 with data collection off (213192d7)
+- Upgrade simple-git to 4 (d644bf28)
+- Upgrade Electron to 45.0.0 and use safeStorage's async API only (e5e505be)
+- Name Electron 45 in the Node-API floor comment (6d2795d3)
+- Share UI session write helpers and fix a stale _core note (3ba736e8)
+- Fail a CI run on a flaky test and build the release changelog by script (cb480c1e)
+
 ## [v0.48.0] - 2026-10-22
 
 ### Features

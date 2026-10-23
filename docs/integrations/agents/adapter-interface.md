@@ -32,6 +32,8 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `detectFirstOutput(data)` | Detect the adapter's readiness escape, which times the boot geometry re-assert. A heuristic, not proof the agent is up, so it does not lift the launch overlay - see First-Output Detection below |
 | `locateSessionHistoryFile(agentSessionId, cwd)` | Locate the agent's native session history file on disk |
 
+The optional members, methods included (`discoverCapabilities`, `getExitSequence`, `summarize`, `parseTranscript` and the rest), are tabulated with their signatures in [Optional adapter properties](optional-properties.md).
+
 ### Required Properties
 
 | Property | Type | Purpose |

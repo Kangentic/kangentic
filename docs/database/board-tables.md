@@ -46,6 +46,10 @@ value is never trusted on the way in or out: `applyBoardConfigToDb` normalizes a
 unconditional migration clears any stray value already on disk (migration 59). `role` is write-once
 at create and is deliberately absent from `SwimlaneUpdateInput`.
 
+Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`,
+`auto`, or NULL when the column sets none and the global `agent.permissionMode` applies (see
+[Permission Mode Resolution](../settings/cascade.md#permission-mode-resolution-priority-order)).
+
 `auto_command` and `auto_command_mode` are RETIRED. The column's message to its agent is a
 `send_message` row in `column_automations` now; the automations migration moved every non-empty
 value into one, nulled the first field and reset the second, and nothing reads either any more.
@@ -118,6 +122,10 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Is
 | updated_at | TEXT | NOT NULL | |
 
 Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id), `idx_tasks_external` on (external_source, external_id), `idx_tasks_workflow` on (workflow_id).
+
+Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`,
+`auto`, or NULL when the task pins none. A set value outranks the column's for the task's whole
+life.
 
 The seven workflow columns are NULL on an ordinary task. `workflow_id` names the task's workflow and
 `workflow_project_id` the project whose database holds it (the task's own project unless the

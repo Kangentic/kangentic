@@ -113,6 +113,21 @@ The context bar is a status line displayed below the terminal showing session me
 | Progress Bar | Visual progress bar for context window usage |
 | Rate Limits | Adapter-reported plan-usage quota bars (e.g. Claude reports 5-hour session and 7-day weekly windows). Hidden for adapters that do not report rate limits. |
 
+## Changes Settings
+
+Applies to every project (Settings > Changes, not a per-project override). These are the defaults for the [Changes panel](task-detail.md#changes-panel) and its file diffs. The diff's own layout, whitespace and wrap toggles write the same settings, so a choice made there sticks.
+
+| Setting | Description |
+|---------|-------------|
+| Layout | Side by side (default) or inline |
+| Default diff scope | What a freshly opened panel shows: uncommitted edits (default), staged changes, or the whole branch against its base. The panel's scope control changes it for that panel only |
+| Ignore whitespace | Hide whitespace-only changes (off by default) |
+| Collapse unchanged regions | Fold large unchanged spans so only the changed hunks show, with a little context (off by default) |
+| Wrap long lines | Wrap long lines instead of scrolling the diff sideways (off by default) |
+| Inline when narrow | Show a narrow diff inline even when Layout is side by side (on by default) |
+| File sort | Order files by name (default), status, size, or extension |
+| Flat file list | List full paths instead of a folder tree (off by default) |
+
 ## Agent Settings
 
 | Setting | Description |
@@ -142,6 +157,16 @@ Three cards: **Branches**, **Worktrees**, and **Pull requests**.
 | Count merge bypass as ready | Pull requests | On by default, GitHub only. Ready means you could merge the PR now. A PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per check. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass |
 
 Azure DevOps PRs always get their branch policies checked (reviewer minimums, required builds, work-item linking), so a clean Azure PR reads `ready` or `blocked` the same way a GitHub one does. Kangentic does not read Azure DevOps bypass permissions yet.
+
+## Browser
+
+Per-project. The Browser tab holds this project's [Browser pane](task-detail.md#browser-pane) settings. What agents may do in the pane is the shared [Agent Browser](#agent-browser) tab.
+
+| Setting | Description |
+|---------|-------------|
+| Browser pane | Embed a Browser pane in this project's task windows (on by default). Off, task headers show no Browser pill and agents cannot open the pane |
+| Default URL | The page a task's pane opens when the task has no URL of its own. Saved the first time you navigate the pane |
+| Clear browser data | Wipe the embedded browser's cookies, storage, service workers and caches, keeping saved URLs. It clears the browser for every project, not only this one |
 
 ## Shortcuts
 
@@ -185,6 +210,22 @@ Global-only, like Behavior.
 | Pausing agents: When memory runs low | On by default. While memory runs low, pause the agent that has waited on you longest, one a minute, until there is room. See [Pausing agents](sessions-and-worktrees.md#pausing-agents). |
 | Pausing agents: When idle | Off by default. Pause any agent that has waited on you for the minutes on its second line, Minutes idle (30 by default). |
 
+## Hotkeys
+
+Applies to every project. Settings > Hotkeys lists every shortcut by area. A rebindable one takes a new key chord or mouse button and has its own reset, and **Reset to default** restores them all after asking. The tab flags a combo that clashes with another shortcut or is already claimed by the OS or another app, and counts the conflicts at the top. [Keyboard shortcuts](keyboard-shortcuts.md) lists every default and which ones are fixed.
+
+## Workflows
+
+Applies to every project. Two agent cards and the workflow agent's first message:
+
+| Setting | Description |
+|---------|-------------|
+| Workflow agent | Agent, Model and Effort for the agent that plans each workflow in the Workflows view's left pane. No workflow agent starts until one is chosen, and Model is required when the agent takes one |
+| Automation agent | Agent, Model and Effort for the agent that answers column Conditions, judges workflow steps, and names tasks and Command Terminals. Nothing runs until one is chosen. A small, fast model is usually enough |
+| Workflow agent prompt | The first message a new workflow's agent gets |
+
+See [Workflows](workflows.md) and [Columns and automations](columns-and-automations.md) for what each agent does.
+
 ## Dictation
 
 Applies to every project (Settings > Dictation, not a per-project override). Voice dictation is off by default. Turn it on, then hold the push-to-talk key and speak. The text goes into the field you have focused, or into the terminal when no text field has focus. A live preview streams in while you talk, and the final text is inserted when you let go. The push-to-talk key is the mouse's back button unless you rebind it in Hotkeys, and a quick tap on it still navigates an active Browser pane's history. Everything runs on this machine unless you choose a cloud refinement.
@@ -201,6 +242,22 @@ Applies to every project (Settings > Dictation, not a per-project override). Voi
 | Refinement model | Transcription | Custom only. Re-reads the clip on release for the final text, and None keeps the live text. **Cloud endpoint** sends the final clip to an OpenAI-compatible `/v1/audio/transcriptions` URL, with an optional API key and model, while the live preview stays on this machine |
 
 Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Dictation](../architecture/dictation.md#dictation) lists the models behind each Mode.
+
+## Knowledge Graph
+
+Applies to every project. The **Index** card decides what Quick Find and the Knowledge Graph search, and the **Knowledge Graph** card turns on finding by meaning and answering questions.
+
+| Setting | Card | Description |
+|---------|------|-------------|
+| Index | Index | Index conversations, tasks and commits on this machine (on by default). Off, nothing is indexed and Quick Find shows no conversation hits |
+| Task summaries | Index | A sentence or two per Done task, so questions find it |
+| Source code | Index | Index the project's code and docs, so answers can explain them |
+| Knowledge Graph | Knowledge Graph | Find your work by meaning and answer questions |
+| Search quality | Knowledge Graph | The local model that finds by meaning. Changing it re-indexes in the background |
+| Model acceleration | Knowledge Graph | Where the local model runs. Auto uses the GPU when there is one |
+| Agent, Model, Effort | Knowledge Graph | The agent that answers questions and writes the task summaries. A small model answers as well and faster, but invents more details in summaries |
+
+[Knowledge Graph](knowledge-graph.md) covers what each source holds and how questions are answered.
 
 ## MCP Server
 

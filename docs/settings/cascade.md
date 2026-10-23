@@ -220,6 +220,8 @@ Every text field takes the template variables listed in
 2. Swimlane's `permission_mode` (if set)
 3. Global `config.agent.permissionMode`
 
+Valid values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` (`PermissionMode` in `src/shared/types.ts`). What each one passes to Claude is listed under [agent.*](app-config.md#agent), and the dropdown offers only the modes the selected agent supports.
+
 ## IPC
 
 | Channel | Purpose |

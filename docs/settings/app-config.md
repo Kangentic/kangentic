@@ -106,6 +106,8 @@ sources:
 | `agent.execution` | Record\<string, AgentProjectExecution\> | `{}` | Per-project, agent-keyed: `{ mode: 'local' \| 'remote', workingDirectory }`. An absent entry means local. `workingDirectory` is a path ON THE SERVER for this project's tasks. See [Remote Execution](#remote-execution). |
 | `agent.launchOptions` | Record\<string, Record\<string, boolean\>\> | `{}` | Global, agent-keyed boolean startup toggles: agent name -> option id -> enabled. An absent entry falls back to the adapter's declared default. Machine-scoped like `agent.cliPaths`. Global-only. Today only Codex declares one option, `disableApps` (launches with `--disable apps` to skip the optional cloud ChatGPT Apps MCP connector, which can hang startup at "Booting MCP server: codex_apps"). |
 
+The Agent tab's Project defaults rows Agent, Model and Effort are not AppConfig keys. They are columns on the project's row in the global database (`default_agent`, `default_model`, `default_effort`, see the [projects table](../database/storage-model.md#projects-table)), and a new session in the project uses them when no column or task override is set.
+
 PermissionMode values:
 
 - `default` -- uses `--settings` (project-settings behavior)
@@ -125,6 +127,8 @@ The configuration splits along a scope seam:
 
 - **`agent.executionServers[name]`** (global) is the server's identity - URL and auth. It is machine-scoped, like `agent.cliPaths`: the same server is available to every project on this machine.
 - **`agent.execution[name]`** (per-project) is this project's use of that server - `local` or `remote`, and if remote, the working directory ON THE SERVER for this project's tasks. It is intentionally excluded from new-project seeding (see the seeding note under [Per-Project Overridable Settings](cascade.md#per-project-overridable-settings)) - a remote server's directory is specific to the project it was configured for.
+
+The Agent tab shows them as four rows. Execution writes `agent.execution[name].mode`, Server URL and Authentication write `agent.executionServers[name].url` and `.auth`, and Server working directory writes `agent.execution[name].workingDirectory`.
 
 At spawn time, `resolveExecutionTarget()` (`src/main/agent/shared/execution-target.ts`) combines both into a single `ResolvedExecutionTarget` and threads it through `CommandOptions.executionTarget`, populated at both spawn chokepoints (`transition-engine.ts`, `session-startup/prepare-spawn.ts`) per `spawn-entry-point-parity.md`. It throws (rather than silently spawning locally) if a project's mode is `remote` but no server URL is configured.
 
