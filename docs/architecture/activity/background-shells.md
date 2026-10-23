@@ -107,7 +107,7 @@ snapshot per cycle. Its predicate is "no descendant that is not a console host" 
 the shell-like filter, which exists to hide an agent's `cmd.exe` launch shim), it runs on its own
 60s cadence rather than the poll interval, and its remedy is a session-STATUS change routed through
 `SessionManager`, not an `ActivityState` transition. Full description and guards:
-[session-lifecycle.md](../../session-lifecycle.md#a-session-whose-agent-exited-under-a-surviving-shell).
+[session-lifecycle.md](../sessions/agent-absence-sweep.md).
 
 Note the contrast with `onRootProcessDied` above, which fires when the root is GONE and forces
 idle. Here the root is ALIVE and only its agent child is missing, which is why root-death detection

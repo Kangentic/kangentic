@@ -406,7 +406,7 @@ if (graphicsMode.engagedNow) pendingGpuNotice = true;
 //
 // Never move it behind a condition: a test or preview run must render the way
 // a user's install does. The incident and the measurements are in
-// docs/activity-marks.md; `tests/e2e/os-reduced-motion.spec.ts` covers it.
+// docs/architecture/renderer/activity-marks.md; `tests/e2e/os-reduced-motion.spec.ts` covers it.
 app.commandLine.appendSwitch('force-prefers-no-reduced-motion');
 
 // Registered here rather than in an ipc/handlers module because the answer is

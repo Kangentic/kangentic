@@ -63,7 +63,7 @@ enumeration being compared.
 1. Read `src/shared/ipc-channels.ts`
 2. Extract all string values from the `IPC` object, preserving the comment-header grouping
 3. Count channels per group
-4. Read `docs/architecture.md`
+4. Read `docs/architecture/system-overview.md`
 5. Find the IPC channel tables (grouped by section)
 6. Compare per group:
    - Missing channels (in source but not in doc table)
@@ -126,7 +126,7 @@ enumeration being compared.
 1. Read `src/shared/task-template-vars.ts` (`TASK_TEMPLATE_VAR_NAMES` / `TASK_TEMPLATE_VARS`)
 2. Extract every keyword name (currently 26) and their `chip`/`description` fields
 3. Read `docs/transition-engine.md` ("## Template Variables", canonical) and
-   `docs/architecture.md` (the "Template variables available" line, cross-reference)
+   `docs/architecture/system-overview.md` (the "Template variables available" line, cross-reference)
 4. Compare: report any chip missing from either doc, or documented with stale prose (e.g.
    describing `{{baseBranch}}` as resolving empty rather than falling back to the effective
    project default). `tests/unit/task-template-vars-parity.test.ts` runs this same check

@@ -24,7 +24,7 @@ column.
 
 Upstream of both, the **Code Review** column runs `/code-review` as an isolated column agent in the
 task's OWN worktree (`isolated` isolates the conversation, not the filesystem; see
-[Isolated Sessions](../session-lifecycle.md#isolated-sessions-per-column-session-model)). Entering the
+[Isolated Sessions](../architecture/sessions/spawn-flow.md#isolated-sessions-per-column-session-model)). Entering the
 column suspends the task agent's session and kills its PTY, so the two never overlap, but it leaves
 that agent's UNCOMMITTED work in the shared tree, which is why the review pass commits by set math
 over `git status` and never `git add -A`.

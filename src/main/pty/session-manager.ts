@@ -370,7 +370,7 @@ const COMMAND_TERMINAL_AGENT_START_CEILING_MS = 120_000;
  * apart. A `/resume` picker left open for 8 s ran no hook at all, so a user
  * browsing it is not on the clock. 5 s is more than 30 times the larger gap,
  * and it also outlasts Claude's own exit after the hook (its SessionEnd
- * budget, 1.5 s by default, then about 0.6 s; see docs/session-lifecycle.md).
+ * budget, 1.5 s by default, then about 0.6 s; see docs/architecture/sessions/suspend-and-cleanup.md).
  * Gemini CLI's hooks reference documents a SessionEnd and a SessionStart for
  * `/clear` too, with no stated gap.
  */

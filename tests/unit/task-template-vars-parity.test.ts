@@ -130,12 +130,12 @@ describe('task template vars: catalog <-> resolvers <-> chips <-> docs parity', 
     ).toEqual([]);
   });
 
-  it('every chip is documented in docs/architecture.md', () => {
-    const docContent = fs.readFileSync(path.join(REPO_ROOT, 'docs/architecture.md'), 'utf-8');
+  it('every chip is documented in docs/architecture/system-overview.md', () => {
+    const docContent = fs.readFileSync(path.join(REPO_ROOT, 'docs/architecture/system-overview.md'), 'utf-8');
     const undocumented = TASK_TEMPLATE_VARS.map((entry) => entry.chip).filter((chip) => !docContent.includes(chip));
     expect(
       undocumented,
-      `These chips are not documented in docs/architecture.md:\n${undocumented.join('\n')}`,
+      `These chips are not documented in docs/architecture/system-overview.md:\n${undocumented.join('\n')}`,
     ).toEqual([]);
   });
 });

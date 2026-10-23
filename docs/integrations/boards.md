@@ -140,6 +140,12 @@ boardRegistry.register(new GitHubIssuesAdapter());
 
 The registry is a singleton populated at module import time. Adapters self-register their URL parsers via `registerSourceUrlParser()` so user-pasted URLs route to the right provider. Status check (`adapter.status === 'stub'`) is the single gate that prevents stub providers from reaching their throwing method bodies.
 
+### IPC channels
+
+Backlog Import group (7 channels): `backlog:importCheckCli`, `backlog:importGetCached`, `backlog:importReconcile`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. The fetch/import channels dispatch through `boardRegistry.requireStable(source)` in `src/main/ipc/handlers/backlog.ts`. `importGetCached` reads the per-project `remote_item_cache` table with no network; `importReconcile` fetches only items changed since the cache high-water mark, merges them, and auto-prunes items the remote no longer has.
+
+Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
+
 ## Adding a New Provider
 
 1. **Folder.** Create `src/main/boards/adapters/<provider>/` with at minimum `adapter.ts` (implementing `BoardAdapter`) and `index.ts` (exporting the class).
@@ -167,4 +173,3 @@ The registry enumerates all 7 providers. Stable providers dispatch normally. Stu
 ## See Also
 
 - [Agent Integration](agents/index.md) - the analogous adapter system for AI coding agents.
-- [Architecture - Board Adapters](../architecture.md#board-adapters) - high-level overview in the main architecture doc.

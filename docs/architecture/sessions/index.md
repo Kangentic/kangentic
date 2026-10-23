@@ -1,0 +1,17 @@
+# Sessions
+
+## Lifecycle
+
+* [Session state machine](state-machine.md) - The in-memory SessionStatus versus the persisted SessionRecordStatus (which adds the DB-only orphaned), every transition and its trigger including held pauses and OS-killed recovery, and how session events and store state are scoped by projectId.
+* [Spawn flow](spawn-flow.md) - The two spawn chokepoints (spawnAgent and prepareAgentSpawn) and every entry point into them, the engine and SessionManager.doSpawn steps, the concurrency queue, isolated session tracks (session_target, session_spawn_strategy), AbortSignal cancellation, and cross-agent handoff.
+* [Suspend and cleanup](suspend-and-cleanup.md) - What each destination column does to a session (To Do cleanup, Done and auto_spawn=false suspend), the KANGENTIC_TASK_ID reap of leftover processes, kill() with its young-session grace, the suspend() steps and double session-changed emit, and the timing constants table.
+* [Resume](resume.md) - Why Resume is refused for To Do, Done and archived tasks, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
+* [Agent absence sweep](agent-absence-sweep.md) - How the bg-shell watcher's process-tree sweep retires a session whose agent exited under a surviving shell, why a Command Terminal ends but a task stays resumable, the WSL exclusion, and the measured Claude exit paths (console close, hangup, Esc sequence).
+* [Crash recovery and PTY host](crash-recovery.md) - The project-open recovery pipeline: orphan marking, getInterruptedExited records, per (task, isolated_swimlane_id) dedup, registerSuspendedPlaceholder, restoredGrid, task-locked resumes, the pass scoped to lost sessions after a pty host crash, and what the pty host owns.
+* [Shutdown](shutdown.md) - The synchronous before-quit sequence in syncShutdownCleanup: metrics flushed into each session's own record, records marked suspended, killAll with the young-session grace, the bounded PTY exit-callback drain behind the node-pty native crash, and the 6 second failsafe.
+
+## Terminals
+
+* [Terminal ownership and clipboard](terminal-ownership.md) - How the bottom panel and task-detail windows share one xterm per session (dialogSessionIds, focused union), the mayTakeArrivalFocus keyboard arbiter, and terminal I/O: bracketed paste, image paste and file drop, copy, OSC 52 clipboard writes, OSC 8 links.
+* [Output streaming](output-streaming.md) - How PTY output reaches xterm and a phone (16 ms flush, 512 KB ring, tap), why alt-screen sessions replay the parsed grid, and the grid-width mechanisms: deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing.
+* [Transient sessions](transient-sessions.md) - How Command Terminals and workflow agents run as transient sessions with no DB row: startCommandTerminal's slot claim and four-terminal cap, cold-spawn checkout, spawn-failed handling, the kill flow, and rebuilding slots after a renderer reload.

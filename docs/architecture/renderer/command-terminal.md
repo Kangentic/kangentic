@@ -1,10 +1,26 @@
+---
+type: Design
+title: Command Terminal
+description: Why the Command Terminal is a second window-manager layer with main-owned slots, why it ends when its agent exits, naming in main, phone starts, leftover reaping, per-project branch and geometry, the two title-bar buttons, and the sidebar indicator.
+tags: [command-terminal, window-manager, slots, design]
+sources:
+  - resource: src/renderer/components/command-bar/
+    title: Command Terminal layer, window, pane, icon and reconcile
+  - resource: src/main/ipc/handlers/transient-sessions.ts
+  - resource: src/main/agent/shared/command-terminal-namer.ts
+  - resource: src/main/ipc/helpers/command-terminal-leftovers.ts
+  - resource: src/shared/command-terminal-name.ts
+  - resource: src/renderer/stores/session-store/transient-session-slice.ts
+  - resource: src/renderer/components/layout/TitleBar.tsx
+  - resource: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+---
 # Command Terminal
 
 Ctrl+Shift+P opens an ephemeral "transient" session with no DB persistence: quick access to an
 agent CLI without creating a task on the board. This document records the design decisions and
 the bugs behind them. The prescriptive version, which is what you need when editing the layer,
-is [`.claude/rules/command-terminal.md`](../.claude/rules/command-terminal.md). The end-user
-walkthrough is in [User Guide](user-guide.md#command-terminal).
+is [`.claude/rules/command-terminal.md`](../../../.claude/rules/command-terminal.md). The end-user
+walkthrough is in [User Guide](../../user-guide.md#command-terminal).
 
 ## A second window-manager layer
 
@@ -72,7 +88,7 @@ toasts it and closes, and a phone gets `command-terminal-start-failed`. Handed b
 the window waited on its launch shimmer for good, since it subscribes to the exit only once it
 knows the session id.
 
-The agent-absence sweep (see [Session Lifecycle](session-lifecycle.md#a-session-whose-agent-exited-under-a-surviving-shell))
+The agent-absence sweep (see [Session Lifecycle](../sessions/agent-absence-sweep.md))
 is what notices, and the agent's SessionEnd hook asks it to look at once, so `/exit` closes the
 window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays alive and the
 process tree keeps the terminal. Every end, a desktop Stop included, goes through
@@ -92,7 +108,7 @@ first-output latch or on the session's usage, and both arrive before the agent r
 frame of pwsh and Windows PowerShell carries the cursor-hide escape Claude's detector matches, and
 the spawn seeds usage with the model name. So a new terminal showed the PowerShell prompt for
 about three seconds before Claude's TUI. It now lifts when main says the agent is on screen
-(`SessionManager.markAgentReady`, see [The launch overlay](integrations/agents/adapter-interface.md#the-launch-overlay)),
+(`SessionManager.markAgentReady`, see [The launch overlay](../../integrations/agents/adapter-interface.md#the-launch-overlay)),
 which works for every agent, inline ones included. The pane mounts behind the overlay with its
 output dropped, so its fit sizes the PTY before the agent's first frame. Mounting only at the lift
 let Claude compose that frame at the 120x30 spawn default.
@@ -140,7 +156,7 @@ Before this, the renderer namer read the same empty field and no Claude terminal
 
 ## Starting one from a phone
 
-The bridge's `command-terminal` verb (see [Mobile Bridge](integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
+The bridge's `command-terminal` verb (see [Mobile Bridge](../../integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
 runs the same `startCommandTerminal` as the desktop's New, with `unattended: true`. A user on a
 phone is away from the desk and cannot recover a start that hangs on a credential prompt or a
 slow fetch, so an unattended start keeps the desktop's steps and makes each one unable to block:

@@ -197,4 +197,4 @@ That used to come with "no changes to the platform-agnostic registry API or its 
 
 - [Board Integration](../boards.md) - the analogous adapter system for importing board issues.
 - [Agent Integration](../agents/index.md) - the adapter system for AI coding agents that both patterns mirror.
-- [Architecture](../../architecture.md) - the `task:resolvePr` IPC channel and task schema in the main architecture doc.
+- [Architecture](../../architecture/system-overview.md) - the `task:resolvePr` IPC channel and task schema in the main architecture doc.

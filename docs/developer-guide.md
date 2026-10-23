@@ -530,8 +530,8 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 
 ## Further Reading
 
-- [Architecture](architecture.md) -- Process model, data flow, IPC channels, stores
-- [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume
+- [Architecture](architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
+- [Session Lifecycle](architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume
 - [Transition Engine](transition-engine.md) -- Action types, templates, execution flow
 - [Database](database/index.md) -- Full schema reference, migrations, connection management
 - [Agent Integration](integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust

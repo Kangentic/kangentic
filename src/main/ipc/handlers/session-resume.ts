@@ -245,7 +245,7 @@ export function resumeTaskSession(
           // session_id write follows it with no further checkpoint, and a
           // spawn a teardown cancels registers nothing. Removing the task's
           // rows here would drop the PAUSED row the canceller still needs;
-          // docs/session-lifecycle.md records what that broke.
+          // docs/architecture/sessions/resume.md records what that broke.
           console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
           return null;
         }

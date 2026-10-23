@@ -8,7 +8,7 @@ paths:
   - "src/renderer/components/dialogs/BoardManagerDialog.tsx"
   - "src/renderer/components/TemplateVariablePicker.tsx"
   - "docs/transition-engine.md"
-  - "docs/architecture.md"
+  - "docs/architecture/system-overview.md"
 ---
 # Rule: task-template-variable parity (chips + resolvers + docs track one catalog)
 
@@ -44,7 +44,8 @@ When you add, rename, or remove a task-template keyword:
    `'workflow'`. Because it shows the description too, a new keyword's `description` is
    user-facing copy, not just a docs string: keep it to one line (the menu clamps it).
 4. **Docs:** document the new keyword in both `docs/transition-engine.md` (Template Variables)
-   and `docs/architecture.md` (Action Types). This couples to [[docs-stay-in-sync]].
+   and `docs/architecture/system-overview.md` (Transition Engine > Automation adapters). This
+   couples to [[docs-stay-in-sync]].
 5. **Resolution semantics are per-keyword, not a blanket rule.** `{{baseBranch}}` resolves to the
    EFFECTIVE base (`task.base_branch ?? defaultBaseBranch ?? 'main'`); `{{worktreePath}}` and
    `{{branchName}}` stay raw reads of the task column (empty is correct for a task with no
@@ -74,7 +75,7 @@ When you add, rename, or remove a task-template keyword:
   catalog name has a resolver and vice versa; (b) `TASK_TEMPLATE_VARS` covers exactly the catalog
   names, and that the dialog maps the catalog rather than hardcoding chips of its own; (c) every
   chip is documented in both `docs/transition-engine.md` and
-  `docs/architecture.md`; plus red-green coverage of the `{{baseBranch}}` effective-default fix
+  `docs/architecture/system-overview.md`; plus red-green coverage of the `{{baseBranch}}` effective-default fix
   and the `interpolateTaskTemplate` drop-and-collapse semantics (including that a substituted
   value containing literal `{{...}}` text is never re-scanned). Runs in CI via `npm run test:unit`.
 - **Review:** `/code-review` flags a new task-template keyword added to only one of the catalog /

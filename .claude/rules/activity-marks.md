@@ -19,7 +19,7 @@ main thread is blocked, an `innerHTML` re-assign that destroys the node under th
 makes Chromium drop the click outright, and a frozen-motion override that lost the cascade and
 silently did nothing. Each is invisible in review and obvious in production. Background,
 measurements, and the upstream geometry history live in
-[docs/activity-marks.md](../../docs/activity-marks.md).
+[docs/architecture/renderer/activity-marks.md](../../docs/architecture/renderer/activity-marks.md).
 
 ## The rule
 

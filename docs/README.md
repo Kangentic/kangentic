@@ -9,7 +9,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 | New user | [Installation](installation.md) |
 | Evaluating the product | [Overview](overview.md) |
 | Contributing code | [Developer Guide](developer-guide.md) |
-| Understanding the system | [Architecture](architecture.md) |
+| Understanding the system | [Architecture](architecture/system-overview.md) |
 
 ## Reference
 
@@ -21,12 +21,12 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [User Guide](user-guide.md) -- End-user walkthrough of all features
 
 ### Architecture
-- [Architecture](architecture.md) -- Process model, data flow, IPC channels, stores
-- [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
+- [Architecture](architecture/system-overview.md) -- Process model, data flow, IPC channels, stores
+- [Session Lifecycle](architecture/sessions/index.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
 - [Transition Engine](transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
 - [Database](database/index.md) -- Schema (including session_transcript_chunks and handoffs tables), migrations, repository pattern, connection management
-- [Command Terminal](command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
-- [Activity Marks](activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
+- [Command Terminal](architecture/renderer/command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
+- [Activity Marks](architecture/renderer/activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
 
 ### Integration
 - [Agent Integration](integrations/agents/index.md) -- Adapter interface, Claude/Codex/Gemini/Aider CLI details, permission modes, detection, command building
