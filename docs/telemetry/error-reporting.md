@@ -674,7 +674,9 @@ in one Sentry org, one triage surface.
   skill's raw-API fallback reads. Normal retrieval uses the `sentry` CLI's stored login instead. Both plugins pass an
   explicit `release.name` of `Kangentic@<version>`, matching what `@sentry/electron` reports at
   runtime; left unset the bundler default is `GITHUB_SHA`, which files the artifacts under a name
-  no event ever carries.
+  no event ever carries. A build that uploads runs its main-process bundles one at a time
+  (`runEsbuildBundles` in `scripts/build.js`): the `sentry` package the plugins drive keeps one
+  module-global env per command, so two uploads in flight at once leave one of them with no token.
 - **A native crash is attributed to the build that crashed, not the one that uploaded it.** Crashpad
   writes the dump; the SDK uploads it on the next launch. If the user upgraded in between, that later
   build's release tag and scope ride along: DESKTOP-M crashed on 0.38.0 and arrived tagged

@@ -489,6 +489,34 @@ const esbuildCommon = {
   plugins: resolveSentryEsbuildPlugins(),
 };
 
+/**
+ * Build the main-process esbuild bundles: one at a time when the build uploads
+ * to Sentry, in parallel otherwise.
+ *
+ * The esbuild Sentry plugin uploads from each build's onEnd through the
+ * `sentry` package, which it drives in-process, and that package keeps ONE
+ * module-global env. Every command installs its own copy carrying the token,
+ * org and project, then puts `process.env` back in a `finally`. Two uploads in
+ * flight at once share that slot, so the first to finish strips the token from
+ * the other, which fails "Not authenticated". v0.49.0's first release run
+ * failed that way on all five platforms, each after one to six of the seven
+ * bundles had uploaded. Within one build the plugin's commands already run one
+ * after another, so running the builds in turn is the whole fix. A build that
+ * uploads nothing keeps its bundles parallel.
+ *
+ * Exported for test, with the build function injected so a test can count
+ * overlapping builds without running esbuild.
+ */
+async function runEsbuildBundles(bundleOptions, buildBundle, { sequential }) {
+  if (!sequential) {
+    await Promise.all(bundleOptions.map((options) => buildBundle(options)));
+    return;
+  }
+  for (const options of bundleOptions) {
+    await buildBundle(options);
+  }
+}
+
 async function build() {
   announceSentryUploadMode();
   console.log('[build] Running tsc --noEmit type check...');
@@ -528,65 +556,68 @@ async function build() {
   console.log('[build] Renderer built');
   assertVendorChunksLazy(rendererOutDir);
 
-  console.log('[build] Building main + preload with esbuild...');
-  await Promise.all([
-    esbuild.build({
+  console.log(
+    `[build] Building main + preload with esbuild (${uploadSourcemaps ? 'one bundle at a time, for the Sentry upload' : 'in parallel'})...`,
+  );
+  const bundleOptions = [
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/index.ts')],
       outfile: path.join(projectDir, '.vite/build/index.js'),
-    }),
-    esbuild.build({
+    },
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
       outfile: path.join(projectDir, '.vite/build/preload.js'),
-    }),
+    },
     // The conversation-memory embedding worker runs in an Electron
     // utilityProcess, so it is bundled as its own entry next to the main
     // bundle. `@huggingface/transformers` stays external (resolved from
     // node_modules at runtime) so its bundled onnxruntime-web wasm assets
     // resolve to real files.
-    esbuild.build({
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
-    }),
+    },
     // The untracked-file line-count worker also runs in an Electron
     // utilityProcess (see src/main/git/line-count/line-count-client.ts), so
     // it is bundled as its own entry next to the main bundle.
-    esbuild.build({
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
-    }),
+    },
     // The dictation (sherpa-onnx) engine also runs in an Electron
     // utilityProcess (see src/main/transcription/dictation-client.ts /
     // DESKTOP-X), so it is bundled as its own entry next to the main
     // bundle. `sherpa-onnx-node` stays external (already in
     // esbuildCommon.external), resolved from node_modules at runtime so the
     // native addon it loads resolves to a real on-disk path.
-    esbuild.build({
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/transcription/dictation-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/dictation-worker.js'),
-    }),
+    },
     // The retrieval index (search, the Knowledge Graph's map, indexing) runs
     // in an Electron utilityProcess (see src/main/retrieval/retrieval-client.ts),
     // so none of its database work blocks the main process. `better-sqlite3`
     // stays external, resolved from the unpacked node_modules at runtime.
-    esbuild.build({
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/retrieval/worker/retrieval-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/retrieval-worker.js'),
-    }),
+    },
     // The pty host (`kangentic-pty-host` utility process): every node-pty
     // instance and the per-chunk work on its output. node-pty and
     // better-sqlite3 stay external, resolved from the unpacked node_modules.
-    esbuild.build({
+    {
       ...esbuildCommon,
       entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
       outfile: path.join(projectDir, '.vite/build/pty-host.js'),
-    }),
-  ]);
+    },
+  ];
+  await runEsbuildBundles(bundleOptions, (options) => esbuild.build(options), { sequential: uploadSourcemaps });
   console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
@@ -627,4 +658,5 @@ module.exports = {
   announceSentryUploadMode,
   assertUploadCanActuallyRun,
   resolveSentryEsbuildPlugins,
+  runEsbuildBundles,
 };
