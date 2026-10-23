@@ -6,7 +6,7 @@
  * Why a script: across 42 recent passes the old prose rule ("Needs revision" whenever anything
  * was skipped) gave the same state different labels (one Low skip said Needs revision, eight
  * and twelve skips said Clean), and every Needs revision sent the card back to Executing on
- * skips alone. See docs/code-review-fanout-audit.md section 15.
+ * skips alone. See docs/audits/code-review-fanout-audit.md section 15.
  *
  * Usage: node scripts/review-verdict.mjs <findings.json> [--ledger]
  *   default   prints the Summary block, the Decisions made list, and the closing verdict block.
@@ -43,7 +43,7 @@
  *
  * There is no followUps or followUpTask key, and the script refuses both. An item outside the diff
  * is fixed in the pass or recorded as a blocked finding whose step reaches the task agent, because
- * a pass files no board task (docs/code-review-fanout-audit.md section 17).
+ * a pass files no board task (docs/audits/code-review-fanout-audit.md section 17).
  */
 import fs from 'node:fs';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';

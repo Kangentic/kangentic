@@ -750,7 +750,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         // this was written for has `base_branch` NULL and predates
         // `resolved_base_branch`, so it would never reach Tier 6 at all. The
         // residual that narrowing would close is documented in
-        // docs/pr-integration.md and is not closable this way, because a task
+        // docs/integrations/pull-requests/pr-linking.md and is not closable this way, because a task
         // sitting on a long-lived branch's tip is byte-identical in git to one
         // sitting on its own pushed tip.
         // Falsy, not nullish, so this agrees with `baseBranch` above on what

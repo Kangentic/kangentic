@@ -4,7 +4,7 @@ A rerunnable benchmark for changes to `.claude/skills/code-review/SKILL.md` and
 `.claude/agents/review-finder.md`. It replays historical review states, runs finder arms over the
 pack the shipped `scripts/build-review-pack.mjs` builds, and scores what each arm raises against
 ground truth taken from later passes. Results and the first run's outcome are in
-`docs/code-review-fanout-audit.md` section 15; the model round's are in section 16.
+`docs/audits/code-review-fanout-audit.md` section 15; the model round's are in section 16.
 
 ## Files
 

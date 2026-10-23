@@ -4,7 +4,7 @@
  *
  * A page is 8 MiB of source: measured on real Claude transcripts of 32 to
  * 548 MB, one page costs the retrieval worker 27 to 34 MB of peak memory and 18
- * to 185 ms, and sends at most 0.9 MB of entries (`docs/conversation-history-paging-audit.md`).
+ * to 185 ms, and sends at most 0.9 MB of entries (`docs/audits/conversation-history-paging-audit.md`).
  * It equals the conversation indexer's window and the transcript archive's row,
  * so an archived page is one archive row.
  *

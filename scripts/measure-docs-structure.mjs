@@ -73,7 +73,8 @@ export function headingPathsByLine(text) {
   const stack = [];
   let next = 0;
   for (let line = 0; line < lineCount; line += 1) {
-    while (next < headings.length && headings[next].line === line) {
+    // headingsOf reports 1-based lines; `line` here is the 0-based index of the same line.
+    while (next < headings.length && headings[next].line === line + 1) {
       const heading = headings[next];
       if (heading.level >= 2) {
         while (stack.length > 0 && stack[stack.length - 1].level >= heading.level) stack.pop();

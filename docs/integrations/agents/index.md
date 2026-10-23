@@ -1,35 +1,34 @@
----
-okf_version: "0.2"
----
 # Agents
 
 ## Adapter contract
 
-* [Agent adapter interface](adapter-interface.md) - The AgentAdapter contract every agent implements, the fifteen supported agents, and the shared rules for agent resolution, first-output detection, exit sequences, history location and prompt templates.
-* [Optional adapter properties](optional-properties.md) - Every optional AgentAdapter property and method, what each declares, and which adapters set it.
-* [Adapter types and capability discovery](adapter-types.md) - The AgentCapabilities, CommandOptions, AdapterRuntimeStrategy and SpawnSessionInput types, and how each adapter discovers its models and effort levels.
+* [Agent adapter interface](adapter-interface.md) - The AgentAdapter methods and required properties, the fifteen-agent matrix of resume flags and MCP delivery, agent resolution order, per-agent first-output and exit key sequences, session history file locations, the launch overlay lift, and the task_xml prompt template.
+* [Optional adapter properties](optional-properties.md) - Every optional AgentAdapter member and which adapters set it, such as getSubmissionVerifier, answerFromContext, parseTranscript, onWorktreeRemoved, supportsPlanAutoApproval, kangenticMcp, remoteExecution, launchOptions and pastedImageNativeExtensions.
+* [Adapter types and capability discovery](adapter-types.md) - The fields of AgentCapabilities, CommandOptions, AdapterRuntimeStrategy and SpawnSessionInput, and how each capability-discovery.ts finds models and effort levels, from Claude's hidden /model picker probe to history scans, agy models, cursor-agent --list-models and Grok's models_cache.json.
 
 ## Shared mechanisms
 
-* [Background commands](background-commands.md) - How an agent declares background commands so a running build holds its task active, and how a hook-driven declaration is wired.
-* [Auto-name (summarize)](auto-name.md) - How an adapter's summarize call names tasks and Command Terminals, where the names surface, and how to add summarize to a new adapter.
-* [Bridge scripts](bridge-scripts.md) - The status, event, plan-approval and background-shell-hint bridge scripts that agent CLIs run from their hooks and status lines.
-* [Project relocation](project-relocation.md) - How the project:relocate handler moves or repoints a project and how each adapter rewrites the paths its CLI stored.
+* [Background commands](background-commands.md) - How a background build or dev server holds its task thinking, the four conditions for declaring backgroundCommands, each agent's launch and stop signals, why Droid, Cursor and Antigravity do not declare it, and the BackgroundCommandSpec directives and hint hook that wire it.
+* [Bridge scripts](bridge-scripts.md) - The four stateless Node bridge scripts that hooks and status lines run, status-bridge.js, event-bridge.js, plan-approval-bridge.js (decision file, fails closed, setMode reply) and background-shell-hint-bridge.js, with their inputs, outputs and supported agents.
+* [Adapter session history](session-history.md) - The native session history files Kangentic tails for telemetry: reader attach and parse flow, the SessionHistoryParseResult contract, Codex, Gemini and Claude file formats, the Claude status-file pipeline, the per-agent resume map, the /clear fork reconcile, known gaps, and how to add a parser.
+* [Cross-agent handoff](handoff.md) - How a task moved to a column with a different agent gets the source agent's native session file passed by path: the three trigger conditions, the prompt wording, the handoffs table, the per-column passthrough toggle, and which TUI agents have a transcript cleaner.
+* [Auto-name (summarize)](auto-name.md) - How summarize names tasks and Command Terminals on the Automation agent, the per-agent title invocations (answer run or runCliPrintSummarize), the 30 second automatic rename, the hourly rate limit and the asked-task set, and how to add summarize to a new adapter.
+* [Project relocation](project-relocation.md) - How project:relocate repoints or moves a project, suspends its sessions and calls onProjectRelocated, and a per-agent table of the path-keyed state each CLI migrates (Claude slugs, Kimi md5 dirs, Codex trust headers, Grok encoded dirs) and the residue it accepts.
 
 ## Adapters
 
-* [Claude Code](claude-code.md) - How Kangentic detects Claude Code, builds its command, maps permission modes, merges per-session settings, injects hooks, and writes ~/.claude.json before each spawn.
-* [Codex CLI](codex-cli.md) - How Kangentic detects Codex CLI, builds its new and resume commands, wires MCP and hooks through -c overrides, pre-approves directory trust, and maps permission modes to sandbox flags.
-* [Gemini CLI](gemini-cli.md) - How Kangentic detects Gemini CLI, builds its command, maps permission modes, handles plan exit and confirmation prompts, and merges its settings and MCP wiring.
-* [Qwen Code](qwen-code.md) - How Kangentic detects Qwen Code, builds its command, maps permission modes and hook events, handles plan exit, trust and the MCP approval gate, and reads its session history.
-* [OpenCode](opencode.md) - How Kangentic detects OpenCode, builds its command, merges settings, tracks activity through a plugin, captures the session id, and attaches to a remote server.
-* [Aider](aider.md) - How Kangentic detects Aider, builds its command and maps permission modes, and what the integration leaves out.
-* [Cursor CLI](cursor-cli.md) - How Kangentic detects Cursor CLI, builds its command and maps permission modes, and what the integration leaves out.
-* [GitHub Copilot CLI](copilot-cli.md) - How Kangentic detects GitHub Copilot CLI, builds its command, maps permission modes, and reads its status and events.
-* [Oz CLI (Warp)](oz-cli.md) - How Kangentic detects Warp's Oz CLI, builds its command and maps permission modes, and what the integration leaves out.
-* [Kimi Code](kimi-code.md) - How Kangentic detects Kimi Code, builds its command, captures the session id, reads its wire.jsonl session history, maps permission modes, and probes authentication.
-* [Droid](droid.md) - How Kangentic detects Factory's Droid, builds its command, captures the session id, maps permission modes, and sets up its MCP config.
-* [Ollama](ollama.md) - How Kangentic detects Ollama, builds its command, maps permission modes, and detects activity without hooks.
-* [Grok Build](grok-build.md) - How Kangentic runs xAI's Grok Build, a Claude-compatible TUI, and how its command building and permission modes map.
-* [Antigravity](antigravity.md) - How Kangentic detects Antigravity CLI, builds its command, maps permission modes, wires hooks, MCP and trust, and reads its session history and transcript.
-* [Goose CLI](goose-cli.md) - How Kangentic detects Goose CLI, builds and resumes its command, maps permission modes, and detects activity.
+* [Claude Code](claude-code.md) - Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, and the locked single write to ~/.claude.json for trust and diffSidebarOpen.
+* [Codex CLI](codex-cli.md) - Why Codex's MCP and hook overrides go in as quote-free -c flags, how hook trust comes from Codex's own app-server hash, how per-worktree trust entries are added to and removed from config.toml, and how permission modes map to sandbox and approval flags.
+* [Gemini CLI](gemini-cli.md) - Gemini CLI's shared .gemini/settings.json with per-session holds that strip Kangentic hooks when the last session leaves, the httpUrl MCP entry of environment references, plan exit read from AfterTool text, ToolPermission notifications as permission idle, and trustedFolders.json entries.
+* [Qwen Code](qwen-code.md) - Qwen Code, a gemini-cli fork with Claude-style hook names, and why Kangentic's MCP server goes in through --mcp-config to avoid the Untrusted MCP server dialog, bare-token Windows hooks, caller-owned --session-id, trust writes gated on folderTrust and the ~/.qwen/projects chat history.
+* [OpenCode](opencode.md) - OpenCode's activity plugin copied into .opencode/plugins, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, and remote mode through opencode attach with no plugin or MCP.
+* [Aider](aider.md) - Aider's --message prompt delivery, --chat-mode ask, --architect and --yes for the permission modes, --no-auto-commits because Kangentic manages git, an idle signal from --notifications-command, and what it lacks (no resume, hooks, settings merge or trust).
+* [Cursor CLI](cursor-cli.md) - Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p stream-json commands, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
+* [GitHub Copilot CLI](copilot-cli.md) - GitHub Copilot CLI with caller-owned --session-id (--resume failed on unseen ids), a per-session --config-dir holding hooks/kangentic.json plus settings.json and config.json copies, cleanup that spares session-state, and plan exit read from exit_plan_mode result text.
+* [Oz CLI (Warp)](oz-cli.md) - Warp's Oz CLI, a one-shot oz agent run cloud runner with an end-of-options guard, detection through dump-debug-info because oz has no --version, permission modes that are labels only since Warp profiles hold the real permissions, and no resume, hooks or history.
+* [Kimi Code](kimi-code.md) - Kimi Code, installed with uv, with caller-owned --session and --continue, session ids from the welcome banner or a scan of the md5-of-cwd folder, wire.jsonl session history under ~/.kimi/sessions parsed into activity events, --plan and --yolo modes, and an auth probe of ~/.kimi/credentials.
+* [Droid](droid.md) - Factory's Droid, a bare droid --cwd command since autonomy is set in its TUI, session ids polled from ~/.factory/sessions cwd-slug files, a project .factory/mcp.json holding only an environment reference for the token, and why live telemetry is unsupported.
+* [Ollama](ollama.md) - Ollama as a local chat model rather than an agentic coder, one-shot ollama run with a mandatory model (default llama3.2, picker from ollama list), a single Chat permission mode, and idle detected only by PTY silence or the interactive REPL prompt.
+* [Grok Build](grok-build.md) - xAI's Grok Build, a Claude-compatible Rust TUI, with caller-owned -s and --resume ids, a per-cwd .grok/hooks/kangentic.json using an env events path, a config.toml MCP block of env references plus --allow MCPTool, trusted_folders.toml cascade and updates.jsonl telemetry.
+* [Antigravity](antigravity.md) - Google's Antigravity CLI (agy), which tokenizes its own hook commands so paths are unquoted and .agents-relative, a copied agy-event-bridge.cjs, MCP as a workspace plugin, per-cwd trustedWorkspaces, why PreToolUse is never hooked, and brain transcript.jsonl history.
+* [Goose CLI](goose-cli.md) - Block's Goose CLI with goose run -t -s, goose session and -n/-r resume, approval mode set through the GOOSE_MODE env var (acceptEdits resolves down to smart_approve, plan to chat with no tools), a version parser that rejects the pressly/goose migration tool, and PTY-only activity.

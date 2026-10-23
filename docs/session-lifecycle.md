@@ -170,7 +170,7 @@ The tag is the same across every session the task ran, so a dev server started b
 - What the task's agents left running in its folders, once that PTY has exited (`reapTaskLeftovers`; see [worktree-strategy.md](worktree-strategy.md#reaping-processes-that-pin-a-worktree))
 - Session files on disk (deleted)
 - All session DB records for the task (deleted)
-- The PR link (`pr_url`, `pr_number`, `pr_state`, `pr_merge_readiness`), `pushed_branch` and `head_sha`, for a task that did its own work. A link typed onto a task that never started stays. See "A To Do move forgets the PR" in [pr-integration.md](pr-integration.md).
+- The PR link (`pr_url`, `pr_number`, `pr_state`, `pr_merge_readiness`), `pushed_branch` and `head_sha`, for a task that did its own work. A link typed onto a task that never started stays. See "A To Do move forgets the PR" in [pr-integration.md](integrations/pull-requests/index.md).
 - In-memory caches (usage, activity, events) for the session
 
 Before the registry row is deleted, `SessionManager.remove()` emits `session-removed` (broadcast
@@ -329,7 +329,7 @@ place**, in the task's current column. Its body is `resumeTaskSession`
 task, so a phone Resume is the same resume: it cancels a resume already in flight for the task,
 labels the task "Resuming session...", resumes the conversation idle, and runs no enter
 automations or column message. The read-stream feed tells the phone when that promise holds
-(`resumable`, see [Mobile Bridge](mobile-bridge.md)). It is refused for three states, resolved by one shared
+(`resumable`, see [Mobile Bridge](integrations/mobile-bridge/index.md)). It is refused for three states, resolved by one shared
 rule (`sessionToggleOffer` in `src/shared/session-resume-eligibility.ts`, over `resumeBlockReasonForTask`)
 that the main-process handler, the task detail, the card menu row, and the phone's `startTaskSession`
 (`handlers/session-start.ts`, the `start-session` verb) all read, and whose role set startup recovery shares:
@@ -399,7 +399,7 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
   no row path, so they land here structurally, which is what keeps the E2E resume specs passing.
 
 This is deliberately narrower than the `canResumeSession` transcript-presence guard reverted in
-#255 (see docs/adapter-session-history.md), whose computed paths and false misses silently lost
+#255 (see docs/integrations/agents/session-history.md), whose computed paths and false misses silently lost
 real conversations. A wrong `expired` costs a new conversation in place of the resume, never data.
 
 On `expired` the same spawn starts fresh. The old record is retired and kept, nothing is deleted,
@@ -830,7 +830,7 @@ restart), and the auto_command escalation emits `resending-command` ("Re-sending
 It emits before its
 suspend and clears the label in a `finally` once the resume has returned or failed, the ordering
 task-move's Phase 3 uses. The emit is what lets the mobile bridge tell this respawn from a park
-(see [Mobile Bridge](mobile-bridge.md)); until #682 this path emitted nothing, and the phone showed
+(see [Mobile Bridge](integrations/mobile-bridge/index.md)); until #682 this path emitted nothing, and the phone showed
 "Session ended" for the swap.
 
 That main-side emit alone is not sufficient: `SessionManager.suspend()` pushes the session's
@@ -859,7 +859,7 @@ When a suspended task moves to an active column:
   `reconcileResumeAgentSessionId` (`src/main/transition-engine/resume-id-reconcile.ts`)
   additionally checks the retiring record's own `status.json` and swaps the resumed id if a fork
   landed in the final seconds before suspend (the status watcher detaches before the CLI exits).
-  Details and the empirical grounding: docs/adapter-session-history.md, "Mid-session fork
+  Details and the empirical grounding: docs/integrations/agents/session-history.md, "Mid-session fork
   reconcile".
 - New PTY spawned with scrollback carried over from the most recently started previous row for the task (see Spawn Flow above)
 - New session DB record inserted, old record marked `exited`

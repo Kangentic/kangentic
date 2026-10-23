@@ -1,10 +1,14 @@
 ---
 type: Reference
 title: Kimi Code
-description: How Kangentic detects Kimi Code, builds its command, captures the session id, reads its wire.jsonl session history, maps permission modes, and probes authentication.
+description: Kimi Code, installed with uv, with caller-owned --session and --continue, session ids from the welcome banner or a scan of the md5-of-cwd folder, wire.jsonl session history under ~/.kimi/sessions parsed into activity events, --plan and --yolo modes, and an auth probe of ~/.kimi/credentials.
 tags: [agents, adapter, kimi]
 sources:
-  - resource: src/main/agent/adapters/kimi/
+  - resource: src/main/agent/adapters/kimi/kimi-adapter.ts
+  - resource: src/main/agent/adapters/kimi/command-builder.ts
+  - resource: src/main/agent/adapters/kimi/session-history-parser.ts
+  - resource: src/main/agent/adapters/kimi/wire-parser.ts
+  - resource: src/main/agent/adapters/kimi/work-dir-hash.ts
 ---
 # Kimi Code
 

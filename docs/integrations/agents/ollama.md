@@ -1,10 +1,11 @@
 ---
 type: Reference
 title: Ollama
-description: How Kangentic detects Ollama, builds its command, maps permission modes, and detects activity without hooks.
+description: Ollama as a local chat model rather than an agentic coder, one-shot ollama run with a mandatory model (default llama3.2, picker from ollama list), a single Chat permission mode, and idle detected only by PTY silence or the interactive REPL prompt.
 tags: [agents, adapter, ollama]
 sources:
-  - resource: src/main/agent/adapters/ollama/
+  - resource: src/main/agent/adapters/ollama/ollama-adapter.ts
+  - resource: src/main/agent/adapters/ollama/capability-discovery.ts
 ---
 # Ollama
 

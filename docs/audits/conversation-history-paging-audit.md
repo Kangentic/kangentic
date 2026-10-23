@@ -1,3 +1,9 @@
+---
+type: Audit
+title: Conversation history paging audit
+description: "Whether the Conversation viewer can scroll past the 16 MiB transcript read cap (2026-10-21): per-read worker costs on transcripts up to 548 MB, seven options weighed against the August OOM, and the capped paging design built for every agent whose transcript Kangentic reads."
+tags: [audit, transcripts, memory, retrieval-worker]
+---
 # Conversation history paging audit (2026-10-21)
 
 Can the Conversation viewer scroll a whole transcript instead of each session's newest 16 MiB

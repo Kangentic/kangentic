@@ -3,15 +3,15 @@
  *
  * The Kangentic MCP server registers tools across the `*-tools.ts` files in
  * `src/main/agent/mcp-http/`. Two surfaces enumerate those tools for humans:
- * the Settings -> MCP Server tool list (`McpServerTab.tsx`) and
- * `docs/mcp-server.md`. Before this manifest existed both hardcoded their own
+ * the Settings -> MCP Server tool list (`McpServerTab.tsx`) and the
+ * `docs/integrations/mcp-server/` concepts. Before this manifest existed both hardcoded their own
  * copies and drifted: the panel listed 10 of 46 registered tools.
  *
  * This manifest is the one list both the panel and the parity test read, so
  * the catalogue cannot silently drift from the registrations again. Every
  * registered tool MUST have an entry here, and every entry MUST name a real
  * registered tool. `tests/unit/mcp-tool-list-parity.test.ts` enforces both
- * directions plus presence in `docs/mcp-server.md`; the convention is
+ * directions plus a heading in one of the `docs/integrations/mcp-server/` concepts; the convention is
  * documented in `.claude/rules/mcp-tool-list-parity.md`.
  *
  * The panel renders every entry as a cell in its `category`'s group, in

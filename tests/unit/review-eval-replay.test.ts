@@ -9,7 +9,7 @@
  * 2. replay counts the bounces a pass avoided, which passes stay blocked, the old-Clean passes that
  *    would now block, and the same counts per level, over a small inline corpus.
  * 3. replay over the committed verdict-replay.json returns the exact numbers
- *    docs/code-review-fanout-audit.md section 17 cites, so that claim stays reproducible.
+ *    docs/audits/code-review-fanout-audit.md section 17 cites, so that claim stays reproducible.
  *
  * Never import scripts/review-eval/prepare.mjs from a test: its top-level code runs git and exits.
  */

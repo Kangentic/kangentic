@@ -1,10 +1,11 @@
 ---
 type: Reference
 title: Agent adapter interface
-description: The AgentAdapter contract every agent implements, the fifteen supported agents, and the shared rules for agent resolution, first-output detection, exit sequences, history location and prompt templates.
+description: The AgentAdapter methods and required properties, the fifteen-agent matrix of resume flags and MCP delivery, agent resolution order, per-agent first-output and exit key sequences, session history file locations, the launch overlay lift, and the task_xml prompt template.
 tags: [agents, adapters]
 sources:
   - resource: src/main/agent/agent-adapter.ts
+    title: AgentAdapter required members
   - resource: src/main/agent/agent-registry.ts
   - resource: src/main/transition-engine/agent-resolver.ts
 ---
@@ -16,7 +17,7 @@ Kangentic supports fifteen AI coding agents: Claude Code, Codex CLI, Gemini CLI,
 
 `src/main/agent/agent-adapter.ts`
 
-Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/main/agent/adapters/<name>/`. TUI agents also have a `transcript-cleanup.ts` file for handoff transcript processing (see [Handoff - Per-Agent Transcript Cleanup](../../handoff.md#per-agent-transcript-cleanup)).
+Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/main/agent/adapters/<name>/`. TUI agents also have a `transcript-cleanup.ts` file for handoff transcript processing (see [Handoff - Per-Agent Transcript Cleanup](handoff.md#per-agent-transcript-cleanup)).
 
 | Method | Purpose |
 |--------|---------|
@@ -47,7 +48,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Agent | Adapter | CLI Binary | Session Resume | Status/Events | Settings Merge | Kangentic MCP | Trust |
 |-------|---------|-----------|----------------|---------------|----------------|---------------|-------|
-| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](../../adapter-session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
+| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
 | Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
 | Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
@@ -93,7 +94,7 @@ When a task moves to a column, `resolveTargetAgent()` determines which agent to 
 
 `task.agent` is intentionally NOT in the resolution chain. It records which agent last ran on the task (for resume and handoff detection), but column and project settings are the authority for which agent should run. Including `task.agent` caused bugs where tasks that previously ran Claude would always resolve to Claude even when moved to a Codex column.
 
-**Handoff detection:** When `task.agent` is set and differs from the resolved agent, a cross-agent handoff is triggered. See [Handoff](../../handoff.md) for the full context transfer flow.
+**Handoff detection:** When `task.agent` is set and differs from the resolved agent, a cross-agent handoff is triggered. See [Handoff](handoff.md) for the full context transfer flow.
 
 ## First-Output Detection
 
@@ -253,7 +254,7 @@ This ensures agents load project-level configuration (`.claude/`, `.gemini/`, `C
 
 ## See Also
 
-- [Handoff](../../handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
+- [Handoff](handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
 - [Activity Detection](../../activity-detection.md) - Event processing, state derivation, subagent-aware transitions
 - [Session Lifecycle](../../session-lifecycle.md) - Spawn flow, resume, crash recovery
 - [Worktree Strategy](../../worktree-strategy.md) - Worktree creation, sparse-checkout, hook delivery

@@ -1,10 +1,14 @@
 ---
 type: Reference
 title: GitHub Copilot CLI
-description: How Kangentic detects GitHub Copilot CLI, builds its command, maps permission modes, and reads its status and events.
+description: GitHub Copilot CLI with caller-owned --session-id (--resume failed on unseen ids), a per-session --config-dir holding hooks/kangentic.json plus settings.json and config.json copies, cleanup that spares session-state, and plan exit read from exit_plan_mode result text.
 tags: [agents, adapter, copilot]
 sources:
-  - resource: src/main/agent/adapters/copilot/
+  - resource: src/main/agent/adapters/copilot/copilot-adapter.ts
+  - resource: src/main/agent/adapters/copilot/detector.ts
+  - resource: src/main/agent/adapters/copilot/command-builder.ts
+  - resource: src/main/agent/adapters/copilot/hook-manager.ts
+  - resource: src/main/agent/adapters/copilot/status-parser.ts
 ---
 # GitHub Copilot CLI
 

@@ -310,7 +310,7 @@ describe('registerGitDiffHandlers GIT_WORKTREE_HEAD', () => {
  * GIT_PREFETCH_REMOTES: the head start the board fires when a drag of a
  * worktree-backed card begins, so the Done-drop probe is not the thing that
  * starts a remote fetch (measured 640 to 1150ms on the dogfooding instance
- * against a 500ms card flight - docs/board-drag-perf-audit.md).
+ * against a 500ms card flight - docs/audits/board-drag-perf-audit.md).
  *
  * The gate is the load-bearing part and the reason these tests exist: the
  * endpoint honours the SAME per-project setting the background scheduler reads,

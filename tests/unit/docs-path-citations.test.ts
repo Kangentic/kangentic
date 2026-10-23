@@ -7,10 +7,12 @@
  * docs/ is scanned too: okf-docs-conformance.test.ts resolves its markdown links, but a doc that
  * names another as a backticked path is not a link, and one such citation outlived the move.
  *
- * Out of scope: CHANGELOG files and docs/log.md (history, never rewritten), tests (their docs/ paths
- * are mostly made-up fixture paths), URLs into any other site, whose docs/ paths are not this repo's,
- * and a git object spec (`<commit>:docs/x.md`), which names a file as it was at that commit, the way
- * scripts/measure-docs-structure.mjs reads the flat agent doc from before the split.
+ * Out of scope: CHANGELOG files, docs/log.md and docs/audits/ (history: an audit row that says
+ * nobody read a 148KB doc names the doc as it was, and rewriting the path would make the row false),
+ * tests (their docs/ paths are mostly made-up fixture paths), URLs into any other site, whose docs/
+ * paths are not this repo's, and a git object spec (`<commit>:docs/x.md`), which names a file as it
+ * was at that commit, the way scripts/measure-docs-structure.mjs reads the flat agent doc from
+ * before the split. RETIRED_PATH_CITATIONS lists the few places that name a retired path on purpose.
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -19,7 +21,12 @@ import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
-const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/];
+const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\//];
+/**
+ * A retired path a file names on purpose, keyed `<file> cites <path>`. release-changelog.mjs matches
+ * commit file lists, and review records committed before the audit moved still list its old path.
+ */
+const RETIRED_PATH_CITATIONS = new Set(['scripts/release-changelog.mjs cites docs/code-review-fanout-audit.md']);
 /** A docs path, wherever it starts (a bare path, `../../docs/...`, a GitHub URL). */
 const DOCS_PATH = /(?<![\w-])docs\/[\w./-]*?\.md(?![\w])/g;
 /** A URL into anywhere but this repository, whose docs/ paths are not ours. */
@@ -63,10 +70,17 @@ describe('docs path citations', () => {
       if (!text.includes('docs/') || text.includes('\u0000')) continue;
       for (const docsPath of citedDocsPaths(text)) {
         cited += 1;
-        if (!fs.existsSync(path.join(ROOT, docsPath))) missing.push(`${file} cites ${docsPath}`);
+        const citation = `${file} cites ${docsPath}`;
+        if (!fs.existsSync(path.join(ROOT, docsPath)) && !RETIRED_PATH_CITATIONS.has(citation)) missing.push(citation);
       }
     }
     expect(missing, 'a moved or deleted doc is still cited; point the citation at the doc that holds the section now').toEqual([]);
+    // Each allowed retired path is still cited and still retired, so the list cannot go stale.
+    for (const citation of RETIRED_PATH_CITATIONS) {
+      const [file, docsPath] = citation.split(' cites ');
+      expect(citedDocsPaths(fs.readFileSync(path.join(ROOT, file), 'utf-8')), citation).toContain(docsPath);
+      expect(fs.existsSync(path.join(ROOT, docsPath)), citation).toBe(false);
+    }
     // Not vacuous: the scan read source, skills and rules, and found real citations.
     expect(files.some((file) => file.startsWith('src/'))).toBe(true);
     expect(files.some((file) => file.startsWith('.claude/'))).toBe(true);

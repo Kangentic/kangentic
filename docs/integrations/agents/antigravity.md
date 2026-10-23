@@ -1,10 +1,16 @@
 ---
 type: Reference
 title: Antigravity
-description: How Kangentic detects Antigravity CLI, builds its command, maps permission modes, wires hooks, MCP and trust, and reads its session history and transcript.
+description: Google's Antigravity CLI (agy), which tokenizes its own hook commands so paths are unquoted and .agents-relative, a copied agy-event-bridge.cjs, MCP as a workspace plugin, per-cwd trustedWorkspaces, why PreToolUse is never hooked, and brain transcript.jsonl history.
 tags: [agents, adapter, antigravity]
 sources:
-  - resource: src/main/agent/adapters/antigravity/
+  - resource: src/main/agent/adapters/antigravity/antigravity-adapter.ts
+  - resource: src/main/agent/adapters/antigravity/detector.ts
+  - resource: src/main/agent/adapters/antigravity/command-builder.ts
+  - resource: src/main/agent/adapters/antigravity/hook-manager.ts
+  - resource: src/main/agent/adapters/antigravity/trust-manager.ts
+  - resource: src/main/agent/adapters/antigravity/transcript-parser.ts
+  - resource: src/main/agent/shared/git-exclude.ts
 ---
 # Antigravity
 

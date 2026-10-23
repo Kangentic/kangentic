@@ -1,11 +1,21 @@
 ---
 type: Reference
 title: Project relocation
-description: How the project:relocate handler moves or repoints a project and how each adapter rewrites the paths its CLI stored.
+description: How project:relocate repoints or moves a project, suspends its sessions and calls onProjectRelocated, and a per-agent table of the path-keyed state each CLI migrates (Claude slugs, Kimi md5 dirs, Codex trust headers, Grok encoded dirs) and the residue it accepts.
 tags: [agents, projects, relocation]
 sources:
   - resource: src/main/ipc/handlers/project-relocate.ts
   - resource: src/main/agent/shared/relocation-utils.ts
+  - resource: src/main/agent/adapters/claude/project-relocation.ts
+  - resource: src/main/agent/adapters/qwen-code/project-relocation.ts
+  - resource: src/main/agent/adapters/droid/project-relocation.ts
+  - resource: src/main/agent/adapters/opencode/project-relocation.ts
+  - resource: src/main/agent/adapters/gemini/project-relocation.ts
+  - resource: src/main/agent/adapters/codex/project-relocation.ts
+  - resource: src/main/agent/adapters/kimi/project-relocation.ts
+  - resource: src/main/agent/adapters/copilot/project-relocation.ts
+  - resource: src/main/agent/adapters/grok/project-relocation.ts
+  - resource: src/main/agent/adapters/antigravity/project-relocation.ts
 ---
 # Project relocation
 

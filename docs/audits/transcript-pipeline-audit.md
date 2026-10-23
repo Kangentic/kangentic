@@ -1,3 +1,9 @@
+---
+type: Audit
+title: Transcript pipeline audit
+description: "Hardening the session transcript pipeline for cross-agent use (2026-06-12): a parseTranscript per adapter, Claude parser fidelity fixes, and checks against real session files from six agents."
+tags: [audit, transcripts, handoff]
+---
 # Transcript pipeline audit (2026-06-12)
 
 Findings from hardening the session-transcript pipeline so cross-agent transcript

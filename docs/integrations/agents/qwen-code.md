@@ -1,10 +1,15 @@
 ---
 type: Reference
 title: Qwen Code
-description: How Kangentic detects Qwen Code, builds its command, maps permission modes and hook events, handles plan exit, trust and the MCP approval gate, and reads its session history.
+description: Qwen Code, a gemini-cli fork with Claude-style hook names, and why Kangentic's MCP server goes in through --mcp-config to avoid the Untrusted MCP server dialog, bare-token Windows hooks, caller-owned --session-id, trust writes gated on folderTrust and the ~/.qwen/projects chat history.
 tags: [agents, adapter, qwen-code]
 sources:
-  - resource: src/main/agent/adapters/qwen-code/
+  - resource: src/main/agent/adapters/qwen-code/qwen-adapter.ts
+  - resource: src/main/agent/adapters/qwen-code/detector.ts
+  - resource: src/main/agent/adapters/qwen-code/command-builder.ts
+  - resource: src/main/agent/adapters/qwen-code/hook-manager.ts
+  - resource: src/main/agent/adapters/qwen-code/trust-manager.ts
+  - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
 ---
 # Qwen Code
 

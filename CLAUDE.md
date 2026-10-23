@@ -279,7 +279,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `restore-no-animation-replay.md` - a project switch or restore paints flat: no entrance replay, no value pulse.
 - `cross-platform-parity.md` - code and tests behave identically on Windows/macOS/Linux/CI.
 - `browser-automation-driver.md` - one shipped CDP driver; every `kangentic_browser_*` tool routes through `withGuest`.
-- `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and `docs/mcp-server.md`.
+- `mcp-tool-list-parity.md` - every registered MCP tool stays in sync with `MCP_TOOL_MANIFEST` and `docs/integrations/mcp-server/index.md`.
 - `mcp-column-field-parity.md` - every `Swimlane` field is a parameter of both MCP column tools, or classified unexposed with a reason.
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; call sites index and `markDirty()`, never embed inline.
 - `retrieval-out-of-process.md` - the index and agent transcript reads run in the `kangentic-retrieval` worker; main schedules and relays.

@@ -1,4 +1,15 @@
-# Board Integration
+---
+type: Reference
+title: Board integration
+description: The BoardAdapter contract for importing issues from GitHub, Azure DevOps and Asana, the Jira, Linear and Trello stubs, safeStorage async-API behavior for stored credentials, the registry and URL parsers, and the steps to add a provider.
+tags: [boards, import, adapters, credentials]
+sources:
+  - resource: src/main/boards/board-registry.ts
+  - resource: src/main/boards/shared/
+  - resource: src/shared/types.ts
+    title: ExternalSource, FileAttachmentRef
+---
+# Board integration
 
 Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana) into the backlog, and is being extended to three more providers (Jira, Linear, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
@@ -29,7 +40,7 @@ src/main/boards/
   index.ts
 ```
 
-The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agent Integration](integrations/agents/index.md) for the analogous agent system.
+The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI agent, central registry, no provider-specific branching in shared handlers). See [Agent Integration](agents/index.md) for the analogous agent system.
 
 ## BoardAdapter Interface
 
@@ -155,5 +166,5 @@ The registry enumerates all 7 providers. Stable providers dispatch normally. Stu
 
 ## See Also
 
-- [Agent Integration](integrations/agents/index.md) - the analogous adapter system for AI coding agents.
-- [Architecture - Board Adapters](architecture.md#board-adapters) - high-level overview in the main architecture doc.
+- [Agent Integration](agents/index.md) - the analogous adapter system for AI coding agents.
+- [Architecture - Board Adapters](../architecture.md#board-adapters) - high-level overview in the main architecture doc.

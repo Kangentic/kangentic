@@ -2,7 +2,7 @@
  * The pre-registered decision rules for the /code-review Phase 0 experiments, as code, so the
  * thresholds are fixed before any run and cannot drift toward a result after it. Written and
  * tested on 2026-10-06, before E1 started. See scripts/review-eval/README.md for the corpus and
- * docs/code-review-fanout-audit.md section 15 for the results.
+ * docs/audits/code-review-fanout-audit.md section 15 for the results.
  *
  * Recall is counted in late-defect hits: for one repetition, the number of distinct ground-truth
  * `late` defects the arm raised across every state in the experiment, as the blind scorer matched
@@ -71,7 +71,7 @@ export function adoptDeltaVerify(caughtByCase) {
 /*
  * E5 and E6: which model a finder or a gated auditor runs on. Written and tested on 2026-10-07,
  * before any E5 or E6 run, when Claude Haiku 5.5 shipped at about a twentieth of Sonnet 5.5's
- * price per token. Results are in docs/code-review-fanout-audit.md section 16.
+ * price per token. Results are in docs/audits/code-review-fanout-audit.md section 16.
  */
 
 /**

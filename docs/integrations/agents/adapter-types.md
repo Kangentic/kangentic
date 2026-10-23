@@ -1,14 +1,30 @@
 ---
 type: Reference
 title: Adapter types and capability discovery
-description: The AgentCapabilities, CommandOptions, AdapterRuntimeStrategy and SpawnSessionInput types, and how each adapter discovers its models and effort levels.
+description: The fields of AgentCapabilities, CommandOptions, AdapterRuntimeStrategy and SpawnSessionInput, and how each capability-discovery.ts finds models and effort levels, from Claude's hidden /model picker probe to history scans, agy models, cursor-agent --list-models and Grok's models_cache.json.
 tags: [agents, adapters, types]
 sources:
   - resource: src/main/agent/agent-adapter.ts
     title: CommandOptions
   - resource: src/shared/types.ts
-    title: AgentCapabilities, AdapterRuntimeStrategy, SpawnSessionInput
-  - resource: src/main/agent/adapters/
+    title: AgentCapabilities, ModelAliasOption, AdapterRuntimeStrategy, SpawnSessionInput
+  - resource: src/shared/model-id.ts
+    title: planModelPickerRows
+  - resource: src/main/agent/shared/history-scan.ts
+  - resource: src/main/agent/adapters/claude/capability-discovery.ts
+  - resource: src/main/agent/adapters/claude/model-picker-probe.ts
+  - resource: src/main/agent/adapters/claude/model-display-name.ts
+  - resource: src/main/agent/adapters/codex/capability-discovery.ts
+  - resource: src/main/agent/adapters/gemini/capability-discovery.ts
+  - resource: src/main/agent/adapters/qwen-code/capability-discovery.ts
+  - resource: src/main/agent/adapters/copilot/capability-discovery.ts
+  - resource: src/main/agent/adapters/kimi/capability-discovery.ts
+  - resource: src/main/agent/adapters/cursor/capability-discovery.ts
+  - resource: src/main/agent/adapters/opencode/capability-discovery.ts
+  - resource: src/main/agent/adapters/antigravity/capability-discovery.ts
+  - resource: src/main/agent/adapters/droid/capability-discovery.ts
+  - resource: src/main/agent/adapters/grok/capability-discovery.ts
+  - resource: src/main/agent/adapters/ollama/capability-discovery.ts
 ---
 # Adapter types and capability discovery
 
@@ -85,8 +101,8 @@ One scannable block per adapter for activity-state derivation and session ID cap
 | `sessionId.fromHook?(hookContext)` | `(string) => string \| null` | Parse the agent's CLI session ID from hook stdin JSON. Fires once on `session_start`. Used by Gemini (`session_id` field) and Codex (`session_id`, or `thread_id` on older payloads, from the full SessionStart hookContext that event-bridge captures from the hook stdin). |
 | `sessionId.fromOutput?(data)` | `(string) => string \| null` | Parse the agent's CLI session ID from raw PTY output. Scanned on every data chunk by `SessionIdScanner` (chunk-boundary-safe rolling buffer with ANSI stripping), plus a final scrollback scan in `suspend()`. Used for Codex's startup header and Gemini's shutdown summary. |
 | `sessionId.fromFilesystem?(options)` | `({ spawnedAt, cwd }) => Promise<string \| null>` | Locate the agent's session ID by scanning the filesystem for a freshly-created session file. Polls the expected directory for files created after `spawnedAt` with a matching `cwd` in the session metadata. Primary capture path for Codex 0.118+ (neither PTY output nor hooks deliver the ID; the UUID is in the rollout filename at `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl`). |
-| `sessionHistory?.locate({agentSessionId, cwd})` | `(options) => Promise<string \| null>` | Locate the agent's native session history file on disk for a captured session UUID. Used by `SessionHistoryReader` (`src/main/pty/readers/session-history-reader.ts`) to start tailing. See [Adapter Session History](../../adapter-session-history.md) for the full pipeline. |
-| `sessionHistory?.parse(content, mode)` | `(string, 'full' \| 'append') => SessionHistoryParseResult` | Parse newly-appended bytes (Codex JSONL, Claude transcript JSONL) or full file content (Gemini JSON) into a `SessionHistoryParseResult` containing `usage`, `events[]`, and an optional `activity` hint. For Claude this is a background-session fallback to the `statusFile` pipeline - see [Adapter Session History](../../adapter-session-history.md#claude). |
+| `sessionHistory?.locate({agentSessionId, cwd})` | `(options) => Promise<string \| null>` | Locate the agent's native session history file on disk for a captured session UUID. Used by `SessionHistoryReader` (`src/main/pty/readers/session-history-reader.ts`) to start tailing. See [Adapter Session History](session-history.md) for the full pipeline. |
+| `sessionHistory?.parse(content, mode)` | `(string, 'full' \| 'append') => SessionHistoryParseResult` | Parse newly-appended bytes (Codex JSONL, Claude transcript JSONL) or full file content (Gemini JSON) into a `SessionHistoryParseResult` containing `usage`, `events[]`, and an optional `activity` hint. For Claude this is a background-session fallback to the `statusFile` pipeline - see [Adapter Session History](session-history.md#claude). |
 | `sessionHistory?.isFullRewrite` | `boolean` | `true` for whole-file-rewrite agents (Gemini), `false` for append-only JSONL (Codex, Claude). Tells the watcher whether to track a byte cursor. |
 | `sessionHistory?.suppressesPtyFallback` | `boolean` | Whether the history file may turn the PTY tracker off for a `hooks_and_pty` agent, on its first read and on a turn-initiating event it reports. Default true, which suits a file that carries the agent's turns (Kimi's wire.jsonl). False for Codex, whose rollout reports only background commands, interrupts and failed turns beside its hooks, so a session whose hooks Codex did not confirm keeps the tracker (task #859). |
 | `statusFile?.parseStatus(raw)` | `(string) => SessionUsage \| null` | Decode the rewritten contents of a per-session `status.json` (written by Kangentic's status-bridge hook) into a `SessionUsage` snapshot. Used by Claude Code and Copilot. Adapters that report plan-usage quotas populate `SessionUsage.rateLimits?: RateLimitWindow[]` - each window self-describes via `id`, `label`, `iconKind: 'session' \| 'period'` (renderer maps to a Lucide icon), `usedPercentage` (0-100, clamp at the adapter), `resetsAt` (Unix epoch seconds), and optionally `windowDurationSeconds` (fixed window length; with `resetsAt` it yields the window start for the renderer's elapsed-time marker line, omitted when a provider's window has no fixed duration, in which case that window simply shows no time marker). A window also has `generation`, which the adapter never sets: main's `RateLimitLedger` stamps it on every report before caching it (see `reportsRateLimits` in [Optional properties](optional-properties.md)). The renderer iterates the array; no per-agent branching. Today only Claude populates this field. |

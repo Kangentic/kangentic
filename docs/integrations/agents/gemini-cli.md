@@ -1,10 +1,15 @@
 ---
 type: Reference
 title: Gemini CLI
-description: How Kangentic detects Gemini CLI, builds its command, maps permission modes, handles plan exit and confirmation prompts, and merges its settings and MCP wiring.
+description: Gemini CLI's shared .gemini/settings.json with per-session holds that strip Kangentic hooks when the last session leaves, the httpUrl MCP entry of environment references, plan exit read from AfterTool text, ToolPermission notifications as permission idle, and trustedFolders.json entries.
 tags: [agents, adapter, gemini]
 sources:
-  - resource: src/main/agent/adapters/gemini/
+  - resource: src/main/agent/adapters/gemini/gemini-adapter.ts
+  - resource: src/main/agent/adapters/gemini/detector.ts
+  - resource: src/main/agent/adapters/gemini/command-builder.ts
+  - resource: src/main/agent/adapters/gemini/hook-manager.ts
+  - resource: src/main/agent/adapters/gemini/trust-manager.ts
+  - resource: src/main/agent/shared/shared-folder-holds.ts
 ---
 # Gemini CLI
 

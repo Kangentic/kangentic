@@ -802,7 +802,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
 
 // A column that has no enter row needing the agent starts it from the fallback
 // at the end of `spawnAgent`, with no row's message to send. The only message
-// left is the task's own `auto_command`, and docs/mcp-server.md promises it runs
+// left is the task's own `auto_command`, and docs/integrations/mcp-server/task-tools.md promises it runs
 // once the agent spawns for the task. These tests run that fallback: `rows` is
 // empty, so the runner never asks `startAgent` and the task's command is the
 // one thing that can still go out.

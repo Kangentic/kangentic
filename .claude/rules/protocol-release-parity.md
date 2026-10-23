@@ -28,7 +28,7 @@ a defect after one. The tag, not the version field, is the line.
    produced together. A `protocol-v*` tag pointing at anything other than a
    `chore(protocol-release):` commit is the signature of a bypass.
 2. **Every `protocol-v*` tag has a matching `## [protocol-vX.Y.Z]` entry** in
-   `packages/protocol/CHANGELOG.md`. That file is canonical for the package. `docs/mobile-bridge.md`
+   `packages/protocol/CHANGELOG.md`. That file is canonical for the package. `docs/integrations/mobile-bridge/scope.md`
    carries the same history as narrative for the bridge feature; it is not a substitute.
 3. **Do not write a bare `#N` in the changelog.** The repo is public and the package is published,
    so a private board task id renders as a GitHub issue link to an unrelated issue. Describe the

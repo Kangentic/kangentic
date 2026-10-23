@@ -591,7 +591,7 @@ function disambiguate(items: GhPrListItem[], opts: { baseBranch?: string; branch
  *   non-matching candidate remains). A candidate never verified as its own work
  *   can therefore win a comparison that previously returned null. Deciding
  *   whether an undetermined survivor should still count toward that threshold is
- *   open; see docs/pr-integration.md.
+ *   open; see docs/integrations/pull-requests/github.md.
  *
  * The probes are memoized per base ref and awaited sequentially on purpose: this
  * runs inside a `ghQueue` slot, so the cost is throughput, not a deadlock. The

@@ -2,7 +2,7 @@
  * Unit coverage for scripts/release-changelog.mjs, the CHANGELOG.md entry /release Step 3 writes.
  *
  * The contract:
- * 1. A commit whose only change is docs/code-review-fanout-audit.md, or a single-parent commit that
+ * 1. A commit whose only change is docs/audits/code-review-fanout-audit.md, or a single-parent commit that
  *    changes nothing (a review pass's ledger), is skipped. A merge, which lists no files under
  *    --name-only, never is, and neither is a commit that touches the audit doc beside anything else.
  * 2. Subjects sort into Breaking Changes, Features, Fixes and Other by their conventional prefix,
@@ -24,6 +24,7 @@ import { execFileSync } from 'node:child_process';
 import {
   RELEASES_MARKER,
   REVIEW_AUDIT_DOC,
+  REVIEW_AUDIT_DOC_BEFORE_MOVE,
   parseGitLog,
   isReviewRecord,
   classifySubject,
@@ -65,6 +66,12 @@ describe('parseGitLog', () => {
 describe('isReviewRecord', () => {
   it('skips a commit that only touches the fan-out audit doc', () => {
     expect(isReviewRecord(commitOf('a', 'docs(review): record task 861 pass', [REVIEW_AUDIT_DOC]))).toBe(true);
+  });
+
+  it('skips a review record committed before the audit moved into docs/audits/', () => {
+    // A release range can span the move, and those records still name the old path.
+    expect(isReviewRecord(commitOf('a', 'docs(review): record task 888 pass', [REVIEW_AUDIT_DOC_BEFORE_MOVE]))).toBe(true);
+    expect(isReviewRecord(commitOf('a', 'fix(review): close a gap', [REVIEW_AUDIT_DOC_BEFORE_MOVE, 'src/a.ts']))).toBe(false);
   });
 
   it('skips a single-parent commit that changes nothing', () => {

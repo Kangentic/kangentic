@@ -1,10 +1,16 @@
 ---
 type: Reference
 title: OpenCode
-description: How Kangentic detects OpenCode, builds its command, merges settings, tracks activity through a plugin, captures the session id, and attaches to a remote server.
+description: OpenCode's activity plugin copied into .opencode/plugins, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, and remote mode through opencode attach with no plugin or MCP.
 tags: [agents, adapter, opencode]
 sources:
-  - resource: src/main/agent/adapters/opencode/
+  - resource: src/main/agent/adapters/opencode/opencode-adapter.ts
+  - resource: src/main/agent/adapters/opencode/detector.ts
+  - resource: src/main/agent/adapters/opencode/command-builder.ts
+  - resource: src/main/agent/adapters/opencode/hook-manager.ts
+  - resource: src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs
+  - resource: src/main/agent/adapters/opencode/session-history-parser.ts
+  - resource: src/main/agent/adapters/opencode/remote-client.ts
 ---
 # OpenCode
 
@@ -32,7 +38,7 @@ The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` 
 
 ## Settings Merge
 
-None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `removeHooks` only removes the activity plugin (next subsection). The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](../../mcp-server.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
+None. OpenCode reads MCP and provider configuration from `opencode.json` (project) or `~/.config/opencode/opencode.json` (global). `removeHooks` only removes the activity plugin (next subsection). The Kangentic MCP server IS wired in for a local-mode spawn - `buildOpenCodeEnv` (`command-builder.ts`) emits an inline `mcp.kangentic` entry via the `OPENCODE_CONFIG_CONTENT` env var per PTY spawn, deep-merged over the user's own config so their `mcp.*` entries are preserved (see [MCP Server](../mcp-server/index.md)). It is NOT wired in for a remote-mode spawn (`opencode attach <url>`) - see the Remote Execution subsection below.
 
 ## Activity Plugin
 
@@ -56,7 +62,7 @@ OpenCode is the only adapter that declares `remoteExecution` (see `remoteExecuti
 - **Session ID capture:** `sessionId.fromFilesystem` (the local SQLite poll) is skipped for a remote-mode cwd - `sessionId.fromOutput` (the PTY scan) is the sole capture path. This also means the "concurrent same-cwd spawns cannot be disambiguated" caveat below does not apply to remote sessions.
 - **Transcript:** `parseTranscript` fetches `GET <url>/session/:id/message` (`remote-client.ts`'s `fetchOpenCodeSessionMessages`) instead of reading the local SQLite database, mapped into the same `TranscriptEntry[]` shape by `mapOpenCodeRemoteEntries` (a distinct mapper from the local `mapOpenCodeRows` - the wire shape is `{info, parts}[]`, not SQLite rows).
 - **Activity plugin:** not installed - the plugin file would need to land on the server's filesystem, which Kangentic has no access to. PTY-silence activity detection (already the fallback tier of `hooks_and_pty`) carries activity for remote sessions.
-- **MCP:** not wired. `buildOpenCodeEnv` returns `null` whenever `options.executionTarget` is set (loopback or genuinely remote target - both). This is architectural, not a reachability problem: `opencode attach <url>` is a stateless HTTP client to a server that was started, and had its config fixed, independently and earlier - its CLI surface exposes no config-push flags (verified against `opencode attach --help`), so env vars Kangentic sets on the spawned attach process are never read by the already-running server. Kangentic's `mcpServer.bindAddress`/`callbackHost` settings (see [MCP Server > Network Access](../../mcp-server.md)) make the server itself LAN/VPN-reachable, but cannot make `attach` push config into a server it does not control the startup of.
+- **MCP:** not wired. `buildOpenCodeEnv` returns `null` whenever `options.executionTarget` is set (loopback or genuinely remote target - both). This is architectural, not a reachability problem: `opencode attach <url>` is a stateless HTTP client to a server that was started, and had its config fixed, independently and earlier - its CLI surface exposes no config-push flags (verified against `opencode attach --help`), so env vars Kangentic sets on the spawned attach process are never read by the already-running server. Kangentic's `mcpServer.bindAddress`/`callbackHost` settings (see [MCP Server > Network Access](../mcp-server/index.md)) make the server itself LAN/VPN-reachable, but cannot make `attach` push config into a server it does not control the startup of.
 - **Worktree:** `ensureTaskWorktree` (`src/main/ipc/helpers/task-git.ts`) skips creating a local git worktree for a task whose resolved agent is remote-mode; the configured server working directory travels via `executionTarget`, never through `task.worktree_path`.
 - **Handoff:** `locateSessionHistoryFile` returns `null` for a remote-mode cwd - cross-agent handoff degrades to the PTY-scrollback cleanup fallback, since there is no local history file to reference.
 

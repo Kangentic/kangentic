@@ -1,4 +1,27 @@
-# Adapter Session History Sources
+---
+type: Reference
+title: Adapter session history
+description: "The native session history files Kangentic tails for telemetry: reader attach and parse flow, the SessionHistoryParseResult contract, Codex, Gemini and Claude file formats, the Claude status-file pipeline, the per-agent resume map, the /clear fork reconcile, known gaps, and how to add a parser."
+tags: [session-history, telemetry, resume, parsers]
+sources:
+  - resource: src/main/pty/readers/session-history-reader.ts
+  - resource: src/main/pty/readers/status-file-reader.ts
+  - resource: src/main/activity-engine/session-telemetry.ts
+  - resource: src/main/agent/adapters/codex/session-history-parser.ts
+  - resource: src/main/agent/adapters/gemini/session-history-parser.ts
+  - resource: src/main/agent/adapters/claude/session-history-parser.ts
+  - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
+  - resource: src/main/agent/adapters/kimi/session-history-parser.ts
+  - resource: src/main/agent/adapters/grok/session-history-parser.ts
+  - resource: src/main/agent/adapters/opencode/session-history-parser.ts
+  - resource: src/main/agent/adapters/aider/session-history-parser.ts
+  - resource: src/main/transition-engine/resume-id-reconcile.ts
+  - resource: src/main/transition-engine/resume-cwd-migration.ts
+  - resource: src/main/transition-engine/resume-conversation-guard.ts
+  - resource: src/shared/types.ts
+    title: SessionHistoryParseResult, AdapterRuntimeStrategy
+---
+# Adapter session history
 
 This document describes the native session history files that Kangentic reads to surface real-time telemetry (model, context window, token counts, activity) for agents that don't provide a status.json/hooks integration like Claude Code does.
 
@@ -27,7 +50,7 @@ Runtime flow:
    - `runtime.sessionId.fromOutput` (PTY scraper)
    - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
 
-   See [Agent Integration](integrations/agents/index.md) for the full table.
+   See [Agent Integration](index.md) for the full table.
 4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless.
 5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
