@@ -8,6 +8,8 @@ sources:
   - resource: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
   - resource: src/renderer/components/dialogs/task-detail/changes/
   - resource: src/main/git/task-changes.ts
+  - resource: src/main/git/diff-service.ts
+  - resource: src/main/git/remote-presence.ts
 ---
 # Task detail and terminal panel
 
