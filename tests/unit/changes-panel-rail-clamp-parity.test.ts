@@ -2,7 +2,7 @@
  * Rail-width clamp parity guard.
  *
  * `ChangesPanel.tsx` declares `RAIL_DEFAULT_WIDTH_CLAMP` as the default width of
- * the Changes panel's file-tree rail. `TaskDetailBody.tsx`'s `ChangesPanelSkeleton`
+ * the Changes panel's file-tree rail. `ChangesPanelSkeleton.tsx`
  * (the Suspense fallback shown before the lazy `ChangesPanel` chunk loads) repeats
  * the exact same CSS clamp() string as a hand-typed literal, deliberately NOT
  * importing `ChangesPanel` (that would pull the lazy chunk, including Monaco,
@@ -23,7 +23,7 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const CHANGES_PANEL_PATH = path.join(REPO_ROOT, 'src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx');
-const TASK_DETAIL_BODY_PATH = path.join(REPO_ROOT, 'src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx');
+const SKELETON_PATH = path.join(REPO_ROOT, 'src/renderer/components/dialogs/task-detail/changes/ChangesPanelSkeleton.tsx');
 
 /** Extract `const RAIL_DEFAULT_WIDTH_CLAMP = '<value>';` from ChangesPanel.tsx. */
 function extractRailDefaultWidthClamp(source: string): string | null {
@@ -35,7 +35,7 @@ function extractRailDefaultWidthClamp(source: string): string | null {
  * Extract the ChangesPanelSkeleton function body, then the single
  * `width: '<value>'` literal within it. Scoping to the function body first
  * (rather than searching the whole file) means a future unrelated
- * `width: 'clamp(...)'` elsewhere in TaskDetailBody.tsx cannot be silently
+ * `width: 'clamp(...)'` elsewhere in ChangesPanelSkeleton.tsx cannot be silently
  * picked up by a first-match-wins regex.
  */
 function extractSkeletonRailWidth(source: string): string | null {
@@ -53,7 +53,7 @@ function extractSkeletonRailWidth(source: string): string | null {
 
 describe('Changes panel rail-width clamp parity', () => {
   const changesPanelSource = fs.readFileSync(CHANGES_PANEL_PATH, 'utf-8');
-  const taskDetailBodySource = fs.readFileSync(TASK_DETAIL_BODY_PATH, 'utf-8');
+  const skeletonSource = fs.readFileSync(SKELETON_PATH, 'utf-8');
 
   it('extracts RAIL_DEFAULT_WIDTH_CLAMP from ChangesPanel.tsx', () => {
     const value = extractRailDefaultWidthClamp(changesPanelSource);
@@ -62,32 +62,32 @@ describe('Changes panel rail-width clamp parity', () => {
       'Could not find `const RAIL_DEFAULT_WIDTH_CLAMP = \'...\'` in '
         + 'src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx. '
         + 'If it was renamed or restructured, update this test AND the skeleton '
-        + "literal in TaskDetailBody.tsx's ChangesPanelSkeleton.",
+        + "literal in ChangesPanelSkeleton.tsx.",
     ).not.toBeNull();
   });
 
-  it("extracts the single rail width literal from TaskDetailBody.tsx's ChangesPanelSkeleton", () => {
-    const value = extractSkeletonRailWidth(taskDetailBodySource);
+  it("extracts the single rail width literal from ChangesPanelSkeleton.tsx", () => {
+    const value = extractSkeletonRailWidth(skeletonSource);
     expect(
       value,
       "Could not find exactly one `width: '...'` literal inside ChangesPanelSkeleton() in "
-        + 'src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx. If the skeleton\'s '
+        + 'src/renderer/components/dialogs/task-detail/changes/ChangesPanelSkeleton.tsx. If the skeleton\'s '
         + 'markup changed, update this test AND keep the literal in sync with '
         + "ChangesPanel.tsx's RAIL_DEFAULT_WIDTH_CLAMP.",
     ).not.toBeNull();
   });
 
-  it("TaskDetailBody.tsx's ChangesPanelSkeleton rail width matches ChangesPanel.tsx's RAIL_DEFAULT_WIDTH_CLAMP", () => {
+  it("ChangesPanelSkeleton.tsx rail width matches ChangesPanel.tsx's RAIL_DEFAULT_WIDTH_CLAMP", () => {
     const railDefaultWidthClamp = extractRailDefaultWidthClamp(changesPanelSource);
-    const skeletonRailWidth = extractSkeletonRailWidth(taskDetailBodySource);
+    const skeletonRailWidth = extractSkeletonRailWidth(skeletonSource);
 
     expect(
       skeletonRailWidth,
-      'src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx\'s ChangesPanelSkeleton hand-types '
+      'src/renderer/components/dialogs/task-detail/changes/ChangesPanelSkeleton.tsx\'s ChangesPanelSkeleton hand-types '
         + `'${String(skeletonRailWidth)}' for the rail width, but `
         + 'src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx\'s '
         + `RAIL_DEFAULT_WIDTH_CLAMP is '${String(railDefaultWidthClamp)}'. Update the skeleton's `
-        + 'literal in TaskDetailBody.tsx to match - the mismatch means the skeleton will visibly '
+        + 'literal in ChangesPanelSkeleton.tsx to match - the mismatch means the skeleton will visibly '
         + 'snap to a different rail width the instant the real ChangesPanel chunk finishes loading.',
     ).toBe(railDefaultWidthClamp);
   });
