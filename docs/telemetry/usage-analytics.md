@@ -239,8 +239,9 @@ Aptabase's own identity model rotates daily (see "How It Works" below), so it ca
 ## What We Don't Collect
 
 - Task titles, descriptions, or any user-generated content
-- File paths, project names, or code (stack-frame paths are normalized to the app root, and the
-  machine's home directory is rewritten to `~` in event text, before they leave the machine)
+- File paths, project names, or code (stack-frame paths are normalized to the app root, and in
+  Sentry event text every registered project root is rewritten to `[project]` and the machine's
+  home directory to `~`, before they leave the machine)
 - Console output in Sentry breadcrumbs, except lines under a short list of diagnostic tags, which
   are rebuilt without error text and with paths redacted. Click breadcrumbs lose their title and
   label text, and request breadcrumbs lose any URL that is not Kangentic's own (see [Tags, sessions
