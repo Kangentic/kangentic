@@ -11,7 +11,7 @@
  * the existing `shell:showItemInFolder` channel rather than a new one, so the
  * only new IPC here is the push itself.
  *
- * See `docs/embedded-browser.md` decision 13.
+ * See `docs/architecture/embedded-browser/decision-log.md` decision 13.
  */
 
 import { useEffect } from 'react';

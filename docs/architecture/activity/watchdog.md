@@ -1,0 +1,82 @@
+---
+type: Reference
+title: Activity watchdog
+description: "The five WatchdogHold safety nets that reclaim a stuck thinking state: named bg-shell cap (5 min), anonymous grace (30s), stale-thinking (180s, 30s when heartbeat-forced), stuck-pending-tools and stuck-subagent, their timer anchors, parkedAnchor and parkedWhen, and how to add a hold."
+tags: [activity, watchdog, timers, recovery]
+sources:
+  - resource: src/main/activity-engine/engine/watchdog.ts
+  - resource: src/main/activity-engine/engine/shapes.ts
+    title: default thresholds
+---
+# Activity watchdog
+
+The predicate handles the common case. Five timer-driven safety nets in `engine/watchdog.ts` catch hook-loss / orphan situations. Each is a `WatchdogHold` describing a state shape, threshold, timer anchor (a `WatchdogAnchor`: which timestamp the deadline is measured from), reset action, and audit-log label. `findActiveWatchdogHold(state, holds)` picks the matching one each cycle (first match wins).
+
+## 1. Named bg-shell sole-holder cap (5 min)
+
+Once the turn is over and a NAMED background shell (`activeBackgroundShellIds`, declared by a `background_shell_start` hook with a shell_id) is the only holder of `thinking`, the engine reclaims it at the long 5-min cap (`timer:bg-shell-hatch`). A named shell is positive evidence of real agent-initiated work, so absence of watcher confirmation must EXTEND, not shorten, the hold. It is reclaimed sooner by positive exit evidence (a `BackgroundShellEnd` event or a Tier A PID death) or held active indefinitely by the watcher confirming its PID alive each cycle (`markBackgroundShellsAlive`, see below). The reset clears the bg-shell counters and emits idle through the stability window.
+
+The deadline is anchored to when bg shells became the sole holder (`bgShellHoldSince`; `anchor: 'bg-shell-hold-since'`), NOT to `lastSignalAt`. An earlier design had the watcher refresh `lastSignalAt` every 2s while it saw any shell-like descendant; for an orphan whose exit the watcher could not attribute, that pulse pushed the deadline out forever and pinned the session `active` indefinitely (tasks #175/#180). Anchoring to the hold-start makes the deadline immovable by signal-only keep-alives; only watcher-confirmed liveness (`markBackgroundShellsAlive`) advances it. The original design used a single 30s grace for ALL bg shells, which false-idled a genuinely-running 10-min E2E at turn end when the watcher could not confirm it alive (tasks #210/#212); splitting named (5-min cap, Tier A liveness) from anonymous (30s grace) fixed that.
+
+## 2. Anonymous bg-shell sole-holder grace (30s)
+
+When only ANONYMOUS bg shells (`anonymousBackgroundShellCount`, no shell_id) hold `thinking` and the turn is over, the engine reclaims them after a short 30s grace (also `timer:bg-shell-hatch`). Anonymous shells are heuristic adoptions (resume-time descendants with no `background_shell_start` hook), so fast reclaim stays correct. Same anchor (`'bg-shell-hold-since'`) and reset as the named cap; only the threshold differs. The watcher's attributed drain (`onNaturalExit`, ~4s) still wins for clean exits; the grace is the backstop for the unattributable case.
+
+## 3. Stale-thinking watchdog (180s)
+
+Held by `turnActive` alone (no tools, no subagent, no bg shells) for 180 seconds. The matching Idle/Stop hook never arrived. Emits synthetic `Idle/Timeout`, clears `turnActive`. Bypasses the stability window (180s already debounced any flicker, or 30s on a heartbeat-forced turn). Anchored to the FRESHER of `lastSignalAt` and `lastPtyOutputAt` (`anchor: 'signal-or-pty-output'`, resolved in `watchdogBaseTime`). `lastSignalAt` is refreshed by every non-log-only event - including `tool_end` (a `PostToolUse` hook is proof of liveness), so a foreground tool longer than 180s that ends while the turn continues gets a fresh window instead of being force-idled the instant it ends (task #229; pinned by `session-016-false-idle-after-long-foreground-tool`). `lastPtyOutputAt` is refreshed by `markPtyOutput` (called unconditionally on every PTY chunk by the spawn flow), so a single heavy generation turn that streams output for >180s with no nested hook event and a silent status heartbeat is not force-idled either (task #246; pinned by `session-019-false-idle-tool-less-streaming-gap`). A genuinely-finished turn sits at a quiet prompt with no PTY data (a blinking cursor is xterm-rendered terminal state, not a PTY chunk), so the anchor freezes and the safety net still fires at the threshold.
+
+**Exception while the agent is BELIEVED parked (`parkedAnchor: 'signal'`).** A parked Claude TUI keeps repainting its statusline (rate-limit / context meter, spinner) = real PTY bytes, so the `signal-or-pty-output` anchor stays fresh forever and the net never fires - the safety net is blinded by the same parked-TUI behavior. The hold narrows its anchor to `signal` (`lastSignalAt` only, ignoring `lastPtyOutputAt`) while ANY of three "believed parked" signals holds:
+
+- `idleHintPending` - the agent reported waiting-for-input, so its repaints are noise (task #294). Paired with the heartbeat no longer refreshing `lastSignalAt` while `idleHintPending` (see [Heartbeat recovery and idle provenance](activity-engine.md#heartbeat-recovery-and-idle-provenance)), `lastSignalAt` freezes at the last genuine hook and the 180s net self-heals a stuck `turnActive` from any cause.
+- `turnForcedByHeartbeat` - the CURRENT `turnActive=true` was set by the status-heartbeat's `forceThinking(sessionId, true)` (output-token growth while idle) and has not since been confirmed by a real turn-initiating hook. A `--resume` resume-picker context-reload is a CLI-internal turn that fires NO turn hooks, so it can NEVER produce an `idle_hint` when it parks - the `idleHintPending` gate alone cannot help, and a chatty parked TUI (statusline repaints with no gap exceeding 180s) would otherwise pin the card ACTIVE indefinitely (task #364, the residual leg task #331 left open). `turnForcedByHeartbeat` is set only by the heartbeat's `forceThinking` call and cleared by every real turn-initiating hook, the permission-resume path, every turn-end, and every turn-ending watchdog reset - mirroring `idleAuthoritative`'s provenance discipline for the active-turn side. (The bg-shell escape hatches do not touch it: their predicate already requires `!turnActive`, so it is `false` before they fire.) The PTY tracker's `forceThinking` callers (non-hooks agents) leave it `false`, so their `lastPtyOutputAt` liveness anchor is never narrowed away.
+- `retryFailurePending` - the session is in a LIVE `turn_retrying` hold (`applyRetryableFailureHold`, see "Aborted-turn recovery" Layer C above): a parked-TUI "retrying in Ns..." repaint during the retry backoff is noise the same way, and must not defer the net forever if the error turns out to be terminal (task #367). Set only by `applyRetryableFailureHold` and cleared the same way as `idleHintPending` - by every real turn-initiating hook, the bypass/hold reset, and `forceThinking`/`forceIdle`.
+
+Any of the three freezes the anchor at the last genuine hook / output growth / retry signal, so the 180s net still fires ~180s after real activity stopped. A live long-generation turn never fires `idle_hint`, is never heartbeat-forced, and is never in a retry hold (it is thinking via a real turn hook), so it keeps the `signal-or-pty-output` anchor and the PTY keeps it alive (#246).
+
+**Fast heal for the heartbeat-forced case (30s, not 180s).** Freezing the anchor is only half the fix for `turnForcedByHeartbeat`: `lastSignalAt` is frozen at the moment output stopped growing, but the hold still waited the general 180s from there before task #331/#364's follow-up. A hook-less `--resume` resume-picker turn is a distinct class from a genuine `idle_hint`/`retryFailurePending` parked turn - it can never receive ANY confirming hook, so once `lastSignalAt` freezes there is nothing further to wait for. The stale-thinking hold's `effectiveThreshold` therefore checks `state.turnForcedByHeartbeat` FIRST (before the `idleHintPending` short grace) and, when set, uses `DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS` (30s) instead of `staleThinkingTimeoutMs` (180s). The anchor is unchanged (still `signal`), so this only shortens how long the net waits once frozen - a live reload that is still genuinely generating keeps refreshing `lastSignalAt` via output-token growth and never reaches the grace. The 30s value is reasoned, not empirically calibrated: it is safe because a too-aggressive heal self-corrects (the next output-growth status write re-triggers `forceThinking(sessionId, true)` via the same idle → thinking heartbeat recovery), so the worst case is a brief idle blip, not a stuck-wrong state. Reuses the stale-thinking hold's `timer:stale-thinking` trigger and `staleThinking` counter rather than adding a new one - a trace cannot distinguish the fast 30s heal from the slow 180s net except by the transition's timestamp relative to when output froze. Pinned by `session-024-fast-heal-hook-less-resume` (enabled vs. disabled-grace red-green) and `session-022-false-active-repainting-past-180s` (updated to assert the tighter 30s deadline).
+
+## 4. Stuck-pending-tools watchdog (5 min, or 180s once an idle_hint is pending)
+
+Held by `pendingToolCount > 0` alone for 5 minutes. When an `idle_hint` is pending, the 180s `staleAfterIdleHintMs` budget replaces the cap: the agent reported it is waiting for input while a tool is still pending, so that tool's PostToolUse was lost in an aborted or errored turn. Common cause: user pressed Ctrl+C, the agent killed the bash, but `PostToolUseFailure` didn't propagate. Without this hatch the engine would be stuck in `thinking` forever - the stale-thinking watchdog requires `pendingToolCount === 0` to fire, the bg-shell holds require bg shells, and the Idle clamp only works when Idle actually fires.
+
+Resets `pendingToolCount`, the stack, `currentTool`, AND `turnActive` (the matching Stop hook for this turn was lost along with the PostToolUse). Goes through the stability window for the same reason as the bg-shell holds.
+
+This hold is anchored to the FRESHER of `lastSignalAt` and `lastPtyOutputAt` (`anchor: 'signal-or-pty-output'`, resolved in `watchdogBaseTime`). A long quiet foreground tool (a single test run streaming output for >5 min with no nested hook events and a silent status heartbeat) used to be force-idled here, because for hooks-based agents the `PtyActivityTracker` is suppressed and PTY data never refreshed `lastSignalAt` (task #210, empirical `stuckPendingTools: 2`). `markPtyOutput` (called unconditionally on every PTY chunk by the spawn flow) refreshes `lastPtyOutputAt`, so streaming TUI output keeps a genuinely-running tool active; after Ctrl+C / a lost PostToolUse the CLI sits at a quiet prompt, output stops, and the hatch fires 5 min after the last chunk.
+
+## 5. Stuck-subagent watchdog (5 min)
+
+Held by `subagentDepth > 0` alone (no pending tools, no bg shells, no permission) for 5 minutes. Because the empty-string inner-stop skip (see "Subagent depth") makes `subagentDepth` sticky, a subagent whose authoritative **named** terminal `SubagentStop` is dropped (only its ignored empty inner stop arrived) would leave depth stuck > 0 forever: every other watchdog hold gates on `subagentDepth === 0`, and the `PtyActivityTracker`'s `forceIdle` (which zeroes depth) is suppressed for hook-active agents. This hold is the only recovery. It resets `subagentDepth` (and `turnActive`) through `releaseSubagentSlots`, which also marks the live `subagentId`s stopped so a late named stop from a released agent counts as `duplicateSubagentStop` rather than a decrement, and emits synthetic `Idle/Timeout`. Anchored to `signal-or-pty-output` and capped at the long 5-min threshold, so a genuinely live subagent - which refreshes the anchor via its nested tool events and streaming output - never trips it; it fires only after a real, long silence. Disjoint from the holds above by its `subagentDepth > 0` predicate. Tallied as the `stuckSubagent` compensation counter (task #237).
+
+**Exception while BELIEVED parked (`parkedAnchor: 'signal'` via `parkedWhen`).** Task #532 made this hold reachable during a live `turn_retrying`: the retry hold now PRESERVES `subagentDepth` instead of zeroing it, so this hold arbitrates where stale-thinking used to. Without a narrowing of its own, a parked TUI repainting "retrying in Ns..." streams real PTY bytes that would defer this net forever - exactly what #367 closed for stale-thinking. So this hold also sets `parkedAnchor: 'signal'`, but scopes it with its own `parkedWhen` predicate to `retryFailurePending` ALONE, rather than the default three-flag test used by section 3.
+
+The narrowing must NOT extend to `idleHintPending`: an idle_hint can fire mid-subagent (task #237 / `session-018`), and there the live subagent's streaming output must keep deferring the hold. Removing `parkedWhen` while keeping `parkedAnchor` turns the pre-existing #237 guard test red, which is the mechanical proof this scoping is load-bearing rather than decorative.
+
+The narrowing is safe because ANY non-log-only event refreshes `lastSignalAt` - the narrowed anchor itself - not just the turn-initiating ones. `tool_start` / `subagent_start` additionally clear `retryFailurePending` outright and disengage the narrowing entirely; `tool_end` and a plain `idle` refresh the anchor without clearing it. Only `idle_hint` and `subagent_stop` are log-only. So what is left to the cap is a wedged CLI emitting nothing but repaints.
+
+Two consequences worth stating precisely, because both are easy to get wrong from the section above. The cap here is 5 min, **or the 180s `staleAfterIdleHintMs` budget once an `idle_hint` has also fired** - a `{depth > 0, retryFailurePending, idleHintPending}` combination that was structurally unreachable before #532, since the depth was already zeroed by the time any idle_hint could arrive. And the one behavior the narrowing gives up: during a retry hold, a subagent producing PURE PTY output with zero hook events no longer defers the net. See "Aborted-turn recovery" Layer D, and keep the two in sync.
+
+## Adding a new watchdog
+
+Append to the table in `buildWatchdogHolds()`:
+
+```ts
+{
+  predicate: (state) => /* what state shape qualifies as stuck */,
+  thresholdMs: config.someThresholdMs,
+  trigger: 'timer:my-watchdog',
+  anchor: 'signal', // WatchdogAnchor: which timestamp gates the deadline
+  // Optional. Replaces `anchor` while the agent is BELIEVED parked, so
+  // parked-TUI repaints stop deferring the net:
+  parkedAnchor: 'signal',
+  // Optional. Replaces the DEFAULT believed-parked test for this hold alone.
+  // Default: idleHintPending || turnForcedByHeartbeat || retryFailurePending.
+  parkedWhen: (state) => state.retryFailurePending,
+  reset: (state) => { /* mutations to clear the hold */ },
+  applyStabilityWindow: true,
+}
+```
+
+The predicates partition the state space, so `findActiveWatchdogHold` returns the first match. Each hold declares its timer anchor explicitly via the `anchor` field, and `watchdogBaseTime` (plus `scheduleTimer`'s `bgShellHoldSince` maintenance) dispatches on it; a new `WatchdogAnchor` kind is a compile-time error rather than a silent fall-through.
+
+Anchor selection has two optional overrides, both used only where a parked TUI's statusline repaints would otherwise defer a net forever. `parkedAnchor` supplies a stricter anchor to use while the agent is believed parked (stale-thinking and stuck-subagent both narrow to `signal`). `parkedWhen` replaces the default believed-parked test for that one hold: omit it and the default three-flag test applies; supply it to scope the narrowing, as `stuck-subagent` does to `retryFailurePending` alone so an `idle_hint` fired mid-subagent keeps the full `signal-or-pty-output` anchor (#237). Thresholds have the parallel pair `idleHintThresholdMs` / `heartbeatForcedThresholdMs`, selected by `effectiveThreshold`; note that a threshold override and an anchor override are independent, so shortening one does not imply narrowing the other. The `trigger` string is only the audit-log label and the key for the compensation-counter tally. The two bg-shell holds share both `trigger: 'timer:bg-shell-hatch'` and `anchor: 'bg-shell-hold-since'`, so they behave as the same hold class with different thresholds. If a new hold's predicate could overlap an existing one, mind the table order.

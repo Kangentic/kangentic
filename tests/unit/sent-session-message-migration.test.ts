@@ -278,7 +278,7 @@ describe('session_messages_sent migration + repository round-trip', () => {
   });
 
   it('cascades: deleting the parent session deletes its session_messages_sent rows', () => {
-    // docs/database.md and the migration comment above `session_messages_sent`
+    // docs/database/session-tables.md and the migration comment above `session_messages_sent`
     // both claim `ON DELETE CASCADE` cleans these rows up with their session.
     // That claim is only true when `PRAGMA foreign_keys = ON` is actually set
     // (see beforeEach above): SQLite parses and stores an FK clause even when

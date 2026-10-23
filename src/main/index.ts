@@ -637,7 +637,7 @@ app.on('web-contents-created', (_event, contents) => {
 
   // Popups from the pane: allowed, hardened, and chromed with their real origin.
   // Denying them outright made every popup-based sign-in (OAuth on most SaaS
-  // apps) present as a dead button. See embedded-browser.md decisions 10 to 12
+  // apps) present as a dead button. See docs/architecture/embedded-browser/decision-log.md, decisions 10 to 12
   // for what the allow costs and how each cost is paid.
   //
   // The budget lives in THIS closure so it dies with the guest: a runaway page
@@ -717,7 +717,7 @@ app.on('web-contents-created', (_event, contents) => {
   // opening Chromium's native save dialog (which can block an agent-driven pane).
   // The pane is for viewing dev servers, which need none of these permissions,
   // and agent-driven navigation could otherwise reach a page that auto-prompts.
-  // (embedded-browser.md decision log items 5, 13 and 14.) Both handlers read one
+  // (docs/architecture/embedded-browser/decision-log.md, items 5, 13 and 14.) Both handlers read one
   // predicate, and both install on the SESSION, so the popups above - which share
   // the guest's Session object - inherit them. The lane manager installs the
   // same policy on an offscreen lane's Session, which never reaches this branch.

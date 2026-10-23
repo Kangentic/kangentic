@@ -16,7 +16,7 @@
  * off a bare app boot via window.__mockBrowser.emitDownloadDone(), which
  * mock-electron-api.js exposes but nothing exercised before this file.
  *
- * See docs/embedded-browser.md decision 13 and
+ * See docs/architecture/embedded-browser/decision-log.md decision 13 and
  * src/renderer/window-manager/bridge/useBrowserDownloadToast.ts.
  */
 import { test, expect } from '@playwright/test';

@@ -1373,7 +1373,7 @@ export function useTerminal(options: UseTerminalOptions) {
 
     // Publish this terminal's element so a floating surface can be positioned
     // against it - the dictation chip anchors to its PANE, deliberately not to
-    // the caret inside it (see decision 23 in embedded-browser.md). Separate
+    // the caret inside it (see decision 23 in docs/architecture/embedded-browser/decision-log.md). Separate
     // from the two registrations above because neither answers "where is this
     // session drawn": the mount registry holds a refcount, and the grid registry
     // compiles away in a shipped build.

@@ -71,7 +71,7 @@ for (const row of rows) {
 ```
 
 3. **Placement rules:**
-   - `runProjectMigrations()` is one unversioned function of self-guarding steps. Add a new step at its END, and give it the next number in `docs/database.md`'s "Key Migrations" list
+   - `runProjectMigrations()` is one unversioned function of self-guarding steps. Add a new step at its END, and give it the next number in `docs/database/migrations.md`'s "Key Migrations" list
    - Wrap multi-statement migrations that move data in `writeTransaction` (`src/main/db/transaction.ts`); `transaction-helper.test.ts` fails on a bare `.transaction(` under `src`
    - Use `db.exec()` for DDL (CREATE, ALTER, DROP)
    - Use `db.prepare().run()` for parameterized DML (INSERT, UPDATE, DELETE)
@@ -101,7 +101,7 @@ for (const row of rows) {
    - Fix any issues the auditor reports before finishing.
 
 9. **Remind about docs:**
-   - Suggest running `/sync-docs` to update `docs/database.md`
+   - Suggest running `/sync-docs` to update `docs/database/index.md`
 
 ## Checklist
 

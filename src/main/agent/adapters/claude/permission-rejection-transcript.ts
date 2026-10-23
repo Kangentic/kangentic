@@ -12,7 +12,7 @@ import { locateClaudeTranscriptFile } from './transcript-parser';
  * tool never ran), and `PermissionDenied` exists only for AUTO-MODE denials.
  * A manual deny therefore leaves NO hook event of any kind - the whole
  * reason `permissionPending` sticks forever without this drain (see
- * docs/activity-detection.md, "Permission flag").
+ * docs/architecture/activity/predicate.md, "Permission flag").
  *
  * The rejection IS always appended to Claude's durable session JSONL, as a
  * synthetic `tool_result` user turn:

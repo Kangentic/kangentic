@@ -1,6 +1,6 @@
 /**
  * Wiring pins for the guest mouse back/forward forwarding in
- * `src/main/index.ts` (decision 25 in docs/embedded-browser.md).
+ * `src/main/index.ts` (decision 25 in docs/architecture/embedded-browser/decision-log.md).
  *
  * The forwarding logic lives as a closure inside the app-wide
  * `web-contents-created` handler rather than an extracted, importable

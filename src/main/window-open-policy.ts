@@ -75,7 +75,7 @@ export function createExternalWindowOpenHandler(
  *    `window.opener`, `postMessage`, and the `popup.closed` poll that nearly
  *    every OAuth flow relies on are all severed.
  *
- * See `docs/embedded-browser.md` decisions 10 to 12.
+ * See `docs/architecture/embedded-browser/decision-log.md` decisions 10 to 12.
  */
 
 /** Live popups one pane may hold. A runaway-guard, NOT a security boundary: a

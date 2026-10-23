@@ -69,7 +69,7 @@ reveals what that one cannot avoid.
   The consequence: `kangentic_browser_type` and `_keypress` WITHOUT a selector work only while the
   pane already holds focus, and are REFUSED otherwise (next bullet). The selector forms work
   because the click and the characters happen inside ONE call, which is the only configuration
-  that measured clean. It is recorded in `docs/embedded-browser.md`.
+  that measured clean. It is recorded in `docs/architecture/embedded-browser/decision-log.md`.
 - **A key the pane would not receive is REFUSED, never sent.** Chromium delivers a CDP key to
   whatever widget holds focus in the window, not to the guest it was sent to. So between calls,
   with focus handed back to the user's terminal, a selector-less key goes to that TERMINAL. It is
@@ -516,7 +516,7 @@ reveals what that one cannot avoid.
    there took focus exactly as before the fix. A new host for this push needs the same stamp.
 2. **Whether Chromium's focus propagation is suppressed is not unit-testable at all.** No unit tier
    has a live `<webview>` guest, and the UI tier's is an inert stub. The live probe recorded in the
-   PR and the preview rig in `docs/embedded-browser.md` are the only evidence, and an Electron major
+   PR and the preview rig in `docs/architecture/embedded-browser/browser-pane.md` are the only evidence, and an Electron major
    bump can silently change the answer. **Re-run the probe on an Electron upgrade.**
 3. **A future CDP input primitive invoked outside a `withGuest` body** is outside the guarantee.
    [[browser-automation-driver]]'s "every driving tool routes through `withGuest`" is what keeps that

@@ -256,7 +256,7 @@ export async function withGuest<T>(
         // sent while the pane does NOT hold focus is refused rather than papered
         // over with focus management: `dispatchKeyEvent` checks where it would
         // land and throws `KeyboardFocusNotInGuestError`, mapped below to
-        // `pane-not-focused`. See `docs/embedded-browser.md`.
+        // `pane-not-focused`. See `docs/architecture/embedded-browser/index.md`.
         // The resolved entry is handed over alongside the guest because
         // `WebContents` alone cannot tell a lane from a pane, nor a docked pane
         // from a popped-out one, and `set_viewport` picks a different mechanism

@@ -23,7 +23,7 @@ import { IPC } from '../../shared/ipc-channels';
  * progress-bar owners, and three toasts once three panes are open in one
  * worktree.
  *
- * See `docs/embedded-browser.md` decision 13.
+ * See `docs/architecture/embedded-browser/decision-log.md` decision 13.
  */
 
 const sessionsWithDownloadPolicy = new WeakSet<Session>();

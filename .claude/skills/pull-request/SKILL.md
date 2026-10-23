@@ -130,7 +130,7 @@ If there are uncommitted changes (non-empty `git status --porcelain` output):
    d. **Find the prose-drift candidates too, not just the anchor matches.** Anchor matching answers
       "you changed this file, does its doc still enumerate it" - it CANNOT catch a doc whose prose
       describes behavior that changed somewhere else. Real case: a PR changed how effort is
-      resolved, and `docs/database.md` still called `applied_effort` "the ground truth". Its anchor
+      resolved, and `docs/database/session-tables.md` still called `applied_effort` "the ground truth". Its anchor
       is `src/main/db/migrations/**`, which that PR never touched, so no anchor rule would ever have
       selected it. Cheap fix: when the diff changes a **precedence chain, fallback order, or
       source of truth** for some value, take the identifiers in that chain and search `docs/` for

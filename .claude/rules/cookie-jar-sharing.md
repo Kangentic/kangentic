@@ -10,7 +10,7 @@ paths:
 The embedded Browser pane shares a project's identity-provider (Google, etc.) login across its
 tasks by COPYING non-localhost cookies between per-task jars via a project identity jar, while
 keeping each task's `localhost` dev-app session isolated (decision 33 in
-`docs/embedded-browser.md`). Two failures would be silent and serious: a copy path that bypasses
+`docs/architecture/embedded-browser/decision-log.md`). Two failures would be silent and serious: a copy path that bypasses
 the localhost exclusion would leak one task's dev-server session into another's jar (or into the
 shared identity jar, then into every task), reintroducing the exact cross-worktree collision the
 per-task keying prevents; and a second, ad-hoc cookie-copy path would let that invariant drift.

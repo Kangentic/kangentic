@@ -477,7 +477,7 @@ fuse wire so a bump that adds a fuse fails before any packaging run.
 
 ## Windows Long Paths
 
-Git worktrees live under `.kangentic/worktrees/<n>/`, which can push deeply nested file paths past Windows' default 260-character limit. Kangentic enables `core.longpaths=true` on Windows during worktree creation (both as a per-command flag for `git worktree add` and as a persistent config in the worktree's local git config). This activates the `\\?\` extended-length path prefix, allowing paths up to 32,767 characters. macOS and Linux are unaffected (1024-4096 byte `PATH_MAX`). See [Worktree Strategy](worktree-strategy.md#windows-long-paths) for details.
+Git worktrees live under `.kangentic/worktrees/<n>/`, which can push deeply nested file paths past Windows' default 260-character limit. Kangentic enables `core.longpaths=true` on Windows during worktree creation (both as a per-command flag for `git worktree add` and as a persistent config in the worktree's local git config). This activates the `\\?\` extended-length path prefix, allowing paths up to 32,767 characters. macOS and Linux are unaffected (1024-4096 byte `PATH_MAX`). See [Worktree Strategy](architecture/worktrees/worktree-creation.md#windows-long-paths) for details.
 
 ## Windows MAX_PATH is mostly not the wall people expect
 
@@ -548,7 +548,7 @@ the longest prefab dependency name.
 It keeps its own overhead small and bounded, and otherwise stays out of the way. The numeric worktree
 folder took Kangentic's contribution from about 49 characters to about 24 (`\.kangentic\worktrees\`
 plus a short number); see
-[Worktree Directory Naming](worktree-strategy.md#worktree-directory-naming).
+[Worktree Directory Naming](architecture/worktrees/worktree-lifecycle.md#worktree-directory-naming).
 
 There is deliberately **no path-length threshold, no proactive warning, and no configurable worktree
 root**. A length check fires on length rather than on the presence of a native toolchain, so it warns
