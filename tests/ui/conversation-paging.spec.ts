@@ -175,6 +175,14 @@ async function requestConversation(page: Page, sessionId: string, tab: { swimlan
 async function openConversation(page: Page, sessionId: string, tab: { swimlaneId: string } | null = null): Promise<void> {
   await requestConversation(page, sessionId, tab);
   await expect(page.getByTestId('conversation-view')).toBeVisible({ timeout: 5000 });
+  // The window animates in, and the scrollbar moves with it: in a 2160px window the
+  // settled rail sits about 9px right of where it is drawn mid-entrance. A drag measured
+  // during the entrance and pressed after it (a slow worker) lands on the messages and
+  // drags nothing, so wait the entrance out before any test reads the rail.
+  await page.getByTestId('conversation-view').evaluate(async (element) => {
+    const frame = element.closest('[data-testid^="window-frame-"]');
+    await Promise.all((frame?.getAnimations() ?? []).map((animation) => animation.finished.catch(() => undefined)));
+  });
 }
 
 /** Hold every page read until the test releases it. */
