@@ -85,6 +85,7 @@ import { retrievalClient } from './retrieval/retrieval-client';
 import { attachCheckpointDriver } from './retrieval/checkpoint-driver';
 import { softly, setGlobalDbFailureNotifier } from './db/soft-db';
 import { ensureGlobalDbReadable, notifyGlobalDbUnavailable } from './db/global-db-dialog';
+import { ProjectRepository } from './db/repositories/project-repository';
 import { setSyncWriteFailureNotifier } from './config/write-failure-notice';
 import { sendToRenderer } from './ipc/send-to-renderer';
 import { setWorktreeRemovedListener, setWorktreeRemovingListener } from './git/worktree-manager';
@@ -1818,6 +1819,11 @@ app.whenReady().then(async () => {
     app.exit(0);
     return;
   }
+
+  // Teach Sentry's path redaction every registered project root before anything
+  // can spawn in one. A project on another drive is out of the home-directory
+  // rewrite's reach (DESKTOP-21).
+  new ProjectRepository().rememberRegisteredRoots();
 
   // Fix node-pty spawn-helper permissions on macOS before any PTY spawns.
   // Must run before createWindow() which triggers session recovery.

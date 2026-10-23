@@ -118,8 +118,10 @@ function buildUserMessage(error: unknown): string {
 /**
  * What goes to Sentry in place of a Node system error. Node writes the paths a syscall
  * touched into the message (`EPERM: operation not permitted, rename '<temp>' -> '<target>'`)
- * and the stack's first line repeats it. `redact-event-paths.ts` rewrites only the home
- * directory, so a project on another drive reached Sentry whole (DESKTOP-1Z).
+ * and the stack's first line repeats it. A project on another drive reached Sentry whole that
+ * way (DESKTOP-1Z). `redact-event-paths.ts` rewrites registered project roots and the home
+ * directory, but a guarded write's temp and target paths can sit outside both, such as a
+ * relocated config directory on another drive. So this copy carries no path at all.
  *
  * The copy's message is built from the errno and syscall fields. It keeps the original
  * frames when the original stack's first line is exactly the header it is replacing, so the

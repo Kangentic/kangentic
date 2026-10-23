@@ -172,22 +172,69 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Replace every spelling of the home directory (either separator, and on
- *  Windows any letter case) with `~`. A longer name that merely starts with
- *  the home path (`/home/dev` inside `/home/developer`) is left alone. */
+/** Either separator, raw or percent-encoded (a whole path passed through
+ *  `encodeURIComponent`, as in a query string). */
+const SEPARATOR_PATTERN = '(?:[\\\\/]|%2[Ff]|%5[Cc])+';
+
+/** A path with its trailing separators cut off. A drive root (`D:\`, `/`)
+ *  comes out as a bare drive letter or the empty string. */
+export function trimTrailingSeparators(rawPath: string): string {
+  return rawPath.replace(/[\\/]+$/, '');
+}
+
+/** One percent-encoded byte, its hex digits in either case. */
+function encodedBytePattern(byte: number): string {
+  const hexDigits = byte.toString(16).toUpperCase().padStart(2, '0');
+  return `%${hexDigits.replace(/[A-F]/g, (hexLetter) => `[${hexLetter}${hexLetter.toLowerCase()}]`)}`;
+}
+
+/** One character, matching its percent-encoded UTF-8 bytes too, and for a
+ *  space the `+` of a form-encoded query string. A file URL writes a space as
+ *  `%20` and `C:` as `C%3A` in some encoders, so the raw spelling alone missed
+ *  a home or project folder with a space or an accent in it. Encoders disagree
+ *  on what they leave alone (`URLSearchParams` encodes `~`, `(` and `!`, and
+ *  `encodeURIComponent` does not), so every character outside the set no
+ *  encoder touches gets both spellings. */
+function characterPattern(character: string): string {
+  const literal = escapeRegExp(character);
+  if (/^[A-Za-z0-9_.-]$/.test(character)) return literal;
+  // A lone surrogate has no UTF-8 encoding; match it as written.
+  if (/^[\uD800-\uDFFF]$/.test(character)) return literal;
+  const spellings = [literal, Array.from(Buffer.from(character, 'utf8'), encodedBytePattern).join('')];
+  if (character === ' ') spellings.push('\\+');
+  return `(?:${spellings.join('|')})`;
+}
+
+/** A global pattern matching every spelling of `pathToRedact`: either
+ *  separator, raw or percent-encoded characters, and when `caseInsensitive` any
+ *  letter case. A longer name that merely starts with the path (`/home/dev`
+ *  inside `/home/developer`) does not match. Null for an empty path, which
+ *  would otherwise match everywhere. The Sentry event redaction
+ *  (src/main/analytics/redact-event-paths.ts) builds its project-root and home
+ *  patterns here too, so a change here changes both rewrites. */
+export function pathPattern(pathToRedact: string, caseInsensitive: boolean): RegExp | null {
+  const trimmedPath = trimTrailingSeparators(pathToRedact);
+  if (trimmedPath.length === 0) return null;
+  // Build each SEGMENT character by character and rejoin with the separator
+  // pattern, so no escaped intermediate form has to be pattern-matched.
+  const segmentPatterns = trimmedPath
+    .split(/[\\/]+/)
+    .map((segment) => Array.from(segment).map(characterPattern).join(''));
+  return new RegExp(`${segmentPatterns.join(SEPARATOR_PATTERN)}(?![\\w-])`, caseInsensitive ? 'gi' : 'g');
+}
+
+/** Replace every spelling of the home directory that `pathPattern` matches
+ *  (either separator, raw or percent-encoded characters, and on Windows any
+ *  letter case) with `~`. A longer name that merely starts with the home path
+ *  (`/home/dev` inside `/home/developer`) is left alone. */
 export function redactHomeDirectory(
   text: string,
   homeDirectory: string = os.homedir(),
   caseInsensitive: boolean = process.platform === 'win32',
 ): string {
-  const trimmedHome = homeDirectory.replace(/[\\/]+$/, '');
-  if (trimmedHome.length === 0 || text.length === 0) return text;
-  // Escape each SEGMENT and rejoin with the separator class. Escaping the
-  // whole path first and then pattern-matching the escaped separators works,
-  // but it means reading `escapeRegExp`'s output as an intermediate form.
-  const separatorAgnostic = trimmedHome.split(/[\\/]+/).map(escapeRegExp).join('[\\\\/]+');
-  const pattern = new RegExp(`${separatorAgnostic}(?![\\w-])`, caseInsensitive ? 'gi' : 'g');
-  return text.replace(pattern, '~');
+  if (text.length === 0) return text;
+  const pattern = pathPattern(homeDirectory, caseInsensitive);
+  return pattern ? text.replace(pattern, '~') : text;
 }
 
 /** The line that best explains a crash, for the in-app signal: the first line

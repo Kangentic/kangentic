@@ -107,16 +107,21 @@ sentry api organizations/kangentic/issues/DESKTOP-1N/ -X PUT -f assignedTo=user:
 
 **What reaches the output unscrubbed.** Nothing in the repo rewrites the CLI's output. Sentry removes
 home paths from events as it stores them (a Data Scrubbing rule, `docs/telemetry/error-reporting.md`, "Native crash
-fields"), and the app rewrites its own home directory in exception text from the first release that
-includes `src/main/analytics/redact-event-paths.ts`. An event stored before the rule (applied
+fields"), and the app rewrites its own home directory in every string of an event from the first release that
+includes `src/main/analytics/redact-event-paths.ts` (registered project roots from the DESKTOP-21
+fix, below). An event stored before the rule (applied
 2026-10-03) still carries them, and they are gone only when the event ages out of the 30-day
 retention, by early November 2026. Known cases: DESKTOP-19's exception
 value and stored message (the readable view matched 66 paths from two users), the crashpad
 `gpu-url-chunk` URL in the `electron` context, and every frame's `package` in `--json`, which the
-rule cannot reach at all. So never paste the readable view's Message, an exception value, a
-breadcrumb, or a stack line into a task or a reply. Describe the error in your own words, cite
-frames by module and line, and search what you are about to paste for `C:\Users`, `/Users/` and
-`/home/`. The Sentry MCP's `get_sentry_resource` prints the contexts too, so the same applies.
+rule cannot reach at all. The Sentry rule matches user paths only, so a project on another drive
+is scrubbed by the app alone, which rewrites every registered project root to `[project]` in builds
+that carry the DESKTOP-21 fix. An event from an older build can carry such a path whole,
+its issue title included (DESKTOP-21, DESKTOP-1Z). So never paste the readable view's Message, an
+exception value, a breadcrumb, or a stack line into a task or a reply. Describe the error in your
+own words, cite frames by module and line, and search what you are about to paste for `C:\Users`,
+`/Users/`, `/home/` and any other drive-letter path. The Sentry MCP's `get_sentry_resource` prints
+the contexts too, so the same applies.
 
 Fall back to the raw API for what the CLI leaves out: the `debugmeta` images the native
 symbolication steps need, the `threads` entry, and the issue `activity` array. In PowerShell, parse

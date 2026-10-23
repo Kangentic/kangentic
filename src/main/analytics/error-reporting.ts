@@ -15,7 +15,7 @@ import {
 } from './native-crash-event';
 import { filterBreadcrumb } from '../../shared/sentry-breadcrumbs';
 import { SENTRY_DATA_COLLECTION } from '../../shared/sentry-data-collection';
-import { redactEventHomeDirectory } from './redact-event-paths';
+import { redactEventPaths } from './redact-event-paths';
 import { rendererNameForReporting } from './renderer-classification';
 
 /**
@@ -267,8 +267,9 @@ export function tagTruncatedStack(event: ErrorEvent): ErrorEvent {
 
 /**
  * The actual `beforeSend`. Tags a frame-capped stack, runs the native crash
- * split, then rewrites this machine's home directory to `~` in whatever event
- * is left (`redactEventHomeDirectory`). None of them ever drops an event.
+ * split, then rewrites every known project root to `[project]` and this
+ * machine's home directory to `~` in whatever event is left
+ * (`redactEventPaths`). None of them ever drops an event.
  *
  * Fails OPEN for the same reason `filterNativeCrashEvent` does: a throwing
  * `beforeSend` makes the SDK drop the event, so a bug in the tagging must never
@@ -280,7 +281,7 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
   } catch {
     // Tagging is diagnostic only; never let it cost us the event.
   }
-  return redactEventHomeDirectory(filterNativeCrashEvent(event, hint));
+  return redactEventPaths(filterNativeCrashEvent(event, hint));
 }
 
 /**
@@ -295,12 +296,15 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * on its own (src/shared/sentry-data-collection.ts: IP address, cookies, HTTP
  * headers and bodies, local variables), and Sentry's server-side data
  * scrubbing is on by default. Further rules belong in the Sentry UI (Advanced
- * Data Scrubbing), with one exception here: `beforeSendEvent` rewrites this
- * machine's home directory to `~` in every event string
- * (src/main/analytics/redact-event-paths.ts). An exception message is free
- * text, normalizePathsIntegration never touches it, and an OS username is often
- * a real name. A native crash's module paths and stack are built on Sentry's
- * servers from the dump, so they stay a Sentry-side rule. Its Crashpad
+ * Data Scrubbing), with one exception here: `beforeSendEvent` rewrites every
+ * known project root to `[project]` and this machine's home directory to `~` in
+ * every event string (src/main/analytics/redact-event-paths.ts). An exception
+ * message is free text, normalizePathsIntegration never touches it, an OS
+ * username is often a real name, and a project's folder name can name a client.
+ * A project on another drive is out of the home rewrite's reach, which is how
+ * DESKTOP-21's spawn error sent one whole. A native crash's module paths and
+ * stack are built on Sentry's servers from the dump, so they stay a Sentry-side
+ * rule. Its Crashpad
  * annotations do not: the SDK copies them into `contexts.electron` on this
  * machine, so the rewrite above reaches them too.
  *
@@ -315,7 +319,7 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  * See the annotated entries below.
  *
  * NATIVE CRASH EVENTS are an exception to the no-beforeSend stance above, next to the
- * home-directory rewrite.
+ * path rewrite.
  * `ignoreErrors` is the `eventFiltersIntegration`, which matches only an event's
  * message and its exception type and value. A minidump event has none of those,
  * so the matcher sees an empty candidate list and the filter is a no-op on it.
@@ -331,8 +335,8 @@ export function beforeSendEvent(event: ErrorEvent, hint: EventHint): ErrorEvent 
  *
  * `beforeSend` also does two other things. beforeSendEvent TAGS a frame-capped
  * stack (tagTruncatedStack, above), which is annotation on an event we keep. And
- * it rewrites this machine's home directory in the event that is left, last, so
- * a foreign-crash rewrite is covered too.
+ * it rewrites project roots and this machine's home directory in the event that
+ * is left, last, so a foreign-crash rewrite is covered too.
  *
  * Errors only: release-health session tracking (the MainProcessSession
  * integration, on by default) is filtered out, and tracing/replay are never
@@ -368,9 +372,9 @@ export function initErrorReporting(): void {
           (integration) => integration.name !== 'MainProcessSession'
         ),
       // Tags a frame-capped stack, splits native crash events into ours and
-      // foreign ones, then rewrites the home directory in what is left; see the
-      // NATIVE CRASH EVENTS note above for why that one class cannot go in
-      // ignoreErrors below.
+      // foreign ones, then rewrites project roots and the home directory in
+      // what is left; see the NATIVE CRASH EVENTS note above for why that one
+      // class cannot go in ignoreErrors below.
       beforeSend: beforeSendEvent,
       // Names a Browser pane page's renderer 'browser-guest' (a <webview> guest,
       // a popup it opened, or an offscreen lane), so beforeSend can reduce its

@@ -9,6 +9,9 @@ sources:
   - resource: src/shared/sentry-data-collection.ts
   - resource: src/shared/sentry-breadcrumbs.ts
   - resource: src/main/analytics/redact-event-paths.ts
+  - resource: src/main/shared/project-roots.ts
+  - resource: src/main/db/repositories/project-repository.ts
+  - resource: src/main/config/write-failure-notice.ts
   - resource: src/main/analytics/native-crash-event.ts
   - resource: src/main/analytics/reportable-module-name.ts
   - resource: src/main/analytics/renderer-classification.ts
@@ -55,12 +58,32 @@ in one Sentry org, one triage surface.
   replaces the home directory with `~` before the text goes anywhere. A foreign process's crash
   loses its dump, breadcrumbs and full module name in `beforeSend` (see "Native crashes in
   processes that are not ours" below). Every breadcrumb passes a policy before it is recorded
-  (see "Breadcrumbs are filtered at the source" below). And `beforeSendEvent` rewrites this
-  machine's home directory to `~` in every string of the event
-  (`src/main/analytics/redact-event-paths.ts`): an exception message is free text that path
-  normalization never touches, and an OS username is often a real name. Monaco's rethrown
-  diff-editor error put about 48 home paths in one exception value. Native crash events are the
-  part this cannot reach (see "Native crash fields" below).
+  (see "Breadcrumbs are filtered at the source" below). And `beforeSendEvent` rewrites every
+  registered project root to `[project]`, then this machine's home directory to `~`, in every
+  string of the event (`src/main/analytics/redact-event-paths.ts`): an exception message is free
+  text that path normalization never touches, an OS username is often a real name, and a
+  project's folder name can name a client or employer. Monaco's rethrown diff-editor error put
+  about 48 home paths in one exception value. Project roots run first, longest first, so a
+  project under the home directory loses its folder name too instead of becoming
+  `~/projects/<name>`. A root inside the home directory also matches its `~`-relative spelling,
+  because a worker's stderr tail is home-redacted before the event is built. Every character
+  except letters, digits and `_.-` also matches its percent-encoded UTF-8 bytes, separators
+  included (`%20`, `C%3A`, `%5C`), and a space also matches the `+` of a form-encoded query
+  string, so a path inside a `file://` URL or a query string is caught too. The same pattern
+  drives the home rewrite and the stderr tail's. The roots come from an in-memory ledger
+  (`src/main/shared/project-roots.ts`), seeded from the global projects list at boot
+  (`ProjectRepository.rememberRegisteredRoots`, which seeds nothing rather than throwing when
+  that read fails) and fed by `ProjectRepository.create` and `updatePath`. It never drops a root
+  during a run, so an error raised while a project is deleted or moved is still covered.
+  `beforeSend` never reads the database, which can be closed or not yet open when an event fires.
+  The ledger also remembers each project's repository folder, because git names it in its own
+  errors (`<repository>/.git/index.lock`). That is the nearest folder at or above the project
+  holding `.git`. For a `.git` file (a linked worktree or a submodule) it is the repository the
+  file points into, read through the worktree's `commondir` file, so a worktree of a bare
+  repository names the bare repository. That lookup is async and runs one project at a time, so
+  a project on an unreachable network share holds one libuv thread rather than all of them. A root at or above the home directory, or at a
+  drive root, is skipped and left to the home rewrite. Native crash events are the part this
+  cannot reach (see "Native crash fields" below).
 
 ## Filtering
 
@@ -142,7 +165,8 @@ in one Sentry org, one triage surface.
   selectors, and `$image.*` is not a valid selector (images take a path).
   - **Crashpad annotations also pass through the app.** For a dump it uploads, the SDK copies the
     dump's Crashpad annotations into `contexts.electron` as `crashpad.<key>` on this machine,
-    before `beforeSend`, so `redact-event-paths.ts` rewrites the home directory in them as well.
+    before `beforeSend`, so `redact-event-paths.ts` rewrites the home directory and every
+    registered project root in them as well.
     A `LOG(FATAL)` message lands there as `crashpad.LOG_FATAL`, including Electron 44.5's
     install-folder access check, whose message names the per-user install folder under the home
     directory (`tests/unit/redact-event-paths.test.ts` pins that case).
@@ -248,8 +272,8 @@ in one Sentry org, one triage surface.
 ## Tags, sessions and breadcrumbs
 
 - **Tagging shares that hook, and runs before the split.** `beforeSend` is `beforeSendEvent`,
-  which tags, delegates to `filterNativeCrashEvent`, and then rewrites the home directory in what
-  is left (`redactEventHomeDirectory`). `tagTruncatedStack` sets
+  which tags, delegates to `filterNativeCrashEvent`, and then rewrites project roots and the home
+  directory in what is left (`redactEventPaths`). `tagTruncatedStack` sets
   `stack_truncated: 'true'` on any event whose parsed stack sits exactly on the SDK's 50-frame
   cap. The parser reads a V8 stack innermost-first and stops there, so a capped event has lost its
   OUTER frames - the app code that called into the library and the timer it ran under - and reads
@@ -336,10 +360,15 @@ in one Sentry org, one triage surface.
   three `mobile_bridge_*` stores, `asana_credential`, plus `errno` and `syscall` tags when the
   error carries them) - send the real error to Sentry so hidden issues
   are diagnosable, not just counted. The guarded write is the one exception to "the real error".
-  Node writes the paths a syscall touched into an fs error's message, and the home-directory
-  redaction cannot reach a project on another drive (Sentry DESKTOP-1Z). So it sends a copy whose
-  message is built from the errno and syscall (`EPERM: rename failed`), with the original frames
-  and no `path` or `dest`. ENOSPC arrives on that last path and is deliberately NOT
+  Node writes the paths a syscall touched into an fs error's message, and a project on another
+  drive reached Sentry whole that way (Sentry DESKTOP-1Z). A config file a guarded write targets
+  can also sit outside both the home directory and every project, such as a relocated config
+  directory on another drive. So it sends a copy whose message is built
+  from the errno and syscall (`EPERM: rename failed`), with the original frames and no `path` or
+  `dest`. A message that names a session directory or a worktree, such as a spawn's
+  `Cannot create session directory at <path>` on a full disk (Sentry DESKTOP-21), needs no such
+  copy, because `beforeSendEvent` redacts every registered project root (see "Initialization and
+  scrubbing" above). ENOSPC arrives on that last path and is deliberately NOT
   filtered: it is a host condition rather than a defect, but it is also the only evidence the
   user-facing toast fires at all, and the per-source latch already caps the volume at one event
   per outage. The `errno` tag is what makes muting it later a Sentry-UI change rather than a code
@@ -627,7 +656,8 @@ in one Sentry org, one triage surface.
   CLI (`sentry issue list`, `sentry issue view`, `sentry api`) and keeps the raw API endpoints as
   the fallback. Nothing rewrites that output on the way to the reader. Home paths are removed
   earlier: the app rewrites its own home directory in event strings from the first release that
-  includes `redact-event-paths.ts`, and Sentry's rule scrubs most stored fields (see "Native crash
+  includes `redact-event-paths.ts`, and every registered project root from the release that carries
+  the DESKTOP-21 fix, and Sentry's rule scrubs most stored fields (see "Native crash
   fields" above). An event stored before either change, and any frame `package`, can still carry
   one.
 

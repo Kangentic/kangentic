@@ -8,16 +8,199 @@
  * name. The cases below use the field names where real leaks were found, a Windows home with both
  * separators and a POSIX home, and the failure modes a privacy rewrite must not have: dropping an
  * event, throwing, or rewriting someone else's path.
+ *
+ * It also rewrites every registered project root to `[project]`. A spawn that failed on a full
+ * disk sent a session directory under a project on another drive to Sentry whole, issue title
+ * included (DESKTOP-21), because the home rewrite never reached that drive. The cases pass the
+ * roots and the case flag explicitly, so the Windows cases run on Linux CI too.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { ErrorEvent } from '@sentry/electron/main';
-import { redactEventHomeDirectory } from '../../src/main/analytics/redact-event-paths';
+import { PROJECT_ROOT_PLACEHOLDER, redactEventPaths } from '../../src/main/analytics/redact-event-paths';
+import { pathPattern } from '../../src/main/utility-process/stderr-tail';
 
 const WINDOWS_HOME = 'C:\\Users\\dev';
 const POSIX_HOME = '/home/dev';
+const OTHER_DRIVE_ROOT = 'D:\\work\\client-app';
+const POSIX_PROJECT_ROOT = '/mnt/data/client-app';
 
-describe('redactEventHomeDirectory: where it looks', () => {
+/** A spawn failure shaped like DESKTOP-21's, with the project root in the three fields the issue
+ *  carried it in: the exception value, the message, and a context. */
+function spawnFailureEvent(exceptionPath: string, messagePath: string, contextPath: string): ErrorEvent {
+  return {
+    exception: {
+      values: [{ type: 'Error', value: `Cannot create session directory at ${exceptionPath}: ENOSPC` }],
+    },
+    message: `mkdir failed for ${messagePath}`,
+    contexts: { spawn: { cwd: contextPath } },
+  };
+}
+
+function fieldsOf(event: ErrorEvent): string[] {
+  return [
+    event.exception?.values?.[0].value ?? '',
+    event.message ?? '',
+    String((event.contexts?.spawn as { cwd: string }).cwd),
+  ];
+}
+
+describe('redactEventPaths: project roots (DESKTOP-21)', () => {
+  it('removes a project root on another drive from the exception value, the message and a context', () => {
+    const event = spawnFailureEvent(
+      'D:\\work\\client-app\\.kangentic\\sessions\\abc',
+      'file:///D:/work/client-app/.kangentic/sessions/abc',
+      'D:/work/client-app',
+    );
+    redactEventPaths(event, WINDOWS_HOME, false, [OTHER_DRIVE_ROOT]);
+    for (const field of fieldsOf(event)) {
+      expect(field).not.toMatch(/client-app/i);
+      expect(field).toContain(PROJECT_ROOT_PLACEHOLDER);
+    }
+    expect(event.exception?.values?.[0].value).toBe(
+      'Cannot create session directory at [project]\\.kangentic\\sessions\\abc: ENOSPC',
+    );
+    expect(event.message).toBe('mkdir failed for file:///[project]/.kangentic/sessions/abc');
+  });
+
+  it('matches a case-changed root when the filesystem is case-insensitive, and only then', () => {
+    const insensitive = spawnFailureEvent('d:\\WORK\\Client-App\\x', 'D:/Work/CLIENT-APP/y', 'd:\\work\\client-APP');
+    redactEventPaths(insensitive, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
+    for (const field of fieldsOf(insensitive)) expect(field).not.toMatch(/client-app/i);
+
+    const sensitive = spawnFailureEvent('d:\\WORK\\Client-App\\x', 'D:/Work/CLIENT-APP/y', 'd:\\work\\client-APP');
+    redactEventPaths(sensitive, WINDOWS_HOME, false, [OTHER_DRIVE_ROOT]);
+    expect(sensitive.message).toBe('mkdir failed for D:/Work/CLIENT-APP/y');
+  });
+
+  it('removes a POSIX project root', () => {
+    const event = spawnFailureEvent(
+      '/mnt/data/client-app/.kangentic/sessions/abc',
+      '/mnt/data/client-app/.kangentic/worktrees/12',
+      '/mnt/data/client-app',
+    );
+    redactEventPaths(event, POSIX_HOME, false, [POSIX_PROJECT_ROOT]);
+    for (const field of fieldsOf(event)) expect(field).not.toContain('client-app');
+    expect(event.message).toBe('mkdir failed for [project]/.kangentic/worktrees/12');
+  });
+
+  it('removes the folder name of a project under the home directory instead of leaving ~/projects/<name>', () => {
+    const event: ErrorEvent = { message: 'failed in C:\\Users\\dev\\projects\\client-app\\.kangentic and C:\\Users\\dev\\other' };
+    redactEventPaths(event, WINDOWS_HOME, true, ['C:\\Users\\dev\\projects\\client-app']);
+    expect(event.message).toBe('failed in [project]\\.kangentic and ~\\other');
+  });
+
+  it('removes the folder name from text already home-redacted at capture, such as a worker stderr tail', () => {
+    // StderrTail.snapshot rewrites home to `~` before the event is built, so the absolute root
+    // pattern finds nothing to match by the time this pass runs.
+    const event: ErrorEvent = {
+      contexts: { utility_process: { stderr: 'at ~\\Projects\\Client-App\\x.js and ~/projects/client-app-old/y.js' } },
+    };
+    redactEventPaths(event, WINDOWS_HOME, true, ['C:\\Users\\dev\\projects\\client-app']);
+    expect((event.contexts?.utility_process as { stderr: string }).stderr).toBe(
+      'at [project]\\x.js and ~/projects/client-app-old/y.js',
+    );
+  });
+
+  it('matches the longest root first, so a project nested in another keeps no outer folder name', () => {
+    const event: ErrorEvent = { message: 'D:\\work\\client-app\\.kangentic\\worktrees\\7\\x' };
+    redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT, 'D:\\work\\client-app\\.kangentic\\worktrees\\7']);
+    expect(event.message).toBe('[project]\\x');
+  });
+
+  it('leaves a sibling folder that merely starts with the root alone', () => {
+    const event: ErrorEvent = { message: 'D:\\work\\client-app-old\\x and D:\\work\\client-app\\y' };
+    redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
+    expect(event.message).toBe('D:\\work\\client-app-old\\x and [project]\\y');
+  });
+
+  it('skips a root at or above the home directory, so the username still goes through the home rewrite', () => {
+    const event: ErrorEvent = { message: 'C:\\Users\\dev\\x and C:\\Users\\shared\\y' };
+    redactEventPaths(event, WINDOWS_HOME, true, ['C:\\Users', 'C:\\Users\\dev']);
+    expect(event.message).toBe('~\\x and C:\\Users\\shared\\y');
+  });
+
+  it('skips a drive root, which would otherwise rewrite every path on the drive', () => {
+    const event: ErrorEvent = { message: 'D:\\anything\\x and /var/log/y' };
+    redactEventPaths(event, WINDOWS_HOME, true, ['D:\\', '/', '']);
+    expect(event.message).toBe('D:\\anything\\x and /var/log/y');
+  });
+
+  it('removes a percent-encoded spelling of a root with a space and an accent in it', () => {
+    const root = 'D:\\Client Work\\Soci\u00e9t\u00e9';
+    const event = spawnFailureEvent(
+      'file:///D:/Client%20Work/Soci%C3%A9t%C3%A9/a.ts',
+      'file:///d%3A/Client%20Work/Soci%c3%a9t%c3%a9/b.ts',
+      '?path=D%3A%5CClient%20Work%5CSoci%C3%A9t%C3%A9%5Cc',
+    );
+    redactEventPaths(event, WINDOWS_HOME, true, [root]);
+    for (const field of fieldsOf(event)) {
+      expect(field).not.toMatch(/Client|Soci/i);
+      expect(field).toContain(PROJECT_ROOT_PLACEHOLDER);
+    }
+    expect(event.message).toBe('mkdir failed for file:///[project]/b.ts');
+  });
+
+  // `!`, `'`, `(` and `)` are raw in `encodeURIComponent` but `URLSearchParams` writes them
+  // `%21`, `%27`, `%28` and `%29`, and a space as `+`. Each spelling is a different string.
+  it('removes a root holding !\'() in its raw, encodeURIComponent and URLSearchParams spellings', () => {
+    const root = "D:\\Client (1)\\App's!";
+    const formEncoded = new URLSearchParams({ path: root }).toString();
+    expect(formEncoded).toBe('path=D%3A%5CClient+%281%29%5CApp%27s%21');
+    expect(() => pathPattern(root, true)).not.toThrow();
+
+    const event: ErrorEvent = {
+      message: "failed in D:\\Client (1)\\App's!\\x",
+      exception: { values: [{ type: 'Error', value: `bad ${encodeURIComponent(root)}%5Cx` }] },
+      contexts: { spawn: { cwd: `${formEncoded}&next=1` } },
+    };
+    redactEventPaths(event, WINDOWS_HOME, true, [root]);
+    expect(event.message).toBe('failed in [project]\\x');
+    expect(event.exception?.values?.[0].value).toBe('bad [project]%5Cx');
+    expect((event.contexts?.spawn as { cwd: string }).cwd).toBe('path=[project]&next=1');
+  });
+
+  it('removes a root whose * and ~ are percent-encoded', () => {
+    const root = 'D:\\Odd*Name~1';
+    const event: ErrorEvent = {
+      message: 'D:\\Odd*Name~1\\x and D%3A%5COdd%2AName%7E1%5Cy and d%3a%5cODD%2aNAME%7e1%5cz',
+    };
+    redactEventPaths(event, WINDOWS_HOME, true, [root]);
+    expect(event.message).toBe('[project]\\x and [project]%5Cy and [project]%5cz');
+  });
+
+  // A lone surrogate has no UTF-8 encoding, so it matches only as written. Encoded as UTF-8 it
+  // would become U+FFFD (`%EF%BF%BD`), which would match any replacement character.
+  it('redacts a root holding a lone surrogate as written only, and still redacts the rest of the event', () => {
+    const root = 'D:\\work\\a\uD800b';
+    expect(() => pathPattern(root, true)).not.toThrow();
+    expect(pathPattern(root, true)).toBeInstanceOf(RegExp);
+
+    const event: ErrorEvent = {
+      message: `failed in ${root}\\x`,
+      tags: { source: 'C:\\Users\\dev\\y', replacement: 'D%3A%5Cwork%5Ca%EF%BF%BDb%5Cx' },
+    };
+    redactEventPaths(event, WINDOWS_HOME, true, [root]);
+    expect(event.message).toBe('failed in [project]\\x');
+    expect(event.tags?.source).toBe('~\\y');
+    expect(event.tags?.replacement).toBe('D%3A%5Cwork%5Ca%EF%BF%BDb%5Cx');
+  });
+
+  it('removes a one-segment POSIX root, which is not a drive root', () => {
+    const event: ErrorEvent = { message: '/client-app/x and /client-app-old/y and /var/log/z' };
+    redactEventPaths(event, POSIX_HOME, false, ['/', '/client-app']);
+    expect(event.message).toBe('[project]/x and /client-app-old/y and /var/log/z');
+  });
+
+  it('is idempotent across both rewrites', () => {
+    const event: ErrorEvent = { message: 'D:\\work\\client-app\\x and C:\\Users\\dev\\y' };
+    redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
+    redactEventPaths(event, WINDOWS_HOME, true, [OTHER_DRIVE_ROOT]);
+    expect(event.message).toBe('[project]\\x and ~\\y');
+  });
+});
+
+describe('redactEventPaths: where it looks', () => {
   it('rewrites an exception value, the field a real production leak sat in', () => {
     const event: ErrorEvent = {
       exception: {
@@ -29,7 +212,7 @@ describe('redactEventHomeDirectory: where it looks', () => {
         ],
       },
     };
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(event.exception?.values?.[0].value).toBe("Illegal value at file:///~/AppData/Local/x.js:1 and '~\\y.js'");
   });
 
@@ -42,7 +225,7 @@ describe('redactEventHomeDirectory: where it looks', () => {
       breadcrumbs: [{ message: 'opened C:\\Users\\dev\\p', data: { cwd: 'C:\\Users\\dev' } }],
       exception: { values: [{ stacktrace: { frames: [{ abs_path: 'C:\\Users\\dev\\proj\\a.js' }] } }] },
     } as unknown as ErrorEvent;
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(JSON.stringify(event)).not.toMatch(/Users[\\/]+dev/i);
     expect(event.tags?.source).toBe('~\\tag');
     expect((event.extra as { nested: { deep: unknown[] } }).nested.deep).toEqual(['~\\a', 3, null]);
@@ -63,7 +246,7 @@ describe('redactEventHomeDirectory: where it looks', () => {
         },
       },
     } as unknown as ErrorEvent;
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     const annotation = (event.contexts?.electron as Record<string, string>)['crashpad.LOG_FATAL'];
     expect(annotation).not.toMatch(/Users[\\/]+dev/i);
     expect(annotation).toContain('~\\AppData\\Local\\Programs\\Kangentic\\icudtl.dat');
@@ -71,34 +254,34 @@ describe('redactEventHomeDirectory: where it looks', () => {
 
   it('rewrites a POSIX home directory', () => {
     const event: ErrorEvent = { message: 'EACCES: open /home/dev/.config/kangentic/config.json' };
-    redactEventHomeDirectory(event, POSIX_HOME, false);
+    redactEventPaths(event, POSIX_HOME, false);
     expect(event.message).toBe('EACCES: open ~/.config/kangentic/config.json');
   });
 });
 
-describe('redactEventHomeDirectory: what it leaves alone', () => {
+describe('redactEventPaths: what it leaves alone', () => {
   it('does not touch another user, or a longer name that merely starts with the home path', () => {
     const event: ErrorEvent = { message: '/home/developer/x and /home/other/y and /home/dev/z' };
-    redactEventHomeDirectory(event, POSIX_HOME, false);
+    redactEventPaths(event, POSIX_HOME, false);
     expect(event.message).toBe('/home/developer/x and /home/other/y and ~/z');
   });
 
   it('matches Windows letter case only when told the filesystem is case-insensitive', () => {
     const sensitive: ErrorEvent = { message: 'c:\\users\\dev\\x' };
-    redactEventHomeDirectory(sensitive, WINDOWS_HOME, false);
+    redactEventPaths(sensitive, WINDOWS_HOME, false);
     expect(sensitive.message).toBe('c:\\users\\dev\\x');
 
     const insensitive: ErrorEvent = { message: 'c:\\users\\dev\\x' };
-    redactEventHomeDirectory(insensitive, WINDOWS_HOME, true);
+    redactEventPaths(insensitive, WINDOWS_HOME, true);
     expect(insensitive.message).toBe('~\\x');
   });
 
   it('leaves non-string values, keys and an empty home directory alone', () => {
     const event = { message: 'C:\\Users\\dev', level: 'error', extra: { count: 4, flag: true, nothing: null } } as unknown as ErrorEvent;
-    redactEventHomeDirectory(event, '', true);
+    redactEventPaths(event, '', true);
     expect(event.message).toBe('C:\\Users\\dev');
 
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(event.level).toBe('error');
     expect(event.extra).toEqual({ count: 4, flag: true, nothing: null });
   });
@@ -111,7 +294,7 @@ describe('redactEventHomeDirectory: what it leaves alone', () => {
     const view = new Uint8Array([1, 2, 3]);
     const event = { message: 'C:\\Users\\dev\\y', extra: { when, buffer, view } } as unknown as ErrorEvent;
 
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
 
     const extra = event.extra as { when: Date; buffer: Buffer; view: Uint8Array };
     expect(event.message).toBe('~\\y');
@@ -126,23 +309,23 @@ describe('redactEventHomeDirectory: what it leaves alone', () => {
 
   it('is idempotent, so the breadcrumb policy and this pass can both run', () => {
     const event: ErrorEvent = { message: 'C:\\Users\\dev\\x' };
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(event.message).toBe('~\\x');
   });
 });
 
-describe('redactEventHomeDirectory: it never costs the event', () => {
+describe('redactEventPaths: it never costs the event', () => {
   it('mutates and returns the same event object', () => {
     const event: ErrorEvent = { message: 'C:\\Users\\dev\\x' };
-    expect(redactEventHomeDirectory(event, WINDOWS_HOME, true)).toBe(event);
+    expect(redactEventPaths(event, WINDOWS_HOME, true)).toBe(event);
   });
 
   it('survives a cyclic structure instead of overflowing the stack', () => {
     const cyclic: Record<string, unknown> = { text: 'C:\\Users\\dev\\x' };
     cyclic.self = cyclic;
     const event = { message: 'C:\\Users\\dev\\y', extra: cyclic } as unknown as ErrorEvent;
-    expect(() => redactEventHomeDirectory(event, WINDOWS_HOME, true)).not.toThrow();
+    expect(() => redactEventPaths(event, WINDOWS_HOME, true)).not.toThrow();
     expect(event.message).toBe('~\\y');
   });
 
@@ -161,11 +344,11 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
     }
 
     const shallow = eventWithTextAtDepth(10);
-    expect(() => redactEventHomeDirectory(shallow.event, WINDOWS_HOME, true)).not.toThrow();
+    expect(() => redactEventPaths(shallow.event, WINDOWS_HOME, true)).not.toThrow();
     expect(shallow.readText()).toBe('~\\x');
 
     const tooDeep = eventWithTextAtDepth(40);
-    expect(() => redactEventHomeDirectory(tooDeep.event, WINDOWS_HOME, true)).not.toThrow();
+    expect(() => redactEventPaths(tooDeep.event, WINDOWS_HOME, true)).not.toThrow();
     expect(tooDeep.readText()).toBe('C:\\Users\\dev\\x');
   });
 
@@ -178,8 +361,8 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
       },
     });
     const event = { message: 'C:\\Users\\dev\\y', extra: hostile } as unknown as ErrorEvent;
-    expect(() => redactEventHomeDirectory(event, WINDOWS_HOME, true)).not.toThrow();
-    expect(redactEventHomeDirectory(event, WINDOWS_HOME, true)).toBe(event);
+    expect(() => redactEventPaths(event, WINDOWS_HOME, true)).not.toThrow();
+    expect(redactEventPaths(event, WINDOWS_HOME, true)).toBe(event);
   });
 
   it('keeps redacting later fields after a frozen object and a throwing getter', () => {
@@ -198,7 +381,7 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
       message: 'C:\\Users\\dev\\y',
       tags: { source: 'C:\\Users\\dev\\z' },
     } as unknown as ErrorEvent;
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(event.message).toBe('~\\y');
     expect(event.tags?.source).toBe('~\\z');
     expect(event.extra).toEqual({ note: 'hello', nested: { deep: 'world' } });
@@ -207,7 +390,7 @@ describe('redactEventHomeDirectory: it never costs the event', () => {
   it('does not write back a value that did not change, so a read-only object is not an error', () => {
     const frozenExtra = Object.freeze({ note: 'nothing to redact here' });
     const event = { extra: frozenExtra, message: 'C:\\Users\\dev\\x' } as unknown as ErrorEvent;
-    redactEventHomeDirectory(event, WINDOWS_HOME, true);
+    redactEventPaths(event, WINDOWS_HOME, true);
     expect(event.extra).toBe(frozenExtra);
     expect(event.message).toBe('~\\x');
   });

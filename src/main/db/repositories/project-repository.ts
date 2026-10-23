@@ -3,11 +3,26 @@ import { getGlobalDb } from '../database';
 import type { Project, ProjectCreateInput } from '../../../shared/types';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
+import { softly } from '../soft-db';
+import { rememberProjectRoots } from '../../shared/project-roots';
 
 export class ProjectRepository {
   list(): Project[] {
     const db = getGlobalDb();
     return db.prepare('SELECT * FROM projects ORDER BY position ASC').all() as Project[];
+  }
+
+  /**
+   * Teach Sentry's path redaction every registered project root
+   * (src/main/shared/project-roots.ts). Boot calls this once, and `create` and
+   * `updatePath` keep the ledger current after that. A failed read seeds
+   * nothing rather than throwing, because the redaction must not cost the boot.
+   */
+  rememberRegisteredRoots(): void {
+    const projects = softly<Project[]>('rememberRegisteredRoots', [], () => this.list(), {
+      note: 'Sentry path redaction starts without the registered project roots.',
+    });
+    rememberProjectRoots(projects.map((project) => project.path));
   }
 
   getById(id: string): Project | undefined {
@@ -16,6 +31,10 @@ export class ProjectRepository {
   }
 
   create(input: ProjectCreateInput): Project {
+    // Every new project path passes here, so this is where Sentry's path
+    // redaction learns it (src/main/shared/project-roots.ts), before anything
+    // can fail and report it.
+    rememberProjectRoots([input.path]);
     const db = getGlobalDb();
     const now = new Date().toISOString();
     const id = uuidv4();
@@ -84,6 +103,8 @@ export class ProjectRepository {
 
   /** Re-point a project at a new folder on disk. Tasks/board data are keyed by project id and are unaffected. */
   updatePath(id: string, newPath: string): Project {
+    // The old root stays known too: the ledger is add-only for the run.
+    rememberProjectRoots([newPath]);
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET path = ? WHERE id = ?').run(newPath, id);
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project;
