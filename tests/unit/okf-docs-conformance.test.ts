@@ -1,15 +1,17 @@
 /**
- * docs/ holds Open Knowledge Format v0.2 concepts (task 889): a folder with an `index.md` is a
- * concept folder, every markdown file in it carries frontmatter, and its index lists each concept
- * with the concept's own description. The rest of docs/ is still flat markdown with no frontmatter,
- * because the pilot split did not save an agent any reading (docs/log.md), so the rollout stopped.
+ * docs/ is one Open Knowledge Format v0.2 bundle (task 889): every folder holding markdown has an
+ * `index.md`, every other markdown file is a concept with frontmatter, and each index lists its
+ * concepts with their own descriptions and links its subfolders' indexes, so an agent can walk from
+ * docs/index.md to any concept by reading descriptions alone (docs/research/okf-knowledge-format.md).
  *
  * Checked here, through the same helpers /sync-docs uses (scripts/docs-bundle.mjs):
  *
- * 1. Every file in a concept folder has frontmatter, and any frontmatter in docs/ has a `type` from
- *    the closed vocabulary, a title, a one-line description, and `sources:` paths that exist.
- * 2. Every index.md lists each sibling concept, with its exact description, and carries no
- *    frontmatter but `okf_version`.
+ * 1. Every concept has frontmatter with a `type` from the closed vocabulary, a title, a one-line
+ *    description, and `sources:` paths that exist. No two concepts share a description: it is the
+ *    routing key an agent picks a concept by, so two that read the same cannot be told apart.
+ * 2. Every folder under docs/ that holds markdown has an index.md. Each index lists each sibling
+ *    concept with its exact description and links each subfolder's index. Only docs/index.md
+ *    carries frontmatter, and it is exactly `okf_version: "0.2"`.
  * 3. Every relative link in docs/ resolves to a file, and a fragment into a markdown file matches one
  *    of its headings by GitHub's anchor rules.
  * 4. No file in docs/ is named like an agent's instruction file. On a case-insensitive filesystem
@@ -57,19 +59,57 @@ function readRepo(repoPath: string): string {
 }
 
 const docsFiles: string[] = listDocsMarkdown(DOCS);
+/** Every folder under docs/ that holds markdown, docs/ itself included. */
+const markdownFolders = [...new Set(docsFiles.map((file) => path.posix.dirname(file)))];
 const conceptFolders = [...new Set(docsFiles.filter((file) => path.posix.basename(file) === 'index.md').map((file) => path.posix.dirname(file)))];
+const concepts = docsFiles.filter((file) => !RESERVED_NAMES.has(path.posix.basename(file)));
 
 describe('docs concept folders', () => {
-  it('finds the docs and at least one concept folder (not vacuous)', () => {
-    expect(docsFiles.length).toBeGreaterThan(20);
+  it('finds the docs and the bundle root (not vacuous)', () => {
+    expect(docsFiles.length).toBeGreaterThan(100);
+    expect(conceptFolders).toContain('docs');
     expect(conceptFolders).toContain('docs/integrations/agents');
   });
 
-  it('gives every file in a concept folder frontmatter', () => {
-    const missing = docsFiles
-      .filter((file) => conceptFolders.includes(path.posix.dirname(file)) && !RESERVED_NAMES.has(path.posix.basename(file)))
-      .filter((file) => parseFrontmatter(readRepo(file)) === null);
-    expect(missing, 'a concept in a folder with an index.md needs frontmatter').toEqual([]);
+  it('gives every folder that holds markdown an index.md', () => {
+    const missing = markdownFolders.filter((folder) => !conceptFolders.includes(folder));
+    expect(missing, 'add an index.md listing the folder\'s concepts').toEqual([]);
+  });
+
+  it('gives every concept frontmatter', () => {
+    const missing = concepts.filter((file) => parseFrontmatter(readRepo(file)) === null);
+    expect(missing, 'every docs markdown file but index.md and log.md is a concept and needs frontmatter').toEqual([]);
+  });
+
+  it('gives no two concepts the same description', () => {
+    const byDescription = new Map<string, string[]>();
+    for (const file of concepts) {
+      const description = (parseFrontmatter(readRepo(file)) as Frontmatter | null)?.description;
+      if (!description) continue;
+      byDescription.set(description, [...(byDescription.get(description) ?? []), file]);
+    }
+    const shared = [...byDescription.values()].filter((files) => files.length > 1).map((files) => files.join(' and '));
+    expect(shared, 'a description is how an agent picks a concept; say what only this one holds').toEqual([]);
+  });
+
+  it('puts okf_version on the root index and nowhere else', () => {
+    expect(parseFrontmatter(readRepo('docs/index.md'))).toEqual({ okf_version: '0.2' });
+    const elsewhere = docsFiles
+      .filter((file) => file !== 'docs/index.md' && path.posix.basename(file) === 'index.md')
+      .filter((file) => parseFrontmatter(readRepo(file)) !== null);
+    expect(elsewhere, 'only docs/index.md carries frontmatter').toEqual([]);
+  });
+
+  it('links each subfolder\'s index from its parent\'s index', () => {
+    const problems: string[] = [];
+    for (const folder of conceptFolders.filter((entry) => entry !== 'docs')) {
+      const parentIndex = `${path.posix.dirname(folder)}/index.md`;
+      if (!fs.existsSync(path.join(ROOT, parentIndex))) continue;
+      const target = `${path.posix.basename(folder)}/index.md`;
+      const linked = linksOf(readRepo(parentIndex)).some((link: { path: string }) => link.path === target);
+      if (!linked) problems.push(`${parentIndex} does not link ${target}`);
+    }
+    expect(problems).toEqual([]);
   });
 
   it('gives all frontmatter a known type, a title, a one-line description, and sources that exist', () => {
@@ -94,11 +134,6 @@ describe('docs concept folders', () => {
     for (const folder of conceptFolders) {
       const indexPath = `${folder}/index.md`;
       const indexText = readRepo(indexPath);
-      const indexFrontmatter = parseFrontmatter(indexText) as Frontmatter | null;
-      if (indexFrontmatter !== null) {
-        const extra = Object.keys(indexFrontmatter).filter((key) => key !== 'okf_version');
-        if (extra.length > 0) problems.push(`${indexPath}: an index.md may carry only okf_version, not ${extra.join(', ')}`);
-      }
       const entries = new Map<string, string>();
       for (const line of indexText.split(/\r?\n/)) {
         // `* [Title](file.md) - description`: the link's file (no fragment) and the description after it.

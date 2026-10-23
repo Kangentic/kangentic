@@ -12,7 +12,7 @@ sources:
 ---
 # Settings panel
 
-The panel uses a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. It opens from the titlebar gear icon or the gear icon on each project row in the sidebar, and a project switcher dropdown in its header switches between projects. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter. The [user guide's Settings section](../user-guide.md#settings) lists every tab with its group and tier.
+The panel uses a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. It opens from the titlebar gear icon or the gear icon on each project row in the sidebar, and a project switcher dropdown in its header switches between projects. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter. The [user guide's Settings section](../user-guide/settings.md) lists every tab with its group and tier.
 
 ## Project and system tabs
 

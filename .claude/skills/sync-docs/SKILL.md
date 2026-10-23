@@ -394,7 +394,7 @@ Scan for undocumented features and determine where to document them:
 2. List `feat:` and `feat!:` commits since that tag: `git log <tag>..HEAD --oneline --grep="^feat"` (use `--grep` flag, not a pipe)
 3. For each feature commit:
    - Extract the feature description from the commit message
-   - Check if it appears in `docs/user-guide.md` or `docs/overview.md`
+   - Check if it appears in `docs/user-guide/index.md` or `docs/user-guide/overview.md`
 4. For each undocumented feature, determine placement:
    - Read the source files touched by the commit to understand the feature scope
    - Use the Source-to-Doc Mapping above to identify the target doc

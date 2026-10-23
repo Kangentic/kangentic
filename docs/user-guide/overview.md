@@ -1,4 +1,10 @@
-# Kangentic - Product Overview
+---
+type: Guide
+title: Product overview
+description: What Kangentic is and is not, the problem it solves, each feature in a paragraph (multi-agent handoff, backlog import, search palette, worktrees, session persistence, themes), the six-step board workflow, the tech stack and the target audience.
+tags: [overview, features, product]
+---
+# Product overview
 
 ## What is Kangentic?
 
@@ -20,11 +26,11 @@ Orchestrate Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Kimi
 
 ### Visual Agent Orchestration
 
-Drag a task card into an active column to spawn an agent. Drag it to Done to terminate the session. Drag it back to To Do to suspend. Every column transition is an orchestration event.
+Drag a task card into an active column to spawn an agent. Drag it to Done to complete it: the session is suspended with its conversation kept, so an unarchived task resumes where it left off. Drag it back to To Do to reset it: the session, its history and the worktree are removed. Every column transition is an orchestration event.
 
 ### Backlog & Import
 
-Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, and Asana with their titles, descriptions, labels, and images. Azure DevOps and Asana also bring file attachments, and Azure DevOps brings comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](user-guide.md#backlog) for details.
+Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, and Asana with their titles, descriptions, labels, and images. Azure DevOps and Asana also bring file attachments, and Azure DevOps brings comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](backlog.md#backlog) for details.
 
 ### Board Filtering
 
@@ -93,7 +99,7 @@ Twelve built-in themes, picked from a swatch grid that shows each one in its own
 3. **Drag a card** into an active column. Kangentic spawns the column's agent CLI, passes it the task description as a prompt, and begins streaming terminal output.
 4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance. Filter by priority or label to focus on what matters.
 5. **Drag the card forward** through your workflow. Each transition can trigger additional actions - commands, scripts, webhooks.
-6. **Drag to Done** to complete and terminate the session, or back to To Do to suspend it for later.
+6. **Drag to Done** to complete the task and suspend its session, or back to To Do to reset it and start over.
 
 ## What Kangentic Is Not
 

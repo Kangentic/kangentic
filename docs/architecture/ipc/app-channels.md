@@ -199,7 +199,7 @@ Detach a registered UI surface (usage stats, git changes, a single changed file'
 The warning toast reads "Low on memory" over the commit headroom left, and its Settings button opens
 the Behavior tab, where Max Concurrent Sessions is set. The user has two levers: a larger initial
 page file, and fewer agents at once. Where commit goes per agent, and the page-file steps, are in
-[user-guide.md](../../user-guide.md#low-memory-warning-windows).
+[user-guide.md](../../user-guide/troubleshooting.md#low-memory-warning-windows).
 
 ## GPU health (2 channels)
 | Channel | Pattern | Purpose |

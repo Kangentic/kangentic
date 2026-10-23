@@ -120,7 +120,7 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
     // not it is touched), so RAM can read half free while this fires. A user
     // has two levers: the page file that sets the limit, and how many agents
     // run at once. The button opens the tab holding the second; the page-file
-    // steps are in docs/user-guide.md (Low memory warning).
+    // steps are in docs/user-guide/troubleshooting.md (Low memory warning).
     //
     // `since` is the sample's time, so a toast left up reads its age instead
     // of quoting a dip that may be long past.

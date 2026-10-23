@@ -1,8 +1,20 @@
+---
+type: Guide
+title: Installation
+description: Installing Kangentic with npx kangentic or a native installer (NSIS, DMG, deb, rpm), prerequisites, the Intel Mac Knowledge Graph gap, SmartScreen, the Windows install-folder icacls grant for a launch that closes at once, macOS Gatekeeper, uninstalling, and --data-dir or KANGENTIC_DATA_DIR.
+tags: [install, npx, packaging, uninstall]
+sources:
+  - resource: packages/launcher/bin/kangentic.js
+  - resource: electron-builder.yml
+  - resource: src/main/config/paths.ts
+    title: "--data-dir and KANGENTIC_DATA_DIR resolution"
+  - resource: src/shared/embedding-runtime-gaps.json
+---
 # Installation
 
 ## Prerequisites
 
-- **At least one agent CLI**, such as Claude Code, Codex CLI, or Gemini CLI, installed, signed in, and on your PATH. The app opens without one but needs one to run tasks. See [supported agents](../README.md#supported-agents).
+- **At least one agent CLI**, such as Claude Code, Codex CLI, or Gemini CLI, installed, signed in, and on your PATH. The app opens without one but needs one to run tasks. See [supported agents](../../README.md#supported-agents).
 - **Node.js 20 or later** to run `npx kangentic`. The app itself does not need Node.
 - **Git 2.26+** -- required for worktree support. Run `git --version` to check.
 - **macOS 13 (Ventura) or later** on a Mac. Electron 44 and later do not start on macOS 12.
@@ -94,7 +106,7 @@ instead of being installed.
 
 Linux has built-in auto-updates: the app downloads the new deb/rpm and installs it when you click
 "Restart to update", asking for your password once. Unlike Windows and macOS there is no
-install-on-quit. See [Linux auto-update](releases/deployment.md#linux-auto-update).
+install-on-quit. See [Linux auto-update](../releases/deployment.md#linux-auto-update).
 
 ### WSL Note
 
