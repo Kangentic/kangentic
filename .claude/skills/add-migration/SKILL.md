@@ -101,7 +101,7 @@ for (const row of rows) {
    - Fix any issues the auditor reports before finishing.
 
 9. **Remind about docs:**
-   - Suggest running `/sync-docs` to update `docs/database/index.md`
+   - Suggest running `/sync-docs` to update `docs/database/migrations.md` and the table concept the migration changed (`board-tables.md`, `session-tables.md` or `knowledge-graph-tables.md`)
 
 ## Checklist
 

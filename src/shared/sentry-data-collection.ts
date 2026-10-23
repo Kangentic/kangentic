@@ -24,7 +24,7 @@ import type { BrowserOptions } from '@sentry/electron/renderer';
  *
  * The type import is erased at build, so neither bundle pulls in an SDK through
  * this module; it is here so a misspelled or removed field fails typecheck.
- * docs/telemetry/error-reporting.md ("Error Reporting") is the prose.
+ * docs/telemetry/error-reporting.md ("Initialization and scrubbing") is the prose.
  */
 export const SENTRY_DATA_COLLECTION: NonNullable<BrowserOptions['dataCollection']> = {
   userInfo: false,

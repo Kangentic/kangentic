@@ -9,7 +9,7 @@
  * task's tag AND works inside the task's directories, each translated with
  * `wslpath -u` inside the distro. It does not apply the shared-subtree,
  * visible-app or tmux rules; a WSL agent leaves those rarely, and the gaps are
- * documented in docs/architecture/worktrees/index.md.
+ * documented in docs/architecture/worktrees/process-reaping.md.
  *
  * One `grep -z` per task finds the tagged processes, so a scan forks a few
  * processes rather than several per process in /proc (8 ms against 280 ms

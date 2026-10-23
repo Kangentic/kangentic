@@ -59,7 +59,7 @@
  *                       never written to or removed. Not a directory a live
  *                       agent session runs in: the probes then share that
  *                       session's transcript directory and its writes
- *                       contaminate the latency (docs/architecture/automations/command-injection.md)
+ *                       contaminate the latency (docs/architecture/automations/command-injection-measurements.md)
  */
 import fs from 'node:fs';
 import os from 'node:os';

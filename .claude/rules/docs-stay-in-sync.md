@@ -26,8 +26,8 @@ template variable), the docs that enumerate it must be updated to match.
 - But keep the relationship in mind, and run `/sync-docs` (or note the affected docs) when a
   change adds or removes an enumerable item.
 - The canonical mapping, anchor list, and workflow live in `.claude/skills/sync-docs/SKILL.md`.
-  Do not duplicate that list here; update it there. Every concept in `docs/` names its own
-  authority files in its `sources:` frontmatter, and `node scripts/docs-bundle.mjs sources <file>`
+  Do not duplicate that list here; update it there. Every concept in `docs/` that documents code
+  names its own authority files in its `sources:` frontmatter, and `node scripts/docs-bundle.mjs sources <file>`
   finds the concepts a changed file feeds. A source file no concept lists is a gap to fill in the
   concept that documents it.
 

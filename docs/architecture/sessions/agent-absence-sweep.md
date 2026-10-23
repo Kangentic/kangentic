@@ -249,8 +249,8 @@ fullscreen, and a user's own exported `CLAUDE_CODE_NO_FLICKER` or
 otherwise strip it with every inherited `CLAUDE_CODE_*` key). Inherited values are ignored when
 Kangentic itself runs inside a Claude session (`CLAUDECODE` set): they are that session's.
 
-So Claude on Windows is closed, never typed into (`consoleCloseIsGraceful`, see "SessionManager.kill()
-and the young-session grace"), and the Esc sequence is its exit sequence where a console cannot
+So Claude on Windows is closed, never typed into (`consoleCloseIsGraceful`, see [SessionManager.kill()
+and the young-session grace](suspend-and-cleanup.md#sessionmanagerkill-and-the-young-session-grace)), and the Esc sequence is its exit sequence where a console cannot
 be closed (below) and on macOS, which neither probe has measured.
 
 ### Asking the orphaned agent to exit
@@ -329,7 +329,7 @@ asks the session's adapter to read them (`AgentAdapter.describeStartupFailure`, 
 Claude) and raises `notifySpawnBlocked`'s "Agent did not start" notice when they name a failure. The
 rare direct PTY exit (the CLI was the root, or its shell ended with it) takes the same read from the
 exit listener when the exit is not intentional. Most resumes of a deleted conversation never get
-here: `assessResumeConversation` (above) starts them fresh before the spawn. This notice covers what
+here: `assessResumeConversation` ([Resume](resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead)) starts them fresh before the spawn. This notice covers what
 that check cannot prove (a conversation whose evidence is gone, a WSL path), and it stays a notice
 rather than a restart.
 

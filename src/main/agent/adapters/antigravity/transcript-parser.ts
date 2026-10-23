@@ -307,7 +307,7 @@ export function extractAntigravityUserTurn(line: string): UserTurnRecord | null 
  * window, the most recent record - the current submission's - wins.
  *
  * Gated on the measured submit-time flush (scripts/measure-injection-flush.mjs
- * per docs/architecture/automations/command-injection.md); only wired into getSubmissionVerifier when
+ * per docs/architecture/automations/command-injection-measurements.md); only wired into getSubmissionVerifier when
  * that measurement passed.
  */
 export function createAntigravityInjectionVerifier(

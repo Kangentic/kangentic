@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Settings
-description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Board, Task, Terminal, Behavior, Performance, Notifications, Dictation, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer)."
+description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer)."
 tags: [settings, tabs, git, notifications, dictation]
 sources:
   - resource: src/renderer/components/settings/settings-tabs.ts
@@ -123,7 +123,7 @@ The context bar is a status line displayed below the terminal showing session me
 | Launch Options | Agent-specific startup toggles (today Codex's "Disable ChatGPT Apps", which skips the optional cloud ChatGPT Apps connector that can hang startup). Shown only for agents that declare options. |
 | Permissions | Default permission mode for all sessions. Options vary by agent (e.g., Claude Code has Plan, Don't Ask, Default, Accept Edits, Auto, and Bypass; Aider has Interactive and Auto-Approve) |
 
-All permission modes are available in both the global App Settings dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent. Each column can override the project default agent via the Edit Column dialog. When a task moves between columns with different agents, a context handoff occurs automatically - see [Column Management](columns-and-automations.md) above.
+All permission modes are available in both the global App Settings dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent. Each column can override the project default agent via the Edit Column dialog. When a task moves between columns with different agents, a context handoff occurs automatically - see [Column Management](columns-and-automations.md).
 
 ## Git Settings
 

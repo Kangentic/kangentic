@@ -152,7 +152,7 @@ its `profiles[].columns` entries in the same edit.
   Write-back then serializes the real UUIDs for future reconciliation.
 - If `kangentic.json` is **unparseable or invalid**, the apply is skipped and the file is **left as
   it is**. The board loads from the database, a warning says why, and every write to the file is
-  skipped or refused until it is fixed (see the unreadable-file rules above). Fixing the file and
+  skipped or refused until it is fixed (see the unreadable-file rules at the end of [File Structure](#file-structure) below). Fixing the file and
   saving it applies it over whatever the database picked up meanwhile. Two exceptions write over
   a file that holds no board: an empty file, and the `"columns": []` stub a settings save creates
   on a project that had no `kangentic.json`.

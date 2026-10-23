@@ -58,7 +58,7 @@ the column's `permission_mode` is `plan`, and `mapRow` reads any other stored va
 task in a running workflow follows the workflow's `plan_approval` instead (see the `workflows`
 table below), and a task with `automations_disabled` set is always `manual`.
 
-Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `docs/architecture/sessions/resume.md` "Isolated Sessions"):
+Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Isolated Sessions](../architecture/sessions/spawn-flow.md#isolated-sessions-per-column-session-model)):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
 - `session_spawn_strategy`: `create_or_resume` (default, resume the target track's session or spawn one) or `always_spawn_new` (always spawn fresh on entry, retiring the prior session for that `(task, target)`). See `SessionSpawnStrategy`. The fresh-vs-resume pairing with `session_target` is applied by the writers, not by `resolveForceFresh`: this column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the resolver's context-aware fallback never evaluates for a stored row. The two INTERACTIVE writers, the Column Manager and the MCP `create_column` / `update_column` handlers, route through `snapSpawnStrategyToTarget`, which moves this to `always_spawn_new` when a column becomes `isolated` and back when it returns to `main`, in both cases only while it still sits at the outgoing track's default. The `kangentic.json` sync is the exception: `apply-config.ts` applies each key exactly as the file gives it, with no pairing. That is harmless for a file the app wrote, since `build-config.ts` emits both keys whenever either is non-default, but a HAND-EDITED `kangentic.json` naming only `sessionTarget: isolated` applies as `isolated` + `create_or_resume`, which resumes one long review instead of running a fresh pass per entry. Spell both keys out when editing that file by hand.
 
@@ -191,8 +191,8 @@ it is an MCP-only escape hatch, so a task may carry both a profile and its own a
 never implies override mode.
 
 `automations_disabled` (0/1, read as `Task.automations_disabled: boolean`) holds the task out of
-every column's automations: see [Transition Engine > Disabling automations for one
-task](transition-engine.md#disabling-automations-for-one-task). It is written by `create()` and
+every column's automations: see [Automation triggers > Disabling automations for one
+task](../architecture/automations/triggers.md#disabling-automations-for-one-task). It is written by `create()` and
 `update()`, and with no caller asking it is cleared only when the task joins a workflow
 (`setWorkflowMembership()`). `move()` and `unarchive()` never touch it, out of a `done` column
 too. A workflow task never carries it: `create()` and `update()` write 0 for one whatever the

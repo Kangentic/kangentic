@@ -49,7 +49,7 @@ in one Sentry org, one triage surface.
   message. Further scrubbing
   rules belong in the Sentry UI (Advanced Data Scrubbing), not in a
   `beforeSend` here. There are four exceptions, all done on the machine before anything is sent
-  rather than as Sentry rules, the same shape as the component-stack reduction above. The utility
+  rather than as Sentry rules, the same shape as the dropped React component stack in [app_error sources](usage-analytics.md#app_error-sources). The utility
   worker's stderr tail (below) is free text, not a stack frame, and Node's `Require stack:` lines print
   absolute install paths under the user's profile, so `src/main/utility-process/stderr-tail.ts`
   replaces the home directory with `~` before the text goes anywhere. A foreign process's crash
@@ -368,7 +368,7 @@ in one Sentry org, one triage surface.
   minimal reading like that took a multi-hour investigation to establish because the diagnosis
   lived only in the minidump's `chromium_stability_report`, not on the event proper). The main
   process samples `process.getSystemMemoryInfo()` every 60s and calls `Sentry.setContext` on the
-  ambient scope (not `beforeSend`, which is already `beforeSendEvent` below and has no
+  ambient scope (not `beforeSend`, which is already `beforeSendEvent` above and has no
   transaction for `setMeasurement` to hang on), so whatever event fires next - including a native
   crash - carries the freshest sample. `correctNativeCrashEvent` prunes `host_memory` under the
   same stale-dump condition as `app_memory`/`free_memory`, since a startup-found dump can otherwise
@@ -620,7 +620,7 @@ in one Sentry org, one triage surface.
 ## Investigating an issue
 
 - **Affected-install counts:** the same anonymous, non-reversible `clientId` documented under
-  "Unique Installs" is attached as the Sentry user id, so an issue's Users column means
+  [Unique Installs](usage-analytics.md#unique-installs) is attached as the Sentry user id, so an issue's Users column means
   "installs affected." It contains no personal data and shares the same kill switches.
 - **Investigating an issue:** the `/sentry` skill (`.claude/skills/sentry/SKILL.md`) teaches an
   agent to retrieve and diagnose issues from the org. It retrieves through Sentry's own `sentry`

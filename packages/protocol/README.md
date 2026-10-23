@@ -12,8 +12,9 @@ This package is the single source of truth for the desktop (`src/main/mobile-bri
 runs on Node (Electron main) and React Native (via the same pure-JS primitives), with no native
 module coupling.
 
-See `docs/integrations/mobile-bridge/index.md` in the main repository for the pairing ceremony, roster/revocation
-model, and the honest relay-metadata statement.
+See `docs/integrations/mobile-bridge/pairing-and-roster.md` in the main repository for the pairing ceremony and
+the roster/revocation model, and `docs/integrations/mobile-bridge/relay-transport.md` for the honest
+relay-metadata statement.
 
 ## Security
 

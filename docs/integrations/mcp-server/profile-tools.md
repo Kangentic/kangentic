@@ -99,7 +99,7 @@ On the ACTIVE project this reaches live sessions, exactly as the Board Manager's
 does: retuning `modelOverride` / `effortOverride` restarts the sessions of tasks riding the
 profile with the new flags, and retuning `autoSpawn` for a column spawns or suspends the tasks already
 sitting in it. A profile edit targeting a background project (via `project`) only writes the file;
-see the blast-radius note under `kangentic_update_column`.
+see the blast-radius note under [`kangentic_update_column`](column-tools.md#kangentic_update_column).
 
 ## kangentic_delete_board_profile
 

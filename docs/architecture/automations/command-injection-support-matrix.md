@@ -65,7 +65,7 @@ Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjec
 
 This is written for someone who already uses the agent in question - the numbers below could not be taken here for exactly the agents you may have installed. Do the steps in order; step 2 is the one that has actually caught bugs.
 
-**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the latency table above. The bar is the 4000ms delivery budget (five 400ms windows plus the 2000ms grace, from the first Enter), applied to the WORST observation.
+**1. Measure the CLI.** `node scripts/measure-injection-flush.mjs --agent <name>`, on a machine where that CLI is authenticated and responsive. Run `--agent claude` first as a control: Claude's verifier ships and works, so a harness that fails Claude is broken and no other verdict from it can be trusted. Record the short/long/slash numbers in the [Measured flush latency](command-injection-measurements.md#measured-flush-latency) table. The bar is the 4000ms delivery budget (five 400ms windows plus the 2000ms grace, from the first Enter), applied to the WORST observation.
 
 **2. Prove the adapter's own verifier in the app.** Create a task with `agent_override` set to that agent, move it into a column carrying an `auto_command`, and read the task's `auto_command_state` back out of the project DB. Expect `confirmed`. With the real CLI installed that is the whole of it, and it costs one ordinary turn.
 

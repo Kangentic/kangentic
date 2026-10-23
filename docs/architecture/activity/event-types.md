@@ -30,7 +30,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
 | `SessionEnd` | `session_end` | log-only | Session ended (CLI process exited) |
 | `SubagentStart` | `subagent_start` | `thinking` | Main agent spawned a child agent |
-| `SubagentStop` | `subagent_stop` | log-only | Subagent returned; depth counter decrements - EXCEPT an empty-string `detail` ("") which is a spurious inner-loop stop, and a stop whose `subagentId` has already stopped, which is a duplicate. Both are ignored (see "Subagent depth") |
+| `SubagentStop` | `subagent_stop` | log-only | Subagent returned; depth counter decrements - EXCEPT an empty-string `detail` ("") which is a spurious inner-loop stop, and a stop whose `subagentId` has already stopped, which is a duplicate. Both are ignored (see [Subagent depth](predicate.md#subagent-depth)) |
 | `Notification` | `notification` | log-only | Informational notification from the agent |
 | `IdleHint` | `idle_hint` | conditional idle | "Waiting for your input" notification, classified at the source. Ends the turn only when no other holder remains; otherwise log-only (see "Idle hints" below) |
 | `Compact` | `compact` | `thinking` | Context-window compaction in progress |
@@ -39,7 +39,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `ConfigChange` | `config_change` | log-only | Agent settings/model changed mid-session |
 | `WorktreeCreate` | `worktree_create` | `thinking` | Agent created a git worktree |
 | `WorktreeRemove` | `worktree_remove` | log-only | Agent removed a git worktree |
-| `BackgroundShellStart` | `background_shell_start` | `thinking` | `Bash(run_in_background: true)` launched, a foreground Bash auto-backgrounded on timeout (its `tool_response` carries a shell id), or a `Monitor` wait promoted via its `tool_response.taskId`. For the other agents that report background commands, a launch their post-tool hook or history file reports (see "Agents other than Claude"). `noActivityHold: true`, honored on a named start only, lands it exempt: a CLI with no tool id for the PreToolUse memo reports the opt-out flag this way |
+| `BackgroundShellStart` | `background_shell_start` | `thinking` | `Bash(run_in_background: true)` launched, a foreground Bash auto-backgrounded on timeout (its `tool_response` carries a shell id), or a `Monitor` wait promoted via its `tool_response.taskId`. For the other agents that report background commands, a launch their post-tool hook or history file reports (see [Agents other than Claude](background-shells.md#opting-a-background-shell-out-of-the-hold)). `noActivityHold: true`, honored on a named start only, lands it exempt: a CLI with no tool id for the PreToolUse memo reports the opt-out flag this way |
 | `BackgroundShellEnd` | `background_shell_end` | log-only | `KillBash` invoked, another agent's stop tool or end notification, a watcher-inferred natural exit, or the watcher's transcript drain observing a tracked shell's terminal `<task-notification>` directly in the durable session transcript; decrements active-shells counter |
 | `ModelStart` | `model_start` | log-only | LLM API call beginning (Gemini per-call telemetry) |
 | `ModelEnd` | `model_end` | log-only | LLM API call returned |
@@ -48,7 +48,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `PlanAutoApproved` | `plan_auto_approved` | log-only | Emitted by main's plan approval gate, never written to the file, right after the plan exit's `tool_end` that follows a `plan_approval_sent`. The Activity log draws it as a "Plan approved automatically" badge with `detail` "Moved to <column>" or "Stayed in <column>", and the engine re-stamps `turnStartedAt` on it |
 | `ToolApprovalSent` | `tool_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when, while a plan is approved automatically, it answers a plan-mode prompt for a tool the session's allow rules name. `tool` names it. Like `plan_approval_sent`, it proves only that the answer was sent. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
 
-"log-only" means the event is recorded for the activity feed and may update internal counters, but does not on its own change `ActivityState`. State changes only occur through the predicate (see below) or via direct `Idle` / `Interrupted` events.
+"log-only" means the event is recorded for the activity feed and may update internal counters, but does not on its own change `ActivityState`. State changes only occur through the [predicate](predicate.md) or via direct `Idle` / `Interrupted` events.
 
 ## Plan approval gate
 

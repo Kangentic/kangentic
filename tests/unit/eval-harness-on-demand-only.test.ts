@@ -326,6 +326,58 @@ describe('the docs-reads measurement', () => {
       fs.rmSync(scratch, { recursive: true, force: true });
     }
   });
+
+  // Which comparison `compare` prints depends on the baseline's groups. Spawned here for the same
+  // reason as above: eval-docs-reads.test.ts may not name the harness's path.
+  it('compare prints the paired comparison for a baseline with no pilot or control group, and the gate for one with', () => {
+    const recordOf = (questionId: string, group: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+      questionId, group, attempt: 1, passed: true, isError: false, exitCode: 0, gateBytes: 1000, docsBytes: 1000, reminderBytes: 0, toolCalls: 2, contextTokens: 50_000, costUsd: 0.01, ...overrides,
+    });
+    const writeRecords = (directory: string, records: ReadonlyArray<Record<string, unknown>>): void => {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, 'records.jsonl'), `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    };
+    const runCompare = (baseline: string, candidate: string) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'), 'compare', '--baseline', baseline, '--candidate', candidate], {
+      env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000,
+    });
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-reads-paired-cli-'));
+    try {
+      // Second-round groups. Baseline q1 has two runs, one without a token count; every other run
+      // carries all four measures. q1's baseline mean is 4000 bytes, q2's 6000; the candidate reads
+      // 2000 and 3000, so bytes come out at 5000 / 10000.
+      writeRecords(path.join(scratch, 'paired-baseline'), [
+        recordOf('q1', 'paraphrase', { gateBytes: 4000 }),
+        recordOf('q1', 'paraphrase', { gateBytes: 4000, contextTokens: null }),
+        recordOf('q2', 'broad', { gateBytes: 6000 }),
+      ]);
+      writeRecords(path.join(scratch, 'paired-candidate'), [
+        recordOf('q1', 'paraphrase', { gateBytes: 2000 }),
+        recordOf('q2', 'broad', { gateBytes: 3000 }),
+      ]);
+
+      const paired = runCompare(path.join(scratch, 'paired-baseline'), path.join(scratch, 'paired-candidate'));
+
+      expect(paired.status, paired.stderr).toBe(0);
+      expect(paired.stdout).toMatch(/gateBytes: candidate\/baseline 0\.500 \(95% interval /);
+      expect(paired.stdout).toMatch(/runs missing a measure \(left out of that measure's mean only\) 1 -> 0/);
+      expect(paired.stdout).toMatch(/pass rate 1\.000 -> 1\.000/);
+      // No verdict: the paired comparison's reading is fixed in docs/log.md, not decided here.
+      expect(paired.stdout).not.toMatch(/gate: (?:PASS|FAIL)/);
+
+      // The same records filed under the first round's groups go to the gate instead.
+      writeRecords(path.join(scratch, 'gate-baseline'), [recordOf('p1', 'pilot', { gateBytes: 10_000 }), recordOf('c1', 'control', { gateBytes: 5_000 })]);
+      writeRecords(path.join(scratch, 'gate-candidate'), [recordOf('p1', 'pilot', { gateBytes: 2_000 }), recordOf('c1', 'control', { gateBytes: 5_000 })]);
+
+      const gated = runCompare(path.join(scratch, 'gate-baseline'), path.join(scratch, 'gate-candidate'));
+
+      expect(gated.status, gated.stderr).toBe(0);
+      expect(gated.stdout).toMatch(/gate: PASS/);
+      expect(gated.stdout).not.toMatch(/candidate\/baseline/);
+      expect(gated.stdout).not.toMatch(/runs missing a measure/);
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('the Ask harness scan helpers', () => {

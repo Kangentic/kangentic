@@ -193,7 +193,7 @@ them on exactly the slow path where the later read matters most.
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |
-| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see Shutdown above) |
+| PTY exit-callback drain | 25 ms poll, 100 ms settle (400 ms blind), 1500 ms deadline (+ 1500 ms with a deferred kill) | `before-quit` holds the quit until the killed PTY children and the pty host are gone, so node-pty's native exit callback lands while JS is still callable. A kill whose child pid was unreadable has no probe and is waited out on the blind budget (see [Shutdown](shutdown.md)) |
 | Pty host exit wait | drain deadline less 200 ms | After `shutdown`, the host exits once every PTY's exit callback has run, or at this bound |
 | Pty host restart | at once, then 1, 5, 15 s; 5 crashes per 5 min | Past the cap the host core runs in main for the rest of the run |
 | KILL_GRACE_MS | 1500 ms | `kill()` on a young session of an agent that is typed into: exit sequence written, force-kill deferred this long (`src/main/pty/lifecycle/deferred-kill.ts`). An agent whose close is its graceful exit (Claude on Windows and Linux) is closed at once |

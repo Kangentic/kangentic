@@ -9,13 +9,13 @@
  * with the command as an argv prompt - which destroys live work. So an adapter
  * only earns a non-null command-injection verifier once its history has been
  * MEASURED to flush on submit rather than at turn-end
- * (`scripts/measure-injection-flush.mjs`; numbers in `docs/architecture/automations/command-injection.md`).
+ * (`scripts/measure-injection-flush.mjs`; numbers in `docs/architecture/automations/command-injection-measurements.md`).
  *
  * `escalates` is the SECOND gate, and it is deliberately stricter than the
  * first. A measurement says the CLI writes the record fast enough; it says
  * nothing about whether THIS adapter's resolver finds THAT record. Both
  * questions have to be answered live before a false negative is unlikely
- * enough to hand it a restart. See the tier table in docs/architecture/automations/command-injection.md.
+ * enough to hand it a restart. See the tier table in docs/architecture/automations/command-injection-support-matrix.md.
  *
  * `verifiesSlashSubmission` and `requiresAgentSessionId` pin the two other
  * declared capabilities that `prepareInjectionPlan`
@@ -162,7 +162,7 @@ describe('Adapter getSubmissionVerifier implementation', () => {
         // A regression to non-null means a verifier was added WITHOUT a
         // measurement, which is how a false `failed` reaches escalation and
         // restarts a session that was working. Record the measurement in
-        // docs/architecture/automations/command-injection.md and update this table together.
+        // docs/architecture/automations/command-injection-measurements.md and update this table together.
         expect(commandVerifier).toBeNull();
       }
 
@@ -208,7 +208,7 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       // So a `true` here is a claim that this adapter's own verifier has been
       // watched confirming a real submission in a running app, not merely that
       // its CLI was measured. If this test failed because you flipped a flag,
-      // run the mock-CLI recipe in docs/architecture/automations/command-injection.md first and record
+      // run the mock-CLI recipe in docs/architecture/automations/command-injection-support-matrix.md first and record
       // the result there in the same change.
       expect(
         escalates,
@@ -250,7 +250,7 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       // reason.
       expect(
         verifiesSlashSubmission,
-        `${name} slash-submission verifiability changed; see canVerifySlashSubmission on the adapter and docs/architecture/automations/command-injection.md`,
+        `${name} slash-submission verifiability changed; see canVerifySlashSubmission on the adapter and docs/architecture/automations/command-injection-support-matrix.md`,
       ).toBe(shouldVerifySlashSubmission);
     },
   );
@@ -288,7 +288,7 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       // the wrong history file.
       expect(
         requiresAgentSessionId,
-        `${name} agent-session-id requirement changed; see requiresAgentSessionIdForVerification on the adapter and docs/architecture/automations/command-injection.md`,
+        `${name} agent-session-id requirement changed; see requiresAgentSessionIdForVerification on the adapter and docs/architecture/automations/command-injection-support-matrix.md`,
       ).toBe(shouldRequireAgentSessionId);
     },
   );
@@ -326,7 +326,7 @@ describe('Adapter getSubmissionVerifier implementation', () => {
       missing,
       `Adapter(s) ${JSON.stringify(missing)} are registered but have no ADAPTER_CLASSES row, `
       + 'so their verifier verdict and escalation tier are unpinned. Add a row with the '
-      + 'evidence for each value (see this file\'s docstring and docs/architecture/automations/command-injection.md).',
+      + 'evidence for each value (see this file\'s docstring and docs/architecture/automations/command-injection-support-matrix.md).',
     ).toEqual([]);
   });
 

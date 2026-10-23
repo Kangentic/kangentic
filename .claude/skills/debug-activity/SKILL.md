@@ -138,7 +138,7 @@ and bumps `duplicateSubagentStart`, which is the tell on a session recorded afte
 `duplicateSubagentStop` also rose for the same agent, the first run's stop landed late.
 One ordering stays open by design: if the first run's stop lands after the continuation's start,
 the depth reads 0 for the rest of the continuation (see "Re-started live subagent" in
-`docs/architecture/activity/index.md`). Pinned by `session-032-restarted-live-subagent.jsonl`, replayed
+`docs/architecture/activity/predicate.md`). Pinned by `session-032-restarted-live-subagent.jsonl`, replayed
 in `activity-engine-turn-ended.test.ts` (ids-stripped red-green).
 
 Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`. Plus `session-025-false-idle-monitor-untracked.jsonl`, `session-026-false-active-injected-ctrl-c-kills-subagent.jsonl`, `session-030-duplicate-named-subagent-stop.jsonl` (#759), and `session-032-restarted-live-subagent.jsonl` (#835).

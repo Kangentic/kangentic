@@ -7,12 +7,14 @@
  * docs/ is scanned too: okf-docs-conformance.test.ts resolves its markdown links, but a doc that
  * names another as a backticked path is not a link, and one such citation outlived the move.
  *
- * Out of scope: CHANGELOG files, docs/log.md and docs/audits/ (history: an audit row that says
- * nobody read a 148KB doc names the doc as it was, and rewriting the path would make the row false),
- * tests (their docs/ paths are mostly made-up fixture paths), URLs into any other site, whose docs/
- * paths are not this repo's, and a git object spec (`<commit>:docs/x.md`), which names a file as it
- * was at that commit, the way scripts/measure-docs-structure.mjs reads the flat agent doc from
- * before the split. RETIRED_PATH_CITATIONS lists the few places that name a retired path on purpose.
+ * Out of scope: CHANGELOG files, docs/log.md, the code review fan-out audit (history: an audit row
+ * that says nobody read a 148KB doc names the doc as it was, and rewriting the path would make the
+ * row false), tests (their docs/ paths are mostly made-up fixture paths), URLs into any other site,
+ * whose docs/ paths are not this repo's, and a git object spec (`<commit>:docs/x.md`), which names a
+ * file as it was at that commit, the way scripts/measure-docs-structure.mjs reads the flat agent doc
+ * from before the split. The other audits are scanned: a line there can say which doc describes what
+ * shipped, and the paging audit's did, naming a deleted doc. RETIRED_PATH_CITATIONS lists the few
+ * places that name a retired path on purpose.
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
@@ -21,7 +23,7 @@ import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
-const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\//];
+const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
 /**
  * A retired path a file names on purpose, keyed `<file> cites <path>`. release-changelog.mjs matches
  * commit file lists, and review records committed before the audit moved still list its old path.

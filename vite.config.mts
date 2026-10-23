@@ -20,7 +20,7 @@ const isWorktree = configDir.replace(/\\/g, '/').includes('.kangentic/worktrees/
 // SENTRY_AUTH_TOKEN stays accepted as the conventional CI fallback. Everything
 // is server-side after upload: hidden sourcemaps are generated, uploaded with
 // debug IDs, then deleted from the output, so nothing ships in the artifact
-// and there is zero runtime or bundle cost (docs/telemetry/error-reporting.md, "Error Reporting").
+// and there is zero runtime or bundle cost (docs/telemetry/error-reporting.md, "Sourcemaps and debug files").
 // Trimmed truthiness, NOT `??`: GitHub Actions still injects an `env:` key whose
 // `${{ secrets.X }}` expression came back empty, so an unset secret arrives as
 // '' rather than undefined, and `??` would hand back that empty string instead

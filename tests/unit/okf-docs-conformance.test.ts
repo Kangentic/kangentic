@@ -9,7 +9,7 @@
  * 1. Every concept has frontmatter with a `type` from the closed vocabulary, a title, a one-line
  *    description, and `sources:` paths that exist. No two concepts share a description: it is the
  *    routing key an agent picks a concept by, so two that read the same cannot be told apart.
- * 2. Every folder under docs/ that holds markdown has an index.md. Each index lists each sibling
+ * 2. Every folder under docs/ that holds markdown, directly or in a subfolder, has an index.md. Each index lists each sibling
  *    concept with its exact description and links each subfolder's index. Only docs/index.md
  *    carries frontmatter, and it is exactly `okf_version: "0.2"`.
  * 3. Every relative link in docs/ resolves to a file, and a fragment into a markdown file matches one
@@ -59,8 +59,16 @@ function readRepo(repoPath: string): string {
 }
 
 const docsFiles: string[] = listDocsMarkdown(DOCS);
-/** Every folder under docs/ that holds markdown, docs/ itself included. */
-const markdownFolders = [...new Set(docsFiles.map((file) => path.posix.dirname(file)))];
+/**
+ * Every folder under docs/ that holds markdown, directly or in a subfolder, docs/ itself included. A
+ * folder holding only subfolders counts too: without an index of its own, nothing links its
+ * subfolders' indexes, and that whole branch is unreachable from docs/index.md.
+ */
+const markdownFolders = [...new Set(docsFiles.flatMap((file) => {
+  const folders: string[] = [];
+  for (let folder = path.posix.dirname(file); folder.startsWith('docs/'); folder = path.posix.dirname(folder)) folders.push(folder);
+  return [...folders, 'docs'];
+}))];
 const conceptFolders = [...new Set(docsFiles.filter((file) => path.posix.basename(file) === 'index.md').map((file) => path.posix.dirname(file)))];
 const concepts = docsFiles.filter((file) => !RESERVED_NAMES.has(path.posix.basename(file)));
 
@@ -104,7 +112,10 @@ describe('docs concept folders', () => {
     const problems: string[] = [];
     for (const folder of conceptFolders.filter((entry) => entry !== 'docs')) {
       const parentIndex = `${path.posix.dirname(folder)}/index.md`;
-      if (!fs.existsSync(path.join(ROOT, parentIndex))) continue;
+      if (!fs.existsSync(path.join(ROOT, parentIndex))) {
+        problems.push(`${folder}/index.md has no parent index at ${parentIndex} to link it`);
+        continue;
+      }
       const target = `${path.posix.basename(folder)}/index.md`;
       const linked = linksOf(readRepo(parentIndex)).some((link: { path: string }) => link.path === target);
       if (!linked) problems.push(`${parentIndex} does not link ${target}`);

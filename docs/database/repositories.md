@@ -211,7 +211,7 @@ Operates on a per-project DB.
 | `mergeTranscriptResultTokens(id, resultTokensByTool)` | Set transcript-derived `resultTokens` onto a record's stored rows by tool name, touching nothing else. Sets, never adds, so two writers of the same run cannot double it. |
 | `markResultTokensRead(id)` | Stamp `result_tokens_read_at` after a Tokens read that answered but left the record nothing to keep. |
 | `setTaskGitStats(recordIds, canonicalRecordId, stats)` | Mirrors `UsageHistoryRepository.setTaskGitStats`: writes churn to `canonicalRecordId` only and zeros every other id in `recordIds`, so `getSummaryForTask` / `listAllSummaries`'s `SUM(lines_added)` reflects the branch's actual churn instead of double-counting it across `--resume` records. |
-| `getSummaryForTask(taskId)` / `listAllSummaries()` | One task's `SessionSummary`, or every task's keyed by id, from one shared statement: per conversation the `MAX` of the running cost and runtime, then summed across conversations; tokens from each conversation's latest row that reported tokens; churn over every row. See the `total_cost_usd` paragraph under the `sessions` table. |
+| `getSummaryForTask(taskId)` / `listAllSummaries()` | One task's `SessionSummary`, or every task's keyed by id, from one shared statement: per conversation the `MAX` of the running cost and runtime, then summed across conversations; tokens from each conversation's latest row that reported tokens; churn over every row. See the `total_cost_usd` paragraph under the [`sessions` table](session-tables.md#sessions-table). |
 
 ## AttachmentRepository
 

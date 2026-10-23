@@ -7,8 +7,8 @@ description: Investigate a Sentry issue - retrieve the issue, latest event, stac
 Retrieve and diagnose issues from the `kangentic` Sentry org (`kangentic.sentry.io`). Two
 projects live there: `desktop` (this Electron app, numeric id `4511996066660352`) and `mobile`
 (the React Native app, numeric id `4511808149651456`). Desktop error reporting is wired in
-`src/main/analytics/error-reporting.ts`; docs/telemetry/error-reporting.md ("Error Reporting") describes what
-gets captured and how.
+`src/main/analytics/error-reporting.ts`; docs/telemetry/error-reporting.md describes what gets
+captured and how.
 
 ## Auth (never print the token)
 
@@ -345,7 +345,7 @@ Reading a native event, in order of what trips people up:
   `src/main/pty/spawn/shell-launch.ts`) start with no exception port on a packaged build. An
   unpackaged run with error reporting switched on keeps node-pty's stock helper, so its events
   (`environment: development`) are not residue. "PTY children and Crashpad's handler" in
-  `docs/platforms/shells-and-paths.md` lists what is covered on macOS and on Windows. On Windows, residue after
+  `docs/platforms/windows.md`, with `docs/platforms/macos.md`, lists what is covered on macOS and on Windows. On Windows, residue after
   the pipe-name strip most likely points at a file `shell.openPath` opened in an Electron app,
   the one path left out there that can still start one. On macOS two known paths still inherit it. The headless agent runs (started in the pty host by `src/main/pty/host/host-cli-processes.ts`, or by `src/main/agent/shared/cli-print.ts` with no host) run agent
   hooks, so a `module` that is a hook tool, or anything else an agent's hooks start, most likely

@@ -289,7 +289,7 @@ export interface BoardColumnWire {
    * That holds today because `handleTaskMove` emits its board-changed event
    * at the commit point rather than at settle time. See the comment above
    * `emitBoardChanged()` in `src/main/ipc/handlers/task-move.ts`, and
-   * `docs/integrations/mobile-bridge/data-feeds.md`.
+   * `docs/integrations/mobile-bridge/scope.md`.
    */
   spawns_session?: boolean | null;
 }

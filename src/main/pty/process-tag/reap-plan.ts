@@ -87,7 +87,7 @@
  * and removes none.
  *
  * One more root, for macOS, where SIP hides the environment of Apple's own
- * tools (`docs/architecture/worktrees/worktree-lifecycle.md`): a process whose environment was
+ * tools (`docs/architecture/worktrees/process-reaping.md`): a process whose environment was
  * withheld, whose parent is `launchd` (it was orphaned), and whose working
  * directory is inside one of the reaped tasks' worktrees (the worktree, not the
  * project: with no tag to go on, the directory must be the task's alone). A

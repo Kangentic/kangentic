@@ -24,7 +24,7 @@ workflow's Resume, launch recovery, recovery after a pty host crash) emits `'ses
 with the session, task and project ids, the conversation it resumed, and its work serial as it
 came back. A resume begins no turn, so the payload carries neither a turn start nor a transcript
 anchor. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
-cut short (see [Transition Engine](../automations/transition-engine.md), "A resume catches up the workflow step").
+cut short (see [On agent turn end](../automations/triggers.md#on-agent-turn-end), "A resume catches up the workflow step").
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
 from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
 
@@ -244,7 +244,7 @@ When a suspended task moves to an active column:
   landed in the final seconds before suspend (the status watcher detaches before the CLI exits).
   Details and the empirical grounding: docs/integrations/agents/session-history.md, "Mid-session fork
   reconcile".
-- New PTY spawned with scrollback carried over from the most recently started previous row for the task (see Spawn Flow above)
+- New PTY spawned with scrollback carried over from the most recently started previous row for the task (see [Spawn flow](spawn-flow.md#engine-spawn-board-driven-path))
 - New session DB record inserted, old record marked `exited`
 - The destination column's settings are re-applied as CLI flags on the resume
   command: `--permission-mode` (lane override, else global default), `--model`,

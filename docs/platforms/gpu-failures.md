@@ -144,7 +144,7 @@ What ships now, on every platform:
   `gpu-info-update`, while the GPU is healthy, and each recorded fallback carries a `linux` reading:
   whether that zygote is `alive`, `dead` (gone, a zombie, or its pid reused), or `unknown`, plus the
   system-wide thread count from `/proc/loadavg` and the soft `Max processes` limit. A dead zygote is
-  never a normal state, so it also lifts the hardware-first rule above: a blocklisted Linux box whose
+  never a normal state, so it also lifts the rule above that a machine that never had GPU compositing writes nothing: a blocklisted Linux box whose
   zygote dies is recorded too. Verified with the real modules bundled into the WSLg reproduction: on
   both a GPU-composited start and a blocklisted one, killing the zygote and then the GPU process
   wrote a `hardware-fallback` record with `zygote: dead` before the fatal, while killing the GPU
