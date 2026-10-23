@@ -355,6 +355,7 @@ describe('ensureTaskWorktree - setup phase outside the git queue', () => {
     branchName: 'fix-the-bug-task-001',
     worktreeFolder: '1',
     baseBranch: 'main',
+    forkPointSha: 'f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0',
   };
 
   beforeEach(() => {
@@ -377,7 +378,7 @@ describe('ensureTaskWorktree - setup phase outside the git queue', () => {
     expect(withLockMock).toHaveBeenCalledTimes(1);
     expect(setUpWorktreeMock).toHaveBeenCalledWith(created.worktreePath, config.git, expect.anything());
     expect(setupRanInsideLock).toBe(false);
-    expect(repo.recordWorktree).toHaveBeenCalledWith('task-001', created.worktreePath, created.branchName, created.worktreeFolder, created.baseBranch);
+    expect(repo.recordWorktree).toHaveBeenCalledWith('task-001', created.worktreePath, created.branchName, created.worktreeFolder, created.baseBranch, created.forkPointSha);
     expect(setUpWorktreeMock.mock.invocationCallOrder[0]).toBeLessThan(repo.recordWorktree.mock.invocationCallOrder[0]);
   });
 

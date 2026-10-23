@@ -144,8 +144,8 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
         <OsHotkeyBanner
           status={conflictComboCount > 0 ? (
             <span className="inline-flex items-center gap-1.5 text-xs text-red-400" data-testid="hotkey-conflict-summary">
-              <CountBadge count={conflictComboCount} variant="solid" size="sm" className="bg-red-500/80 text-white" />
-              {conflictComboCount === 1 ? 'conflict' : 'conflicts'} detected
+              {conflictComboCount === 1 ? 'Conflict detected' : 'Conflicts detected'}
+              <CountBadge count={conflictComboCount} variant="tinted" size="pill" testId="hotkey-conflict-count" />
             </span>
           ) : undefined}
           action={(

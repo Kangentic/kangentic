@@ -724,8 +724,13 @@ export interface TaskDetailViewState {
   changesSelectedCommit?: string;
   /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
   changesHistoryHeight?: number;
-  /** History section expanded in the Changes rail. Written only when true; absent means collapsed (the default). */
-  changesHistoryOpen?: boolean;
+  /**
+   * History section collapsed in the Changes rail. Written only when true;
+   * absent means open, the default. (Blobs written before #881 carry
+   * `changesHistoryOpen` instead, when History was collapsed by default; it is
+   * ignored, so those tasks open History once and keep a collapse from then.)
+   */
+  changesHistoryCollapsed?: true;
 }
 
 export interface TaskAttachment {
@@ -3007,6 +3012,12 @@ export interface GitCommitGraphCommit {
   authorTimestamp: string;
   /** Commit subject, first line only (`%s`). */
   subject: string;
+  /**
+   * The commit's page on the repository's web host (GitHub, Azure DevOps), or
+   * null when no connector owns the remote or the commit is not on it yet.
+   * Absent where nothing looked it up.
+   */
+  webUrl?: string | null;
 }
 
 /**
@@ -3027,6 +3038,78 @@ export interface GitCommitGraphResult {
   currentBranch: string | null;
   /** True when history exceeded `maxCommits` and the tail was dropped. */
   truncated: boolean;
+  /**
+   * The web host a commit's `webUrl` opens ("GitHub", "Azure DevOps"), named by
+   * the connector that owns the remote. Null or absent when none does.
+   */
+  webProviderName?: string | null;
+}
+
+/**
+ * A fixed span of history to diff, as full commit hashes: everything `head`
+ * has that `base` does not (`git diff base head`). A completed task's whole
+ * change, read from commits alone, so it needs no checkout. `base` may be the
+ * empty tree when the span starts at a root commit.
+ */
+export interface GitDiffRange {
+  base: string;
+  head: string;
+}
+
+/**
+ * Why a completed task's Changes tab has nothing to show:
+ * - `no-commits`: the task made none that can be found.
+ * - `indexing-off`: Knowledge Graph indexing is off, so no commits are linked,
+ *   and the task's branch did not give a range either.
+ * - `not-in-clone`: commits are linked, but none exists in this clone.
+ */
+export type GitTaskChangesEmptyReason = 'no-commits' | 'indexing-off' | 'not-in-clone';
+
+/** One changed file of a completed task. */
+export interface GitTaskChangesFile extends GitDiffFileEntry {
+  /**
+   * With no whole-task range, the files are the union of the commits' own
+   * diffs: this names the newest commit that touched the file, which a click
+   * on it opens. Absent when a range was diffed.
+   */
+  newestCommitSha?: string;
+}
+
+/** Input for `git:taskChanges`: a completed task, by its project. */
+export interface GitTaskChangesInput {
+  projectId: string;
+  taskId: string;
+}
+
+/**
+ * What a completed task changed, read from git alone (no checkout needed),
+ * for its Changes tab, its Summary's Files card and its header strip.
+ *
+ * `range` is the task's whole change when one span of history holds it: its
+ * branch, when it never merged, or the run of its linked commits on the base,
+ * when they landed one after another. With no range the commits are listed on
+ * their own, and `files` is the union of their diffs.
+ */
+export interface GitTaskChangesResult {
+  range: GitDiffRange | null;
+  /** The task's commits, newest first, at most 300; each may carry `webUrl`. */
+  commits: GitCommitGraphCommit[];
+  /** True when the task had more commits than the cap, so `commits` was cut. */
+  truncated: boolean;
+  /** Biggest change (insertions plus deletions) first. */
+  files: GitTaskChangesFile[];
+  /** The range's totals; null with no range (the union double counts nothing, but is no single diff). */
+  totals: { insertions: number; deletions: number; filesChanged: number } | null;
+  /** Set exactly when there are no commits to show. */
+  emptyReason: GitTaskChangesEmptyReason | null;
+  /** The task's branch, for the panel's top bar; null once it is forgotten. */
+  branchName: string | null;
+  /** The base the task was compared against. */
+  baseBranch: string;
+  /** The repository every read of this result runs in. */
+  projectPath: string;
+  /** Who a commit's `webUrl` opens ("GitHub"), or null when nobody does. */
+  webProviderName: string | null;
 }
 
 /**
@@ -3051,6 +3134,12 @@ export interface GitDiffFilesInput {
    * `scope` - the history browser's commit-detail selection. Overrides `scope`.
    */
   commitOid?: string;
+  /**
+   * When set (and no `commitOid`), diff this fixed span of history instead of
+   * `scope`: a completed task's whole change. Read from commits only, never
+   * the working tree.
+   */
+  range?: GitDiffRange;
 }
 
 export interface GitDiffFilesResult {
@@ -3070,6 +3159,8 @@ export interface GitFileContentInput {
   scope?: GitDiffScope;
   /** Must match the `commitOid` the file list was fetched with, if any. */
   commitOid?: string;
+  /** Must match the `range` the file list was fetched with, if any. */
+  range?: GitDiffRange;
 }
 
 export interface GitFileContentResult {
@@ -7797,6 +7888,8 @@ export interface ElectronAPI {
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
     worktreeHead: (input: GitWorktreeHeadInput) => Promise<GitWorktreeHeadResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
+    /** What a completed task changed, from git alone: its commits, files and range. A read. */
+    taskChanges: (input: GitTaskChangesInput) => Promise<GitTaskChangesResult>;
     fileHistory: (input: GitFileHistoryInput) => Promise<GitFileHistoryResult>;
     blame: (input: GitBlameInput) => Promise<GitBlameResult>;
   };

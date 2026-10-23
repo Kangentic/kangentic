@@ -23,13 +23,25 @@ import type { Task, TaskReport } from '../../../../../shared/types';
  * A task window can be scaled to about 520px, where seven metrics and the
  * status need about 720px: without step 4 the last of them were clipped.
  * Every class is a complete literal, since Tailwind reads source text.
+ *
+ * Changes reads git when the task's whole change resolved to one range
+ * (`gitTotals`): what landed, not the figure stored while the run worked,
+ * which counted uncommitted edits and missed later commits. Without a range
+ * it shows the stored figure.
  */
-export function CompletedHeaderStrip({ task, report }: { task: Task; report: TaskReport }) {
+export function CompletedHeaderStrip({ task, report, gitTotals }: {
+  task: Task;
+  report: TaskReport;
+  gitTotals?: { insertions: number; deletions: number; filesChanged: number } | null;
+}) {
   const { summary } = report;
   const startedMs = report.startedAt ? Date.parse(report.startedAt) : Number.NaN;
   const endedMs = report.endedAt ? Date.parse(report.endedAt) : Number.NaN;
   const elapsedMs = endedMs - startedMs;
-  const hasChanges = summary !== null && (summary.linesAdded > 0 || summary.linesRemoved > 0 || summary.filesChanged > 0);
+  const changeFigures = gitTotals
+    ? { linesAdded: gitTotals.insertions, linesRemoved: gitTotals.deletions, filesChanged: gitTotals.filesChanged }
+    : summary;
+  const hasChanges = changeFigures !== null && (changeFigures.linesAdded > 0 || changeFigures.linesRemoved > 0 || changeFigures.filesChanged > 0);
   const prLabel = prStatePresentation(task.pr_state).label;
   const exitedWithError = summary?.exitCode != null && summary.exitCode !== 0;
   const statusLabel = exitedWithError ? `Exited (${summary?.exitCode})` : 'Completed';
@@ -46,24 +58,24 @@ export function CompletedHeaderStrip({ task, report }: { task: Task; report: Tas
     });
   }
   if (summary && summary.durationMs > 0) metrics.push({ key: 'agent-runtime', label: 'Agent runtime', value: formatSpan(summary.durationMs) });
-  if (hasChanges && summary) {
+  if (hasChanges && changeFigures) {
     metrics.push({
       key: 'changes',
       label: 'Changes',
       value: (
         <>
-          <Tooltip label={`${summary.linesAdded.toLocaleString()} lines added`}>
-            <span className="text-green-400/80">+{formatTokenCount(summary.linesAdded)}</span>
+          <Tooltip label={`${changeFigures.linesAdded.toLocaleString()} lines added`}>
+            <span className="text-green-400/80">+{formatTokenCount(changeFigures.linesAdded)}</span>
           </Tooltip>
-          <Tooltip label={`${summary.linesRemoved.toLocaleString()} lines removed`}>
-            <span className="text-red-400/80">-{formatTokenCount(summary.linesRemoved)}</span>
+          <Tooltip label={`${changeFigures.linesRemoved.toLocaleString()} lines removed`}>
+            <span className="text-red-400/80">-{formatTokenCount(changeFigures.linesRemoved)}</span>
           </Tooltip>
-          {summary.filesChanged > 0 && (
-            <span className="hidden text-[13px] font-normal text-fg-muted @[860px]:inline">{summary.filesChanged} {summary.filesChanged === 1 ? 'file' : 'files'}</span>
+          {changeFigures.filesChanged > 0 && (
+            <span className="hidden text-[13px] font-normal text-fg-muted @[860px]:inline">{changeFigures.filesChanged} {changeFigures.filesChanged === 1 ? 'file' : 'files'}</span>
           )}
         </>
       ),
-      tip: summary.filesChanged > 0 ? `${summary.filesChanged.toLocaleString()} ${summary.filesChanged === 1 ? 'file' : 'files'} changed` : undefined,
+      tip: changeFigures.filesChanged > 0 ? `${changeFigures.filesChanged.toLocaleString()} ${changeFigures.filesChanged === 1 ? 'file' : 'files'} changed` : undefined,
     });
   }
   if (task.pr_number != null) {

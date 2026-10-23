@@ -9,7 +9,7 @@ import { Tooltip } from '../../../Tooltip';
 export const HISTORY_SECTION_HEADER_PX = 28;
 
 interface ChangesHistorySectionProps {
-  /** Expanded state (per task, persisted; collapsed is the default). */
+  /** Expanded state (per task, persisted; open is the default). */
   open: boolean;
   onToggle: () => void;
   /** Body height (px) while open - live during a drag, stored otherwise. */
@@ -18,9 +18,8 @@ interface ChangesHistorySectionProps {
   commitCount: number | null;
   /** Whether the commit list hit its cap (the count is a floor, not a total). */
   truncated: boolean;
-  /** Pinned commit's short hash, shown as a chip while COLLAPSED so the
-   *  selection stays legible with the list hidden. */
-  pinnedShortHash: string | null;
+  /** What the commits are: "on this branch" (a live task), "for this task" (a completed one). */
+  countSubject?: string;
   /** False while the user is dragging the section's resize handle, so the
    *  height tracks the pointer 1:1 (never animate during a drag); the height
    *  transition applies only to the discrete open/close toggle. */
@@ -34,12 +33,13 @@ interface ChangesHistorySectionProps {
 
 /**
  * The Changes rail's History section: a VS Code-style collapsible section at
- * the BOTTOM of the rail (files above are the primary review object; history
- * is a navigation axis). The header row is always visible; the body holds the
- * commit graph at a per-task height, resized by the handle ChangesPanel
- * renders directly above this section while open.
+ * the BOTTOM of the rail, open by default. The header row is always visible;
+ * the body holds the commit graph at a per-task height, resized by the handle
+ * ChangesPanel renders directly above this section while open. A selected
+ * commit needs no marker here: the selection bar at the top of the rail names
+ * it whether or not this section is open.
  */
-export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, pinnedShortHash, animateHeight, children }: ChangesHistorySectionProps) {
+export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, countSubject = 'on this branch', animateHeight, children }: ChangesHistorySectionProps) {
   return (
     <div className="flex flex-col min-h-0 flex-shrink border-t border-edge" data-testid="changes-history-section">
       <Tooltip label={open ? 'Collapse history' : 'Expand history'}>
@@ -54,21 +54,12 @@ export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount,
           <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
           <span className="text-xs font-medium">History</span>
           {commitCount !== null && (
-            // xs widens into a pill past one digit, so the graph's 200-commit cap
-            // renders without clipping (sm/md are fixed circles).
-            <Tooltip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits on this branch`}>
+            // The pill widens with each digit, so the graph's 200-commit cap
+            // renders without clipping. Tinted from the toggle's tone, so it
+            // brightens with the label on hover.
+            <Tooltip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits ${countSubject}`}>
               <span className="inline-flex">
-                <CountBadge count={commitCount} variant="muted" size="xs" />
-              </span>
-            </Tooltip>
-          )}
-          {!open && pinnedShortHash && (
-            <Tooltip label="Reviewing this commit" detail="Expand to see it in the list">
-              <span
-                className="ml-auto flex-shrink-0 rounded border border-edge-subtle px-1 py-px font-mono text-[11px] leading-none text-fg-muted"
-                data-testid="changes-history-pinned-chip"
-              >
-                {pinnedShortHash}
+                <CountBadge count={commitCount} variant="tinted" size="pill" testId="changes-history-count" />
               </span>
             </Tooltip>
           )}

@@ -1,14 +1,26 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
+import { useTaskChanges } from '../../components/dialogs/task-detail/completed/useTaskReport';
+import { completedChangesEntityId } from '../../components/dialogs/task-detail/completed/CompletedChangesTab';
+import { CompletedChangesEmpty } from '../../components/dialogs/task-detail/completed/CompletedChangesEmpty';
 import type { PopOutTaskParams } from '../../../shared/pop-out';
+import type { Task } from '../../../shared/types';
 
 const ChangesPanel = lazy(() =>
   import('../../components/dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })),
 );
+
+function PanelFallback() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 size={20} className="animate-spin text-fg-muted" />
+    </div>
+  );
+}
 
 /**
  * Pop-out root for the 'changes' surface. Re-hydrates the same way
@@ -23,13 +35,22 @@ const ChangesPanel = lazy(() =>
  * projects in the main window before this pop-out's own bootstrap/HMR resync
  * resolves, the task lookup below simply misses and shows "No changes on this
  * branch" rather than any incorrect cross-project data.
+ *
+ * A task the loaded board does not hold is a completed one (the board keeps
+ * only live tasks in `tasks`), opened from its Changes tab: it reads the task's
+ * commits from git by `params`, as that tab does, rather than a working tree.
  */
 export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? null);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));
 
-  if (!task || !projectPath) {
+  // Not on the board: the row itself says whether it is a completed task. The
+  // board's own `hydrated` flag cannot decide it, since a load that began
+  // before the window's project arrived publishes nothing.
+  if (!task) return <UnboardedTaskRoot params={params} />;
+
+  if (!projectPath) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
         No changes on this branch
@@ -39,13 +60,7 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
 
   return (
     <PanelErrorBoundary label="Changes panel">
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
-          </div>
-        }
-      >
+      <Suspense fallback={<PanelFallback />}>
         {/* Render the FULL task-detail layout (history region + Working/Staged/
             Branch tabs + file tree + diff pane), NOT the stripped standalone-dialog
             view. So we mirror TaskDetailBody's props: no `emptyMessage` (which would
@@ -65,6 +80,78 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
           baseBranch={task.base_branch || defaultBaseBranch || 'main'}
           task={task}
           filePopOutParams={{ taskId: params.taskId, projectId: params.projectId }}
+        />
+      </Suspense>
+    </PanelErrorBoundary>
+  );
+}
+
+/**
+ * The task row by params, from the task's own project (the monitor's detail
+ * read, archived tasks included). An archived row is what the board store does
+ * not hold, and the panel needs it for its History section and for naming a
+ * file window.
+ */
+function useTaskRow(projectId: string, taskId: string): { task: Task | null; loading: boolean } {
+  const [state, setState] = useState<{ key: string; task: Task | null } | null>(null);
+  const key = `${projectId}\u0000${taskId}`;
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI.monitor.getTaskDetail(projectId, taskId)
+      .then((bundle) => { if (!cancelled) setState({ key, task: bundle?.task ?? null }); })
+      .catch((error: unknown) => {
+        console.warn('[pop-out changes] task read failed:', error);
+        if (!cancelled) setState({ key, task: null });
+      });
+    return () => { cancelled = true; };
+  }, [key, projectId, taskId]);
+  const current = state?.key === key ? state : null;
+  return { task: current?.task ?? null, loading: current === null };
+}
+
+/**
+ * A task the loaded board does not hold. An archived row reads its commits from
+ * git; a live one is waiting for the board (or the main window switched
+ * projects), and keeps the old answer, since this path shows a completed
+ * task's commits only.
+ */
+function UnboardedTaskRoot({ params }: { params: PopOutTaskParams }) {
+  const { task, loading } = useTaskRow(params.projectId, params.taskId);
+  if (loading) return <PanelFallback />;
+  if (task?.archived_at) return <CompletedChangesRoot params={params} task={task} />;
+  return (
+    <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="popout-changes-none">
+      No changes on this branch
+    </div>
+  );
+}
+
+function CompletedChangesRoot({ params, task }: { params: PopOutTaskParams; task: Task }) {
+  const { changes, loading, error } = useTaskChanges(params.projectId, params.taskId);
+
+  if (loading) return <PanelFallback />;
+  if (error || !changes) {
+    return (
+      <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="popout-completed-changes-error">
+        {error ?? 'The task\'s changes could not be read'}
+      </div>
+    );
+  }
+  if (changes.emptyReason) return <CompletedChangesEmpty reason={changes.emptyReason} />;
+  return (
+    <PanelErrorBoundary label="Changes panel">
+      <Suspense fallback={<PanelFallback />}>
+        {/* The completed tab's panel state is keyed `completed-<id>`; the pop-out
+            keys its own (`popout-completed-<id>`), as the live pop-out does. */}
+        <ChangesPanel
+          entityId={`popout-${completedChangesEntityId(params.taskId)}`}
+          isFocused
+          scrollKey={completedChangesEntityId(params.taskId)}
+          projectPath={changes.projectPath}
+          baseBranch={changes.baseBranch}
+          task={task}
+          filePopOutParams={{ taskId: params.taskId, projectId: params.projectId }}
+          completedChanges={changes}
         />
       </Suspense>
     </PanelErrorBoundary>

@@ -356,7 +356,7 @@ export function CardGroupTile({ label, count, open, onToggle, children, testId }
           data-testid={testId ? `${testId}-toggle` : undefined}
         >
           <span className={SETTING_LABEL_CLASS}>{label}</span>
-          <CountBadge count={count} />
+          <CountBadge count={count} variant="tinted" size="pill" className="text-fg-muted" />
           <ChevronDown
             size={16}
             className={`card-group-chevron ml-auto flex-shrink-0 text-fg-muted group-hover:text-fg ${open ? 'rotate-180' : ''}`}

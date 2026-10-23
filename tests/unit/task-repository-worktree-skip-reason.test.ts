@@ -190,3 +190,118 @@ describe('resolved_base_branch', () => {
     expect(tasks.getById(task.id)!.resolved_base_branch).toBe('develop');
   });
 });
+
+describe('fork_point_sha (main-only)', () => {
+  const FORK_POINT = 'f4657fd6cf9f208ad2fe4e4bc9fae99f0edfca55';
+
+  it('records the fork point on a real creation, and keeps it off the shared Task', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+    // rowToTask spreads every column, so this is the line that keeps it from
+    // riding every Task over IPC.
+    expect(Object.keys(tasks.getById(task.id)!)).not.toContain('fork_point_sha');
+    expect(Object.keys(tasks.list(task.swimlane_id)[0])).not.toContain('fork_point_sha');
+  });
+
+  it('keeps the fork point an earlier creation recorded when a reattach reads none', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', null, null);
+
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+  });
+
+  it('keeps the fork point when a reattach to the same branch omits the argument entirely', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881');
+
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+  });
+
+  it.each([
+    ['omitted', undefined],
+    ['null', null],
+  ])('drops the stored fork point when an attach to a DIFFERENT branch reads none (%s)', (_label, noForkPoint) => {
+    // The stored point was cut for the first branch. An attach to another
+    // branch has no fork point of its own to record, and leaving the old one
+    // would make the Changes view diff the new branch from a commit it never
+    // forked at.
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-other5678', '881', null, noForkPoint);
+
+    expect(tasks.getById(task.id)!.branch_name).toBe('task-other5678');
+    expect(tasks.getForkPointSha(task.id)).toBeNull();
+  });
+
+  it('replaces the stored fork point when an attach to a different branch does read one', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    const otherForkPoint = '0123456789abcdef0123456789abcdef01234567';
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-other5678', '881', 'main', otherForkPoint);
+
+    expect(tasks.getForkPointSha(task.id)).toBe(otherForkPoint);
+  });
+
+  it('an update() that never mentions branch_name keeps the fork point', () => {
+    // update() clears the fork point in the same statement only when the caller
+    // writes branch_name to null. The gate is `=== null`, not `== null`, so an
+    // edit that leaves branch_name out (or passes it as undefined) must not
+    // forget the branch's fork point.
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    tasks.update({ id: task.id, title: 'Renamed' });
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+
+    tasks.update({ id: task.id, title: 'Renamed again', branch_name: undefined });
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+
+    tasks.update({ id: task.id, worktree_path: null });
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+    expect(tasks.getById(task.id)!.branch_name).toBe('task-abcd1234');
+  });
+
+  it('is forgotten with the branch, kept through a rename and an unrelated edit', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    tasks.recordWorktree(task.id, '/project/.kangentic/worktrees/881', 'task-abcd1234', '881', 'main', FORK_POINT);
+
+    tasks.update({ id: task.id, title: 'Renamed' });
+    tasks.update({ id: task.id, branch_name: 'feat/renamed-branch' });
+    expect(tasks.getForkPointSha(task.id)).toBe(FORK_POINT);
+
+    tasks.update({ id: task.id, worktree_path: null, branch_name: null, resolved_base_branch: null });
+    expect(tasks.getForkPointSha(task.id)).toBeNull();
+  });
+
+  it('reads null for a task that never had a worktree', () => {
+    const database = migratedDatabase();
+    const tasks = new TaskRepository(database);
+    const task = createTask(tasks, database, 'Task');
+    expect(tasks.getForkPointSha(task.id)).toBeNull();
+    expect(tasks.getForkPointSha('no-such-task')).toBeNull();
+  });
+});

@@ -161,6 +161,40 @@ describe('DiffService', () => {
       expect(result.files[0].path).toBe('src/new-name.ts');
     });
 
+    // What real git prints for a rename in `--stat`: both paths, braced.
+    it.each([
+      ['src/{old-name.ts => new-name.ts}', 'src/old-name.ts', 'src/new-name.ts'],
+      ['src/{old => new}/file.ts', 'src/old/file.ts', 'src/new/file.ts'],
+      ['src/{ => nested}/file.ts', 'src/file.ts', 'src/nested/file.ts'],
+      ['src/{nested => }/file.ts', 'src/nested/file.ts', 'src/file.ts'],
+      ['old-name.ts => new-name.ts', 'old-name.ts', 'new-name.ts'],
+      // The new name ends at the FIRST `}` after the arrow, so a `}` further
+      // along the path stays in the path. A greedy match swallowed it into the
+      // new name and printed `b}/y.md`, which `--name-status` never lists.
+      ['{a => b}/y}.md', 'a/y}.md', 'b/y}.md'],
+      ['src/{old => new}/a}b}.ts', 'src/old/a}b}.ts', 'src/new/a}b}.ts'],
+    ])('names a rename the summary prints as %s by its new path', async (summaryPath, oldPath, newPath) => {
+      mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: summaryPath, insertions: 2, deletions: 1 }]));
+      mockGit.diff.mockResolvedValue(`R090\t${oldPath}\t${newPath}\n`);
+
+      const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+      expect(result.files[0]).toMatchObject({ path: newPath, status: 'R', oldPath });
+    });
+
+    // The rename parse only runs for a path `--name-status` did not list. A
+    // file whose own name holds ` => ` is listed as itself, so it keeps its
+    // path and status instead of being read as a rename to `ird.ts`.
+    it('leaves a path that merely contains " => " alone when --name-status lists it', async () => {
+      mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'we => ird.ts', insertions: 3, deletions: 0 }]));
+      mockGit.diff.mockResolvedValue('M\twe => ird.ts\n');
+
+      const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0]).toMatchObject({ path: 'we => ird.ts', status: 'M', oldPath: undefined });
+    });
+
     it('parses deleted files', async () => {
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([
         { file: 'src/removed.ts', insertions: 0, deletions: 25 },
@@ -974,17 +1008,17 @@ describe('DiffService', () => {
       });
 
       it('root commit: rev-parse <oid>^ fails, falls back to the empty tree', async () => {
-        mockGit.raw.mockRejectedValue(new Error('fatal: ambiguous argument \'root123^\': unknown revision'));
+        mockGit.raw.mockRejectedValue(new Error('fatal: ambiguous argument \'a0c123^\': unknown revision'));
         mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/a.ts', insertions: 5, deletions: 0 }]));
         mockGit.diff.mockResolvedValue('A\tsrc/a.ts\n');
 
         const result = await service.getDiffFiles({
           projectPath: '/project',
           baseBranch: 'main',
-          commitOid: 'root123',
+          commitOid: 'a0c123',
         });
 
-        expect(mockGit.diffSummary).toHaveBeenCalledWith([EMPTY_TREE_HASH, 'root123']);
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([EMPTY_TREE_HASH, 'a0c123']);
         // Every file in a root commit reads as added against the empty tree.
         expect(result.files[0].status).toBe('A');
       });
@@ -1361,6 +1395,21 @@ describe('DiffService', () => {
       expect(result.modified?.kind).toBe('bytes');
     });
 
+    it('range: both sides come from the range\'s base and head, never disk or the merge base', async () => {
+      const base = 'a'.repeat(40);
+      const head = 'b'.repeat(40);
+      routeObjects({ [`${base}:img/a.png`]: PNG_BYTES, [`${head}:img/a.png`]: PNG_BYTES });
+
+      const result = await service.getImageContent({ ...baseInput, status: 'M', scope: 'working', range: { base, head } });
+
+      expect(objectNamesRead().sort()).toEqual([`${base}:img/a.png`, `${head}:img/a.png`]);
+      expect(fs.promises.stat).not.toHaveBeenCalled();
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+      expect(mockGit.raw).not.toHaveBeenCalled();
+      expect(result.original?.kind).toBe('bytes');
+      expect(result.modified?.kind).toBe('bytes');
+    });
+
     it('rename: the original side reads from the old path', async () => {
       routeObjects({ 'abc123:img/old.png': PNG_BYTES });
       mockDiskFile(PNG_BYTES);
@@ -1518,6 +1567,8 @@ describe('DiffService', () => {
   // and a commit from the history, so anything else is refused before any read.
   describe('refuses a path or commit no diff list could hold', () => {
     const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    /** A well-formed full hash, the one end of a range that is valid in the refused rows. */
+    const FULL_HASH = '0123456789abcdef0123456789abcdef01234567';
 
     it.each([
       ['a parent segment', { filePath: '../outside/key.png' }],
@@ -1528,6 +1579,11 @@ describe('DiffService', () => {
       ['an empty path', { filePath: '' }],
       ['a parent segment in the old path of a rename', { filePath: 'img/a.png', oldPath: 'img/../../old.png' }],
       ['a commit that is not an object id', { filePath: 'img/a.png', commitOid: '--output=x' }],
+      // A range's ends are full hashes: a branch name, an option, or an
+      // abbreviation on either end is refused, whatever the other end is.
+      ['a range whose base is a branch name', { filePath: 'img/a.png', range: { base: 'main', head: FULL_HASH } }],
+      ['a range whose head is an option', { filePath: 'img/a.png', range: { base: FULL_HASH, head: '--output=x' } }],
+      ['a range whose base is an abbreviated hash', { filePath: 'img/a.png', range: { base: FULL_HASH.slice(0, 7), head: FULL_HASH } }],
     ])('%s: neither reader touches git or the disk', async (_label, overrides) => {
       const input = { projectPath: '/project', worktreePath: '/project/wt', baseBranch: 'main', status: 'M' as const, ...overrides };
 

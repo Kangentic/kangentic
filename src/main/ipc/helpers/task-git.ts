@@ -506,7 +506,7 @@ export async function ensureTaskWorktree(
       onProgress: options?.onProgress,
       signal: options?.signal,
     });
-    tasks.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch);
+    tasks.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch, result.forkPointSha);
     Object.assign(task, tasks.getById(task.id));
   });
 }

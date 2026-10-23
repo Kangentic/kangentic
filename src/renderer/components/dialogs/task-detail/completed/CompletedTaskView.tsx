@@ -1,62 +1,106 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MessageSquare } from 'lucide-react';
 import { Tabs, tabIds } from '../../../Tabs';
 import type { TabItem } from '../../../Tabs';
-import { openTaskConversation } from '../open-task-conversation';
-import { useTaskDetailHost } from '../task-detail-host';
-import { Tooltip } from '../../../Tooltip';
+import { useSessionStore } from '../../../../stores/session-store';
+import type { CompletedTab, CompletedViewRequest } from '../../../../stores/session-store/task-changes-panel-slice';
 import { CompletedHeaderStrip } from './CompletedHeaderStrip';
+import { CompletedChangesTab, completedChangesEntityId } from './CompletedChangesTab';
+import { CompletedConversationTab } from './CompletedConversationTab';
 import { SummaryTab } from './SummaryTab';
 import { UsageTab } from './UsageTab';
-import { useTaskReport } from './useTaskReport';
+import { useTaskChanges, useTaskReport } from './useTaskReport';
 import type { ConversationTabRequest, Task } from '../../../../../shared/types';
-
-type CompletedTab = 'summary' | 'usage' | 'description';
 
 const TABS: ReadonlyArray<TabItem<CompletedTab>> = [
   { id: 'summary', label: 'Summary' },
+  { id: 'changes', label: 'Changes' },
+  { id: 'conversation', label: 'Conversation' },
   { id: 'usage', label: 'Usage' },
   { id: 'description', label: 'Description' },
 ];
 
 const ID_PREFIX = 'completed-task';
 
+/** Tabs that fill the view edge to edge with their own scrolling, rather than a padded page. */
+const FULL_BLEED_TABS: ReadonlySet<CompletedTab> = new Set(['changes', 'conversation']);
+
 /**
- * A completed task's window body: a strip of what the task took, then three
+ * A completed task's window body: a strip of what the task took, then five
  * tabs. Summary reads what was done (the written summary, the route through the
- * board, its commits and files), Usage reads what it cost (each run, the models
- * and their tokens, the background calls), and Description is the task as it
- * was written. Everything but the description comes from one
- * `sessions.getTaskReport` read.
+ * board, its commits and files), Changes is the Changes panel over the task's
+ * commits, Conversation is the conversation viewer's body, Usage reads what it
+ * cost, and Description is the task as it was written.
+ *
+ * The report is one `sessions.getTaskReport` read; what the task changed is one
+ * `git:taskChanges` read, shared by the strip, the Summary's commit and file
+ * rows and the Changes tab.
+ *
+ * Opened on a tab from outside through the session store's one-shot
+ * `completedViewRequest` (the archived card's Show changes and View
+ * conversation); applied during render and cleared after, so it never fights
+ * the user's own tab choice.
  */
 export function CompletedTaskView({
   task,
   projectId,
   description,
+  isFocused = false,
 }: {
   task: Task;
   /** The task's own project, which can differ from the open board's. */
   projectId: string;
   /** The description body, or null when the task has none. */
   description: ReactNode | null;
+  /** Whether this window is the focused one: gates the Changes and Conversation keyboard. */
+  isFocused?: boolean;
 }) {
-  const [selectedTab, setSelectedTab] = useState<CompletedTab>('summary');
+  const request = useSessionStore((state) => (state.completedViewRequest?.taskId === task.id ? state.completedViewRequest : null));
+  const clearCompletedViewRequest = useSessionStore((state) => state.clearCompletedViewRequest);
+  const setChangesSelectedCommit = useSessionStore((state) => state.setChangesSelectedCommit);
+  const setChangesSelectedFile = useSessionStore((state) => state.setChangesSelectedFile);
+
+  const [selectedTab, setSelectedTab] = useState<CompletedTab>(request?.tab ?? 'summary');
+  // Held in state and replaced per click, so the conversation body applies
+  // each Route card pick (it compares the request by reference).
+  const [conversationTabRequest, setConversationTabRequest] = useState<ConversationTabRequest | null>(request?.conversationTab ?? null);
+  const [appliedRequest, setAppliedRequest] = useState<CompletedViewRequest | null>(request);
+  if (request && request !== appliedRequest) {
+    setAppliedRequest(request);
+    setSelectedTab(request.tab);
+    if (request.conversationTab) setConversationTabRequest({ ...request.conversationTab });
+  }
+  useEffect(() => {
+    if (request) clearCompletedViewRequest(task.id);
+  }, [request, clearCompletedViewRequest, task.id]);
+
   const { report, loading } = useTaskReport(projectId, task.id);
+  const taskChanges = useTaskChanges(projectId, task.id);
   const panelIds = tabIds(ID_PREFIX, selectedTab);
-  // Null where this host cannot show the conversation viewer, which leaves
-  // every opener in the view (this tab bar's and the Route card's) out.
-  const { canOpenConversation } = useTaskDetailHost();
-  const openConversation = useMemo(
-    () => (canOpenConversation
-      ? (target?: ConversationTabRequest) => { void openTaskConversation(task.id, projectId, target); }
-      : null),
-    [canOpenConversation, task.id, projectId],
-  );
+
+  const entityId = completedChangesEntityId(task.id);
+  const openCommitInChanges = useCallback((commitSha: string) => {
+    setChangesSelectedCommit(entityId, commitSha);
+    setSelectedTab('changes');
+  }, [entityId, setChangesSelectedCommit]);
+  // A file opens on the task's whole change when it has one, else in the
+  // newest commit that touched it.
+  const openFileInChanges = useCallback((filePath: string, newestCommitSha: string | null) => {
+    setChangesSelectedCommit(entityId, newestCommitSha);
+    setChangesSelectedFile(entityId, filePath);
+    setSelectedTab('changes');
+  }, [entityId, setChangesSelectedCommit, setChangesSelectedFile]);
+  const openConversation = useCallback((target: ConversationTabRequest) => {
+    setConversationTabRequest({ ...target });
+    setSelectedTab('conversation');
+  }, []);
+
+  const fullBleed = FULL_BLEED_TABS.has(selectedTab);
+  const gitTotals = taskChanges.changes?.range ? taskChanges.changes.totals : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="completed-task-view">
-      {report && <CompletedHeaderStrip task={task} report={report} />}
+      {report && <CompletedHeaderStrip task={task} report={report} gitTotals={gitTotals} />}
       <Tabs
         tabs={TABS}
         selectedId={selectedTab}
@@ -64,25 +108,12 @@ export function CompletedTaskView({
         ariaLabel="Completed task"
         idPrefix={ID_PREFIX}
         testId="completed-task-tabs"
-        trailing={openConversation && (
-          <Tooltip label="View the full conversation transcript">
-            <button
-              type="button"
-              onClick={() => openConversation()}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              data-testid="completed-view-conversation"
-            >
-              <MessageSquare size={14} />
-              View conversation
-            </button>
-          </Tooltip>
-        )}
       />
       <div
         role="tabpanel"
         id={panelIds.panelId}
         aria-labelledby={panelIds.tabId}
-        className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+        className={fullBleed ? 'flex min-h-0 flex-1 flex-col' : 'min-h-0 flex-1 overflow-y-auto px-6 py-5'}
         data-testid={`completed-panel-${selectedTab}`}
       >
         {selectedTab === 'description' && (
@@ -90,12 +121,40 @@ export function CompletedTaskView({
             ? <div className="space-y-3">{description}</div>
             : <div className="py-8 text-center text-sm text-fg-disabled">No description</div>
         )}
-        {selectedTab !== 'description' && loading && <ReportSkeleton />}
-        {selectedTab !== 'description' && !loading && !report && (
+        {selectedTab === 'changes' && (
+          <CompletedChangesTab
+            task={task}
+            projectId={projectId}
+            isFocused={isFocused}
+            changes={taskChanges.changes}
+            loading={taskChanges.loading}
+            error={taskChanges.error}
+            onRetry={taskChanges.retry}
+          />
+        )}
+        {selectedTab === 'conversation' && (
+          <CompletedConversationTab
+            taskId={task.id}
+            projectId={projectId}
+            isFocused={isFocused}
+            tabRequest={conversationTabRequest}
+          />
+        )}
+        {(selectedTab === 'summary' || selectedTab === 'usage') && loading && <ReportSkeleton />}
+        {(selectedTab === 'summary' || selectedTab === 'usage') && !loading && !report && (
           <div className="py-8 text-center text-sm text-fg-disabled">Could not read this task&apos;s record</div>
         )}
         {selectedTab === 'summary' && report && (
-          <SummaryTab report={report} projectId={projectId} taskId={task.id} onOpenConversation={openConversation} />
+          <SummaryTab
+            report={report}
+            projectId={projectId}
+            taskId={task.id}
+            taskChanges={taskChanges.changes}
+            taskChangesLoading={taskChanges.loading}
+            onOpenConversation={openConversation}
+            onOpenCommit={openCommitInChanges}
+            onOpenFile={openFileInChanges}
+          />
         )}
         {selectedTab === 'usage' && report && <UsageTab report={report} />}
       </div>

@@ -6,6 +6,7 @@ import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { ActivityMark } from '../ActivityMark';
+import { CountBadge } from '../CountBadge';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { OverlayPopover } from '../OverlayPopover';
@@ -79,8 +80,10 @@ function SectionHeading({ children, count, trailing }: { children: React.ReactNo
   return (
     <div className="flex items-center gap-2 mb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">
       {children}
+      {/* Tinted from the heading's faint tone. `tracking-normal` keeps the
+          heading's letter-spacing off the digits. */}
       {count !== undefined && (
-        <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-edge/50 text-xs font-semibold normal-case tracking-normal tabular-nums">{count}</span>
+        <CountBadge count={count} variant="tinted" size="pill" className="tracking-normal" />
       )}
       {trailing}
     </div>

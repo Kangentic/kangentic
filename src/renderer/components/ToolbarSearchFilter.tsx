@@ -58,6 +58,11 @@ export function ToolbarSearchFilter({
   const filterPopoverRef = useRef<HTMLDivElement>(null);
 
   const hasActiveFilters = priorityFilters.size > 0 || labelFilters.size > 0;
+  // An icon-only Filter button is a fixed square that cannot hold the count
+  // pill, so while the pill shows it takes the collapse pair's sized variant.
+  const filterButtonSizing = filterCollapse
+    ? (hasActiveFilters && filterCollapse.buttonWithCount ? filterCollapse.buttonWithCount : filterCollapse.button)
+    : 'px-3';
 
   // Close the popover on click outside (button or popover).
   useEffect(() => {
@@ -115,7 +120,7 @@ export function ToolbarSearchFilter({
             type="button"
             onClick={() => setShowFilterPopover(!showFilterPopover)}
             aria-label="Filter"
-            className={`relative flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterCollapse ? filterCollapse.button : 'px-3'} ${
+            className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterButtonSizing} ${
               hasActiveFilters
                 ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
                 : 'text-fg-muted hover:text-fg border-edge/50 hover:bg-surface-hover/40'
@@ -124,11 +129,15 @@ export function ToolbarSearchFilter({
           >
             <Filter size={14} className="shrink-0" />
             <span className={filterCollapse?.label}>Filter</span>
+            {/* Tinted from the button's own tone, which is the accent while a
+                filter is active. It stays when the label collapses, so the
+                icon-only button still says how many filters are on. */}
             {hasActiveFilters && (
               <CountBadge
                 count={priorityFilters.size + labelFilters.size}
-                variant="solid"
-                className="absolute -top-2 -right-2"
+                variant="tinted"
+                size="pill"
+                testId={`${filterTestId}-count`}
               />
             )}
           </button>

@@ -49,7 +49,7 @@ import {
 } from '../../../boards/adapters/azure-devops/client';
 import { readRemoteUrls } from '../../../git/git-remotes';
 import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
-import { firstAzureRemote, buildAzurePrWebUrl, type AzureRemote } from './azure-remote';
+import { firstAzureRemote, buildAzurePrWebUrl, buildAzureCommitWebUrl, type AzureRemote } from './azure-remote';
 
 /**
  * Shared az client. Reuses the board importer's binary detection and error
@@ -312,6 +312,11 @@ export const azureDevOpsPRConnector: PRConnector = {
 
   matchesRemote(remoteUrls: readonly string[]): boolean {
     return firstAzureRemote(remoteUrls) !== null;
+  },
+
+  commitWebUrl(remoteUrls: readonly string[], sha: string): string | null {
+    const remote = firstAzureRemote(remoteUrls);
+    return remote ? buildAzureCommitWebUrl(remote, sha) : null;
   },
 
   matchesCommand(commandDetail: string): boolean {

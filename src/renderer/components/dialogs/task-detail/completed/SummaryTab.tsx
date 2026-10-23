@@ -11,8 +11,11 @@ import { formatSpan, formatSpanCompact } from '../../../../utils/format-session'
 import { formatDateTime, formatMonthDayTime, formatTimeAgo } from '../../../../lib/datetime';
 import { ColumnPill, LinkButton, OPENS_CONVERSATION_DETAIL, ReportCard } from './report-parts';
 import { useTaskLastMessage } from './useTaskReport';
+import { FILE_STATUS_CONFIG } from '../changes/file-status';
 import type {
   ConversationTabRequest,
+  GitTaskChangesFile,
+  GitTaskChangesResult,
   TaskReport,
   TaskReportKnowledge,
   TaskReportRouteColumn,
@@ -21,24 +24,40 @@ import type {
 
 /** A visit shorter than this is a pass through the column, not a stay worth a card. */
 const VISIT_CARD_MIN_MS = 60_000;
-/** Changed files listed before "Show all". */
-const FILES_SHOWN = 8;
+/** The Files card's box holds about this many rows, then scrolls. */
+const FILES_BOX_ROWS = 8;
+/** One file row's height (px), for the box's height. */
+const FILE_ROW_PX = 24;
 
 const STAY_ROW_CLASS = 'flex h-[30px] w-full items-center whitespace-nowrap rounded-md border px-2.5 text-xs tabular-nums';
 
-export function SummaryTab({ report, projectId, taskId, onOpenConversation }: {
+export function SummaryTab({ report, projectId, taskId, taskChanges, taskChangesLoading, onOpenConversation, onOpenCommit, onOpenFile }: {
   report: TaskReport;
   projectId: string;
   taskId: string;
-  /** Opens the task's conversation on a part of it; null where the host cannot show the viewer. */
-  onOpenConversation: ((target: ConversationTabRequest) => void) | null;
+  /** What the task changed, from git; null while it is read, or when it could not be. */
+  taskChanges: GitTaskChangesResult | null;
+  taskChangesLoading: boolean;
+  /** Opens the task's Conversation tab on a part of it. */
+  onOpenConversation: (target: ConversationTabRequest) => void;
+  /** Opens the Changes tab on one commit. */
+  onOpenCommit: (commitSha: string) => void;
+  /** Opens the Changes tab on one file: the whole change, or with no range its newest commit. */
+  onOpenFile: (filePath: string, newestCommitSha: string | null) => void;
 }) {
   return (
     <div className="flex flex-col gap-4">
       <TaskSummaryCard state={report.summaryState} projectId={projectId} taskId={taskId} />
       {report.route.length > 0 && <RouteCard route={report.route} onOpenConversation={onOpenConversation} />}
-      {report.knowledge && report.knowledge.commits.length > 0 && <CommitsCard knowledge={report.knowledge} />}
-      {report.knowledge && report.knowledge.changedFiles.length > 0 && <FilesChangedCard knowledge={report.knowledge} />}
+      {report.knowledge && report.knowledge.commits.length > 0 && (
+        <CommitsCard knowledge={report.knowledge} taskChanges={taskChanges} onOpenCommit={onOpenCommit} />
+      )}
+      <FilesChangedCard
+        knowledge={report.knowledge}
+        taskChanges={taskChanges}
+        loading={taskChangesLoading}
+        onOpenFile={onOpenFile}
+      />
     </div>
   );
 }
@@ -158,13 +177,12 @@ function ClampedMarkdown({ text }: { text: string }) {
  * time. A column it came back to with two or more real stays lists each one
  * under its pill, with the full date, since the stays can be days apart.
  *
- * Where the host can show the conversation viewer, a pill opens it on that
- * column's tab, and a stay row on that tab scrolled to the stay; a window
- * already open switches its tab.
+ * A pill opens the Conversation tab on that column's tab, and a stay row on
+ * that tab scrolled to the stay.
  */
 function RouteCard({ route, onOpenConversation }: {
   route: TaskReportRouteColumn[];
-  onOpenConversation: ((target: ConversationTabRequest) => void) | null;
+  onOpenConversation: (target: ConversationTabRequest) => void;
 }) {
   return (
     <ReportCard title="Route" testId="completed-route">
@@ -177,39 +195,26 @@ function RouteCard({ route, onOpenConversation }: {
                 column={column}
                 label={formatSpanCompact(column.totalMs)}
                 tip={`${column.name}: ${formatSpan(column.totalMs)}`}
-                onClick={onOpenConversation ? () => onOpenConversation({ swimlaneId: column.swimlaneId }) : undefined}
+                onClick={() => onOpenConversation({ swimlaneId: column.swimlaneId })}
               />
-              {stays.length >= 2 && stays.map((visit) => {
-                const stayContent = (
-                  <>
+              {stays.length >= 2 && stays.map((visit) => (
+                <Tooltip
+                  key={visit.startedAt}
+                  label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}
+                  detail={OPENS_CONVERSATION_DETAIL}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onOpenConversation({ swimlaneId: column.swimlaneId, visitStartedAt: visit.startedAt })}
+                    className={`${STAY_ROW_CLASS} cursor-pointer transition-colors hover:bg-surface-hover/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
+                    style={{ borderColor: column.color }}
+                    data-testid="route-visit"
+                  >
                     <span className="text-fg-muted">{formatMonthDayTime(visit.startedAt)}</span>
                     <span className="ml-auto pl-3.5 font-medium text-fg-secondary">{formatSpanCompact(visit.durationMs)}</span>
-                  </>
-                );
-                return (
-                  <Tooltip
-                    key={visit.startedAt}
-                    label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}
-                    detail={onOpenConversation ? OPENS_CONVERSATION_DETAIL : undefined}
-                  >
-                    {onOpenConversation ? (
-                      <button
-                        type="button"
-                        onClick={() => onOpenConversation({ swimlaneId: column.swimlaneId, visitStartedAt: visit.startedAt })}
-                        className={`${STAY_ROW_CLASS} cursor-pointer transition-colors hover:bg-surface-hover/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent`}
-                        style={{ borderColor: column.color }}
-                        data-testid="route-visit"
-                      >
-                        {stayContent}
-                      </button>
-                    ) : (
-                      <div className={STAY_ROW_CLASS} style={{ borderColor: column.color }} data-testid="route-visit">
-                        {stayContent}
-                      </div>
-                    )}
-                  </Tooltip>
-                );
-              })}
+                  </button>
+                </Tooltip>
+              ))}
             </div>
           );
         })}
@@ -218,49 +223,145 @@ function RouteCard({ route, onOpenConversation }: {
   );
 }
 
-function CommitsCard({ knowledge }: { knowledge: TaskReportKnowledge }) {
+/**
+ * The task's linked commits. A row whose commit is in the clone opens the
+ * Changes tab on it; one the clone lacks (or before git answers) stays text.
+ */
+function CommitsCard({ knowledge, taskChanges, onOpenCommit }: {
+  knowledge: TaskReportKnowledge;
+  taskChanges: GitTaskChangesResult | null;
+  onOpenCommit: (commitSha: string) => void;
+}) {
   const aside = knowledge.commitCount > knowledge.commits.length ? `${knowledge.commits.length} of ${knowledge.commitCount}` : undefined;
+  const openable = new Set((taskChanges?.commits ?? []).map((commit) => commit.hash));
   return (
     <ReportCard title="Commits" aside={aside} testId="completed-commits">
-      {knowledge.commits.map((commit) => (
-        <div key={commit.sha} className="flex min-w-0 items-center gap-2 py-[3px] text-[13px] text-fg-secondary">
-          <span className="flex-shrink-0 font-mono text-xs text-accent-fg">{commit.sha.slice(0, 7)}</span>
-          <Tooltip label={commit.subject}>
+      {knowledge.commits.map((commit) => {
+        const shortSha = commit.sha.slice(0, 7);
+        const content = (
+          <>
+            <span className="flex-shrink-0 font-mono text-xs text-accent-fg">{shortSha}</span>
             <span className="min-w-0 truncate">{commit.subject}</span>
-          </Tooltip>
-          <Tooltip label={formatDateTime(commit.committedAt)}>
             <span className="ml-auto flex-shrink-0 pl-3 text-xs text-fg-faint">{formatTimeAgo(commit.committedAt)}</span>
+          </>
+        );
+        if (!openable.has(commit.sha)) {
+          return (
+            <Tooltip key={commit.sha} label={commit.subject} detail={formatDateTime(commit.committedAt)}>
+              <div className="flex min-w-0 items-center gap-2 py-[3px] text-[13px] text-fg-secondary" data-testid="completed-commit-row">
+                {content}
+              </div>
+            </Tooltip>
+          );
+        }
+        return (
+          <Tooltip key={commit.sha} label={`Show ${shortSha} in Changes`} detail={`${commit.subject}\n${formatDateTime(commit.committedAt)}`}>
+            <button
+              type="button"
+              onClick={() => onOpenCommit(commit.sha)}
+              className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-[3px] text-left text-[13px] text-fg-secondary transition-colors hover:bg-surface-hover/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              data-testid="completed-commit-row"
+            >
+              {content}
+            </button>
           </Tooltip>
-        </div>
-      ))}
+        );
+      })}
     </ReportCard>
   );
 }
 
-function FilesChangedCard({ knowledge }: { knowledge: TaskReportKnowledge }) {
-  const [showAll, setShowAll] = useState(false);
-  const files = showAll ? knowledge.changedFiles : knowledge.changedFiles.slice(0, FILES_SHOWN);
-  const hidden = knowledge.changedFiles.length - FILES_SHOWN;
+/**
+ * The files the task changed, read from git: each with its status and lines,
+ * biggest change first, two columns in a box about eight rows tall that
+ * scrolls. A row opens the Changes tab on that file. Only when git has no
+ * files to give (the commits are not in this clone, or the read failed) does
+ * it fall back to the index's list of files the agent's tools wrote, as text.
+ * With neither there is no card, so while git is read it holds its place only
+ * when the index already names files, and a task that changed nothing never
+ * flashes an empty card.
+ */
+function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
+  knowledge: TaskReportKnowledge | null;
+  taskChanges: GitTaskChangesResult | null;
+  loading: boolean;
+  onOpenFile: (filePath: string, newestCommitSha: string | null) => void;
+}) {
+  const gitFiles = taskChanges?.files ?? [];
+  const indexFiles = knowledge?.changedFiles ?? [];
+  const boxStyle = { maxHeight: FILES_BOX_ROWS * FILE_ROW_PX };
+
+  if (gitFiles.length === 0 && indexFiles.length === 0) return null;
+
+  if (loading) {
+    return (
+      <ReportCard title="Files changed" testId="completed-files-changed">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-2" data-testid="completed-files-loading">
+          {Array.from({ length: 4 }, (_, index) => (
+            <div key={index} className="h-4 animate-pulse rounded bg-surface-hover" />
+          ))}
+        </div>
+      </ReportCard>
+    );
+  }
+
+  if (gitFiles.length === 0) {
+    return (
+      <ReportCard title="Files changed" aside={knowledge?.changedFileCount} testId="completed-files-changed">
+        <div className="grid grid-cols-2 gap-x-8 overflow-y-auto" style={boxStyle}>
+          {indexFiles.map((file) => (
+            <Tooltip key={file} label={file}>
+              <div className="min-w-0 truncate py-[3px] font-mono text-xs text-fg-secondary" data-testid="completed-changed-file">
+                {file}
+              </div>
+            </Tooltip>
+          ))}
+        </div>
+      </ReportCard>
+    );
+  }
+
+  const hasRange = Boolean(taskChanges?.range);
   return (
-    <ReportCard
-      title="Files changed"
-      aside={knowledge.changedFileCount}
-      action={hidden > 0 && (
-        <LinkButton onClick={() => setShowAll((previous) => !previous)} testId="completed-files-toggle">
-          {showAll ? 'Show less' : 'Show all'}
-        </LinkButton>
-      )}
-      testId="completed-files-changed"
-    >
-      <div className="grid grid-cols-2 gap-x-8">
-        {files.map((file) => (
-          <Tooltip key={file} label={file}>
-            <div className="min-w-0 truncate py-[3px] font-mono text-xs text-fg-secondary" data-testid="completed-changed-file">
-              {file}
-            </div>
-          </Tooltip>
+    <ReportCard title="Files changed" aside={gitFiles.length} testId="completed-files-changed">
+      {/* The box, not each row, takes the negative margin: rows pad their hover
+          back in, so their text lines up with the title, and nothing reaches
+          past the scrolling box to raise a sideways scrollbar. */}
+      <div className="-mx-1.5 grid grid-cols-2 gap-x-5 overflow-y-auto overflow-x-hidden" style={boxStyle} data-testid="completed-files-box">
+        {gitFiles.map((file) => (
+          <FileRow key={file.path} file={file} onOpen={() => onOpenFile(file.path, hasRange ? null : (file.newestCommitSha ?? null))} />
         ))}
       </div>
     </ReportCard>
+  );
+}
+
+function FileRow({ file, onOpen }: { file: GitTaskChangesFile; onOpen: () => void }) {
+  const status = FILE_STATUS_CONFIG[file.status];
+  const StatusIcon = status.icon;
+  const fileName = file.path.split('/').pop() ?? file.path;
+  return (
+    <Tooltip label={`Show ${fileName} in Changes`} detail={file.oldPath ? `${file.oldPath} to ${file.path}` : file.path}>
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-surface-hover/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+        style={{ height: FILE_ROW_PX }}
+        data-testid="completed-changed-file"
+      >
+        <StatusIcon size={12} className={`flex-shrink-0 ${status.colorClass}`} aria-label={status.label} />
+        <span className="min-w-0 truncate font-mono text-xs text-fg-secondary">{file.path}</span>
+        <span className="ml-auto flex flex-shrink-0 gap-1 pl-3 text-[11px] tabular-nums">
+          {file.binary ? (
+            <span className="text-fg-faint">binary</span>
+          ) : (
+            <>
+              <span className="text-green-400">+{file.insertions}</span>
+              <span className="text-red-400">-{file.deletions}</span>
+            </>
+          )}
+        </span>
+      </button>
+    </Tooltip>
   );
 }

@@ -37,6 +37,7 @@ import {
   type GhMergeBypass,
 } from '../../../boards/adapters/github-common/gh-client';
 import { isShaContainedInRef } from '../../../git/worktree-head';
+import { firstGitHubRemote, buildGitHubCommitWebUrl } from './github-remote';
 
 /**
  * Shared gh client for authoritative PR resolution. Reuses the same binary
@@ -656,6 +657,11 @@ export const gitHubPRConnector: PRConnector = {
    */
   matchesRemote(remoteUrls: readonly string[]): boolean {
     return remoteUrls.some((url) => /(^|\/\/|@)[^/:@]*github[^/:@]*[:/]/i.test(url));
+  },
+
+  commitWebUrl(remoteUrls: readonly string[], sha: string): string | null {
+    const remote = firstGitHubRemote(remoteUrls);
+    return remote ? buildGitHubCommitWebUrl(remote, sha) : null;
   },
 
   matchesCommand(commandDetail: string): boolean {

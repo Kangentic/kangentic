@@ -1851,6 +1851,7 @@ test.describe('Settings Search', () => {
     // tab label is a searchable field, so every row on the tab matches "theme".
     const themeTab = page.getByRole('button', { name: 'Theme 2' });
     await expect(themeTab).not.toHaveClass(/opacity-40/);
+    await expect(themeTab.getByTestId('settings-search-count-theme')).toHaveText('2');
 
     // General sidebar tab should be dimmed (no matches for "theme" - it only
     // holds Project Location now that Theme is its own tab).

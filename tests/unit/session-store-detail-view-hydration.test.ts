@@ -88,7 +88,10 @@ const setDetailViewStateMock = vi.fn(async (_taskId: string, _state: TaskDetailV
 
 // Import after the global stub so the store module sees the mocked window.
 import { useSessionStore } from '../../src/renderer/stores/session-store';
-import { commandTerminalChangesEntityId } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
+import {
+  COMPLETED_CHANGES_ENTITY_PREFIX,
+  commandTerminalChangesEntityId,
+} from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -117,7 +120,7 @@ function resetSliceState(): void {
     changesViewMode: {},
     changesSelectedCommit: {},
     changesHistoryHeight: {},
-    changesHistoryOpen: {},
+    changesHistoryCollapsed: {},
     dividerRatio: {},
     browserOpenTasks: new Set<string>(),
     maximizedTasks: new Set<string>(),
@@ -332,71 +335,80 @@ describe('changesSelectedCommit - persists to and hydrates from detail_view_stat
 });
 
 // ---------------------------------------------------------------------------
-// changesHistoryOpen: the Changes rail's History section expanded flag.
-// Written only when true (absent = collapsed, the new default), mirroring the
-// changesOpen / changesSelectedCommit asymmetry; collapsing drops the key from
-// the store record AND the next blob write rather than storing false.
+// changesHistoryCollapsed: the Changes rail's History section collapsed flag.
+// History arrives open, so the blob records only a collapse (absent = open),
+// mirroring the changesOpen / changesSelectedCommit asymmetry; reopening drops
+// the key from the store record AND the next blob write rather than storing
+// false. The old `changesHistoryOpen` key is ignored on hydration.
 // Red condition (write): remove the
-// `if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;` line
-// from buildDetailViewBlob and the persist test loses the key. Red condition
-// (read): remove the `if (blob.changesHistoryOpen) ...` hydration line and the
-// hydrate test fails.
+// `if (state.changesHistoryCollapsed[taskId]) blob.changesHistoryCollapsed = true;`
+// line from buildDetailViewBlob and the persist test loses the key. Red
+// condition (read): remove the `if (blob.changesHistoryCollapsed) ...`
+// hydration line and the hydrate test fails.
 // ---------------------------------------------------------------------------
 
-describe('changesHistoryOpen - persists to and hydrates from detail_view_state', () => {
+describe('changesHistoryCollapsed - persists to and hydrates from detail_view_state', () => {
   beforeEach(() => {
     // Same stray-timer flush as the changesSelectedCommit block above.
     vi.advanceTimersByTime(1000);
     resetSliceState();
   });
 
-  it('persists changesHistoryOpen: true into the saved blob after setChangesHistoryOpen(id, true)', () => {
-    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+  it('persists changesHistoryCollapsed: true into the saved blob after setChangesHistoryOpen(id, false)', () => {
+    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
 
     vi.advanceTimersByTime(1000);
 
     expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
     const [taskId, blob] = setDetailViewStateMock.mock.calls[0];
     expect(taskId).toBe('task-history');
-    expect(blob).toMatchObject({ changesHistoryOpen: true });
+    expect(blob).toMatchObject({ changesHistoryCollapsed: true });
   });
 
-  it('omits changesHistoryOpen from the blob after collapsing back (absent = collapsed default)', () => {
-    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
+  it('omits changesHistoryCollapsed from the blob after reopening (absent = open default)', () => {
     useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
 
     vi.advanceTimersByTime(1000);
 
     // Both setter calls coalesce into one debounced save carrying the final state.
     expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
     const [, blob] = setDetailViewStateMock.mock.calls[0];
-    expect(blob?.changesHistoryOpen).toBeUndefined();
+    expect(blob?.changesHistoryCollapsed).toBeUndefined();
     // The store record drops the key too, staying bounded.
-    expect('task-history' in useSessionStore.getState().changesHistoryOpen).toBe(false);
+    expect('task-history' in useSessionStore.getState().changesHistoryCollapsed).toBe(false);
   });
 
   it('is a no-op (no save scheduled) when setting the value it already has', () => {
-    useSessionStore.getState().setChangesHistoryOpen('task-history', false);
+    useSessionStore.getState().setChangesHistoryOpen('task-history', true);
 
     vi.advanceTimersByTime(1000);
 
     expect(setDetailViewStateMock).not.toHaveBeenCalled();
   });
 
-  it('hydrates changesHistoryOpen from a persisted blob back into the store', () => {
-    const task = makeTask('task-hydrate-history', JSON.stringify({ changesHistoryOpen: true }));
+  it('hydrates changesHistoryCollapsed from a persisted blob back into the store', () => {
+    const task = makeTask('task-hydrate-history', JSON.stringify({ changesHistoryCollapsed: true }));
 
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
-    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-history']).toBe(true);
+    expect(useSessionStore.getState().changesHistoryCollapsed['task-hydrate-history']).toBe(true);
   });
 
-  it('leaves changesHistoryOpen unset when the persisted blob omits it (collapsed stays the default)', () => {
-    const task = makeTask('task-hydrate-collapsed', JSON.stringify({ dividerRatio: 0.5 }));
+  it('leaves changesHistoryCollapsed unset when the persisted blob omits it (open stays the default)', () => {
+    const task = makeTask('task-hydrate-open', JSON.stringify({ dividerRatio: 0.5 }));
 
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
-    expect(useSessionStore.getState().changesHistoryOpen['task-hydrate-collapsed']).toBeUndefined();
+    expect(useSessionStore.getState().changesHistoryCollapsed['task-hydrate-open']).toBeUndefined();
+  });
+
+  it('ignores the retired changesHistoryOpen key, so a blob from before the flip opens History', () => {
+    const task = makeTask('task-hydrate-retired', JSON.stringify({ changesHistoryOpen: true }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesHistoryCollapsed['task-hydrate-retired']).toBeUndefined();
   });
 });
 
@@ -519,5 +531,90 @@ describe('commandTerminalChangesEntityId - excluded from detail_view_state persi
     expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
     const [taskId] = setDetailViewStateMock.mock.calls[0];
     expect(taskId).toBe('task-1');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavior 5: the prefixed entity ids of a task's OTHER Changes hosts are
+// excluded from detail_view_state persistence too. The standalone dialog
+// (`dialog-<id>`), the detached window (`popout-<id>`) and a completed task's
+// Changes tab (`completed-<id>`, built from the exported
+// COMPLETED_CHANGES_ENTITY_PREFIX) all share the Changes-panel setters but name
+// no `tasks` row, so a save would be an IPC write whose UPDATE matches nothing.
+// Each id is driven through three different setters, each of which ends in
+// scheduleDetailViewSave, so the exclusion is pinned at its one chokepoint
+// rather than at one call site. The store state still updates for the excluded
+// id (its state lives for the session): that assertion is what stops the test
+// passing because a setter silently no-oped.
+// Red condition: drop 'dialog-', 'popout-' and COMPLETED_CHANGES_ENTITY_PREFIX
+// from NON_TASK_DETAIL_VIEW_PREFIXES and every excluded-id case fails -
+// setDetailViewStateMock is called twice instead of once.
+// ---------------------------------------------------------------------------
+
+describe('prefixed Changes host entity ids - excluded from detail_view_state persistence', () => {
+  beforeEach(() => {
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  const excludedEntityIds: Array<[string, string]> = [
+    ['completed- prefix (COMPLETED_CHANGES_ENTITY_PREFIX)', `${COMPLETED_CHANGES_ENTITY_PREFIX}task-1`],
+    ['popout- prefix', 'popout-task-1'],
+    ['dialog- prefix', 'dialog-task-1'],
+  ];
+
+  interface ChangesSetterCase {
+    name: string;
+    apply: (entityId: string) => void;
+    appliedToStore: (entityId: string) => boolean;
+  }
+
+  const changesSetterCases: ChangesSetterCase[] = [
+    {
+      name: 'toggleChangesOpen',
+      apply: (entityId) => useSessionStore.getState().toggleChangesOpen(entityId),
+      appliedToStore: (entityId) => useSessionStore.getState().changesOpenTasks.has(entityId),
+    },
+    {
+      name: 'setChangesSelectedCommit',
+      apply: (entityId) => useSessionStore.getState().setChangesSelectedCommit(entityId, 'a1b2c3d'),
+      appliedToStore: (entityId) => useSessionStore.getState().changesSelectedCommit[entityId] === 'a1b2c3d',
+    },
+    {
+      name: 'setChangesHistoryOpen(false)',
+      apply: (entityId) => useSessionStore.getState().setChangesHistoryOpen(entityId, false),
+      appliedToStore: (entityId) => useSessionStore.getState().changesHistoryCollapsed[entityId] === true,
+    },
+  ];
+
+  describe.each(excludedEntityIds)('%s', (_label, excludedEntityId) => {
+    it.each(changesSetterCases)(
+      '$name does not schedule a setDetailViewState save for the prefixed id, but does for a real task id',
+      ({ apply, appliedToStore }) => {
+        apply(excludedEntityId);
+        apply('task-1');
+
+        // The excluded id's state is kept for the session; only its save is skipped.
+        expect(appliedToStore(excludedEntityId)).toBe(true);
+
+        vi.advanceTimersByTime(1000);
+
+        expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+        const [taskId] = setDetailViewStateMock.mock.calls[0];
+        expect(taskId).toBe('task-1');
+      },
+    );
+  });
+
+  it('matches the prefixes at the START of the id only, so a real task id that merely contains one still persists', () => {
+    const containsAPrefixMidId = ['task-popout-1', 'task-dialog-1', `task-${COMPLETED_CHANGES_ENTITY_PREFIX}1`];
+    for (const taskId of containsAPrefixMidId) {
+      useSessionStore.getState().toggleChangesOpen(taskId);
+    }
+
+    vi.advanceTimersByTime(1000);
+
+    const savedTaskIds = setDetailViewStateMock.mock.calls.map(([taskId]) => taskId).sort();
+    expect(savedTaskIds).toEqual([...containsAPrefixMidId].sort());
   });
 });

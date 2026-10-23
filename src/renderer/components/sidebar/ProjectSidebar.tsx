@@ -278,7 +278,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             Projects
           </span>
           {projects.length > 0 && (
-            <CountBadge count={projects.length} variant="muted" size="sm" />
+            <CountBadge count={projects.length} variant="tinted" size="pill" className="text-fg-faint" testId="sidebar-projects-count" />
           )}
         </div>
         <div className="relative">

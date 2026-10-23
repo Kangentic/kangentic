@@ -109,14 +109,16 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             {/* Role icon or color dot */}
             <SwimlaneIcon swimlane={swimlane} size={16} dotClassName="w-2.5 h-2.5 rounded-full flex-shrink-0" />
 
-            {/* Column name */}
-            <span className={`text-sm font-medium truncate flex-1 min-w-0 ${
-              isSystemColumn ? 'text-fg' : 'text-fg-secondary'
-            }`}>
-              {swimlane.name}
-            </span>
-
-            <CountBadge count={tasks.length} />
+            {/* Column name, then its task count right after it. The pair takes
+                the free width, so the glyph and edit button stay on the right. */}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <span className={`text-sm font-medium truncate min-w-0 ${
+                isSystemColumn ? 'text-fg' : 'text-fg-secondary'
+              }`}>
+                {swimlane.name}
+              </span>
+              <CountBadge count={tasks.length} variant="tinted" size="pill" className="shrink-0 text-fg-muted" testId="swimlane-task-count" />
+            </div>
 
             <AutomationGlyph swimlaneId={swimlane.id} />
 

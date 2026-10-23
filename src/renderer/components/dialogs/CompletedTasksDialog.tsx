@@ -1,11 +1,10 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Search, ClipboardList, Loader2 } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
-import { TaskChangesDialog } from './TaskChangesDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTable } from '../DataTable';
 import { ArchivedTaskContextMenu } from '../board/ArchivedTaskContextMenu';
-import { openTaskConversation } from './task-detail/open-task-conversation';
+import { openCompletedTask } from './task-detail/open-completed-task';
 import { formatCost } from '../../utils/format-session';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { useBoardStore } from '../../stores/board-store';
@@ -47,7 +46,6 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; task: Task } | null>(null);
-  const [changesTask, setChangesTask] = useState<Task | null>(null);
 
   // This dialog needs the FULL archive, not just the board's newest-N preview.
   // Refcount a viewer for the whole mount so board hydration keeps the full
@@ -338,23 +336,22 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         </div>
       </BaseDialog>
 
-      {changesTask && (
-        <TaskChangesDialog task={changesTask} onClose={() => setChangesTask(null)} />
-      )}
-
       {contextMenu && (
         <ArchivedTaskContextMenu
           position={contextMenu.position}
           task={contextMenu.task}
           swimlanes={swimlanes}
           onOpen={() => handleViewDetail(contextMenu.task.id)}
+          // The window opens on the board layer under this modal, so close the
+          // list to reveal it, as Open does.
           onViewConversation={() => {
-            // The window opens on the board layer under this modal, so close the
-            // list to reveal it, as Open does.
-            void openTaskConversation(contextMenu.task.id, currentProjectId);
+            openCompletedTask(contextMenu.task.id, 'conversation');
             onClose();
           }}
-          onShowChanges={() => setChangesTask(contextMenu.task)}
+          onShowChanges={() => {
+            openCompletedTask(contextMenu.task.id, 'changes');
+            onClose();
+          }}
           onRestoreTo={(targetSwimlaneId) => handleRestore(contextMenu.task.id, targetSwimlaneId)}
           onDelete={() => handleDelete(contextMenu.task.id)}
           onClose={() => setContextMenu(null)}

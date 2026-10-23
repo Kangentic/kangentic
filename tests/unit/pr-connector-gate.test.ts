@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { registeredPRConnectors, commitAnchorSelfVerifies, type PRResolveOptions } from '../../src/main/pr/pr-registry';
+import { registeredPRConnectors, commitAnchorSelfVerifies, commitWebLinks, type PRResolveOptions } from '../../src/main/pr/pr-registry';
 import { PR_MERGE_READINESS_VALUES } from '../../src/shared/types';
 import { GitHubImporter } from '../../src/main/boards/adapters/github-common/gh-client';
 import { AzureDevOpsImporter } from '../../src/main/boards/adapters/azure-devops/client';
@@ -178,6 +178,68 @@ describe('commitAnchorSelfVerifies', () => {
   it('is false for an empty repoCwd', async () => {
     remotes.urls = ['https://github.com/owner/repo.git'];
     await expect(commitAnchorSelfVerifies('')).resolves.toBe(false);
+  });
+});
+
+/**
+ * Commit web links. A connector's `commitWebUrl` is its own provider gate, so a
+ * lazy one (a URL for any remote) would send a GitHub repo's History hashes to
+ * another host. Driven over the REAL array, like the remote gate above.
+ */
+const SHA = '4f6fb55696d52b7963ffaa4f72733d101b3535cd';
+
+describe('commit web links stay with the connector that owns the remote', () => {
+  beforeEach(() => {
+    remotes.urls = null;
+  });
+
+  it('at least one connector builds commit links, so these assertions are not vacuous', () => {
+    expect(registeredPRConnectors.some((connector) => connector.commitWebUrl)).toBe(true);
+  });
+
+  it.each(Object.entries(PROVIDER_REMOTES).flatMap(([provider, urls]) => urls.map((url) => [provider, url])))(
+    'only the owner of the %s remote %s builds a link for it',
+    (_provider, url) => {
+      const builders = registeredPRConnectors.filter((connector) => connector.commitWebUrl?.([url], SHA));
+      expect(builders.map((connector) => connector.name)).toEqual(
+        registeredPRConnectors.filter((connector) => connector.matchesRemote([url])).map((connector) => connector.name),
+      );
+    },
+  );
+
+  it.each(FOREIGN_REMOTES)('no connector builds a link for %s', (url) => {
+    for (const connector of registeredPRConnectors) {
+      expect(connector.commitWebUrl?.([url], SHA) ?? null).toBeNull();
+    }
+  });
+
+  it('builds the expected page for each provider', () => {
+    const github = registeredPRConnectors.find((connector) => connector.name === 'GitHub');
+    const azure = registeredPRConnectors.find((connector) => connector.name === 'Azure DevOps');
+    expect(github?.commitWebUrl?.(['git@github.com:owner/repo.git'], SHA)).toBe(`https://github.com/owner/repo/commit/${SHA}`);
+    expect(azure?.commitWebUrl?.(['https://dev.azure.com/my-org/My%20Project/_git/my-repo'], SHA))
+      .toBe(`https://dev.azure.com/my-org/My%20Project/_git/my-repo/commit/${SHA}`);
+  });
+
+  it('commitWebLinks names the owner of the primary remote and builds from it', async () => {
+    remotes.urls = ['https://github.com/owner/repo.git'];
+    const links = await commitWebLinks('C:/repo');
+    expect(links?.providerName).toBe('GitHub');
+    expect(links?.url(SHA)).toBe(`https://github.com/owner/repo/commit/${SHA}`);
+  });
+
+  // Unlike the commit-anchor gate, links never follow a secondary remote: a
+  // repo whose own `origin` no connector owns must not link to an upstream.
+  it('commitWebLinks is null when only a secondary remote is owned', async () => {
+    remotes.urls = ['https://gitlab.com/group/project.git', 'https://github.com/owner/repo.git'];
+    await expect(commitWebLinks('C:/repo')).resolves.toBeNull();
+  });
+
+  it('commitWebLinks is null, not a rejection, when the remotes cannot be read or there are none', async () => {
+    remotes.urls = null;
+    await expect(commitWebLinks('C:/repo')).resolves.toBeNull();
+    remotes.urls = [];
+    await expect(commitWebLinks('C:/repo')).resolves.toBeNull();
   });
 });
 

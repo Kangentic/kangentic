@@ -114,7 +114,13 @@ test.describe('Hotkeys settings tab', () => {
 
     await expect(page.getByTestId('hotkey-conflict-view.toggleSidebar')).toBeVisible();
     await expect(page.getByTestId('hotkey-conflict-commandBar.toggle')).toBeVisible();
-    await expect(page.getByTestId('hotkey-conflict-summary')).toBeVisible();
+    // One combo is shared, so the summary is singular, with its count in a pill
+    // after the text.
+    const summary = page.getByTestId('hotkey-conflict-summary');
+    await expect(summary).toBeVisible();
+    await expect(summary).toContainText('Conflict detected');
+    await expect(summary).not.toContainText('Conflicts detected');
+    await expect(summary.getByTestId('hotkey-conflict-count')).toHaveText('1');
 
     // Clean up so later tests start from defaults.
     await page.getByTestId('hotkey-reset-view.toggleSidebar').click();

@@ -71,10 +71,15 @@ chrome unless these are stated.
   (`settings/shared.tsx`) in the settings panel. `Combobox`, `ToggleCard`, and
   `SegmentedControl` each match that fill deliberately and say so in a comment, so a one-off
   `bg-*` on a new control breaks a family that is being held together by hand.
-- **Numeric counts:** use the shared `CountBadge` (`src/renderer/components/CountBadge.tsx`)
-  with its `muted` / `accent` / `solid` variants. Do not inline badge styles. A count inside a
-  control whose text tone it should follow (the board toolbar's view tabs) is `variant="tinted"
-  size="pill"`, which also centers the digits on their own ink.
+- **Numeric counts:** use the shared `CountBadge` (`src/renderer/components/CountBadge.tsx`).
+  Do not inline badge styles. The standard count is `variant="tinted" size="pill"`, placed right
+  after the label it counts, and it centers the digits on their own ink. The pill sets no text
+  color: its fill and edge mix from `currentColor`, so it takes its parent's tone. Inside a
+  control that sets a tone (a tab, a toggle, the Filter button) let it inherit, so it follows
+  hover and selection. After a plain label, pass the label's tone on the badge (`text-fg-muted`,
+  `text-fg-faint`): `<body>` is `text-fg`, so an untoned pill renders bright. The title bar's
+  unread announcements badge is the one overlay badge, a solid `xs` circle on its icon. A count
+  in parentheses ("Completed (7)") or a bare number aside stays text.
 - **Confirmations:** use `ConfirmDialog` for all yes/no prompts; set `showDontAskAgain` when the
   confirmation should be suppressible. Never build a one-off modal for a simple confirmation.
 - **Dialog dismissal:** all dialogs use a global `useEffect` Escape key listener.

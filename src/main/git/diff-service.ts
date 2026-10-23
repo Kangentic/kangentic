@@ -1,7 +1,7 @@
 import { gitAt, type GitClient } from './git-client';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
+import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffRange, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult, GitFileImageInput, GitImageContentResult, GitImageSide } from '../../shared/types';
 import { IMAGE_PREVIEW_MAX_BYTES, isGitLfsPointer } from '../../shared/image-preview';
 import { countFileLines } from './line-count/count-lines';
 import { readGitObject } from './git-object-reader';
@@ -95,8 +95,24 @@ function parseNameStatus(output: string): Map<string, { status: GitDiffStatus; o
   return result;
 }
 
+/**
+ * `git diff --stat` names a rename by both paths, `docs/{old.md => new.md}`
+ * (or `old.md => new.md` when they share no prefix), where `--name-status`
+ * and the file list use the new path alone. Without this a renamed file kept
+ * the combined name, so its status, old path and contents were never found.
+ * Only applied to a path `--name-status` did not list, so a name that merely
+ * contains ` => ` is left alone. The new name ends at the first `}` after the
+ * arrow, so a `}` later in the path stays in the path.
+ */
+function renamedSummaryPath(summaryPath: string): string {
+  const braced = /^(.*)\{(.*) => (.*?)\}(.*)$/.exec(summaryPath);
+  if (braced) return `${braced[1]}${braced[3]}${braced[4]}`.replace(/\/{2,}/g, '/').replace(/^\//, '');
+  const bare = /^(.+) => (.+)$/.exec(summaryPath);
+  return bare ? bare[2] : summaryPath;
+}
+
 /** The empty tree object every git repo has - used as the "parent" of a root commit. */
-const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+export const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 /**
  * The best common ancestor of two commits, or null when they share none or a
@@ -253,13 +269,19 @@ export class DiffService {
   }
 
   async getDiffFiles(input: GitDiffFilesInput): Promise<GitDiffFilesResult> {
+    // The commit and range arrive over IPC and become `git diff` arguments, so
+    // anything that is not a hash is refused before git sees it (an
+    // `--output=...` would otherwise be read as an option).
+    if (!isSafeRevisionInput(input)) throw new Error('Refused a diff request whose commit or range is not a commit hash');
     const git = gitAt(this.gitDirectory);
-    const { baseBranch, commitOid } = input;
+    const { baseBranch, commitOid, range } = input;
     const scope = input.scope ?? 'branch';
 
     const { summaryArgs, nameStatusArgs, includeUntracked } = commitOid
       ? await this.resolveCommitDiffArgs(git, commitOid)
-      : await this.resolveScopeDiffArgs(git, scope, baseBranch);
+      : range
+        ? resolveRangeDiffArgs(range)
+        : await this.resolveScopeDiffArgs(git, scope, baseBranch);
 
     // Run git commands in parallel for faster initial load.
     // git.status() fetches untracked files that git diff ignores - only needed
@@ -272,7 +294,7 @@ export class DiffService {
     const statusMap = parseNameStatus(nameStatusOutput);
 
     const files: GitDiffFileEntry[] = summary.files.map((file) => {
-      const filePath = file.file;
+      const filePath = statusMap.has(file.file) ? file.file : renamedSummaryPath(file.file);
       const statusInfo = statusMap.get(filePath);
       const isBinary = file.binary;
 
@@ -433,6 +455,7 @@ export class DiffService {
    * overrides scope entirely: original is that commit's parent tree. A rename
    * reads the left side from its old path.
    *   commit  -> <oid>^ (or the empty tree for a root commit)
+   *   range   -> its base (vs its head)
    *   working -> index   (vs working tree on disk)
    *   staged  -> HEAD    (vs the index blob)
    *   branch  -> base    (vs working tree on disk)
@@ -442,6 +465,7 @@ export class DiffService {
     const showPath = input.oldPath ?? input.filePath;
     let revision: string;
     if (input.commitOid) revision = await this.resolveParentRef(git, input.commitOid);
+    else if (input.range) revision = input.range.base;
     else if (scope === 'working') revision = '';
     else if (scope === 'staged') revision = 'HEAD';
     else revision = await this.getMergeBase(git, input.baseBranch);
@@ -476,26 +500,49 @@ function isRepoRelativePath(filePath: string): boolean {
 
 const COMMIT_OID_PATTERN = /^[0-9a-f]{4,64}$/i;
 
+/** A range's ends are always full hashes (SHA-1 or SHA-256): the resolver hands them out whole. */
+const FULL_OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
+/**
+ * The `git diff` arguments for a fixed span of history (`base..head`). Both
+ * ends are commits, so there is no working tree and no untracked file in it.
+ */
+function resolveRangeDiffArgs(range: GitDiffRange): { summaryArgs: string[]; nameStatusArgs: string[]; includeUntracked: boolean } {
+  return {
+    summaryArgs: [range.base, range.head],
+    nameStatusArgs: ['--name-status', range.base, range.head],
+    includeUntracked: false,
+  };
+}
+
+/** A commit is a hash; a range is two full hashes. Either may be absent. */
+function isSafeRevisionInput(input: { commitOid?: string; range?: GitDiffRange }): boolean {
+  if (input.commitOid !== undefined && !COMMIT_OID_PATTERN.test(input.commitOid)) return false;
+  if (input.range !== undefined && !(FULL_OID_PATTERN.test(input.range.base) && FULL_OID_PATTERN.test(input.range.head))) return false;
+  return true;
+}
+
 /**
  * The content readers take their paths and commit from the caller, the
  * renderer over IPC or the phone through the mobile bridge, and join the
  * paths onto the worktree. Every legitimate input names a file the diff list
- * reported and a commit from the history, so anything else is refused before
- * any read.
+ * reported and a commit or range from the history, so anything else is
+ * refused before any read.
  */
 function isSafeContentInput(input: GitFileContentInput): boolean {
   if (!isRepoRelativePath(input.filePath)) return false;
   if (input.oldPath !== undefined && !isRepoRelativePath(input.oldPath)) return false;
-  return input.commitOid === undefined || COMMIT_OID_PATTERN.test(input.commitOid);
+  return isSafeRevisionInput(input);
 }
 
 /**
  * The "modified" (right) side reads from disk for working/branch, from the
  * staged index blob for the staged scope, and from the commit tree itself
- * (never disk) for a commit selection - history is immutable.
+ * (never disk) for a commit selection or a range - history is immutable.
  */
 function resolveModifiedSource(input: GitFileContentInput): FileSideSource {
   if (input.commitOid) return { kind: 'revision', spec: `${input.commitOid}:${input.filePath}` };
+  if (input.range) return { kind: 'revision', spec: `${input.range.head}:${input.filePath}` };
   if ((input.scope ?? 'branch') === 'staged') return { kind: 'revision', spec: `:${input.filePath}` };
   const workingDirectory = input.worktreePath ?? input.projectPath;
   return { kind: 'disk', absolutePath: path.join(workingDirectory, input.filePath) };

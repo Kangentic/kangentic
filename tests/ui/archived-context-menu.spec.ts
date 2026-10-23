@@ -8,8 +8,10 @@
  *
  * Both surfaces should:
  *   - Open the archived context menu at the cursor on right-click.
- *   - Surface "View conversation", which opens the conversation window (the
- *     Completed Tasks dialog closes first, as it does for Open).
+ *   - Surface "View conversation" and "Show changes" on every archived task,
+ *     worktree or not, each opening the task's window on its Conversation or
+ *     Changes tab (the Completed Tasks dialog closes first, as it does for
+ *     Open).
  *   - Surface "Restore to" with non-Done lanes.
  *   - Surface "Delete" which routes through ConfirmDialog (skipDeleteConfirm
  *     unset by default) and ultimately calls tasks.delete via the existing
@@ -235,8 +237,9 @@ test.describe('Archived task context menu', () => {
       // The confirmation names what Delete does, so the item needs no "permanently".
       await expect(page.locator('[data-testid="archived-context-delete-task"]')).toHaveText('Delete');
 
-      // No worktree_path -> "Show changes" item must be gated off.
-      await expect(page.locator('[data-testid="archived-context-show-changes"]')).not.toBeVisible();
+      // No worktree_path, and Show changes is still offered: it reads the
+      // task's commits from git, not a checkout.
+      await expect(page.locator('[data-testid="archived-context-show-changes"]')).toBeVisible();
 
       // Click delete -> opens ConfirmDialog (skipDeleteConfirm is false by default).
       await page.locator('[data-testid="archived-context-delete-task"]').click();
@@ -286,23 +289,28 @@ test.describe('Archived task context menu', () => {
     }
   });
 
-  test('DoneSwimlane preview: View conversation follows Open and opens the conversation window', async () => {
+  test('DoneSwimlane preview: View conversation follows Open and opens the task on its Conversation tab', async () => {
     const { browser, page } = await launchWithArchivedTask();
     try {
       const compactCard = page.locator('[data-task-id="' + TASK_ID + '"]').first();
       await compactCard.waitFor({ state: 'visible', timeout: 10000 });
       await compactCard.click({ button: 'right' });
 
-      // Right after Open: the two ways to look at a finished task sit together.
+      // Right after Open: the ways to look at a finished task sit together.
       await expect(page.locator('[data-testid="archived-context-open-task"] + [data-testid="archived-context-view-conversation"]')).toHaveText('View conversation');
       await page.locator('[data-testid="archived-context-view-conversation"]').click();
-      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      const view = page.getByTestId('completed-task-view');
+      await expect(view).toBeVisible({ timeout: 5000 });
+      await expect(view.getByRole('tab', { name: 'Conversation' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('completed-panel-conversation')).toBeVisible();
+      // The conversation shows in the tab, not in a window of its own.
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('CompletedTasksDialog: View conversation closes the dialog and opens the conversation window', async () => {
+  test('CompletedTasksDialog: View conversation closes the dialog and opens the task on its Conversation tab', async () => {
     const { browser, page } = await launchWithArchivedTask();
     try {
       await page.locator('[data-testid="view-all-completed"]').click();
@@ -312,7 +320,50 @@ test.describe('Archived task context menu', () => {
 
       await page.locator('[data-testid="archived-context-view-conversation"]').click();
       await expect(dialog).toHaveCount(0);
-      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      const view = page.getByTestId('completed-task-view');
+      await expect(view).toBeVisible({ timeout: 5000 });
+      await expect(view.getByRole('tab', { name: 'Conversation' })).toHaveAttribute('aria-selected', 'true');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('DoneSwimlane preview: Show changes on a task with no worktree opens its Changes tab', async () => {
+    const { browser, page } = await launchWithArchivedTask();
+    try {
+      const compactCard = page.locator('[data-task-id="' + TASK_ID + '"]').first();
+      await compactCard.waitFor({ state: 'visible', timeout: 10000 });
+      await compactCard.click({ button: 'right' });
+
+      await page.locator('[data-testid="archived-context-show-changes"]').click();
+      const view = page.getByTestId('completed-task-view');
+      await expect(view).toBeVisible({ timeout: 5000 });
+      await expect(view.getByRole('tab', { name: 'Changes' })).toHaveAttribute('aria-selected', 'true');
+      // The mock's default answer for a task with no seeded commits.
+      await expect(page.getByTestId('completed-changes-empty-no-commits')).toHaveText('No commits for this task');
+      // Read from git for this task, never the worktree-based dialog, which
+      // would fall back to the project checkout.
+      await expect.poll(() => page.evaluate((taskId) => (
+        (window as unknown as { __mockTaskChangesCalls?: Array<{ taskId: string }> }).__mockTaskChangesCalls ?? []
+      ).some((call) => call.taskId === taskId), TASK_ID)).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('CompletedTasksDialog: Show changes closes the dialog and opens the task on its Changes tab', async () => {
+    const { browser, page } = await launchWithArchivedTask();
+    try {
+      await page.locator('[data-testid="view-all-completed"]').click();
+      const dialog = page.locator('[data-testid="completed-tasks-dialog"]');
+      await dialog.waitFor({ state: 'visible', timeout: 5000 });
+      await page.locator('[data-testid="completed-task-row"]').first().click({ button: 'right' });
+
+      await page.locator('[data-testid="archived-context-show-changes"]').click();
+      await expect(dialog).toHaveCount(0);
+      const view = page.getByTestId('completed-task-view');
+      await expect(view).toBeVisible({ timeout: 5000 });
+      await expect(view.getByRole('tab', { name: 'Changes' })).toHaveAttribute('aria-selected', 'true');
     } finally {
       await browser.close();
     }

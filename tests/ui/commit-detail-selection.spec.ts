@@ -4,11 +4,11 @@
  * Selecting a commit row in the history browser scopes the detail pane (file
  * tree + diff) to that commit's diff, seeded via window.__mockGitDiffByCommit
  * (checked by the mock before window.__mockGitDiffByScope - see
- * resolveGitDiffFixture in mock-electron-api.js). The scope selector and
- * branch header disappear in commit-detail (FileTreePanel's own guards drop
- * them when `scope`/`branchSummary` are undefined); a commit-detail-header
- * with a back button (commit-detail-back) replaces them, and returns to
- * Uncommitted (the branch-wide working diff, from window.__mockGitDiff).
+ * resolveGitDiffFixture in mock-electron-api.js). The selection bar
+ * (commit-selection-bar: the commit's hash and subject) takes the scope
+ * control's slot while a commit is selected, and its x (commit-selection-close)
+ * returns to the scope the user was on (the working diff, from
+ * window.__mockGitDiff).
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -137,7 +137,7 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes panel: commit-detail selection', () => {
-  test('selecting a commit scopes the detail pane to its diff; Uncommitted returns to the working diff', async () => {
+  test('selecting a commit scopes the detail pane to its diff; the bar\'s x returns to the working diff', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Commit Detail Task').first();
     await card.click();
 
@@ -149,46 +149,36 @@ test.describe('Changes panel: commit-detail selection', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
 
-    // Uncommitted is selected by default: the working diff's file shows, the
+    // No commit is selected by default: the working diff's file shows, the
     // scope selector is present.
     await expect(fileTree.locator('text=working.ts')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
 
-    // Expand the (default-collapsed) History section to reveal the commit rows.
+    // History arrives open, so its commit rows are already listed.
     const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
-    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
-    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
-      await historyToggle.click();
-    }
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
 
     // Select the commit row: the detail pane swaps to that commit's file list.
     await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'fix parser' }).click();
     await expect(fileTree.locator('text=committed.ts')).toBeVisible({ timeout: 10000 });
     await expect(fileTree.locator('text=working.ts')).not.toBeVisible();
     await expect(page.locator('[data-testid="changes-scope-select"]')).not.toBeVisible();
-    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible();
-    await expect(page.locator('[data-testid="commit-detail-header"]')).toContainText('+3/-1');
+    const bar = page.locator('[data-testid="commit-selection-bar"]');
+    await expect(bar).toBeVisible();
+    await expect(bar.locator('[data-testid="commit-selection-hash"]')).toHaveText('aaaaaaa');
+    await expect(bar.locator('[data-testid="commit-selection-subject"]')).toHaveText('fix parser');
 
     // Selecting the file shows its commit-scoped diff content.
     await fileTree.locator('text=committed.ts').click();
     await expect(page.locator('[data-testid="diff-editor-area"]')).toBeVisible();
 
-    // Back returns to Uncommitted: the working file reappears, the scope
-    // selector returns, the commit header disappears.
-    await page.locator('[data-testid="commit-detail-back"]').click();
+    // The x returns to the working diff: the working file reappears, the
+    // scope selector returns, the bar disappears.
+    await page.locator('[data-testid="commit-selection-close"]').click();
     await expect(fileTree.locator('text=working.ts')).toBeVisible({ timeout: 10000 });
     await expect(fileTree.locator('text=committed.ts')).not.toBeVisible();
     await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
-    await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible();
-
-    // Re-collapse History: it is persisted per task (changesHistoryOpen), so
-    // leaving it expanded hands the next reopen a state the documented default
-    // says is collapsed. Guarded and asserted, matching commit-graph-panel's
-    // closeChangesPanelAndDialog.
-    if ((await historyToggle.getAttribute('aria-expanded')) === 'true') {
-      await historyToggle.click();
-    }
-    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(bar).not.toBeVisible();
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
@@ -196,12 +186,13 @@ test.describe('Changes panel: commit-detail selection', () => {
   });
 });
 
-// ─── Commit-detail header restore fallback ──────────────────────────────────
+// ─── Restored selection ─────────────────────────────────────────────────────
 //
 // A `changesSelectedCommit` restored from a task's persisted `detail_view_state`
 // (dialog opened fresh, no click this session) has no `selectedCommitMeta` -
-// that is local component state, seeded only by clicking a commit row. The
-// header must fall back to showing just the short hash until the user clicks.
+// that is local component state, seeded only by clicking a commit row. The bar
+// shows the short hash at once, then the subject from the commits History
+// loaded, which it reports up even while collapsed.
 
 const RESTORE_PROJECT_ID = 'proj-commit-detail-restore';
 const RESTORE_TASK_ID = 'task-commit-detail-restore';
@@ -281,14 +272,14 @@ const restorePreConfig = `
       archived_at: null,
       created_at: ts,
       updated_at: ts,
-      detail_view_state: JSON.stringify({ changesSelectedCommit: '${RESTORE_COMMIT_OID}' }),
+      detail_view_state: JSON.stringify({ changesSelectedCommit: '${RESTORE_COMMIT_OID}', changesHistoryCollapsed: true }),
     });
 
     return { currentProjectId: '${RESTORE_PROJECT_ID}' };
   });
 `;
 
-test.describe('Changes panel: commit-detail header restore fallback', () => {
+test.describe('Changes panel: restored commit selection', () => {
   let restoreBrowser: Browser;
   let restorePage: Page;
 
@@ -303,7 +294,7 @@ test.describe('Changes panel: commit-detail header restore fallback', () => {
     await restoreBrowser?.close();
   });
 
-  test('a commit selection restored from detail_view_state shows only the short hash until the row is clicked', async () => {
+  test('a commit selection restored from detail_view_state names the commit with History collapsed', async () => {
     const card = restorePage.locator('[data-swimlane-name="Code Review"]').locator('text=Commit Detail Restore Task').first();
     await card.click();
 
@@ -311,28 +302,19 @@ test.describe('Changes panel: commit-detail header restore fallback', () => {
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     await restorePage.locator('[data-testid="changes-toggle"]').click();
-    // The History section stays COLLAPSED on restore (its own default), which
-    // makes this a sharper test of the new design: the pinned selection must be
-    // legible without expanding history at all - via the rail's commit-detail
-    // header AND the collapsed section header's pinned-hash chip.
+    // The blob also collapsed History, which makes this the sharper case: the
+    // selection must be legible without the list on screen, and the subject
+    // can only come from the commits the hidden graph reported up.
     await restorePage.locator('[data-testid="changes-history-section"]').waitFor({ state: 'visible', timeout: 10000 });
     await expect(restorePage.locator('[data-testid="changes-history-toggle"]')).toHaveAttribute('aria-expanded', 'false');
-    await expect(restorePage.locator('[data-testid="changes-history-pinned-chip"]')).toContainText('abcdef1');
+    await expect(restorePage.locator('[data-testid="commit-graph-panel"]')).not.toBeVisible();
 
-    const header = restorePage.locator('[data-testid="commit-detail-header"]');
-    await expect(header).toBeVisible({ timeout: 10000 });
-    // Short hash (first 7 chars of the restored OID) always renders.
-    await expect(header).toContainText('abcdef1');
-    // No selectedCommitMeta this session (never clicked) - the subject/author
-    // line must be absent. Structural assertion (span count) rather than a
-    // literal-text check: the header always renders exactly 2 <span>s (the
-    // short hash + the insertions/deletions badge) when commitHeaderMeta is
-    // null; the subject <span> and the author-line <span> render only when it
-    // is populated, bringing the count to 4 - this holds regardless of what
-    // text a regression happens to synthesize.
-    await expect(header.locator('span')).toHaveCount(2, { timeout: 5000 });
-    await expect(header).not.toContainText('restored subject line');
-    await expect(header).not.toContainText('Restore Author');
+    const bar = restorePage.locator('[data-testid="commit-selection-bar"]');
+    await expect(bar).toBeVisible({ timeout: 10000 });
+    await expect(bar.locator('[data-testid="commit-selection-hash"]')).toHaveText('abcdef1');
+    await expect(bar.locator('[data-testid="commit-selection-subject"]')).toHaveText('restored subject line', { timeout: 10000 });
+    // The restored commit's files, not the working tree's.
+    await expect(restorePage.locator('[data-testid="changes-file-tree"]').locator('text=restored.ts')).toBeVisible({ timeout: 10000 });
 
     await restorePage.locator('[data-testid="changes-toggle"]').click();
     await restorePage.keyboard.press('Control+Shift+W');
@@ -461,12 +443,12 @@ test.describe('Changes panel: empty-commit scoped message', () => {
 
     await emptyCommitPage.locator('[data-testid="changes-toggle"]').click();
 
-    // The commit-detail header renders even with zero files (it reports the
-    // commit, not the file count), so this is a real signal the panel is
-    // scoped to the empty commit rather than showing a stale Uncommitted view.
-    const header = emptyCommitPage.locator('[data-testid="commit-detail-header"]');
-    await expect(header).toBeVisible({ timeout: 10000 });
-    await expect(header).toContainText('deadbee');
+    // The selection bar renders even with zero files (it names the commit,
+    // not its files), so this is a real signal the panel is scoped to the
+    // empty commit rather than showing a stale working-tree view.
+    const bar = emptyCommitPage.locator('[data-testid="commit-selection-bar"]');
+    await expect(bar).toBeVisible({ timeout: 10000 });
+    await expect(bar.locator('[data-testid="commit-selection-hash"]')).toHaveText('deadbee');
 
     const noChanges = emptyCommitPage.locator('[data-testid="diff-no-changes"]');
     await expect(noChanges).toBeVisible({ timeout: 10000 });
@@ -658,12 +640,7 @@ test.describe('Changes panel: file-content cache key isolation across commit sel
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     await cachePage.locator('[data-testid="changes-toggle"]').click();
-    // Expand the (default-collapsed) History section to reveal the commit rows.
-    const cacheHistoryToggle = cachePage.locator('[data-testid="changes-history-toggle"]');
-    await cacheHistoryToggle.waitFor({ state: 'visible', timeout: 10000 });
-    if ((await cacheHistoryToggle.getAttribute('aria-expanded')) !== 'true') {
-      await cacheHistoryToggle.click();
-    }
+    // History arrives open, so its commit rows are already listed.
     await cachePage.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
 
     // 1. Select file A under Uncommitted: populates its Uncommitted-scoped
@@ -675,17 +652,17 @@ test.describe('Changes panel: file-content cache key isolation across commit sel
     // 2. Select the commit. A stays selected (auto-restore) and converges to
     // the commit's content for A.
     await cachePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'cache isolation commit' }).click();
-    await expect(cachePage.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
+    await expect(cachePage.locator('[data-testid="commit-selection-bar"]')).toBeVisible({ timeout: 10000 });
     await expect.poll(() => getModifiedEditorValue(cachePage), { timeout: 8000 }).toContain('ALPHA_COMMITTED_MARKER');
 
     // 3. Detour to file B under the same commit (its own cache entry).
     await fileRowButton(cachePage, PATH_B).click();
     await expect.poll(() => getModifiedEditorValue(cachePage), { timeout: 8000 }).toContain('BETA_COMMITTED_MARKER');
 
-    // 4. Back to Uncommitted. B stays selected (auto-restore) and converges to
-    // its Uncommitted content. File A's entry is left behind, still holding
-    // the commit's content from step 2.
-    await cachePage.locator('[data-testid="commit-detail-back"]').click();
+    // 4. Back to the working diff. B stays selected (auto-restore) and
+    // converges to its Uncommitted content. File A's entry is left behind,
+    // still holding the commit's content from step 2.
+    await cachePage.locator('[data-testid="commit-selection-close"]').click();
     await expect.poll(() => getModifiedEditorValue(cachePage), { timeout: 8000 }).toContain('BETA_UNCOMMITTED_MARKER');
 
     // 5. Arm the gate, then explicitly re-select A. The synchronous
@@ -711,7 +688,7 @@ test.describe('Changes panel: file-content cache key isolation across commit sel
     });
     await expect.poll(() => getModifiedEditorValue(cachePage), { timeout: 8000 }).toContain('ALPHA_UNCOMMITTED_MARKER');
 
-    // Already back on Uncommitted (step 4) - no commit-detail-back needed here.
+    // Already back on the working diff (step 4) - no deselect needed here.
     await cachePage.locator('[data-testid="changes-toggle"]').click();
     await cachePage.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });

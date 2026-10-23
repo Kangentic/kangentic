@@ -1965,6 +1965,18 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!hasTaskAutomationsDisabled) {
     db.exec('ALTER TABLE tasks ADD COLUMN automations_disabled INTEGER NOT NULL DEFAULT 0');
   }
+
+  // Migration: add 'fork_point_sha' column - the commit a task's branch was cut
+  // from, read when its worktree is created (#881). A completed task's view
+  // diffs its branch from here when the branch never merged, which survives a
+  // base history rewrite that moves the merge-base back. Main-only: rowToTask
+  // strips it, so it never rides the shared Task type over IPC. NULL for
+  // existing tasks, which fall back to the merge-base.
+  const hasForkPointShaColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((column) => column.name === 'fork_point_sha');
+  if (!hasForkPointShaColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN fork_point_sha TEXT DEFAULT NULL');
+  }
 }
 
 /**

@@ -59,7 +59,14 @@ the same array.
     `stopPropagation`, so one press undoes one thing. A `window` capture listener runs before
     every `document` listener, so it beats the menus and dialogs alike. It yields the key, still
     closing the tip, when focus is in a `.xterm` (Escape is the agent interrupt) or a hotkey
-    rebind is capturing. `tests/ui/tooltip.spec.ts` pins it. Escape is registered display-only as
+    rebind is capturing. `tests/ui/tooltip.spec.ts` pins it. A SELECTED COMMIT in the Changes
+    panel is the in-gesture shape held as state: `ChangesPanel` adds a capture-phase `document`
+    listener only while a History commit is selected and its window is focused, lets go of the
+    commit, and calls `stopImmediatePropagation`, so the same press does not also close the task
+    window. It yields through `escapeOwnedElsewhere` (`src/renderer/utils/escape-ownership.ts`,
+    the guard `PopOutWindowFrame` uses too) to an open menu or popover, a focused text field, a
+    terminal, and Monaco's find widget. `tests/ui/changes-commit-selection-bar.spec.ts` pins it.
+    Escape is registered display-only as
     `dialog.dismiss` and is not rebindable; none of the three shapes adds an entry, since a
     second entry for the same physical key would only invent a phantom conflict.
   - The description editor's text-formatting combos (`description.bold` / `.italic` / `.link` /
