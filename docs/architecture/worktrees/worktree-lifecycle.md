@@ -62,7 +62,7 @@ stable, because the old name was derived from the task title, so renaming a task
 it would be recreated in.
 
 How much that matters in practice is measured in
-[cross-platform.md](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
+[Windows MAX_PATH is mostly not the wall people expect](../../platforms/windows.md#windows-max_path-is-mostly-not-the-wall-people-expect), which
 also records why there is no path-length warning and no configurable worktree root. In short: a
 shorter root does help a native Windows toolchain, but it can never be a guarantee, because
 Kangentic controls neither the project's own location nor how deep a build runs beneath it. The
@@ -215,7 +215,7 @@ written, via `WorktreeManager.findWorktreeHoldingBranch` (`parseWorktreeBranches
 `git worktree list --porcelain` into a branch to path map). That matters because the tool response is
 sent before auto-spawn runs, so a collision caught later can only reach a desktop toast the calling
 agent never sees. The preflight fails open when git cannot be probed, and is skipped for backlog
-items. See [MCP Server](../../integrations/mcp-server/task-tools.md#kangentic_create_task) for the full refusal contract.
+items. See [Task tools](../../integrations/mcp-server/task-tools.md#kangentic_create_task) for the full refusal contract.
 
 ## When worktree creation fails with a written error
 
@@ -274,7 +274,7 @@ base-branch fetch (`fetchIfStale`, which worktree creation runs whatever this sw
 one branch and does not count. A failed fetch stamps nothing, so the scheduler also counts from its
 own last attempt (`lastAttemptAt`); without that, an offline repo would retry on every tick.
 
-The lifecycle mirrors `prRefreshScheduler` ([pr-integration.md](../../integrations/pull-requests/refresh-and-scheduler.md#the-scheduler)):
+The lifecycle mirrors `prRefreshScheduler` ([The scheduler](../../integrations/pull-requests/refresh-and-scheduler.md#the-scheduler)):
 one active timer, an immediate deferred sweep, re-armed after a config change, torn down on project
 switch, project delete, and shutdown, `.unref()`'d, created outside `runWithProjectLogContext` with
 each sweep wrapped inside it. `git.autoFetch` replaced `git.autoFetchIntervalMinutes`;
@@ -335,10 +335,10 @@ All in `src/main/agent/`:
 |--------|-------------|-------------|------|
 | `status-bridge.js` | `status.json` | statusLine | Token usage, cost, model, context % |
 | `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
-| `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` or `tool_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode`; and matcher `mcp__.*` when the session's allow rules name another server's tool | Approves the plan when the session's `plan-approval.json` says to, and while it does, an allowed MCP tool plan mode asks about; otherwise prints nothing (see [Agent Integration](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)) |
-| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Agent Integration](../../integrations/agents/bridge-scripts.md#background-shell-hint-bridgejs)) |
+| `plan-approval-bridge.js` | stdout, plus one `plan_approval_sent` or `tool_approval_sent` line in `events.jsonl` | `PermissionRequest`, matcher `ExitPlanMode`; and matcher `mcp__.*` when the session's allow rules name another server's tool | Approves the plan when the session's `plan-approval.json` says to, and while it does, an allowed MCP tool plan mode asks about; otherwise prints nothing (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)) |
+| `background-shell-hint-bridge.js` | stdout | `PostToolUse`, matcher `Bash\|PowerShell` for Claude (Qwen, Gemini and Copilot match their own launch tools) | Tells the agent a background command keeps its task working and how to mark it as a service. Registered only for a task session whose MCP URL names it (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#background-shell-hint-bridgejs)) |
 
-The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](../../integrations/agents/claude-code.md#hook-injection) for the full mapping.
+The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Claude Code](../../integrations/agents/claude-code.md#hook-injection) for the full mapping.
 
 Each bridge reads JSON from stdin (piped by Claude Code), writes its output, and exits. All writes are try/catch wrapped for non-fatal failures.
 
@@ -456,7 +456,7 @@ Two listeners bracket a removal, and they are deliberately NOT symmetric in plac
 
 Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json`, Qwen's `~/.qwen/trustedFolders.json`, Grok's `~/.grok/trusted_folders.toml`, and Antigravity's `trustedWorkspaces` array have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor; Qwen has no ancestor check at all, so it records one entry per worktree whenever `security.folderTrust.enabled` is set).
 
-`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agent Integration](../../integrations/agents/index.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
+`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Agents](../../integrations/agents/index.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
 Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
 

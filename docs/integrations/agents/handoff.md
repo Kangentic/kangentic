@@ -64,7 +64,7 @@ Post-spawn: handoff DB record updated with target session ID
 
 ## Session History File Locations
 
-Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 15 supported adapters) lives in [Agent Integration > Session History File Location](adapter-interface.md#session-history-file-location); maintained there as the single source of truth.
+Each agent adapter implements `locateSessionHistoryFile(agentSessionId, cwd)` to find the native session file. The full per-agent table (file patterns + lookup methods for all 15 supported adapters) lives in [Session History File Location](adapter-interface.md#session-history-file-location); maintained there as the single source of truth.
 
 ## Prompt Delivery
 
@@ -119,7 +119,7 @@ GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript
 
 ## See Also
 
-- [Agent Integration](index.md) - Adapter interface, per-agent CLI details
-- [Session Lifecycle](../../architecture/sessions/index.md) - Spawn flow, suspend, resume
+- [Agents](index.md) - Adapter interface, per-agent CLI details
+- [Sessions](../../architecture/sessions/index.md) - Spawn flow, suspend, resume
 - [Database](../../database/index.md) - Schema for handoffs table
 - [MCP Server](../mcp-server/index.md) - `kangentic_get_handoff_context` and `kangentic_get_transcript` tools

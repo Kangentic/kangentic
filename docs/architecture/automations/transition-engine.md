@@ -25,7 +25,7 @@ sources:
 
 The transition engine runs a column's automations when tasks move between swimlanes. It handles the logic that makes Kanban columns "active" -- spawning agents, sending messages, running scripts, calling webhooks, and raising notifications.
 
-Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration](../../settings/cascade.md#column-automations) and the tables are [Database](../../database/index.md).
+Each column owns ONE ordered list, split into three groups: On task enter, On agent turn end and On task exit. An automation belongs to exactly one column: there are no `from -> to` pairs and no shared, named actions. Every type is an adapter under `src/main/automations/adapters/`, declared once in `AUTOMATION_MANIFEST` (`src/shared/automation-manifest.ts`), and the engine dispatches through `automationRegistry`. Users edit the lists in the Column Manager; the file format is [Configuration cascade](../../settings/cascade.md#column-automations) and the tables are [Database](../../database/index.md).
 
 ## Priority Rules on Task Move
 
@@ -33,7 +33,7 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [pr-integration.md](../../integrations/pull-requests/index.md)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
+| 1 | Target is **To Do** (role=`todo`) | Drop the PR link of a task that did its own work as the move commits (`forgetPRLinkOnTodoReset`, see [Pull requests](../../integrations/pull-requests/index.md)), then kill session, reap what the task left running, remove worktree (and branch when `git.autoCleanup` is on) |
 | 2 | Target is **Done** (role=`done`) | Suspend session (resumable), reap what the task left running, archive task |
 | 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
 | 3 | Task has **active session** | A model or effort change suspends and respawns with the destination's CLI flags. A column message alone is injected into the running session. A permission-only change, or none, keeps it alive. |
@@ -132,7 +132,7 @@ Offered on `turn_end` only: on enter or exit its move would run inside the move 
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
 
-`kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [configuration.md](../../settings/index.md)).
+`kill_session`, `create_worktree` and `cleanup_worktree` (`RETIRED_ACTION_TYPES`) are GONE, rows and all. Each was a no-op or a duplicate of the move path: `kill_session` suspended a session the task no longer had at that point, `create_worktree` did what `ensureTaskWorktree` does, and `cleanup_worktree` did what a To Do move does. `create_pr` was never implemented, and the migration drops it with any other type it does not recognize. A hand-written `kangentic.json` naming one of these is warned and skipped, matching what the migration did to the same row in the DB. `send_command` is not retired. The migration converted its rows to `send_message`, and a file that still names it is read as an alias (see [Settings](../../settings/index.md)).
 
 ## Every row is isolated, bounded and recorded
 
@@ -269,7 +269,7 @@ value that went missing. Path-valued keywords are also substituted unquoted, so
 quote them yourself (`git -C "{{projectPath}}" merge main`) wherever the path
 may contain spaces.
 
-Shortcut commands use a separate set of template variables. See [Configuration](../../settings/board-config.md#shortcuts) for the full list.
+Shortcut commands use a separate set of template variables. See [Board config files](../../settings/board-config.md#shortcuts) for the full list.
 
 ## Stale Spawn Prevention (AbortSignal)
 
@@ -289,7 +289,7 @@ When a task moves to a column whose On enter group holds a `send_message` automa
 **Resumed sessions** (priority 3 suspend-and-resume, or priority 4 resume from suspended):
 - The message is interpolated and passed as the resume prompt to `claude --resume <id>`
 - This is deterministic: the message is the first thing the agent sees on resume
-- Two cases do not send the message as the resume prompt. If the agent deleted the conversation on a task's main session, the spawn starts fresh with a recap of the task, and the message is withheld and recorded as skipped "Not sent". If the conversation never started, the spawn is fresh and the message goes out after it. See [Session Lifecycle](../sessions/resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead).
+- Two cases do not send the message as the resume prompt. If the agent deleted the conversation on a task's main session, the spawn starts fresh with a recap of the task, and the message is withheld and recorded as skipped "Not sent". If the conversation never started, the spawn is fresh and the message goes out after it. See [Resume](../sessions/resume.md#a-resume-the-cli-cannot-serve-starts-fresh-instead).
 
 **Fresh spawns** (priority 4, no suspended session to resume):
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the message for deferred PTY injection
@@ -307,7 +307,7 @@ This enables workflows like moving a task from "Running" to "Code Review" to aut
 
 **A profile cannot re-point the message.** Automations are shared by every profile, which is why the Column Manager's whole list is read-only under one. `BoardProfileEntry.autoCommand` is the retired key that used to overlay it: nothing reads it, and nothing writes it. A column's own legacy `autoCommand` in `kangentic.json` IS still read, and converted into a `send_message` row on apply.
 
-The unarchive handlers (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) and any other move out of Done suppress delivery via `spawnAgent`'s `suppressAutoCommand` (the recovery-move contract; see [Session Lifecycle](../sessions/resume.md#resume)). That reaches the runner as `suppressAgentMessages`, which SKIPS every row whose adapter `needs` the agent, recording "Restoring a task from Done does not message the agent. The next move does." The skip belongs in the runner rather than in `deliverToAgent`'s own no-op, because a silent no-op lets `send_message` return normally and the row records "Delivered" for a message nobody received. It also runs before the agent-start step, so a message that is going to be skipped no longer spawns an agent to be skipped at. Every other type still runs: the suppression is about the agent's attention, not about the move.
+The unarchive handlers (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) and any other move out of Done suppress delivery via `spawnAgent`'s `suppressAutoCommand` (the recovery-move contract; see [Resume](../sessions/resume.md#resume)). That reaches the runner as `suppressAgentMessages`, which SKIPS every row whose adapter `needs` the agent, recording "Restoring a task from Done does not message the agent. The next move does." The skip belongs in the runner rather than in `deliverToAgent`'s own no-op, because a silent no-op lets `send_message` return normally and the row records "Delivered" for a message nobody received. It also runs before the agent-start step, so a message that is going to be skipped no longer spawns an agent to be skipped at. Every other type still runs: the suppression is about the agent's attention, not about the move.
 
 A legacy `spawn_agent` automation that creates the session itself runs its own prompt template, and the fallback message / continuation injection is skipped for that spawn. This is uniform across every entry point (move, create, promote, MCP create), since all route through `spawnAgent`, whose fallback start only fires when no automation spawned the session. The task's own `auto_command` is the exception: when a legacy Start agent row, or a Send message row with no text, started the agent and no row sent it, it still goes out once after the enter group, unless the task's main session started over on an expired conversation's recap or the move was superseded. A fresh board is unaffected: nothing is seeded any more.
 
@@ -379,7 +379,7 @@ When a column has `permission_mode='plan'`, Claude runs in plan mode. When the p
 
 The move is keyed on the approval, not on the agent calling `ExitPlanMode`. The `plan-exit` listener (`ipc/handlers/sessions.ts`) fires on the tool's completion (`PostToolUse`), which the CLI sends only for an approved plan, so a rejected plan moves nothing. That holds whoever approves.
 
-Who approves is the column's `plan_approval`. `manual` (the default) waits for the user in the agent's terminal. `automatic` has Kangentic answer the prompt through the agent's plan approval hook, for an agent that declares `supportsPlanAutoApproval` (see [Agent Integration](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). A task in a running workflow follows the workflow's `plan_approval` instead, and an agent that cannot approve plans, or a task with its automations disabled, always waits for the user. Kangentic's approval also switches the session to the permission mode it would spawn with in the destination column, with fallbacks when that is `plan` (see [Agent Integration](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). Besides the plan prompt, the hook answers only a planning prompt for another MCP server's tool the allow rules in the project's or the user's Claude settings name, which Claude's plan mode asks about anyway (task #870), so an unattended Planning session does not stall on a tool you allowed. A question the agent asks the user, any other tool, and Kangentic's own tools still wait.
+Who approves is the column's `plan_approval`. `manual` (the default) waits for the user in the agent's terminal. `automatic` has Kangentic answer the prompt through the agent's plan approval hook, for an agent that declares `supportsPlanAutoApproval` (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). A task in a running workflow follows the workflow's `plan_approval` instead, and an agent that cannot approve plans, or a task with its automations disabled, always waits for the user. Kangentic's approval also switches the session to the permission mode it would spawn with in the destination column, with fallbacks when that is `plan` (see [Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). Besides the plan prompt, the hook answers only a planning prompt for another MCP server's tool the allow rules in the project's or the user's Claude settings name, which Claude's plan mode asks about anyway (task #870), so an unattended Planning session does not stall on a tool you allowed. A question the agent asks the user, any other tool, and Kangentic's own tools still wait.
 
 Default setup: Planning column has `plan_exit_target_id` pointing to the Executing column.
 
@@ -398,18 +398,17 @@ When a task moves to a column with a different agent (detected by `resolveTarget
 1. **Agent resolution** detects agent change: `resolveTargetAgent()` checks `task.agent_override` first (highest priority - the user's create-time lock), then column `agent_override`, then project `default_agent`, then global fallback (`'claude'`). If the resolved agent differs from the current session's agent, a handoff is triggered. Tasks with a non-null `task.agent_override` never trigger a handoff on column moves - the locked agent supersedes column settings.
 2. **Task-move Priority 3** suspends the current session.
 3. **spawnAgent handoff path** - the `agentOverride` parameter is passed to `executeSpawnAgent()`, which prevents resume of the wrong agent's session.
-4. **HandoffOrchestrator** packages context from the previous session: transcript (from `session_transcript_chunks`), git diff, and session metrics.
-5. **Transition engine** spawns the new agent with a `handoffPromptPrefix` that summarizes the handoff context.
-6. **Post-spawn** - a `handoff-context.md` file is written to the session directory for the new agent to reference.
+4. **`spawnAgent` locates the previous session's history** (`src/main/ipc/helpers/agent-spawn.ts`): the source agent's adapter finds its native session file (`locateSessionHistoryFile`), and `buildSessionHistoryReference()` turns that path into a prompt telling the target agent to read it. A `handoffs` row records the from and to agents.
+5. **Transition engine** spawns the new agent through `resumeSuspendedSession()` with that prompt as `handoffPromptPrefix`, prepended to the task prompt, and the `handoffs` row is updated with the new session.
 
-Spawn progress phases during handoff: `packaging-handoff` (while context is being assembled), `detecting-agent` (while the target agent CLI is detected), then `starting-agent`.
+Spawn progress phases during handoff: `packaging-handoff` (while the session file is located and the prompt built), `detecting-agent` (while the target agent CLI is detected), then `starting-agent`. The full flow, the per-agent file locations and the passthrough toggle are in [Cross-agent handoff](../../integrations/agents/handoff.md).
 
-Because create-into-spawn-column and unarchive route through the same `spawnAgent` chokepoint as task moves, handoff semantics apply on those paths too: unarchiving a task into a column whose resolved agent differs from `task.agent` packages handoff context when the column's `handoff_context` toggle is enabled, and spawns the new agent fresh (no context) when it is disabled. The full entry-point table lives in [Session Lifecycle](../sessions/spawn-flow.md#spawn-entry-points).
+Because create-into-spawn-column and unarchive route through the same `spawnAgent` chokepoint as task moves, handoff semantics apply on those paths too: unarchiving a task into a column whose resolved agent differs from `task.agent` packages handoff context when the column's `handoff_context` toggle is enabled, and spawns the new agent fresh (no context) when it is disabled. The full entry-point table lives in [Spawn flow](../sessions/spawn-flow.md#spawn-entry-points).
 
 ## See Also
 
-- [Session Lifecycle](../sessions/index.md) -- spawn entry points, spawn flow, queue, suspend, resume
-- [Agent Integration](../../integrations/agents/index.md) -- command building, permission modes, per-agent CLI details
-- [Worktree Strategy](../worktrees/index.md) -- worktree creation details
+- [Sessions](../sessions/index.md) -- spawn entry points, spawn flow, queue, suspend, resume
+- [Agents](../../integrations/agents/index.md) -- command building, permission modes, per-agent CLI details
+- [Worktrees](../worktrees/index.md) -- worktree creation details
 - [Database](../../database/index.md) -- schema for `column_automations`, `automation_runs`, swimlanes
-- [Configuration](../../settings/cascade.md#column-automations) -- the `kangentic.json` shape for a column's lists
+- [Configuration cascade](../../settings/cascade.md#column-automations) -- the `kangentic.json` shape for a column's lists

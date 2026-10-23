@@ -230,7 +230,7 @@ renders it as the collapsed `DoneSwimlane` instead of a normal column, and `appl
 the flag back on for the `done` role on every board-config apply. Anything that filters swimlanes on
 `is_archived` therefore drops Done unless it carves the role out, which is why the MCP read tools
 have explicit done-column handling. See
-[mcp-server.md](../integrations/mcp-server/column-tools.md#kangentic_list_columns).
+[kangentic_list_columns](../integrations/mcp-server/column-tools.md#kangentic_list_columns).
 
 No lane is seeded with a `description`: it is left empty for the user to fill in, because a
 `description` round-trips into the project's committed `kangentic.json` and a prefilled one would

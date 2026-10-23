@@ -28,7 +28,7 @@ If a project's folder was moved or renamed outside Kangentic while the app was c
 
 ## Search
 
-A search bar at the top of each panel filters settings by keyword. Type multiple words to narrow results (all tokens must match). Results are grouped by tab with match count badges on the sidebar tabs. Tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
+A search bar at the top of each panel filters settings by keyword. Type multiple words to narrow results (all tokens must match). Results are grouped by tab, and each sidebar tab shows its match count right after its name. Tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
 ## Themes
 
@@ -200,7 +200,7 @@ Applies to every project (Settings > Dictation, not a per-project override). Voi
 | Live model | Transcription | Custom only. The preview while you speak. A streaming model is instant and a chunked one is more accurate |
 | Refinement model | Transcription | Custom only. Re-reads the clip on release for the final text, and None keeps the live text. **Cloud endpoint** sends the final clip to an OpenAI-compatible `/v1/audio/transcriptions` URL, with an optional API key and model, while the live preview stays on this machine |
 
-Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Configuration](../architecture/dictation.md#dictation) lists the models behind each Mode.
+Under these rows the Transcription card lists the models the setup runs, whether each one is downloaded, and their licenses. [Dictation](../architecture/dictation.md#dictation) lists the models behind each Mode.
 
 ## MCP Server
 

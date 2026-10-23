@@ -71,7 +71,7 @@ Click the filter icon at the top right of the board to open the filter popover. 
 - **Priority** - toggle one or more priority levels (None, Low, Medium, High, Urgent)
 - **Labels** - toggle one or more labels from the project's label set
 
-Active filters show a count badge on the filter icon. Click "Clear all filters" at the bottom of the popover to reset. Priority and label filters combine with the search query - a task must match all active criteria to be visible.
+While filters are active, the Filter button shows how many, right after its label. Click "Clear all filters" at the bottom of the popover to reset. Priority and label filters combine with the search query - a task must match all active criteria to be visible.
 
 ## Board Configuration
 
@@ -126,7 +126,7 @@ open it.
 Announcements are fetched from a static file on the public GitHub repo - no account, no tracking,
 and if the feed is unreachable (offline or self-hosted setups) no new ones appear, though your
 history stays available. See
-[Configuration - In-App Announcements](../releases/announcements.md#in-app-announcements) for the feed
+[In-App Announcements](../releases/announcements.md#in-app-announcements) for the feed
 mechanics.
 
 ## CLI

@@ -20,7 +20,7 @@ Ctrl+Shift+P opens an ephemeral "transient" session with no DB persistence: quic
 agent CLI without creating a task on the board. This document records the design decisions and
 the bugs behind them. The prescriptive version, which is what you need when editing the layer,
 is [`.claude/rules/command-terminal.md`](../../../.claude/rules/command-terminal.md). The end-user
-walkthrough is in [User Guide](../../user-guide/command-terminal.md#command-terminal).
+walkthrough is in [Command Terminal](../../user-guide/command-terminal.md#command-terminal).
 
 ## A second window-manager layer
 
@@ -88,7 +88,7 @@ toasts it and closes, and a phone gets `command-terminal-start-failed`. Handed b
 the window waited on its launch shimmer for good, since it subscribes to the exit only once it
 knows the session id.
 
-The agent-absence sweep (see [Session Lifecycle](../sessions/agent-absence-sweep.md))
+The agent-absence sweep (see [Agent absence sweep](../sessions/agent-absence-sweep.md))
 is what notices, and the agent's SessionEnd hook asks it to look at once, so `/exit` closes the
 window in about 4 seconds. `/clear` also fires SessionEnd, but its process stays alive and the
 process tree keeps the terminal. Every end, a desktop Stop included, goes through
@@ -156,7 +156,7 @@ Before this, the renderer namer read the same empty field and no Claude terminal
 
 ## Starting one from a phone
 
-The bridge's `command-terminal` verb (see [Mobile Bridge](../../integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
+The bridge's `command-terminal` verb (see [Capability verbs](../../integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
 runs the same `startCommandTerminal` as the desktop's New, with `unattended: true`. A user on a
 phone is away from the desk and cannot recover a start that hangs on a credential prompt or a
 slow fetch, so an unattended start keeps the desktop's steps and makes each one unable to block:

@@ -68,7 +68,7 @@ field there and the next move out pins it again to whatever the dialog was showi
 Agents can read and edit Board Profiles too, including across projects, which is the practical way
 to keep them in sync as models change ("update every profile's Opus 4.8 to Opus 5", "copy this
 board's Heavy profile into project X"). See
-[MCP Server > Board Profiles](../integrations/mcp-server/profile-tools.md#board-profiles).
+[Board Profiles](../integrations/mcp-server/profile-tools.md#board-profiles).
 
 Before the first spawn, the task detail dialog also shows a slim **pre-spawn context bar** with the same Model and Effort pills. Set them there to avoid the spawn -> cancel -> restart loop: the picker writes the override to the DB, and `prepare-spawn` picks it up on the next agent launch.
 
@@ -104,7 +104,7 @@ conversation and sends the task once more.
   - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see `liveTelemetryUnsupported` in [Optional adapter properties](../integrations/agents/optional-properties.md))
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
-  - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR Integration](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
+  - A pull request pill once the task has a linked PR, showing its number and merge readiness (`ready`, `blocked`, `conflicting`, `queued`, `running`, or `unknown`). The same pill appears in the task detail header. See [PR connector model](../integrations/pull-requests/connector-model.md#merge-readiness) for what each value promises and which settings change it
 - **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that runs the destination's automations), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the running automation's name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ## Move Between Active Columns
@@ -125,7 +125,7 @@ Drag to Done. The worktree directory is removed to reclaim disk, the session is 
 
 Anything the task's agent left running in its folder, such as a dev server it started in the background, is stopped before the worktree is removed. When that happens a toast gives the counts, and a click on it lists each process with a **Stop** button for any that kept running: a window the agent opened, a tmux server, or a tool other work also uses (another task, or a command running in one of your terminals). A process that exits on its own after that reads **Ended** in the list, and the toast closes once nothing it named is still running. The same happens when a task returns to To Do or is deleted. Turn it off with [Stop Leftover Processes](settings.md#behavior-settings); the toast then lists what kept running and stops nothing.
 
-Clicking a completed task opens the [completed task view](task-detail.md#completed-task-view): its timing, runtime, changes and cost, and its Summary, Usage and Description tabs.
+Clicking a completed task opens the [completed task view](task-detail.md#completed-task-view): its timing, runtime, changes and cost, and its Summary, Changes, Conversation, Usage and Description tabs.
 
 ## Task Card Context Menu
 
@@ -153,9 +153,10 @@ groups. On a task in a running workflow, Move to, Backlog and
 Archive stay in the menu, disabled, with the reason as their tooltip.
 
 An archived card, in the Done column or the Completed Tasks list, has a shorter menu: its task
-ID, Open, View conversation, Show changes when the task still has a worktree, Restore to (each
-column it can go back to), and Delete, which asks first. View conversation says so in a toast when
-the task has no conversation on record.
+ID, Open, View conversation, Show changes, Restore to (each column it can go back to), and
+Delete, which asks first. View conversation and Show changes open the task's window on its
+Conversation or Changes tab, on every archived task, since both read the task's record and git
+rather than its worktree.
 
 ## Return to To Do
 

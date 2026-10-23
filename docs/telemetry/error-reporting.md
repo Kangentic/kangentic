@@ -433,7 +433,7 @@ in one Sentry org, one triage surface.
   were launch failures, which Electron 41 never forwarded to JS (Electron 44 forwards the ones
   Chromium survives), and on Linux the running GPU
   process's death through a dead zygote reads as a normal exit that fires nothing either (see
-  "When the GPU process is unusable" in [cross-platform.md](../platforms/index.md)). A fallback-only
+  [GPU process failures](../platforms/gpu-failures.md)). A fallback-only
   record has `count: 0` and `reason: 'hardware-fallback'`. On Linux each fallback entry also
   carries a `linux` block from `src/main/diagnostics/linux-gpu-zygote.ts`: the GPU zygote's state
   (`alive`, `dead`, `unknown`), the system-wide thread count, and the soft process limit. A dead
@@ -514,7 +514,7 @@ in one Sentry org, one triage surface.
   record behind them is already gone. Reading consumes the notice, so a reload cannot re-toast.
   The way back is the Settings > Performance toggle, which saves and restarts in one call
   (`IPC.GPU_HEALTH_SET_ACCELERATION`) through the normal quit, so that run records `clean`.
-  See "Graphics failures" in [user-guide.md](../user-guide/index.md) for what the user sees.
+  See "Graphics failures" in [Troubleshooting](../user-guide/troubleshooting.md#graphics-failures) for what the user sees.
 - **A transient updater feed failure is counted, not reported.** `hasTransientNetworkCause`
   (`src/main/updater.ts`) gates the `reportHandledError` call in the `autoUpdater.on('error')`
   handler, and sits deliberately AFTER `trackEvent('app_error')` so the "how often do update

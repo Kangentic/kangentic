@@ -30,7 +30,7 @@ Drag a task card into an active column to spawn an agent. Drag it to Done to com
 
 ### Backlog & Import
 
-Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, and Asana with their titles, descriptions, labels, and images. Azure DevOps and Asana also bring file attachments, and Azure DevOps brings comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](backlog.md#backlog) for details.
+Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, Azure DevOps, and Asana with their titles, descriptions, labels, and images. Azure DevOps and Asana also bring file attachments, and Azure DevOps brings comments. Imports are one-way, and re-importing skips items already imported. Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [Backlog](backlog.md#backlog) for details.
 
 ### Board Filtering
 

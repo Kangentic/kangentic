@@ -60,7 +60,7 @@ sources:
 | `task:switchBranch` | invoke | Switch base branch or enable worktree for a task |
 | `task:updateFromBase` | invoke | One-click "Update from base": fetch the task's effective base and fast-forward its worktree from `origin/<base>`. Refuses while a session is running; returns a discriminated `TaskUpdateFromBaseResult` (updated / already-up-to-date / cannot-ff / dirty-tree / fetch-failed / no-remote) rather than throwing for expected outcomes |
 | `task:setRuntimeOverride` | invoke | Set per-task model/effort override; restarts a live session (suspend + `--resume` with the new flags) on a change to a concrete value, otherwise persists it for the next spawn (or because the session already runs at the pick) |
-| `task:resolvePr` | invoke | Authoritatively resolve and link a task's PR through the repository's PR connector (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in [pr-integration.md](../../integrations/pull-requests/index.md) (number, worktree branch, commit, stored branch, pushed branch, remote tip); refreshes `pr_state`, `pr_merge_readiness`, `pr_url`, `pr_number`. Returns `no-anchor` only when the task has nothing to search by |
+| `task:resolvePr` | invoke | Authoritatively resolve and link a task's PR through the repository's PR connector (GitHub via `gh`, Azure DevOps via `az`), walking the confidence ladder in [Pull requests](../../integrations/pull-requests/index.md) (number, worktree branch, commit, stored branch, pushed branch, remote tip); refreshes `pr_state`, `pr_merge_readiness`, `pr_url`, `pr_number`. Returns `no-anchor` only when the task has nothing to search by |
 | `task:autoMoved` | on | Event: task was auto-moved by transition engine |
 | `task:createdByAgent` | on | Event: task was created by an agent via MCP tool call |
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call |
@@ -192,7 +192,7 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
 | `boardConfig:warnings` | on | Event: the project-open reconcile's warnings for the board's warning banner, sent on every open (an empty list clears it) |
 | `boardConfig:getLastWarnings` | invoke | The warnings of a project's last apply. The renderer fetches them each time a project becomes current, for the push it drops when it lands first (a launch restore, an open by folder path) |
-| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Configuration](../../settings/board-config.md#board-profiles)). An optional `projectId` reads another registered project's board |
+| `boardConfig:getBoardProfiles` | invoke | Get the board's Board Profiles (see [Board config files](../../settings/board-config.md#board-profiles)). An optional `projectId` reads another registered project's board |
 | `boardConfig:setBoardProfiles` | invoke | Replace the board's Board Profiles (team-scoped) |
 | `boardConfig:boardProfilesChanged` | on | Event: an agent (MCP) rewrote this project's Board Profiles |
 | `boardConfig:getShortcuts` | invoke | Get task detail dialog shortcuts |

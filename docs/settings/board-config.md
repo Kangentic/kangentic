@@ -80,7 +80,7 @@ A task's assignment lives in the per-project database (`tasks.profile_id`), not 
 profile *definition* is team-shared, the *assignment* is per-task local runtime state. A task
 pointing at a profile a teammate deleted degrades to the columns' own settings and logs once. The
 same is true of `tasks.run_mode`, which records which of the dialog's two branches the task is on
-(see [Database > tasks table](../database/board-tables.md#tasks-table)).
+(see [tasks table](../database/board-tables.md#tasks-table)).
 
 Profiles are mutually exclusive with the task's Advanced agent/model/effort/permission pins and with
 `run_mode: 'agent_override'`, enforced at write time in `TaskRepository`.
@@ -88,7 +88,7 @@ Profiles are mutually exclusive with the task's Advanced agent/model/effort/perm
 IPC channels are in the Board Config group: `boardConfig:getBoardProfiles`,
 `boardConfig:setBoardProfiles`, `boardConfig:boardProfilesChanged`. Agents can read and edit
 profiles (including across projects) via the `kangentic_*_board_profile` MCP tools - see
-[MCP Server > Board Profiles](../integrations/mcp-server/profile-tools.md#board-profiles).
+[Board Profiles](../integrations/mcp-server/profile-tools.md#board-profiles).
 
 ## Board Configuration
 

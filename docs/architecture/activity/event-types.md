@@ -52,7 +52,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 
 ## Plan approval gate
 
-A plan Kangentic approves (Plan approval Automatic, see [Agent Integration](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs))
+A plan Kangentic approves (Plan approval Automatic, see [Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs))
 still raises the agent's plan prompt as a permission request, and two hooks answer it in parallel:
 the catch-all `PermissionRequest` hook writes a permission `idle` carrying `tool: ExitPlanMode`, and
 the plan approval hook writes `plan_approval_sent` and approves. Either can land first. Measured on
@@ -180,7 +180,7 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   the stamp it was keyed to is the one the turn end reports. A turn with no anchor (no trail
   read yet, a fresh spawn, or an agent with no window read) reads the newest reply in the
   transcript instead. See
-  [Transition engine](../automations/triggers.md#on-agent-turn-end).
+  [Automation triggers](../automations/triggers.md#on-agent-turn-end).
 - **Which agents have one.** Each adapter's runtime strategy declares `reportsTurnEnd`. True for
   Claude, Codex (its Stop hook), Copilot, Gemini, Antigravity, Qwen, Grok, OpenCode and Kimi (whose
   wire protocol emits `TurnEnd`); false for agents whose only signal is
