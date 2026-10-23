@@ -619,6 +619,8 @@ describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
     );
 
     expect(result).toHaveProperty('baseBranch', 'develop');
+    // The fork point is the commit it cut at: the base's tip, as a full hash.
+    expect(result).toHaveProperty('forkPointSha', run(repo, ['rev-parse', 'develop']).trim());
   });
 
   it('reports NO base when it attached to a branch that already existed', async () => {
@@ -643,6 +645,8 @@ describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
     // base claim is withheld.
     expect(result).toHaveProperty('branchName', 'feature/long-lived');
     expect(result).toHaveProperty('baseBranch', null);
+    // Nothing was cut here, so there is no fork point to claim either.
+    expect(result).toHaveProperty('forkPointSha', null);
   });
 
   it('reports the base when it attaches to its own leftover branch still at the start point', async () => {
@@ -662,6 +666,7 @@ describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
 
     expect(result).toHaveProperty('branchName', 'fix-the-thing-task-eee');
     expect(result).toHaveProperty('baseBranch', 'main');
+    expect(result).toHaveProperty('forkPointSha', run(repo, ['rev-parse', 'main']).trim());
   });
 
   it('reports NO base once its own branch has commits past the start point', async () => {
@@ -680,5 +685,6 @@ describe('WorktreeManager.ensureWorktree - the base it reports back', () => {
 
     expect(result).toHaveProperty('branchName', 'fix-the-thing-task-fff');
     expect(result).toHaveProperty('baseBranch', null);
+    expect(result).toHaveProperty('forkPointSha', null);
   });
 });

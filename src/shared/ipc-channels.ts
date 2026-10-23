@@ -239,6 +239,7 @@ export const IPC = {
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
   GIT_WORKTREE_HEAD: 'git:worktreeHead',
   GIT_COMMIT_GRAPH: 'git:commitGraph',
+  GIT_TASK_CHANGES: 'git:taskChanges',
   GIT_FILE_HISTORY: 'git:fileHistory',
   GIT_BLAME: 'git:blame',
 

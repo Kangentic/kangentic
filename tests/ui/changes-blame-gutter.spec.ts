@@ -288,7 +288,7 @@ test.describe('DiffViewer: blame gutter', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('blame is unavailable while browsing a historical commit, and re-enables when returning to Uncommitted', async () => {
+  test('blame is unavailable while browsing a historical commit, and re-enables when the commit is deselected', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
     await card.click();
 
@@ -300,42 +300,34 @@ test.describe('DiffViewer: blame gutter', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
 
-    // Sanity: on Uncommitted, blamed.ts's option starts enabled.
-    await fileTree.locator('text=blamed.ts').click();
+    // The file's row, not its name anywhere in the tree: the selection bar
+    // sits in the tree too, and the commit's subject names the same file.
+    const blamedFileRow = fileTree.locator('[data-testid="changes-file-row"]').filter({ hasText: 'blamed.ts' }).getByRole('button').first();
+
+    // Sanity: on the working diff, blamed.ts's option starts enabled.
+    await blamedFileRow.click();
     await expect(await openBlameOption(page)).toBeEnabled();
     await closeViewOptions(page);
 
-    // Expand the (default-collapsed) History section to reveal the commit rows.
+    // History arrives open, so its commit rows are already listed.
     const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
-    await historyToggle.waitFor({ state: 'visible', timeout: 10000 });
-    if ((await historyToggle.getAttribute('aria-expanded')) !== 'true') {
-      await historyToggle.click();
-    }
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
 
     // Select the historical commit that also touches blamed.ts - the same
     // file path, but blame is not eligible while browsing a commit (content
     // and line numbers may not match the file's current working-tree state).
     await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'touch blamed.ts' }).click();
-    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
-    await fileTree.locator('text=blamed.ts').click();
+    await expect(page.locator('[data-testid="commit-selection-bar"]')).toBeVisible({ timeout: 10000 });
+    await blamedFileRow.click();
     await expect(await openBlameOption(page)).toBeDisabled();
     await closeViewOptions(page);
 
-    // Returning to Uncommitted re-enables blame for the same file.
-    await page.locator('[data-testid="commit-detail-back"]').click();
-    await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible({ timeout: 10000 });
-    await fileTree.locator('text=blamed.ts').click();
+    // Deselecting the commit re-enables blame for the same file.
+    await page.locator('[data-testid="commit-selection-close"]').click();
+    await expect(page.locator('[data-testid="commit-selection-bar"]')).toHaveCount(0, { timeout: 10000 });
+    await blamedFileRow.click();
     await expect(await openBlameOption(page)).toBeEnabled();
     await closeViewOptions(page);
-
-    // Re-collapse History: it is persisted per task (changesHistoryOpen), so
-    // leaving it expanded hands the next reopen a state the documented default
-    // says is collapsed. Guarded and asserted, matching commit-graph-panel's
-    // closeChangesPanelAndDialog.
-    if ((await historyToggle.getAttribute('aria-expanded')) === 'true') {
-      await historyToggle.click();
-    }
-    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

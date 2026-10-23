@@ -354,7 +354,7 @@ export function MonitorBody() {
                     <span className="text-[11px] uppercase tracking-wider text-fg-muted flex-shrink-0">
                       {group.label}
                     </span>
-                    <CountBadge count={group.rows.length} variant="muted" size="sm" />
+                    <CountBadge count={group.rows.length} variant="tinted" size="pill" className="text-fg-muted" />
                     <span className="h-px flex-1 bg-edge/60" aria-hidden />
                   </div>
                 )}
@@ -395,7 +395,7 @@ export function MonitorBody() {
                         <span className="text-[11px] uppercase tracking-wider text-fg-muted flex-shrink-0">
                           {unit.label}
                         </span>
-                        <CountBadge count={unit.count} variant="muted" size="sm" />
+                        <CountBadge count={unit.count} variant="tinted" size="pill" className="text-fg-muted" />
                         <span className="h-px flex-1 bg-edge/60" aria-hidden />
                       </div>
                     ) : (

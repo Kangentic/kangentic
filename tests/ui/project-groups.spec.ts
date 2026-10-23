@@ -45,8 +45,7 @@ test.describe('ProjectSidebar header count badge', () => {
   test('shows project count badge in header when projects exist', async () => {
     // The "Projects" header renders a CountBadge next to the label when projects.length > 0.
     // Scope to the header area to avoid matching group or project-row badges.
-    const header = page.locator('.px-3.pt-3.pb-2.border-b').first();
-    await expect(header.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
+    await expect(page.getByTestId('sidebar-projects-count')).toHaveText('2');
   });
 });
 
@@ -192,7 +191,7 @@ test.describe('Project Groups', () => {
     await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeHidden();
 
     // Count badge should show "2" in the group header
-    await expect(groupHeader.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
+    await expect(groupHeader.locator('[data-testid^="group-count-"]')).toHaveText('2');
 
     // Click again to expand
     await groupName.click();
@@ -218,7 +217,7 @@ test.describe('Project Groups', () => {
 
     // Badge must be visible while expanded
     const groupHeader = page.locator('[data-testid^="project-group-"]');
-    await expect(groupHeader.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
+    await expect(groupHeader.locator('[data-testid^="group-count-"]')).toHaveText('2');
   });
 
   test('can rename a group via context menu', async () => {

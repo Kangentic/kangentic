@@ -161,4 +161,13 @@ export interface PRConnector {
    * choice cannot be made by omission.
    */
   verifiesCommitOwnership?: boolean;
+
+  /**
+   * The web page for one commit of the repository behind these remote fetch
+   * URLs (`origin` first), or null when none of them is this platform's. Must
+   * be pure, like `matchesRemote`: no subprocess, no network. Whether the
+   * commit has been pushed is the caller's question, not this one's. Optional:
+   * a platform without it simply shows no commit links.
+   */
+  commitWebUrl?(remoteUrls: readonly string[], sha: string): string | null;
 }

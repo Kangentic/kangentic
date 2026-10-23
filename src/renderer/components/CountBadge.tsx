@@ -1,19 +1,19 @@
 import React from 'react';
 import { TINTED_PILL_EDGE, TINTED_PILL_FILL } from './Pill';
 
-type CountBadgeVariant = 'muted' | 'accent' | 'solid' | 'tinted';
-type CountBadgeSize = 'xs' | 'sm' | 'md' | 'pill';
+type CountBadgeVariant = 'solid' | 'tinted';
+type CountBadgeSize = 'xs' | 'pill';
 
 interface CountBadgeProps {
   count: number;
   /**
-   * Visual variant. 'muted' for subtle, 'accent' for highlighted, 'solid' for strong emphasis,
-   * 'tinted' for a count inside a control whose text tone it should follow.
+   * Visual variant. 'tinted' is the standard count: it sets no text color and takes the tone
+   * of whatever it sits in. 'solid' is the title bar's unread overlay.
    */
   variant?: CountBadgeVariant;
   /**
-   * Size. 'xs' = 14px circle (overlaid on an icon), 'sm' = 18px, 'md' = 20px, 'pill' = an 18px
-   * pill that widens with each digit, its digits centered on their own ink.
+   * Size. 'pill' = the standard 18px pill that widens with each digit, its digits centered on
+   * their own ink. 'xs' = 14px circle overlaid on an icon.
    */
   size?: CountBadgeSize;
   className?: string;
@@ -26,8 +26,6 @@ const SIZE_CLASSES: Record<CountBadgeSize, string> = {
   // Keeps the 10px text floor the badge family is grandfathered at, and pairs
   // with a min-w so a 2-digit count widens into a pill instead of clipping.
   xs: 'h-3.5 min-w-3.5 px-[3px] text-[10px] tabular-nums',
-  sm: 'w-[18px] h-[18px] text-[10px] tabular-nums',
-  md: 'w-5 h-5 text-[12px] tabular-nums',
   // Proportional figures: a tabular "1" is padded to a full digit's width, which
   // put "1204" up to 1.1px right of center when measured from the pixels;
   // proportional ones held every count from 1 to 4 digits within 0.51px.
@@ -35,12 +33,11 @@ const SIZE_CLASSES: Record<CountBadgeSize, string> = {
 };
 
 const VARIANT_CLASSES: Record<CountBadgeVariant, string> = {
-  muted: 'bg-surface-hover/50 text-fg-faint',
-  accent: 'bg-surface-hover/50 text-fg-muted',
   solid: 'bg-accent-emphasis text-accent-on',
-  // No text color: the count takes the tone of the control it sits in (muted
-  // while its tab is idle, bright when selected or hovered), and its fill and
-  // edge are mixed from that same tone, so it reads on any ground behind it.
+  // No text color: the count takes the tone of whatever it sits in (muted
+  // while its tab is idle, bright when selected or hovered, red in a conflict
+  // line), and its fill and edge are mixed from that same tone, so it reads on
+  // any ground behind it.
   tinted: 'border',
 };
 
@@ -50,9 +47,12 @@ const TINTED_STYLE: React.CSSProperties = {
 };
 
 /**
- * Count badge for displaying numeric counts. 'sm' and 'md' are fixed circles;
- * 'xs' is a circle at one digit that widens into a pill past that, so an overlay
- * badge stays small without clipping a 2-digit count.
+ * Count badge for displaying numeric counts. The standard count is
+ * `variant="tinted" size="pill"`, placed right after the label it counts. It
+ * takes its parent's text color, so a call site whose parent sets no tone gives
+ * the badge one through `className` (`<body>` is `text-fg`, so an untoned badge
+ * renders bright). The one other shape is the title bar's unread announcements
+ * badge, a solid 'xs' circle overlaid on its icon.
  *
  * 'pill' centers the digits' INK rather than their line box. `line-height: 1`
  * centers the em box, and the system UI font's tall ascent leaves digits 0.5 to
@@ -63,16 +63,14 @@ const TINTED_STYLE: React.CSSProperties = {
  * 100% and 200% display scaling (an odd remainder can never center at 100%).
  *
  * Usage:
- *   <CountBadge count={3} />
- *   <CountBadge count={12} variant="accent" />
- *   <CountBadge count={5} variant="solid" size="sm" />
- *   <CountBadge count={12} variant="solid" size="xs" />   // overlaid on an icon
- *   <CountBadge count={21} variant="tinted" size="pill" /> // inside a tab or button
+ *   <CountBadge count={21} variant="tinted" size="pill" />                       // inside a toned control
+ *   <CountBadge count={4} variant="tinted" size="pill" className="text-fg-muted" /> // after a label, toned
+ *   <CountBadge count={12} variant="solid" size="xs" />                           // overlaid on an icon
  */
 export const CountBadge = React.memo(function CountBadge({
   count,
-  variant = 'muted',
-  size = 'md',
+  variant = 'tinted',
+  size = 'pill',
   className,
   testId,
 }: CountBadgeProps) {

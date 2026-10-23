@@ -122,9 +122,10 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
             <span className="text-sm font-medium truncate text-fg">
               {swimlane.name}
             </span>
+            {/* Inside the button, so the button keeps the free width and the
+                space after the count still opens the Board Manager. */}
+            <CountBadge count={tasks.length} variant="tinted" size="pill" className="shrink-0 text-fg-muted" testId="swimlane-task-count" />
           </button>
-
-          <CountBadge count={tasks.length} />
 
           <button
             type="button"
@@ -229,9 +230,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
             >
               <Maximize2 size={14} />
               <span className="text-sm">View all</span>
-              <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-surface-hover/60 text-fg-secondary">
-                {archivedTotalCount}
-              </span>
+              <CountBadge count={archivedTotalCount} variant="tinted" size="pill" testId="view-all-completed-count" />
             </button>
           )}
         </div>

@@ -5,6 +5,7 @@ import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { TIER_LABELS } from './settings-tabs';
 import type { SettingsTabTier } from './settings-tabs';
 import { Pill } from '../Pill';
+import { CountBadge } from '../CountBadge';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 
@@ -204,12 +205,15 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                         }`}
                       >
                         <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
-                        <span className="flex-1 text-left">{tab.label}</span>
-                        {isSearching && matchCount !== undefined && matchCount > 0 && (
-                          <Pill size="sm" className="bg-surface-hover text-fg-faint min-w-[1.25rem] text-center">
-                            {matchCount}
-                          </Pill>
-                        )}
+                        {/* The match count sits right after the label, tinted
+                            from the tab's own tone so it follows hover and the
+                            selection. The pair takes the free width. */}
+                        <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
+                          <span>{tab.label}</span>
+                          {isSearching && matchCount !== undefined && matchCount > 0 && (
+                            <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
+                          )}
+                        </span>
                       </button>
                     </Tooltip>
                   </React.Fragment>

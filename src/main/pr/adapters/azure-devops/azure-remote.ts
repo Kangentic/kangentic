@@ -90,8 +90,17 @@ export function firstAzureRemote(remoteUrls: readonly string[]): AzureRemote | n
  * double-encoding.
  */
 export function buildAzurePrWebUrl(remote: AzureRemote, prNumber: number): string {
+  return `${repositoryWebUrl(remote)}/pullrequest/${prNumber}`;
+}
+
+/** The browser URL for one commit, encoded the same way as {@link buildAzurePrWebUrl}. */
+export function buildAzureCommitWebUrl(remote: AzureRemote, sha: string): string {
+  return `${repositoryWebUrl(remote)}/commit/${sha}`;
+}
+
+function repositoryWebUrl(remote: AzureRemote): string {
   const org = encodeURIComponent(remote.org);
   const project = encodeURIComponent(remote.project);
   const repo = encodeURIComponent(remote.repo);
-  return `https://dev.azure.com/${org}/${project}/_git/${repo}/pullrequest/${prNumber}`;
+  return `https://dev.azure.com/${org}/${project}/_git/${repo}`;
 }

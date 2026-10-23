@@ -106,6 +106,16 @@ export const TOOLBAR_ROW_CONTAINER_CLASS = '@container';
 export interface ToolbarControlCollapse {
   button: string;
   label: string;
+  /**
+   * The button's classes while it carries a count pill after its label, in
+   * place of `button`. Only the Filter button has one (its active-filter
+   * count). The icon-only square is a fixed 36px, and the icon, its gap and an
+   * 18px pill do not fit in it, so the button sizes to its content instead,
+   * keeping the 34px height the row is built on. At the floor that costs the
+   * search about 18px while a filter is active, which the old overlay on the
+   * button's corner did not.
+   */
+  buttonWithCount?: string;
 }
 
 /** Everything one branch of the toolbar needs to run the ladder. */
@@ -146,6 +156,7 @@ export const BOARD_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
     button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[880px]:w-auto @[880px]:h-auto @[880px]:px-3',
     label: 'hidden @[880px]:inline',
+    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[880px]:h-auto @[880px]:px-3',
   },
   viewSwitcherLabel: 'hidden @[730px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[730px]:hidden',
@@ -161,6 +172,7 @@ export const BACKLOG_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
     button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[1000px]:w-auto @[1000px]:h-auto @[1000px]:px-3',
     label: 'hidden @[1000px]:inline',
+    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[1000px]:h-auto @[1000px]:px-3',
   },
   viewSwitcherLabel: 'hidden @[760px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[760px]:hidden',
@@ -183,6 +195,7 @@ export const WORKFLOWS_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
     button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[750px]:w-auto @[750px]:h-auto @[750px]:px-3',
     label: 'hidden @[750px]:inline',
+    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[750px]:h-auto @[750px]:px-3',
   },
   viewSwitcherLabel: 'hidden @[590px]:inline',
   viewSwitcherIcon: 'flex items-center h-5 @[590px]:hidden',

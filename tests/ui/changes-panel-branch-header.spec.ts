@@ -2,9 +2,10 @@
  * UI test for the Changes panel branch header (PR 1).
  *
  * Verifies that the header surfaces the live branch context returned by
- * git.branchSummary: the current branch name, ahead/behind counts, and the
- * last-commit line. Uses the headless mock (window.__mockBranchSummary) so no
- * real git repo is needed.
+ * git.branchSummary: the current branch name and ahead/behind counts. The last
+ * commit and the linked PR are not repeated there: History lists the commits,
+ * and the task header carries the PR. Uses the headless mock
+ * (window.__mockBranchSummary) so no real git repo is needed.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -118,7 +119,7 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes panel: branch header', () => {
-  test('shows branch name, ahead/behind, and last commit in the shared surface header', async () => {
+  test('shows branch name and ahead/behind in the shared surface header, and no last commit', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header Task')
@@ -153,11 +154,14 @@ test.describe('Changes panel: branch header', () => {
     await expect(branchName).toHaveText('feature/enhance-changes', { timeout: 8000 });
     await expect(page.locator('[data-testid="changes-branch-name"]')).toHaveCount(1);
 
-    // Last-commit line: short hash + subject.
-    const lastCommit = surfaceHeader.locator('[data-testid="changes-last-commit"]');
-    await lastCommit.waitFor({ state: 'visible', timeout: 3000 });
-    await expect(lastCommit).toContainText('abc1234', { timeout: 3000 });
-    await expect(lastCommit).toContainText('wire branch summary into header', { timeout: 3000 });
+    // Ahead/behind from the same summary: 3 up, 1 down.
+    const aheadBehind = surfaceHeader.locator('[data-testid="changes-ahead-behind"]');
+    await expect(aheadBehind).toHaveText(/3\s*1/, { timeout: 3000 });
+
+    // The summary carries a last commit, and the header leaves it out: the
+    // History section below already lists it with every other commit.
+    await expect(page.locator('[data-testid="changes-last-commit"]')).toHaveCount(0);
+    await expect(surfaceHeader).not.toContainText('wire branch summary into header');
 
     // The file tree has no branch/commit content to size around in this
     // embed (it lives in the full-width surface header instead), so the tree
@@ -174,12 +178,13 @@ test.describe('Changes panel: branch header', () => {
   });
 });
 
-// ─── Linked-PR chip in the surface header ───────────────────────────────────
+// ─── No linked-PR chip in the surface header ────────────────────────────────
 
 const PR_PROJECT_ID = 'proj-branch-header-pr';
 const PR_TASK_ID = 'task-branch-header-pr';
 const PR_SESSION_ID = 'sess-branch-header-pr';
 const PR_URL = 'https://github.com/example/example/pull/77';
+// PR_URL is seeded on the task so the task header has a PR to show.
 
 const prPreConfig = `
   window.__mockBranchSummary = {
@@ -244,7 +249,7 @@ const prPreConfig = `
   });
 `;
 
-test.describe('Changes panel: linked-PR chip', () => {
+test.describe('Changes panel: linked PR', () => {
   let prBrowser: Browser;
   let prPage: Page;
 
@@ -259,7 +264,7 @@ test.describe('Changes panel: linked-PR chip', () => {
     await prBrowser?.close();
   });
 
-  test('a linked PR renders the shared PrLink chip in the surface header, with its state badge, and click opens the PR URL', async () => {
+  test('a linked PR is not repeated in the Changes header or the file tree', async () => {
     const card = prPage
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header PR Task')
@@ -277,19 +282,13 @@ test.describe('Changes panel: linked-PR chip', () => {
     const surfaceHeader = prPage.locator('[data-testid="surface-header-changes"]');
     await surfaceHeader.waitFor({ state: 'visible', timeout: 8000 });
 
-    // The chip lives in the surface header (the embed's one branch-context
-    // home) and carries the PR number and state badge. Scoping to the header
-    // also proves the task-detail header's own PR link is not being counted.
-    const chip = surfaceHeader.locator('[data-testid="changes-pr-link"]');
-    await expect(chip).toBeVisible({ timeout: 8000 });
-    await expect(chip).toContainText('PR #77');
-    await expect(chip.locator('[data-testid="pr-state-badge"]')).toContainText('open');
-
-    // Click-through records the PR URL via the mock's external-open hook.
-    await chip.click();
-    await expect
-      .poll(async () => prPage.evaluate(() => (window as unknown as { __openedExternalUrls?: string[] }).__openedExternalUrls ?? []), { timeout: 5000 })
-      .toContain(PR_URL);
+    // The branch context has loaded, so a missing chip is a decision, not a race.
+    await expect(surfaceHeader.locator('[data-testid="changes-branch-name"]')).toHaveText('feature/pr-chip', { timeout: 8000 });
+    // The task header carries the PR; the Changes panel does not repeat it,
+    // in its surface header or in the file tree's branch header.
+    await expect(surfaceHeader.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
+    await expect(fileTree.locator('[data-testid="changes-pr-link"]')).toHaveCount(0);
+    await expect(surfaceHeader).not.toContainText('PR #77');
 
     await prPage.locator('[data-testid="changes-toggle"]').click();
     await prPage.keyboard.press('Control+Shift+W');

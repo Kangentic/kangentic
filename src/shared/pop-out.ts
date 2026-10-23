@@ -11,7 +11,7 @@
 
 import { IPC } from './ipc-channels';
 // Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
-import type { GitDiffScope, GitDiffStatus } from './types';
+import type { GitDiffRange, GitDiffScope, GitDiffStatus } from './types';
 
 export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'knowledge-graph';
 
@@ -47,6 +47,9 @@ export interface PopOutChangesFileParams extends PopOutTaskParams {
   /** When set, show this file's diff within that single commit (immutable;
    *  overrides `scope`, mirroring GitDiffFilesInput). */
   commitOid?: string;
+  /** When set (and no `commitOid`), show this file's diff over a completed
+   *  task's whole range, read from commits only, so the window watches nothing. */
+  range?: GitDiffRange;
   /** Boot seed: project directory (GitFileContentInput.projectPath). */
   projectPath: string;
   /** Boot seed: worktree directory, when the task has one. */

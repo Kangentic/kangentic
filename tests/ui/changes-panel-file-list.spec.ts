@@ -323,7 +323,7 @@ test.describe('Changes panel: file-list controls', () => {
     await expect(groupRows.nth(1)).toContainText('Modified');
     await expect(groupRows.nth(2)).toHaveAttribute('data-status', 'D');
     await expect(groupRows.nth(2)).toContainText('Deleted');
-    await expect(groupRows.nth(0)).toContainText('1');
+    await expect(groupRows.nth(0).locator('[data-testid="changes-group-count"]')).toHaveText('1');
 
     // Size: most changes first (modified 10, deleted 5, added 1), no group rows.
     await sortButton.click();

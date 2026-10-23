@@ -191,14 +191,16 @@ them. They are still open:
   request is a `TranscriptPageRequest` (conversation id, direction, cursor, position, until
   position, source token, request key), and there are three endpoints, `transcript:page`,
   `transcript:locate` and `transcript:timeline`, which share one history queue.
-- **Keep pages apart from the polled tail.** `ConversationWindow` holds the pages per session next to
-  the polled response. A pure merge inserts each session's pages at its gap row and dedupes by
+- **Keep pages apart from the polled tail.** The conversation body's state
+  (`use-conversation-state.ts`, which the Conversation window and a completed task's Conversation
+  tab both host) holds the pages per session next to the polled response, keyed by its host's
+  `requestKey`. A pure merge inserts each session's pages at its gap row and dedupes by
   `transcriptEntryKey`, the tail winning. That key is the uuid, plus the tool use id for a tool
   result, because a reply and its tool results can share a uuid and a uuid-only key dropped them. The index-based delta of `transcript.task` never sees a page, so the poll
-  protocol is unchanged. Holding pages in the window, not in `ConversationView`, also keeps them
+  protocol is unchanged. Holding pages in that state, not in `ConversationView`, also keeps them
   across the remount a Route tab switch causes.
 - **Trigger and anchor.** A gap row entering the overscan requests the next page, one request in
-  flight per window. Anchoring comes from virtual-core's `anchorTo: 'end'`, which keeps the first
+  flight per request key. Anchoring comes from virtual-core's `anchorTo: 'end'`, which keeps the first
   visible row in place by key when the row count changes. A page that arrives while
   `useScrollSettle` is positioning waits until it settles. If the `/preview` check shows the option
   fighting the open-at-bottom path, the fallback is the same arithmetic by hand: record the first

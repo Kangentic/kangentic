@@ -256,6 +256,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | head_sha | TEXT | | NULL |
 | pushed_branch | TEXT | | NULL |
 | resolved_base_branch | TEXT | | NULL |
+| fork_point_sha | TEXT | | NULL |
 | external_id | TEXT | | NULL |
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
@@ -316,6 +317,17 @@ today it is recorded and exposed with no renderer reader: the 12px card glyph th
 reviewed out as too small to tell apart. The task card's marker and the detail header's "Project
 folder" chip still read `worktree_path`.
 See [Worktree Strategy](worktree-strategy.md#when-a-worktree-is-not-created).
+
+`fork_point_sha` is the commit the task's branch was cut from, read from the branch tip right after
+`createWorktree` cuts it (null when the worktree attached to a branch that already existed, since
+that branch's start is not this task's). `recordWorktree` writes it in the same transaction as the
+worktree, and clears it when it records a different branch with no fork point of its own.
+`update()` clears it, in the same statement, whenever `branch_name` is set to null, so it follows
+the branch's lifecycle: cleared at a To Do reset and a missing-worktree cleanup, kept at Done and
+through a rename. Main reads it only
+through `getForkPointSha`: `rowToTask` strips it, so it is not on the shared `Task`. The completed
+task resolver (`git:taskChanges`) uses it as one candidate start of an unmerged branch's range,
+beside the merge-base and the reflog's creation point.
 
 `profile_id` names a Board Profile - a team-shared, named alternate set of per-column strategy
 settings the task rides as it moves (see [Configuration > Board Profiles](configuration.md#board-profiles)).
@@ -1319,6 +1331,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 87. **`automations_disabled` on tasks** - `INTEGER NOT NULL DEFAULT 0`, the per-task switch that disables column automations (see the `tasks` table notes above). 0 is every existing task's behavior, so one guarded `ALTER TABLE` and no backfill.
 88. **`plan_approval` on swimlanes** - `TEXT NOT NULL DEFAULT 'manual'`, who approves a plan column's plans (see the `swimlanes` table notes above). Runs right after the `auto_command_mode` add (56). `manual` is what every existing column already does, so no backfill. Team-shared, so it round-trips through `kangentic.json` as `planApproval`. A guarded `ALTER TABLE`.
 89. **`plan_approval` on workflows** - `TEXT DEFAULT NULL`, who approves plans for a workflow's tasks (see the `workflows` table above). NULL follows the plan columns, so every existing workflow keeps doing what its columns already do. A guarded `ALTER TABLE` on the same `table_info` read, at the end of `runWorkflowsMigration`.
+90. **`fork_point_sha` on tasks** - `TEXT DEFAULT NULL`, the commit the task's branch was cut from (see the `tasks` table notes above). NULL for every existing task and for one that attached to an already-existing branch, so nothing is backfilled and the completed-task resolver falls back to the merge-base and the reflog. A guarded `ALTER TABLE`, after the `automations_disabled` block.
 
 ### Key Migrations (Global DB)
 

@@ -171,7 +171,11 @@ export interface ConversationPagingOptions {
   projectId: string | null;
   /** The window's anchor session: any session of the task. */
   sessionId: string;
-  windowId: string;
+  /**
+   * Keys this viewer's reads in the retrieval worker's queue, where a newer read
+   * under the same key supersedes an older one: one key per mounted viewer.
+   */
+  requestKey: string;
   /** A change drops every page: a new anchor, project or tab. */
   resetKey: string;
   /** A column tab's stays, or undefined for All. */
@@ -253,10 +257,9 @@ function timeNear(page: TranscriptHistoryPage, position: number): number {
 }
 
 export function useConversationPaging(options: ConversationPagingOptions): ConversationPaging {
-  const { response, projectId, sessionId, windowId, resetKey, timeRanges, openingTs, visitTs, turnUuid } = options;
+  const { response, projectId, sessionId, requestKey, resetKey, timeRanges, openingTs, visitTs, turnUuid } = options;
   const conversations: ReadonlyArray<ConversationExtent> | undefined = response?.conversations;
   const enabled = isPagingMode(conversations);
-  const requestKey = `conversation-window:${windowId}`;
 
   const [state, setState] = useState<PagingState>(() => initialState(resetKey, openingTs, 0, visitTs));
   // State the inputs already imply, applied during render (React restarts the

@@ -464,6 +464,7 @@ const api: ElectronAPI = {
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
     worktreeHead: (input) => ipcRenderer.invoke(IPC.GIT_WORKTREE_HEAD, input),
     commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
+    taskChanges: (input) => ipcRenderer.invoke(IPC.GIT_TASK_CHANGES, input),
     fileHistory: (input) => ipcRenderer.invoke(IPC.GIT_FILE_HISTORY, input),
     blame: (input) => ipcRenderer.invoke(IPC.GIT_BLAME, input),
     onDiffChanged: (callback) => {

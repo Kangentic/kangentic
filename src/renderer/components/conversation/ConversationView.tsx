@@ -7,8 +7,8 @@
  * (`display-rows.ts`); a tool_result with no owning tool_use in this parse (an
  * orphan, e.g. after a resume) renders as its own standalone row.
  *
- * Stateless with respect to fetching: the owning ConversationWindow fetches and
- * passes the loaded entries down. `reconcileDisplayRows` reuses a previous
+ * Stateless with respect to fetching: `useConversationState` fetches, and
+ * `ConversationBody` passes the loaded entries down. `reconcileDisplayRows` reuses a previous
  * row's object identity whenever its uuid and content are unchanged, which is
  * what lets `MemoConversationRow`'s default shallow-compare skip re-rendering
  * (and re-parsing markdown) rows a live-poll tick did not actually change.
@@ -74,7 +74,7 @@ const PREFETCH_VIEWPORTS = 2;
 
 /** Where the viewer opens by default (no `scrollToTurnUuid`): the latest
  *  message, or centered on the row matching the terminal's visible
- *  scrollback (see `tui-anchor.ts`). Computed by `ConversationWindow`. The
+ *  scrollback (see `tui-anchor.ts`). Computed by `useConversationState`. The
  *  start is where Jump to start opens a paged window. */
 export type InitialPosition = { kind: 'bottom' } | { kind: 'top' } | { kind: 'uuid'; uuid: string };
 

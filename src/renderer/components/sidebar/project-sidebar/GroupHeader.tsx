@@ -94,7 +94,7 @@ export function GroupHeader({
             {group.name}
           </span>
         )}
-        <CountBadge count={projectCount} variant="muted" size="sm" className="flex-shrink-0" />
+        <CountBadge count={projectCount} variant="tinted" size="pill" className="flex-shrink-0 text-fg-muted" testId={`group-count-${group.id}`} />
       </div>
 
       <Tooltip label="Group options (or right-click)">

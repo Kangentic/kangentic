@@ -23,6 +23,8 @@
  * What is authored, since no recording holds it: which column each phase ran in, the second
  * conversation (one headless run is one conversation), the time between runs, the moves, the two
  * commits (the run committed nothing), the three background calls, and the summary's wording.
+ * Because the commits are authored, git has neither, so the view's Changes tab shows main's answer
+ * for that (`DEMO_COMPLETED_TASK_CHANGES`, not in this clone) rather than a diff nobody committed.
  *
  * Main assembles the report (`assembleTaskReport`) from these rows, so the route, each run's
  * columns, each run's share of its conversation's cumulative readings, the call outcomes and
@@ -34,7 +36,8 @@ import type { TaskReportSessionRecord } from '../../../src/main/db/repositories/
 import type { TaskBackgroundCallRow } from '../../../src/main/db/repositories/background-call-repository';
 import type { TaskModelUsageRow } from '../../../src/main/retrieval/conversation/conversation-usage-store';
 import type { TaskKnowledge } from '../../../src/main/retrieval/task-knowledge';
-import type { AutomationRun, Swimlane, TaskMoveRecord, TaskReport } from '../../../src/shared/types';
+import type { AutomationRun, GitTaskChangesResult, Swimlane, TaskMoveRecord, TaskReport } from '../../../src/shared/types';
+import contosoHistory from '../fixtures/demo/history/contoso-web.json';
 import {
   DEMO_ARCHIVED_RUNS, DEMO_ARCHIVED_SUMMARIES, DEMO_LANES_BY_PROJECT, PROJECT_CONTOSO,
   archivedSessionIdOf, archivedToolBreakdown, demoLaneId, type DemoArchivedSummary,
@@ -249,3 +252,21 @@ export function demoCompletedTaskReportInput(): Parameters<typeof assembleTaskRe
 
 /** The report the completed-task scenes seed, with no summary until the mock hands it the row's. */
 export const DEMO_COMPLETED_TASK_REPORT: TaskReport = assembleTaskReport(demoCompletedTaskReportInput());
+
+/**
+ * What main's `git:taskChanges` answers for this task in the sample install. Its two commits are
+ * authored, so the scaffold repository the history fixture reads holds neither, and the resolver
+ * finds none of them in the clone. Derived from the fixture rather than written down: a commit plan
+ * that one day carries them fails here, and the seed then has to be their real range.
+ */
+function completedTaskChanges(): Partial<GitTaskChangesResult> {
+  const historyHashes = new Set(contosoHistory.commits.map((commit) => commit.hash));
+  const inClone = COMMITS.filter((commit) => historyHashes.has(commit.sha));
+  if (inClone.length > 0) {
+    throw new Error(`${DEMO_COMPLETED_TASK_ID}'s commits ${inClone.map((commit) => commit.sha.slice(0, 7)).join(', ')} are in the scaffold history now; seed their range from it instead of not-in-clone`);
+  }
+  return { emptyReason: 'not-in-clone' };
+}
+
+/** The `__mockTaskChanges` entry the completed-task scenes seed beside the report. */
+export const DEMO_COMPLETED_TASK_CHANGES: Partial<GitTaskChangesResult> = completedTaskChanges();

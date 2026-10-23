@@ -281,6 +281,11 @@
     var commitOid = request && request.commitOid;
     var byCommit = (typeof window !== 'undefined' && window.__mockGitDiffByCommit) || null;
     if (commitOid && byCommit && byCommit[commitOid]) return byCommit[commitOid];
+    // A completed task's whole change: window.__mockGitDiffByRange = { '<base>..<head>': {...} },
+    // checked after the commit (a commit selection inside a range wins) and before scope.
+    var range = request && request.range;
+    var byRange = (typeof window !== 'undefined' && window.__mockGitDiffByRange) || null;
+    if (range && byRange && byRange[range.base + '..' + range.head]) return byRange[range.base + '..' + range.head];
     var scope = (request && request.scope) || 'branch';
     var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
     if (byScope && byScope[scope]) return byScope[scope];
@@ -4335,6 +4340,33 @@
         if (graphForWorktree) return graphForWorktree;
         return { commits: [], tipHash: null, baseHash: null, mergeBaseHash: null, currentBranch: null, truncated: false };
       },
+      taskChanges: async function (input) {
+        // What a completed task changed (git:taskChanges). Test hook: seed per task via
+        // window.__mockTaskChanges = { '<taskId>': { range, commits, files, totals, ... } };
+        // any field left out takes the default below. Every call is recorded in
+        // window.__mockTaskChangesCalls. Unseeded, a task has no commits, which is what
+        // main answers for a task whose work it cannot find.
+        var taskId = input && input.taskId;
+        if (typeof window !== 'undefined') {
+          window.__mockTaskChangesCalls = window.__mockTaskChangesCalls || [];
+          window.__mockTaskChangesCalls.push({ projectId: input && input.projectId, taskId: taskId });
+        }
+        var seeded = (typeof window !== 'undefined' && window.__mockTaskChanges && window.__mockTaskChanges[taskId]) || null;
+        if (seeded && seeded.reject) throw new Error(seeded.reject);
+        var project = projects.find(function (candidate) { return candidate.id === (input && input.projectId); });
+        return Object.assign({
+          range: null,
+          commits: [],
+          truncated: false,
+          files: [],
+          totals: null,
+          emptyReason: seeded ? null : 'no-commits',
+          branchName: null,
+          baseBranch: 'main',
+          projectPath: project ? project.path : '/mock/project',
+          webProviderName: null,
+        }, seeded || {});
+      },
       fileHistory: async function (request) {
         // Test hook: seed the file-history popover via window.__mockFileHistory =
         // { commits: [{ hash, shortHash, authorName, authorTimestamp, subject }] }.
@@ -6134,9 +6166,12 @@
         for (var p = 0; p < projects.length; p++) {
           if (projects[p].id === projectId) { project = projects[p]; break; }
         }
+        // Archived tasks too, as main's `tasks.getById` reads them: a completed
+        // task's detached Changes window looks its row up here.
         var task = null;
-        for (var t = 0; t < tasks.length; t++) {
-          if (tasks[t].id === taskId) { task = tasks[t]; break; }
+        var searched = tasks.concat(archivedTasks);
+        for (var t = 0; t < searched.length; t++) {
+          if (searched[t].id === taskId) { task = searched[t]; break; }
         }
         if (!project || !task) return Promise.resolve(null);
         return Promise.resolve({

@@ -6,7 +6,8 @@ import { readLocalBranchSha } from '../../git/worktree-head';
  * failed removal), so the task becomes a no-worktree task in the shared
  * checkout. The checkout facts die with the directory: `worktree_path`,
  * `branch_name` (the LOCAL branch a restore re-attaches to), and
- * `resolved_base_branch` (the base that checkout was cut from).
+ * `resolved_base_branch` (the base that checkout was cut from), and with the
+ * branch the repository's `fork_point_sha`.
  *
  * The WORK does not die with it, and the PR ladder's durable anchors describe
  * the work: `pushed_branch` is a remote fact and stays untouched, and the

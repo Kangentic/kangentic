@@ -210,6 +210,9 @@ three things staying in step, and each is enforced rather than remembered.
   phases, and the columns, the second conversation, the time between runs, the moves, the commits,
   the calls and the summary's wording are authored and named as authored. It is a scene seed, never the dataset, and it is the
   only authored report: any other archived task's window shows what the mock derives from its run.
+  Its commits being authored, git holds neither, so the view's Changes tab is seeded with main's
+  answer for that (`__mockTaskChanges`, not in this clone), derived from the history fixture so a
+  commit plan that later carries them fails the build instead of showing a diff nobody committed.
 - **The `demo` Playwright tier stays green**, and it runs on the exact bytes a release deploys.
 
 ## Enforcement (self-maintaining)

@@ -3,6 +3,7 @@ import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import type { PopOutKind } from '../../shared/pop-out';
 import { Tooltip } from '../components/Tooltip';
+import { escapeOwnedElsewhere } from '../utils/escape-ownership';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -53,27 +54,16 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
   // (which preventDefaults keys it handled, e.g. closing the find widget).
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return;
-      // A focused text field owns its Escape (cancelling an edit - the browser
-      // pop-out's URL bar, the Changes file filter): closing the whole OS
-      // window mid-typing would discard both the edit and the window.
-      const activeElement = document.activeElement;
-      if (
-        activeElement instanceof HTMLElement &&
-        (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)
-      ) return;
-      // An open dialog / context menu / popover owns this Escape.
-      if (document.querySelector('[data-dismissable-layer]')) return;
+      if (event.key !== 'Escape') return;
+      // Something else owns this Escape: a handled key (Monaco), a focused text
+      // field (closing the whole OS window mid-typing would discard both the
+      // edit and the window), an open dialog / menu / popover, a terminal, or
+      // Monaco's find widget. See escapeOwnedElsewhere.
+      if (escapeOwnedElsewhere(event)) return;
       // A DOM window (task detail in the detached Agent Monitor) owns this Escape.
       for (const host of document.querySelectorAll('[data-window-layer-root]')) {
         if (host.childElementCount > 0) return;
       }
-      // Belt-and-braces for Monaco's find widget, should its Escape ever
-      // bubble. '.find-widget' alone (not qualified by Monaco's editor root
-      // class): the build's lazy-monaco assertion scans entry chunks for that
-      // class name as a marker string, and this frame is in the entry closure.
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target?.closest('.find-widget')) return;
       window.electronAPI.window.close();
     };
     window.addEventListener('keydown', handleKeyDown);

@@ -6,9 +6,10 @@ import type { Task, Swimlane } from '../../../shared/types';
 /**
  * Inline context menu shown on right-click of an archived task card, in the
  * Done lane preview and in the Completed Tasks dialog. Offers copy-id, open
- * (read-only detail), view conversation (the conversation window on All),
- * show-changes (if worktree still exists), restore-to (for every non-Done
- * non-archived non-ghost target lane), and delete (the host confirms first).
+ * (read-only detail), view conversation and show changes (the detail on its
+ * Conversation or Changes tab, which read the task's sessions and commits, so
+ * they need no worktree), restore-to (for every non-Done non-archived non-ghost
+ * target lane), and delete (the host confirms first).
  *
  * Positions itself at the click coordinates, clamped to stay fully
  * visible in the viewport. Closes on outside click or Escape.
@@ -102,17 +103,15 @@ export function ArchivedTaskContextMenu({
         View conversation
       </button>
 
-      {task.worktree_path && (
-        <button
-          type="button"
-          onClick={() => { onShowChanges(); onClose(); }}
-          className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
-          data-testid="archived-context-show-changes"
-        >
-          <GitCompare size={14} className="text-fg-faint" />
-          Show changes
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => { onShowChanges(); onClose(); }}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        data-testid="archived-context-show-changes"
+      >
+        <GitCompare size={14} className="text-fg-faint" />
+        Show changes
+      </button>
 
       {restoreTargets.length > 0 && (
         <>

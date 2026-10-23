@@ -52,7 +52,10 @@ function buildSeedEntry(params: PopOutChangesFileParams): GitDiffFileEntry {
  * shifts.
  */
 export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFileParams }) {
-  const { filePath, scope, commitOid, projectPath, worktreePath, baseBranch } = params;
+  const { filePath, scope, commitOid, range, projectPath, worktreePath, baseBranch } = params;
+  // A completed task's file window reads a fixed range, which no edit changes.
+  const rangeBase = range?.base;
+  const rangeHead = range?.head;
   // The file's current list entry, seeded from params (so the first content
   // fetch needs no preceding diffFiles round trip). null after a reconcile that
   // no longer finds the file = the change was reverted (empty state; the window
@@ -69,6 +72,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   const lastResultRef = useRef<DiffContent | null>(null);
   const runFetch = useCallback(async (seedEntry: GitDiffFileEntry | null) => {
     const generation = ++fetchGenerationRef.current;
+    const fetchRange = rangeBase && rangeHead ? { base: rangeBase, head: rangeHead } : undefined;
     const applyContent = async (fileEntry: GitDiffFileEntry) => {
       const result = await fetchDiffContent({
         worktreePath,
@@ -79,6 +83,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
         oldPath: fileEntry.oldPath,
         scope,
         commitOid,
+        range: fetchRange,
       }, fileEntry.binary, lastResultRef.current);
       if (generation !== fetchGenerationRef.current) return;
       lastResultRef.current = result;
@@ -95,7 +100,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
             seedContentFailed = true;
           })
         : null;
-      const filesResult = await window.electronAPI.git.diffFiles({ worktreePath, projectPath, baseBranch, scope, commitOid });
+      const filesResult = await window.electronAPI.git.diffFiles({ worktreePath, projectPath, baseBranch, scope, commitOid, range: fetchRange });
       if (seededContent) await seededContent;
       if (generation !== fetchGenerationRef.current) return;
       const matched = filesResult.files.find((file) => file.path === filePath) ?? null;
@@ -116,7 +121,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
       // while nothing is displayed yet.
       setLoadError(error instanceof Error ? error.message : String(error));
     }
-  }, [worktreePath, projectPath, baseBranch, filePath, scope, commitOid]);
+  }, [worktreePath, projectPath, baseBranch, filePath, scope, commitOid, rangeBase, rangeHead]);
 
   const seedRef = useRef<GitDiffFileEntry | null>(buildSeedEntry(params));
   useEffect(() => {
@@ -135,9 +140,11 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   useLayoutEffect(() => {
     runFetchRef.current = runFetch;
   });
+  const isRange = Boolean(rangeBase && rangeHead);
   useEffect(() => {
     const watchPath = worktreePath ?? projectPath;
-    if (!watchPath) return;
+    // A range is fixed commits, not a working tree: nothing to watch.
+    if (!watchPath || isRange) return;
     window.electronAPI.git.subscribeDiff(watchPath);
     const unsubscribe = window.electronAPI.git.onDiffChanged(() => {
       // A commit's diff is immutable - no refetch while pinned to one.
@@ -147,7 +154,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
       window.electronAPI.git.unsubscribeDiff(watchPath);
       unsubscribe();
     };
-  }, [worktreePath, projectPath, commitOid]);
+  }, [worktreePath, projectPath, commitOid, isRange]);
 
   if (!entry) {
     return (
@@ -176,6 +183,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
             content={content}
             scope={scope}
             commitOid={commitOid}
+            isRange={isRange}
             projectPath={projectPath}
             worktreePath={worktreePath}
             scrollKey={params.taskId}

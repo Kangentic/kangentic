@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, Circle } from 'lucide-react';
+import { GitBranch } from 'lucide-react';
 import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import { CountBadge } from '../../../CountBadge';
 import { Tooltip } from '../../../Tooltip';
+import { EMPTY_REASON_COPY } from '../completed/CompletedChangesEmpty';
 import type { GitCommitGraphCommit, GitCommitGraphResult, Task } from '../../../../../shared/types';
+
+/**
+ * A completed task's commits, handed in whole: the panel then fetches nothing,
+ * listens to no watcher, and marks no tip, base or PR (there is no checkout
+ * whose HEAD they would describe).
+ */
+export interface StaticCommitHistory {
+  commits: GitCommitGraphCommit[];
+  truncated: boolean;
+  /** Who each commit's `webUrl` opens ("GitHub"), for the hash link's tip. */
+  webProviderName: string | null;
+}
 
 interface CommitGraphPanelProps {
   projectPath: string;
@@ -16,12 +28,8 @@ interface CommitGraphPanelProps {
   isFocused?: boolean;
   /** Fires when the user clicks a commit row - scopes the detail pane to that commit's diff. */
   onSelectCommit: (commit: GitCommitGraphCommit) => void;
-  /** Fires when the user clicks the pinned "Uncommitted changes" row - returns the detail pane to the branch-wide working diff. */
-  onSelectUncommitted: () => void;
-  /** The currently-selected commit OID, or null when "Uncommitted changes" is selected. */
+  /** The currently-selected commit OID, or null when none is. */
   selectedCommit: string | null;
-  /** File count for the working diff, shown on the "Uncommitted changes" row. */
-  uncommittedCount: number;
   /**
    * Rail-width rendering (the History section at the bottom of the Changes
    * rail, 200-420px): tighter row padding, the lane gutter capped at
@@ -30,12 +38,15 @@ interface CommitGraphPanelProps {
    * its badge - it is the one ref worth ink at this size.
    */
   compact?: boolean;
+  /** Set for a completed task: these commits, as they are, instead of the checkout's graph. */
+  staticHistory?: StaticCommitHistory;
   /**
-   * Fires whenever a graph fetch settles, carrying the commit count (and
+   * Fires whenever the commits settle, with the commits themselves (and
    * whether the list hit its cap). Lets the host render the count while the
-   * panel itself is mounted-hidden (the collapsed History section).
+   * panel is mounted-hidden (the collapsed History section), and name a
+   * restored selection's subject.
    */
-  onLoaded?: (commitCount: number, truncated: boolean) => void;
+  onLoaded?: (commits: GitCommitGraphCommit[], truncated: boolean) => void;
 }
 
 /** Lane cap for the compact (rail) rendering; lanes beyond this clip. Task
@@ -61,21 +72,49 @@ function RefBadge({ label, tone }: { label: string; tone: 'tip' | 'base' | 'pr' 
   );
 }
 
+/**
+ * A commit's short hash. When the commit is on the repository's web host it is
+ * its own button that opens the commit there; the row around it selects.
+ */
+function CommitHash({ commit, color, providerName }: { commit: GitCommitGraphCommit; color: string | undefined; providerName: string | null }) {
+  const webUrl = commit.webUrl ?? null;
+  if (!webUrl || !providerName) {
+    return <span className="shrink-0 font-mono text-[11px]" style={{ color }}>{commit.shortHash}</span>;
+  }
+  return (
+    <Tooltip label={`Open on ${providerName}`}>
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          void window.electronAPI.shell.openExternal(webUrl);
+        }}
+        aria-label={`Open ${commit.shortHash} on ${providerName}`}
+        className="pointer-events-auto relative shrink-0 rounded font-mono text-[11px] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        style={{ color }}
+        data-testid="commit-hash-link"
+      >
+        {commit.shortHash}
+      </button>
+    </Tooltip>
+  );
+}
+
 export function CommitGraphPanel({
   projectPath,
   worktreePath,
   baseBranch,
   task,
   onSelectCommit,
-  onSelectUncommitted,
   selectedCommit,
-  uncommittedCount,
   compact = false,
+  staticHistory,
   onLoaded,
 }: CommitGraphPanelProps) {
   const [result, setResult] = useState<GitCommitGraphResult | null>(null);
   const [loaded, setLoaded] = useState(false);
   const initialFetchDoneRef = useRef(false);
+  const isStatic = staticHistory !== undefined;
 
   // Stable ref so a host passing an inline callback never re-triggers fetches.
   // Written on commit (a layout effect), never during render.
@@ -90,13 +129,13 @@ export function CommitGraphPanel({
       setResult(next);
       initialFetchDoneRef.current = true;
       setLoaded(true);
-      onLoadedRef.current?.(next.commits.length, next.truncated);
+      onLoadedRef.current?.(next.commits, next.truncated);
     } catch {
       // Best-effort, like ChangesPanel: on a transient live-update failure keep
       // the previous graph; only reveal the empty state if the first load failed.
       if (!initialFetchDoneRef.current) {
         setLoaded(true);
-        onLoadedRef.current?.(0, false);
+        onLoadedRef.current?.([], false);
       }
     }
   }, [worktreePath, projectPath, baseBranch]);
@@ -110,9 +149,17 @@ export function CommitGraphPanel({
   });
 
   // Fetch on mount and whenever the target directory / base branch changes.
+  // A static history is never fetched.
   useEffect(() => {
+    if (isStatic) return;
     fetchGraphRef.current();
-  }, [worktreePath, projectPath, baseBranch]);
+  }, [worktreePath, projectPath, baseBranch, isStatic]);
+
+  // A static history reports its commits once per set, as a fetch would.
+  useEffect(() => {
+    if (!staticHistory) return;
+    onLoadedRef.current?.(staticHistory.commits, staticHistory.truncated);
+  }, [staticHistory]);
 
   // Live refresh via the shared diff fs-watcher. We ONLY register an onDiffChanged
   // listener here - we deliberately do NOT call subscribeDiff / unsubscribeDiff.
@@ -123,54 +170,35 @@ export function CommitGraphPanel({
   // unsubscribeDiff on unmount (e.g. a Graph->Files toggle, which unmounts only this
   // child), it would tear down the watcher out from under the still-mounted
   // ChangesPanel and silently stop its live refresh. Listening only, and letting
-  // ChangesPanel own subscribe/unsubscribe, avoids that.
+  // ChangesPanel own subscribe/unsubscribe, avoids that. A static history has
+  // nothing on disk to watch.
   useEffect(() => {
+    if (isStatic) return;
     const unsubscribe = window.electronAPI.git.onDiffChanged(() => {
       fetchGraphRef.current();
     });
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [isStatic]);
 
-  const layout = useMemo(() => layoutCommitGraph(result?.commits ?? []), [result]);
+  const commits = useMemo(() => (staticHistory ? staticHistory.commits : (result?.commits ?? [])), [staticHistory, result]);
+  const truncated = staticHistory ? staticHistory.truncated : (result?.truncated ?? false);
+  const providerName = staticHistory ? staticHistory.webProviderName : (result?.webProviderName ?? null);
+  const layout = useMemo(() => layoutCommitGraph(commits), [commits]);
 
   // Markers derived in the renderer: the tip and base come from the result; the
-  // PR-head anchor is the task's persisted head_sha when a PR is linked.
-  const tipHash = result?.tipHash ?? null;
-  const baseHash = result?.baseHash ?? null;
-  const prHash = task.pr_number != null ? task.head_sha : null;
+  // PR-head anchor is the task's persisted head_sha when a PR is linked. A
+  // static history marks none of them.
+  const tipHash = staticHistory ? null : (result?.tipHash ?? null);
+  const baseHash = staticHistory ? null : (result?.baseHash ?? null);
+  const prHash = !staticHistory && task.pr_number != null ? task.head_sha : null;
 
-  const isUncommittedSelected = !selectedCommit;
   const rowPadding = compact ? 'px-2' : 'px-3';
 
-  // Pinned top row: the working diff, selectable like any commit. Always
-  // rendered regardless of load/empty state, so the branch-wide diff stays one
-  // click away even on a brand-new branch with no commits yet.
-  const uncommittedRow = (
-    <button
-      type="button"
-      onClick={onSelectUncommitted}
-      aria-pressed={isUncommittedSelected}
-      data-testid="commit-history-uncommitted"
-      data-selected={isUncommittedSelected || undefined}
-      className={`flex w-full items-center gap-2 border-b border-edge-subtle ${rowPadding} text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-        isUncommittedSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
-      }`}
-      style={{ height: ROW_HEIGHT_PX }}
-    >
-      <Circle size={9} className={isUncommittedSelected ? 'text-accent' : 'text-fg-faint'} fill="currentColor" />
-      <span className={`flex-1 truncate text-xs ${isUncommittedSelected ? 'font-medium text-fg' : 'text-fg-secondary'}`}>
-        Uncommitted changes
-      </span>
-      <CountBadge count={uncommittedCount} variant={isUncommittedSelected ? 'accent' : 'muted'} size="sm" />
-    </button>
-  );
-
-  if (!loaded) {
+  if (!isStatic && !loaded) {
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
-        {uncommittedRow}
         {/* Skeleton rows echoing the real anatomy (lane-gutter dot + two text
             lines at ROW_HEIGHT), so the loading paint has the list's shape
             instead of a centered spinner. */}
@@ -189,12 +217,12 @@ export function CommitGraphPanel({
     );
   }
 
-  const commits = result?.commits ?? [];
   if (commits.length === 0) {
-    const message = tipHash || result?.currentBranch ? 'No commits on this branch yet.' : 'No git history available.';
+    const message = isStatic
+      ? EMPTY_REASON_COPY['no-commits']
+      : tipHash || result?.currentBranch ? 'No commits on this branch yet.' : 'No git history available.';
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
-        {uncommittedRow}
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
           <GitBranch size={22} className="text-fg-disabled" />
           <span className="text-sm text-fg-muted">{message}</span>
@@ -205,7 +233,6 @@ export function CommitGraphPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
-      {uncommittedRow}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex">
           <div className="shrink-0 overflow-hidden pl-2" style={{ minHeight: commits.length * ROW_HEIGHT_PX }}>
@@ -225,23 +252,31 @@ export function CommitGraphPanel({
               const compactTipDetail = compact
                 ? `${commit.authorName}${isBase ? `\nBase: ${baseBranch}` : ''}${isPr ? `\nPR #${task.pr_number}` : ''}`
                 : undefined;
+              // The row selects through a button stretched across it, and the
+              // content above it passes clicks through, except the hash: a link
+              // to the commit's web page is its own button, and a button cannot
+              // sit inside another.
               return (
-                <Tooltip key={commit.hash} label={compactTipLabel} detail={compactTipDetail}>
-                  <button
-                    type="button"
-                    onClick={() => onSelectCommit(commit)}
-                    aria-pressed={isSelected}
-                    data-testid="commit-graph-row"
-                    data-selected={isSelected || undefined}
-                    className={`flex w-full flex-col justify-center gap-0.5 border-b border-edge-subtle ${rowPadding} text-left transition-colors outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent ${
-                      isSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
-                    }`}
-                    style={{ height: ROW_HEIGHT_PX }}
-                  >
+                <div
+                  key={commit.hash}
+                  className={`relative border-b border-edge-subtle transition-colors ${isSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'}`}
+                  style={{ height: ROW_HEIGHT_PX }}
+                  data-testid="commit-graph-row"
+                  data-selected={isSelected || undefined}
+                >
+                  <Tooltip label={compactTipLabel} detail={compactTipDetail}>
+                    <button
+                      type="button"
+                      onClick={() => onSelectCommit(commit)}
+                      aria-pressed={isSelected}
+                      aria-label={`${commit.shortHash} ${commit.subject}`}
+                      className="absolute inset-0 h-full w-full outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-accent"
+                      data-testid="commit-graph-row-select"
+                    />
+                  </Tooltip>
+                  <div className={`pointer-events-none relative flex h-full flex-col justify-center gap-0.5 ${rowPadding}`}>
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="shrink-0 font-mono text-[11px]" style={{ color }}>
-                        {commit.shortHash}
-                      </span>
+                      <CommitHash commit={commit} color={color} providerName={providerName} />
                       <span className="truncate text-xs text-fg">{commit.subject}</span>
                       {commit.hash === tipHash && <RefBadge label="HEAD" tone="tip" />}
                       {isBase && (compact ? (
@@ -272,14 +307,14 @@ export function CommitGraphPanel({
                         </>
                       )}
                     </div>
-                  </button>
-                </Tooltip>
+                  </div>
+                </div>
               );
             })}
           </div>
         </div>
       </div>
-      {result?.truncated && (
+      {truncated && (
         <div className="shrink-0 border-t border-edge-subtle px-3 py-1.5 text-[11px] text-fg-faint">
           Showing latest {commits.length} commits.
         </div>

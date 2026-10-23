@@ -164,9 +164,9 @@ test.describe('Board Filters', () => {
     await highPill.click();
     await bugPill.click();
 
-    // CountBadge should show 2
-    const badge = page.locator('[data-testid="board-filter-btn"]').locator('..');
-    await expect(badge.locator('text=2')).toBeVisible();
+    // The count pill sits inside the Filter button, after its label, and shows 2
+    const badge = page.locator('[data-testid="board-filter-btn"] [data-testid="board-filter-btn-count"]');
+    await expect(badge).toHaveText('2');
 
     // Clean up
     await highPill.click();

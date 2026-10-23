@@ -10,7 +10,12 @@ import { getFileHistory } from '../../git/file-history';
 import { getBlame } from '../../git/blame';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitFileImageInput, GitPendingChangesInput, GitPendingChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
+import { commitsMissingFromRemotes } from '../../git/remote-presence';
+import { resolveTaskChanges, TASK_CHANGES_MAX_COMMITS } from '../../git/task-changes';
+import { commitWebLinks } from '../../pr/pr-registry';
+import { retrievalClient } from '../../retrieval/retrieval-client';
+import { getProjectRepos, resolveProjectContext } from '../helpers/project-repos';
+import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphCommit, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitFileImageInput, GitPendingChangesInput, GitPendingChangesResult, GitTaskChangesInput, GitTaskChangesResult, GitWorktreeHeadInput, GitWorktreeHeadResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
 
@@ -105,6 +110,107 @@ export async function probePendingChanges(checkPath: string, opts?: ProbeOptions
     // If git fails (missing directory, corrupted repo, etc.), assume changes exist as safe default
     return { hasPendingChanges: true, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
   }
+}
+
+/**
+ * Stamp each commit with its web page, when the connector that owns the repo's
+ * primary remote can build one and the commit is on a remote. Lives in the
+ * handler so `src/main/git` stays free of `src/main/pr`. Never throws: no
+ * owning connector, unreadable remotes, or a failed push check all leave the
+ * graph without links rather than failing the pane.
+ */
+export async function withCommitWebLinks<T extends { commits: GitCommitGraphCommit[] }>(
+  repoCwd: string,
+  graph: T,
+): Promise<T & { webProviderName: string | null }> {
+  if (graph.commits.length === 0) return { ...graph, webProviderName: null };
+  const links = await commitWebLinks(repoCwd);
+  if (!links) return { ...graph, webProviderName: null };
+  const missing = await commitsMissingFromRemotes(repoCwd, graph.commits.map((commit) => commit.hash));
+  const commits = graph.commits.map((commit) => ({
+    ...commit,
+    webUrl: missing === null || missing.has(commit.hash) ? null : links.url(commit.hash),
+  }));
+  return { ...graph, commits, webProviderName: links.providerName };
+}
+
+/** How long the read waits on the index for the task's linked commits. */
+const LINKED_COMMITS_WAIT_MS = 8_000;
+
+/**
+ * The commits the index links to a task, or `'off'` with indexing off, or
+ * `'unavailable'` when the worker failed or did not answer in time.
+ */
+async function readLinkedCommits(context: IpcContext, projectId: string, taskId: string): Promise<string[] | 'off' | 'unavailable'> {
+  let indexingOn = true;
+  try {
+    indexingOn = context.configManager.load().knowledgeGraph?.indexingEnabled !== false;
+  } catch {
+    // An unreadable config reads as the default, which is on.
+  }
+  if (!indexingOn) return 'off';
+  let waitTimer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<'unavailable'>((resolve) => {
+    waitTimer = setTimeout(() => resolve('unavailable'), LINKED_COMMITS_WAIT_MS);
+  });
+  // One past the cap: the index lists newest first, so the resolver keeps the
+  // newest it can show and still sees that there were more.
+  const reading = retrievalClient
+    .call('task.knowledge', { projectId, taskIds: [taskId], limits: { commits: TASK_CHANGES_MAX_COMMITS + 1, files: 0 } })
+    .then((knowledge) => (knowledge.get(taskId)?.commits ?? []).map((commit) => commit.sha))
+    .catch((error: unknown): 'unavailable' => {
+      console.warn('[git:taskChanges] linked commits read failed:', error instanceof Error ? error.message : error);
+      return 'unavailable';
+    });
+  try {
+    return await Promise.race([reading, waited]);
+  } finally {
+    clearTimeout(waitTimer);
+  }
+}
+
+/**
+ * `git:taskChanges`: a completed task's commits, files and range, from git
+ * alone (see `resolveTaskChanges`), with each commit's web link. Reads the
+ * project's repository, never a worktree, so it works after Done removed it.
+ *
+ * Throws, so the view shows its retry, when the task or its project cannot be
+ * found, when the diff of a found range fails, and when the index could not be
+ * read and git alone found nothing: a worker that is restarting must not read
+ * as a task with no commits.
+ */
+export async function readTaskChanges(context: IpcContext, input: GitTaskChangesInput): Promise<GitTaskChangesResult> {
+  const { projectId, projectPath } = resolveProjectContext(context, input.projectId);
+  if (!projectId || !projectPath) throw new Error('The task\'s project is not open');
+  const tasks = getProjectRepos(context, projectId).tasks;
+  const task = tasks.getById(input.taskId);
+  if (!task) throw new Error('The task could not be found');
+
+  const defaultBaseBranch = context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch || 'main';
+  const baseBranch = task.resolved_base_branch || task.base_branch || defaultBaseBranch;
+  const linked = await readLinkedCommits(context, projectId, task.id);
+
+  const resolution = await resolveTaskChanges({
+    repoPath: projectPath,
+    baseBranch,
+    branchName: task.branch_name,
+    headSha: task.head_sha,
+    forkPointSha: tasks.getForkPointSha(task.id),
+    linkedCommitShas: linked === 'off' ? null : linked === 'unavailable' ? [] : linked,
+  });
+  if (linked === 'unavailable' && resolution.emptyReason !== null) {
+    throw new Error('The Knowledge Graph index is restarting, so the task\'s commits could not be read');
+  }
+
+  const linkedResult = await withCommitWebLinks(projectPath, { commits: resolution.commits });
+  return {
+    ...resolution,
+    commits: linkedResult.commits,
+    branchName: task.branch_name,
+    baseBranch,
+    projectPath,
+    webProviderName: linkedResult.webProviderName,
+  };
 }
 
 export function registerGitDiffHandlers(context: IpcContext): void {
@@ -228,8 +334,13 @@ export function registerGitDiffHandlers(context: IpcContext): void {
     return readWorktreeHeadUnqueued(input.path);
   });
 
-  ipcMain.handle(IPC.GIT_COMMIT_GRAPH, (_, input: GitCommitGraphInput) => {
-    return getCommitGraph(input);
+  ipcMain.handle(IPC.GIT_COMMIT_GRAPH, async (_, input: GitCommitGraphInput) => {
+    const graph = await getCommitGraph(input);
+    return withCommitWebLinks(input.worktreePath ?? input.projectPath, graph);
+  });
+
+  ipcMain.handle(IPC.GIT_TASK_CHANGES, (_, input: GitTaskChangesInput): Promise<GitTaskChangesResult> => {
+    return readTaskChanges(context, input);
   });
 
   ipcMain.handle(IPC.GIT_FILE_HISTORY, (_, input: GitFileHistoryInput) => {

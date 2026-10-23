@@ -2,10 +2,11 @@
  * UI tests for the completed task view (an archived task's window) and the
  * Done column's completed section.
  *
- * Covers: the header strip and its status, the Summary / Usage / Description
- * tabs and their keyboard, a failed report read, the summary states and when the
- * last message is read, View conversation, the Route, Commits and Files changed
- * cards, the Runs table (its Total row, repeat columns) and its per-tool
+ * Covers: the header strip and its status, the Summary / Changes /
+ * Conversation / Usage / Description tabs and their keyboard, a failed report
+ * read, the summary states and when the last message is read, the Conversation
+ * tab, the Route, Commits and Files changed cards, the Runs table (its Total
+ * row, repeat columns) and its per-tool
  * popover (which fetches nothing), the Models and tokens card (ledger and
  * fallback), Background calls, the Completed Tasks dialog's Agent runtime
  * column, and the Done column's section.
@@ -456,6 +457,25 @@ test.describe('Completed task view', () => {
     }
   });
 
+  test('at a narrow window all five tabs fit their row', async () => {
+    // The task window scales to about 520px at the 900px floor; the five tab
+    // names never shrink (`flex-shrink-0`), so the last one is what overflows
+    // first. A pixel of tolerance absorbs sub-pixel rounding.
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, prNumber: 550 }));
+    try {
+      await narrowStrip(page);
+      const row = page.locator('[data-testid="completed-task-tabs"]');
+      await expect(row.getByRole('tab')).toHaveCount(5);
+      const overflow = await row.evaluate((rowElement) => {
+        const tabs = Array.from(rowElement.querySelectorAll('[role="tab"]'));
+        return tabs[tabs.length - 1].getBoundingClientRect().right - rowElement.getBoundingClientRect().right;
+      });
+      expect(overflow).toBeLessThanOrEqual(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a non-zero exit reads Exited with its code, and a null exit reads Completed', async () => {
     const exited = await launchWithState(makePreConfig({ withSummary: true, exitCode: 1 }));
     try {
@@ -478,11 +498,12 @@ test.describe('Completed task view', () => {
     try {
       await openCompletedTask(page);
       const summaryTab = page.getByRole('tab', { name: 'Summary' });
+      await expect(page.getByRole('tab')).toHaveText(['Summary', 'Changes', 'Conversation', 'Usage', 'Description']);
       await summaryTab.focus();
       await page.keyboard.press('ArrowRight');
-      await expect(page.getByRole('tab', { name: 'Usage' })).toHaveAttribute('aria-selected', 'true');
-      await expect(page.getByRole('tab', { name: 'Usage' })).toBeFocused();
-      await expect(page.locator('[data-testid="completed-panel-usage"]')).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'Changes' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByRole('tab', { name: 'Changes' })).toBeFocused();
+      await expect(page.locator('[data-testid="completed-panel-changes"]')).toBeVisible();
       await page.keyboard.press('End');
       await expect(page.getByRole('tab', { name: 'Description' })).toHaveAttribute('aria-selected', 'true');
       await expect(page.locator('[data-testid="completed-panel-description"]')).toContainText('A task that has been completed');
@@ -658,47 +679,39 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('View conversation opens the newest session of this task and asks with the host project', async () => {
-    const { browser, page } = await launchWithState(makePreConfig({
-      withSummary: true,
-      transcriptSessions: [
-        { sessionId: 'sess-older', agentName: 'Claude Code', startedAt: '2026-03-13T15:44:00.000Z', exitedAt: '2026-03-13T15:45:00.000Z', isolatedSwimlaneId: null, status: 'exited' },
-        { sessionId: 'sess-newest', agentName: 'Claude Code', startedAt: '2026-03-13T16:44:00.000Z', exitedAt: '2026-03-13T16:45:00.000Z', isolatedSwimlaneId: null, status: 'exited' },
-      ],
-    }));
+  test('the Conversation tab reads the newest session of this task with the host project, in the view itself', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
     try {
-      await recordBridgeCalls(page, ['transcripts.listSessions']);
+      await recordBridgeCalls(page, ['transcripts.listSessions', 'transcripts.get']);
       await openCompletedTask(page);
-      // The header asks once on mount whether there is any history; only the click's call counts.
+      // The header asks once on mount whether there is any history; only the tab's calls count.
       await resetBridgeCalls(page);
-      await page.locator('[data-testid="completed-view-conversation"]').click();
-      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
-      const calls = await bridgeCalls(page, 'transcripts.listSessions');
-      expect(calls.length).toBeGreaterThan(0);
-      for (const callArguments of calls) expect(callArguments).toEqual([TASK_ID, PROJECT_ID]);
-      const conversationSessionId = await page.evaluate(() => (window as unknown as {
-        __zustandStores: { session: { getState: () => { conversationSessionId: string | null } } };
-      }).__zustandStores.session.getState().conversationSessionId);
-      expect(conversationSessionId).toBe('sess-newest');
+      await page.getByRole('tab', { name: 'Conversation' }).click();
+      const panel = page.locator('[data-testid="completed-panel-conversation"]');
+      await expect(panel.getByText('REVIEW_TURN')).toBeVisible({ timeout: 5000 });
+      // The tab is the conversation viewer's body; no window opens for it.
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
+      const listCalls = await bridgeCalls(page, 'transcripts.listSessions');
+      expect(listCalls.length).toBeGreaterThan(0);
+      for (const callArguments of listCalls) expect(callArguments).toEqual([TASK_ID, PROJECT_ID]);
+      // Anchored on the newest of the task's sessions, as the window's opener
+      // picks one when none is live.
+      const getCalls = await bridgeCalls(page, 'transcripts.get');
+      expect(getCalls.length).toBeGreaterThan(0);
+      for (const [request] of getCalls) expect(request).toMatchObject({ sessionId: 'sess-newest', projectId: PROJECT_ID });
     } finally {
       await browser.close();
     }
   });
 
-  test('View conversation on a task with no session history says so in a toast and opens nothing', async () => {
+  test('the Conversation tab on a task with no session history says so in one line and opens nothing', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true }));
     try {
-      await recordBridgeCalls(page, ['transcripts.listSessions']);
       await openCompletedTask(page);
-      await resetBridgeCalls(page);
-      await page.locator('[data-testid="completed-view-conversation"]').click();
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'No conversation yet' });
-      await expect(toast.getByTestId('toast-title')).toHaveText('No conversation yet');
-      await expect(toast.getByTestId('toast-body')).toHaveText('This task has no conversation history.');
+      await page.getByRole('tab', { name: 'Conversation' }).click();
+      await expect(page.locator('[data-testid="completed-conversation-empty"]')).toHaveText('This task has no conversation history');
+      await expect(page.locator('[data-testid="toast"]')).toHaveCount(0);
       await expect(page.getByTestId('conversation-window')).toHaveCount(0);
-      const calls = await bridgeCalls(page, 'transcripts.listSessions');
-      expect(calls.length).toBeGreaterThan(0);
-      for (const callArguments of calls) expect(callArguments).toEqual([TASK_ID, PROJECT_ID]);
     } finally {
       await browser.close();
     }
@@ -714,9 +727,11 @@ test.describe('Completed task view', () => {
       // Executing's 20s pass is not a stay, so it has two cards, and the single-visit columns none.
       await expect(route.locator('[data-testid="route-visit"]')).toHaveCount(2);
       await expect(page.locator('[data-testid="completed-commits"]')).toContainText('f9a8d40');
-      await expect(page.locator('[data-testid="completed-changed-file"]')).toHaveCount(8);
-      await page.locator('[data-testid="completed-files-toggle"]').click();
+      // Git has none of this task's commits (the mock's default), so the Files
+      // card falls back to the index's names: every one of them, in a box that
+      // scrolls past about eight rows, with no Show all.
       await expect(page.locator('[data-testid="completed-changed-file"]')).toHaveCount(10);
+      await expect(page.locator('[data-testid="completed-files-toggle"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -761,20 +776,21 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('a Route pill opens the conversation on its column\'s tab, and a second pill switches that window', async () => {
+  test('a Route pill opens the Conversation tab on its column, and a second pill switches the column', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
     try {
       await openCompletedTask(page);
       await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Code Review"]').click();
-      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
-      await expect(page.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true');
-      await expect(page.getByText('REVIEW_TURN')).toBeVisible();
-      await expect(page.getByText('EXECUTING_FIRST')).toHaveCount(0);
-      // The conversation window may sit over the card now, so click the pill as
-      // its own handler would be reached, not by pointer position.
-      await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Executing"]').dispatchEvent('click');
-      await expect(page.getByTestId('conversation-route-tabs-lane-executing')).toHaveAttribute('aria-selected', 'true');
-      await expect(page.getByTestId('conversation-window')).toHaveCount(1);
+      const panel = page.locator('[data-testid="completed-panel-conversation"]');
+      await expect(page.getByRole('tab', { name: 'Conversation' })).toHaveAttribute('aria-selected', 'true');
+      await expect(panel.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true', { timeout: 5000 });
+      await expect(panel.getByText('REVIEW_TURN')).toBeVisible();
+      await expect(panel.getByText('EXECUTING_FIRST')).toHaveCount(0);
+      // Back to the Route, and a second pill switches the tab's column.
+      await page.getByRole('tab', { name: 'Summary' }).click();
+      await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Executing"]').click();
+      await expect(panel.getByTestId('conversation-route-tabs-lane-executing')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -795,18 +811,25 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('a pill reuses a conversation window opened on another of the task\'s sessions', async () => {
+  test('a pill opens the tab beside a conversation window open for the task, and leaves that window as it was', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, report: fullReport(), ...routeConversation() }));
     try {
       await openCompletedTask(page);
-      // A search hit or an earlier open anchored the window on the older session.
+      // A search hit or an earlier open anchored a window on the older session.
       await page.evaluate(() => (window as unknown as {
         __zustandStores: { session: { getState: () => { setConversationSessionId: (id: string) => void } } };
       }).__zustandStores.session.getState().setConversationSessionId('sess-older'));
-      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+      const conversationWindow = page.getByTestId('conversation-window');
+      await expect(conversationWindow).toBeVisible({ timeout: 5000 });
+      // The window may sit over the card now, so click the pill as its own
+      // handler would be reached, not by pointer position.
       await page.locator('[data-testid="route-column-pill"][data-swimlane-name="Code Review"]').dispatchEvent('click');
-      await expect(page.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true');
-      await expect(page.getByTestId('conversation-window')).toHaveCount(1);
+      const panel = page.locator('[data-testid="completed-panel-conversation"]');
+      await expect(panel.getByTestId('conversation-route-tabs-lane-review')).toHaveAttribute('aria-selected', 'true', { timeout: 5000 });
+      // Two bodies at once: each keeps its own tab ids, and the window keeps
+      // its own column and anchor.
+      await expect(conversationWindow).toHaveCount(1);
+      await expect(conversationWindow.getByTestId('conversation-route-tabs-lane-review')).not.toHaveAttribute('aria-selected', 'true');
       const conversationSessionId = await page.evaluate(() => (window as unknown as {
         __zustandStores: { session: { getState: () => { conversationSessionId: string | null } } };
       }).__zustandStores.session.getState().conversationSessionId);
@@ -1292,7 +1315,8 @@ test.describe('Completed task view', () => {
       await openCompletedTask(page);
       await openUsageTab(page);
       await expect(page.locator('[data-testid="completed-no-runs"]')).toBeVisible();
-      await expect(page.locator('[data-testid="completed-view-conversation"]')).toBeVisible();
+      // The conversation is one tab away, on every completed task.
+      await expect(page.getByRole('tab', { name: 'Conversation' })).toBeVisible();
     } finally {
       await browser.close();
     }
@@ -1541,7 +1565,7 @@ test.describe('Done Column', () => {
       await expect(doneColumn.locator('[data-testid="compact-title"]')).toHaveCount(7);
       await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toBeVisible();
       await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toContainText('View all');
-      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toContainText('7');
+      await expect(doneColumn.locator('[data-testid="view-all-completed"] [data-testid="view-all-completed-count"]')).toHaveText('7');
     } finally {
       await browser.close();
     }
@@ -1596,9 +1620,11 @@ test.describe('Done Column', () => {
 
 /**
  * A task detail hosted in the Agent Monitor cannot show the conversation viewer
- * (its host sets `canOpenConversation: false`: the viewer opens on the board's
- * layer, under the monitor overlay), so every opener is left out rather than
- * left to do nothing. The board host keeps them, which the tests above and
+ * WINDOW (its host sets `canOpenConversation: false`: the viewer opens on the
+ * board's layer, under the monitor overlay), so every window opener is left out
+ * rather than left to do nothing. A completed task's own Conversation tab is
+ * not a window, so it works in any host, and its Route opens it here too. The
+ * board host keeps the window openers, which the tests above and
  * conversation-pill-disabled-state.spec.ts cover.
  */
 test.describe('Task detail hosted in the Agent Monitor', () => {
@@ -1620,10 +1646,9 @@ test.describe('Task detail hosted in the Agent Monitor', () => {
     await expect(page.getByRole('menu').getByRole('button', { name: 'Edit' })).toBeVisible();
   }
 
-  // Red: `MonitorTaskDetailHost` sets `canOpenConversation: true`. The completed
-  // view's tab row gains View conversation, the Route's pills and stay rows
-  // become buttons, and the Actions menu lists View conversation.
-  test('a completed task detail in the monitor has no way to open the conversation', async () => {
+  // Red: `MonitorTaskDetailHost` sets `canOpenConversation: true`, and the
+  // Actions menu lists View conversation.
+  test('a completed task detail in the monitor opens its conversation in its own tab, never a window', async () => {
     const taskId = 'task-monitor-completed';
     const { browser, page } = await launchMonitorSeed(
       { tasks: [{ id: taskId, displayId: 90, title: 'Completed in the monitor', lane: 'Done', session: true, sessionStatus: 'suspended', archived: true }] },
@@ -1640,13 +1665,12 @@ test.describe('Task detail hosted in the Agent Monitor', () => {
       const stays = detail.locator('[data-testid="route-visit"]');
       await expect(pills).toHaveCount(3);
       await expect(stays).toHaveCount(2);
-      await expect(detail.locator('[data-testid="completed-view-conversation"]')).toHaveCount(0);
 
-      // The Route's pills and stay rows are plain boxes here, not buttons.
-      expect(await pills.evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(['DIV', 'DIV', 'DIV']);
-      expect(await stays.evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(['DIV', 'DIV']);
+      // The Route's pills and stay rows open the detail's own Conversation tab.
+      expect(await pills.evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(['BUTTON', 'BUTTON', 'BUTTON']);
       await pills.nth(2).click();
-      await stays.nth(1).click();
+      await expect(detail.getByRole('tab', { name: 'Conversation' })).toHaveAttribute('aria-selected', 'true');
+      await expect(detail.locator('[data-testid="completed-panel-conversation"]')).toBeVisible();
       await settleFrames(page);
       await expect(page.getByTestId('conversation-window')).toHaveCount(0);
       const conversationSessionId = await page.evaluate(() => (window as unknown as {

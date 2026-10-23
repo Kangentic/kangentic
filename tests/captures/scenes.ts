@@ -31,7 +31,7 @@
  * free. tests/unit/scene-registry.test.ts pins the shape.
  */
 import { DEMO_AGENT_OVERRIDES, DEMO_COLUMN_MODELS, DEMO_KNOWLEDGE_GRAPH, DEMO_LANES_BY_PROJECT, DEMO_KNOWLEDGE_GRAPH_NODE_TOTAL, DEMO_KNOWLEDGE_GRAPH_STATUS, DEMO_PROJECTS, PROJECT_CONTOSO, PROJECT_PETCLINIC, SESSION_API_CLIENT, SESSION_CONTOSO_TERMINAL, SESSION_EMPTY_STATES, SESSION_INTEGRATION, SESSION_MIDDLEWARE, SESSION_RATE_LIMIT, SESSION_VALIDATE, SESSION_WEBSOCKET, TASK_API_CLIENT, TASK_API_ERRORS, TASK_AUTH, TASK_LOGGING, TASK_MIDDLEWARE, TASK_RATE_LIMIT, TASK_SCHEMA, TASK_VALIDATE, TASK_WEBSOCKET, demoLaneId } from './helpers/demo-dataset';
-import { DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
+import { DEMO_COMPLETED_TASK_CHANGES, DEMO_COMPLETED_TASK_ID, DEMO_COMPLETED_TASK_REPORT } from './helpers/demo-task-report';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import { commandTerminalTitle } from '../../src/shared/command-terminal-name';
 import announcementsFeed from '../../announcements.json';
@@ -573,6 +573,8 @@ const AUTOMATION_RUNS_INCREMENT = '[data-testid="edit-automation-max-runs-increm
  * hold, and this report is partly authored, so it stays with the two figures that show it.
  */
 const COMPLETED_TASK_REPORTS = { [DEMO_COMPLETED_TASK_ID]: DEMO_COMPLETED_TASK_REPORT };
+/** What main's `git:taskChanges` answers for that task: its authored commits are not in the scaffold history. */
+const COMPLETED_TASK_CHANGES = { [DEMO_COMPLETED_TASK_ID]: DEMO_COMPLETED_TASK_CHANGES };
 
 /**
  * Opening that task's view the way a user does: the Done column's Completed header, then View
@@ -1163,7 +1165,7 @@ const CONVERSATION_SEARCH = '[data-testid="conversation-search-input"]';
 const monitorHeader = (key: string): string => `[data-testid="monitor-page"] th[data-column-key="${key}"]`;
 const completedRow = (taskId: string): string => `[data-testid="completed-task-row"][data-row-id="${taskId}"]`;
 const turnEndRowEdit = (name: string): string => `[data-testid="column-automation-group"][data-trigger="turn_end"] [data-testid="column-automation-row"][data-name="${name}"] [data-testid="column-automation-edit"]`;
-const completedTab = (tab: 'summary' | 'usage' | 'description'): string => `[data-testid="completed-task-tabs-${tab}"]`;
+const completedTab = (tab: 'summary' | 'changes' | 'conversation' | 'usage' | 'description'): string => `[data-testid="completed-task-tabs-${tab}"]`;
 /** An orbit around a Knowledge Graph and one over it, then Reset view, which flies the camera to the framing it opened on. */
 const KNOWLEDGE_GRAPH_ORBIT: ChoreographyStep[] = [
   { drag: { from: { x: 0.6, y: 0.52 }, to: { x: 0.74, y: 0.47 } }, ms: 1400 },
@@ -1658,15 +1660,13 @@ export const SCENES: Record<string, SceneDefinition> = {
   'changes-history': {
     name: 'changes-history',
     reach: 'state',
-    description: 'The Changes panel with History expanded and the commit that wired the routes selected, so the diff pane shows that commit rather than the working tree. The graph is the scaffold\'s real history (scripts/capture-demo-history.mjs).',
-    alt: 'The Changes panel with its History section expanded: the branch\'s commits listed under Uncommitted changes with the routes commit selected, the file tree showing the two files that commit added, and the diff pane showing routes.ts as that commit introduced it.',
+    description: 'The Changes panel with History open (its default) and the commit that wired the routes selected, so the diff pane shows that commit rather than the working tree. The graph is the scaffold\'s real history (scripts/capture-demo-history.mjs).',
+    alt: 'The Changes panel with History open: the branch\'s commits with the routes commit selected and named in the bar above the files, the two files that commit added, and the diff pane showing routes.ts as that commit introduced it.',
     config: { workspaceByProject: { [PROJECT_CONTOSO]: middlewareWindowWorkspace('maximized') } },
-    tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesHistoryOpen: true, changesSelectedCommit: ROUTES_COMMIT.hash }) }],
-    ready: '[data-testid="changes-file-tree"]',
+    tasks: [{ id: TASK_MIDDLEWARE, detail_view_state: middlewareChangesStateWith({ changesScope: 'branch', changesSelectedCommit: ROUTES_COMMIT.hash }) }],
+    ready: '[data-testid="commit-selection-subject"]',
     // The pointer over the rate limiting commit below it, then the commit's other file opened and
-    // routes.ts again. Never another commit: a restored selection draws its header without the
-    // subject until the row is clicked (ChangesPanel's commitHeaderMeta), so selecting it again
-    // would leave a header the poster does not have.
+    // routes.ts again. It stays on the routes commit, so every cycle ends on the poster's selection.
     choreography: [
       { hover: commitRow(2), ms: 2000 },
       { click: changesFile('server/index.ts'), waitFor: '[data-testid="changes-file-row"][data-path="server/index.ts"][data-selected="true"]', ms: 2800 },
@@ -2180,11 +2180,13 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'The completed task view of an archived contoso task, opened the way a user opens one: the Done column\'s Completed header, then View details on the Set up CI/CD pipeline row, then the window\'s maximize toggle so every card fits. It shows the default Summary tab under the header strip, for the Completed tasks docs. The maximized window fills the frame between the title and status bars, so its focus rect is close to the whole frame. The report is a scene seed (`__mockTaskReports`, helpers/demo-task-report.ts) that main\'s assembleTaskReport builds. The header strip is the row\'s own summary, so its cost and agent runtime match the completed-tasks scene. The runs, tokens and changed files come from the task\'s recorded run. The columns, the second conversation, the time between runs, the moves, the commits, the background calls and the summary wording are authored.',
     alt: 'The completed task view of Set up CI/CD pipeline. A header strip gives dates, runtime, changes, pull request, cost and status. The Summary tab shows the written summary, a route through Executing and Code Review twice each, two commits and four changed files.',
-    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS },
+    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS, __mockTaskChanges: COMPLETED_TASK_CHANGES },
     ready: '[data-testid="completed-route"]',
     focus: '[data-testid="task-detail-dialog"]',
     steps: COMPLETED_TASK_STEPS,
-    // Usage, then Description, then Summary again: the report's three tabs.
+    // Usage, then Description, then Summary again: the tabs the report fills. Changes would say
+    // only that the authored commits are not in this clone, and Conversation has no recorded
+    // transcript behind it (web-demo-parity.md), so the cycle passes over both.
     choreography: [
       { click: completedTab('usage'), waitFor: `${completedTab('usage')}[aria-selected="true"]`, ms: 3000 },
       { click: completedTab('description'), waitFor: `${completedTab('description')}[aria-selected="true"]`, ms: 2400 },
@@ -2196,7 +2198,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'The same completed task view, maximized, after a click on Usage, for the Completed tasks docs: the Runs table over two conversations (main, and Code Review\'s isolated one) with its per-tool popovers, Models and tokens from the run\'s own ledger (one model, so one row), and the background calls with Code Review\'s Agent evaluation met once and not met once, then the summary call. The same scene seed as completed-task.',
     alt: 'The Usage tab of the completed CI/CD pipeline task: four runs across a main and a Code Review conversation, each with its column, model, permissions, runtime, cost and tool calls, then tokens by kind and background calls that ran once and skipped once.',
-    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS },
+    seeds: { __mockTaskReports: COMPLETED_TASK_REPORTS, __mockTaskChanges: COMPLETED_TASK_CHANGES },
     ready: '[data-testid="completed-models"]',
     focus: '[data-testid="task-detail-dialog"]',
     steps: [

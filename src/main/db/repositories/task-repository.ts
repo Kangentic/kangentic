@@ -7,11 +7,16 @@ import { writeTransaction } from '../transaction';
 import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 
-/** Raw row from SQLite - labels and skipped columns stored as JSON strings, the switch as 0/1. */
+/**
+ * Raw row from SQLite - labels and skipped columns stored as JSON strings, the
+ * switch as 0/1, plus the main-only columns `rowToTask` strips.
+ */
 interface TaskRow extends Omit<Task, 'labels' | 'skipped_swimlane_ids' | 'automations_disabled'> {
   labels: string;
   skipped_swimlane_ids: string | null;
   automations_disabled: number;
+  /** Main-only: read through `getForkPointSha`, never sent over IPC on a Task. */
+  fork_point_sha?: string | null;
 }
 
 function parseStringList(raw: string | null | undefined): string[] {
@@ -25,8 +30,11 @@ function parseStringList(raw: string | null | undefined): string[] {
 }
 
 function rowToTask(row: TaskRow): Task {
+  // The spread below copies every column, so a main-only one is dropped here
+  // or it rides every Task over IPC.
+  const { fork_point_sha: _forkPointSha, ...columns } = row;
   return {
-    ...row,
+    ...columns,
     labels: parseStringList(row.labels),
     // A row from before the workflow columns reads as an ordinary task.
     workflow_id: row.workflow_id ?? null,
@@ -267,8 +275,10 @@ export class TaskRepository {
     branchName: string,
     worktreeFolder: string,
     resolvedBaseBranch?: string | null,
+    forkPointSha?: string | null,
   ): void {
     writeTransaction(this.db, () => {
+      const previousBranchName = this.getById(id)?.branch_name ?? null;
       this.update({
         id,
         worktree_path: worktreePath,
@@ -277,6 +287,11 @@ export class TaskRepository {
         // it never erases a base an earlier creation did record.
         ...(resolvedBaseBranch ? { resolved_base_branch: resolvedBaseBranch } : {}),
       });
+      // Same rule as the base: an attach to an existing branch reads no fork
+      // point, and must not erase the one its first creation recorded. An
+      // attach to a DIFFERENT branch does: that point was another branch's.
+      if (forkPointSha) this.setForkPointSha(id, forkPointSha);
+      else if (previousBranchName !== branchName) this.setForkPointSha(id, null);
       this.setWorktreeFolder(id, worktreeFolder);
       // A task that once fell back to the shared checkout and now has a
       // worktree must not keep claiming otherwise. Inside the transaction so
@@ -295,6 +310,27 @@ export class TaskRepository {
    */
   setWorktreeSkipReason(taskId: string, reason: WorktreeSkipReason | null): void {
     this.db.prepare('UPDATE tasks SET worktree_skip_reason = ? WHERE id = ?').run(reason, taskId);
+  }
+
+  /**
+   * The commit the task's branch was cut from, recorded at worktree creation,
+   * or null (not recorded yet, an attached branch, or cleared with the branch).
+   * Main-only: it is not on the shared Task type, so it is read here rather
+   * than off a Task. A completed task's Changes view diffs an unmerged branch
+   * from it.
+   */
+  getForkPointSha(taskId: string): string | null {
+    const row = this.db.prepare('SELECT fork_point_sha FROM tasks WHERE id = ?').get(taskId) as { fork_point_sha: string | null } | undefined;
+    return row?.fork_point_sha ?? null;
+  }
+
+  /**
+   * Record or clear the fork point. Lives exactly as long as `branch_name`: it
+   * is set at creation and nulled wherever the branch is forgotten. Like the
+   * skip reason, no `updated_at` bump: it is git bookkeeping, not a user edit.
+   */
+  setForkPointSha(taskId: string, sha: string | null): void {
+    this.db.prepare('UPDATE tasks SET fork_point_sha = ? WHERE id = ?').run(sha, taskId);
   }
 
   /**
@@ -557,10 +593,18 @@ export class TaskRepository {
       automations_disabled: merged.workflow_id ? false : merged.automations_disabled,
     };
 
+    // The fork point lives exactly as long as the branch it describes, so a
+    // write that forgets the branch forgets it too, in the same statement so a
+    // crash cannot leave one without the other. Here rather than at each
+    // caller: every path that drops a branch (a To Do reset, the startup
+    // cleanup, a vanished worktree) writes through this one method. A rename
+    // keeps it, since the commit the branch was cut at has not changed.
+    const forgetsBranch = input.branch_name === null ? 1 : 0;
     this.db.prepare(`
-      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, pr_merge_readiness = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, automations_disabled = ?, updated_at = ?
+      UPDATE tasks SET title = ?, description = ?, swimlane_id = ?, position = ?, agent = ?, session_id = ?, worktree_path = ?, branch_name = ?, pr_number = ?, pr_url = ?, pr_state = ?, pr_merge_readiness = ?, head_sha = ?, pushed_branch = ?, base_branch = ?, resolved_base_branch = ?, use_worktree = ?, labels = ?, priority = ?, model_override = ?, effort_override = ?, agent_override = ?, permission_mode = ?, profile_id = ?, run_mode = ?, automations_disabled = ?, updated_at = ?,
+        fork_point_sha = CASE WHEN ? = 1 THEN NULL ELSE fork_point_sha END
       WHERE id = ?
-    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.automations_disabled ? 1 : 0, updated.updated_at, updated.id);
+    `).run(updated.title, updated.description, updated.swimlane_id, updated.position, updated.agent, updated.session_id, updated.worktree_path, updated.branch_name, updated.pr_number, updated.pr_url, updated.pr_state, updated.pr_merge_readiness, updated.head_sha, updated.pushed_branch, updated.base_branch, updated.resolved_base_branch, updated.use_worktree, JSON.stringify(updated.labels), updated.priority, updated.model_override, updated.effort_override, updated.agent_override, updated.permission_mode, updated.profile_id, updated.run_mode, updated.automations_disabled ? 1 : 0, updated.updated_at, forgetsBranch, updated.id);
 
     return updated;
   }

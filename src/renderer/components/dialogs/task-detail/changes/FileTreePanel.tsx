@@ -1,23 +1,15 @@
-import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
+import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Search, Copy, ChevronRight, ChevronDown, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2, AppWindow } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit, PRMergeReadiness, PRState } from '../../../../../shared/types';
+import type { AppConfig, GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
-import { PrLink } from '../../../PrLink';
 import { OverlayPopover } from '../../../OverlayPopover';
 import { usePopoverPosition } from '../../../../hooks/usePopoverPosition';
 import { CountBadge } from '../../../CountBadge';
 import { Tooltip } from '../../../Tooltip';
 import { tipLabel } from '../../../../utils/tooltip';
-
-/** Linked-PR chip data, declared once so the panel prop and the header prop cannot drift. */
-interface PrLinkData {
-  url: string;
-  number: number | null;
-  state: PRState | null | undefined;
-  mergeReadiness: PRMergeReadiness | null | undefined;
-}
+import { FILE_STATUS_CONFIG } from './file-status';
 
 /** Diff scope options for the segmented control (single-select among 3 fixed values). */
 const SCOPE_OPTIONS: { value: GitDiffScope; label: string }[] = [
@@ -32,13 +24,20 @@ interface FileTreePanelProps {
   onSelect: (filePath: string) => void;
   totalInsertions: number;
   totalDeletions: number;
-  /** Live branch context (name, ahead/behind, last commit) shown in the header. */
+  /** Live branch context (name, ahead/behind) shown in the header. */
   branchSummary?: GitBranchSummaryResult | null;
-  /** Whether to render the built-in branch header (branch + base + ahead/behind +
-   *  last commit). The task-detail embed shows this context in the shared surface
+  /** Whether to render the built-in branch header (branch + base +
+   *  ahead/behind). The task-detail embed shows this context in the shared surface
    *  header instead, so it passes false to avoid duplicating the row. Default true
    *  (standalone dialog / command-terminal embed, which have no surface header). */
   showBranchHeader?: boolean;
+  /**
+   * The selected commit's bar, shown in the slot the scope control holds, in
+   * its own wrapper and padding: while a commit is selected the scope control
+   * is hidden and this takes its place at its height, so closing it moves
+   * nothing below.
+   */
+  selection?: ReactNode;
   /** Paths the user has marked "viewed" (their rows dim). */
   viewedFiles: Set<string>;
   /** Toggle a file's "viewed" mark. */
@@ -55,10 +54,6 @@ interface FileTreePanelProps {
    *  more surprising case, rendered with a stronger accent tone than the
    *  default-base case so it actually draws the eye. */
   baseLabelCustom?: boolean;
-  /** Linked-PR chip data for the branch header, so every mount that shows the
-   *  built-in header (standalone dialog, whole-panel pop-out) gets the same PR
-   *  affordance the task-detail embed shows in its surface header. */
-  prLink?: PrLinkData;
   /** Whether the first file-list fetch has settled. Before it has, an empty
    *  list renders skeleton rows rather than the settled "0 files" empty shape
    *  (which would otherwise flash a false negative during the initial load).
@@ -77,14 +72,7 @@ interface FileTreePanelProps {
   onOpenInNewWindow?: (filePath: string) => void;
 }
 
-const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
-  A: { icon: Plus, colorClass: 'text-green-400', label: 'Added' },
-  M: { icon: Pencil, colorClass: 'text-modified', label: 'Modified' },
-  D: { icon: Minus, colorClass: 'text-red-400', label: 'Deleted' },
-  R: { icon: ArrowRight, colorClass: 'text-blue-400', label: 'Renamed' },
-  C: { icon: Copy, colorClass: 'text-blue-400', label: 'Copied' },
-  U: { icon: FileQuestion, colorClass: 'text-green-300', label: 'Untracked' },
-};
+const STATUS_CONFIG = FILE_STATUS_CONFIG;
 
 // Row height in px for the virtualized list
 const ROW_HEIGHT = 26;
@@ -281,10 +269,14 @@ const GroupRowView = memo(function GroupRowView({ row, first }: { row: FlatGroup
       data-testid="changes-group-row"
       data-status={row.status}
     >
-      <span className="text-[11px] font-semibold uppercase tracking-wider leading-none text-fg-faint">
-        {statusConfig.label}
+      {/* The label and its count center on each other, while the pair stays
+          bottom-aligned with the boundary. */}
+      <span className="inline-flex items-center gap-1.5 text-fg-faint">
+        <span className="text-[11px] font-semibold uppercase tracking-wider leading-none">
+          {statusConfig.label}
+        </span>
+        <CountBadge count={row.count} variant="tinted" size="pill" testId="changes-group-count" />
       </span>
-      <CountBadge count={row.count} variant="muted" size="xs" />
     </div>
   );
 });
@@ -828,27 +820,27 @@ function FileHistoryPopover({
 // ---------------------------------------------------------------------------
 
 /**
- * Current branch, ahead/behind vs base, and the tip commit. The panel refreshes
- * automatically (working-tree + git-metadata watch), so there is no manual button.
+ * Current branch and ahead/behind vs base: the same context the task-detail
+ * embed's surface header shows, for the mounts that have none. No PR link and
+ * no last commit, as in every host: the PR opens from the task window's menu,
+ * the cards and the completed strip. The panel refreshes automatically
+ * (working-tree + git-metadata watch), so there is no manual button.
  */
 function BranchHeader({
   branchSummary,
   baseLabel,
   baseLabelCustom,
-  prLink,
 }: {
   branchSummary?: GitBranchSummaryResult | null;
   baseLabel?: string;
   baseLabelCustom?: boolean;
-  prLink?: PrLinkData;
 }) {
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
   const behind = branchSummary?.behind ?? 0;
-  const lastCommit = branchSummary?.lastCommit ?? null;
 
-  // Nothing useful to show - render nothing.
-  if (!branch && !lastCommit) return null;
+  // Nothing known yet (or no branch context at all) - render nothing.
+  if (!branchSummary) return null;
 
   return (
     <div className="border-b border-edge flex-shrink-0">
@@ -889,29 +881,7 @@ function BranchHeader({
             </span>
           </Tooltip>
         )}
-        {prLink && (
-          <PrLink
-            prUrl={prLink.url}
-            prNumber={prLink.number}
-            prState={prLink.state}
-            prMergeReadiness={prLink.mergeReadiness}
-            testId="changes-pr-link"
-            className="shrink-0"
-          />
-        )}
       </div>
-      {lastCommit && (
-        <Tooltip label={`${lastCommit.hash} ${lastCommit.subject}`}>
-          <div
-            className="px-3 pb-2 -mt-1 text-[11px] text-fg-muted truncate"
-            data-testid="changes-last-commit"
-          >
-            <span className="font-mono text-fg-faint">{lastCommit.hash}</span>{' '}
-            {lastCommit.subject}
-            {lastCommit.timestamp && <span className="text-fg-faint"> {'·'} {formatRelativeTime(lastCommit.timestamp)}</span>}
-          </div>
-        </Tooltip>
-      )}
     </div>
   );
 }
@@ -934,7 +904,7 @@ export function FileTreePanel({
   onScopeChange,
   baseLabel,
   baseLabelCustom,
-  prLink,
+  selection,
   loaded = true,
   worktreePath,
   projectPath,
@@ -1026,7 +996,7 @@ export function FileTreePanel({
       {/* Branch context + refresh. Suppressed in the task-detail embed, where the
           shared surface header owns this context (see showBranchHeader). */}
       {showBranchHeader && (
-        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} prLink={prLink} />
+        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
       )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control
@@ -1040,7 +1010,11 @@ export function FileTreePanel({
           container wraps this row alone: the row and history menus below are
           `position: fixed` at the cursor, and nothing that can become their
           containing block may sit above them. */}
-      {scope && onScopeChange && (
+      {selection ? (
+        <div className="@container/file-tree flex-shrink-0">
+          <div className="px-1 @[200px]/file-tree:px-2 py-1.5 border-b border-edge">{selection}</div>
+        </div>
+      ) : scope && onScopeChange && (
         <div className="@container/file-tree flex-shrink-0">
           <div className="px-1 @[200px]/file-tree:px-2 py-1.5 border-b border-edge">
             <div

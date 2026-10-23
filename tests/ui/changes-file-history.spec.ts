@@ -133,7 +133,7 @@ test.afterAll(async () => {
 test.describe('Changes panel: per-file history popover', () => {
   test('View history lists the commits that touched the file; selecting one scopes the detail to that commit', async () => {
     // This test chains dialog mount, Changes panel mount, a right-click
-    // context menu, a fetched history popover, a commit-detail selection, and
+    // context menu, a fetched history popover, a commit selection, and
     // a close - each step waiting on real DOM/programmatic state (never a
     // fixed sleep). test.slow() triples the ENCLOSING per-test budget from
     // 15000ms to 45000ms so a single slow step doesn't exhaust the whole
@@ -195,8 +195,9 @@ test.describe('Changes panel: per-file history popover', () => {
     // Selecting the older commit scopes the detail pane to that commit's diff.
     await rows.filter({ hasText: 'introduce index' }).click();
     await expect(popover).toBeHidden({ timeout: 5000 });
-    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('[data-testid="commit-detail-header"]')).toContainText('+10/-0');
+    const bar = page.locator('[data-testid="commit-selection-bar"]');
+    await expect(bar).toBeVisible({ timeout: 10000 });
+    await expect(bar.locator('[data-testid="commit-selection-subject"]')).toHaveText('introduce index');
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

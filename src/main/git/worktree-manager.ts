@@ -215,6 +215,14 @@ export interface WorktreeCreateResult {
    * post-worktree script leaves behind, and attaching to it is the same cut.
    */
   baseBranch: string | null;
+  /**
+   * The commit the branch was cut at (full hash), recorded as
+   * `tasks.fork_point_sha` so a completed task's view can diff an unmerged
+   * branch from where it actually started. Null under exactly the rule that
+   * withholds `baseBranch`: an attach to a branch that already existed did not
+   * cut anything here. Also null when the read fails, which is non-fatal.
+   */
+  forkPointSha: string | null;
 }
 
 /**
@@ -1110,12 +1118,26 @@ export class WorktreeManager {
     // `baseBranch` describes a cut that never happened. Report nothing rather
     // than a guess (see `WorktreeCreateResult.baseBranch`), unless the branch is
     // this task's own and still at the start point.
+    const cutHere = !branchExists || attachesAtStartPoint;
     return {
       worktreePath,
       branchName,
       worktreeFolder: folderName,
-      baseBranch: branchExists && !attachesAtStartPoint ? null : baseBranch,
+      baseBranch: cutHere ? baseBranch : null,
+      // Read off the new branch itself: right after the cut its tip IS the
+      // commit it was cut at, whatever ref name the start point went by.
+      forkPointSha: cutHere ? await this.branchTip(branchName) : null,
     };
+  }
+
+  /** The branch's tip commit (full hash), or null when it does not resolve. */
+  private async branchTip(branchName: string): Promise<string | null> {
+    try {
+      const tip = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
+      return tip || null;
+    } catch {
+      return null;
+    }
   }
 
   /**

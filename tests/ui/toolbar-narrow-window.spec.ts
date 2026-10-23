@@ -252,6 +252,14 @@ const SEARCH_FLOOR_PX = 110;
  */
 const FOUR_DIGIT_SEARCH_FLOOR_PX = 100;
 
+/**
+ * The same bound for the second exception, an active filter at the absolute
+ * floor. The Filter button sheds its label there, and the count pill after the
+ * icon widens it about 18px, which the search gives up: 99.5px on Windows'
+ * fonts. Held to its own floor, with the same room for headless Linux's metrics.
+ */
+const FILTERED_SEARCH_FLOOR_PX = 94;
+
 /** The toolbar's OWN search field. The sidebar has one too, earlier in the document. */
 async function readSearchWidth(page: Page): Promise<number> {
   return page.evaluate(() => {
@@ -548,14 +556,38 @@ test.describe('Chrome rows at the 900x600 floor', () => {
       expect(reading.right).toBeLessThanOrEqual(FLOOR.width + 1);
 
       // The load-bearing half: the menu still ACTS. Clicking a priority pill sets
-      // a filter, and the Filter button's CountBadge is what reports it - the
-      // button's label is hidden at this width, so its text going from empty to
-      // "1" is exactly the badge appearing. A menu that is painted over or
-      // pointer-dead fails here; the hit-test probe above is only a tripwire.
+      // a filter, and the count pill after the Filter button's label is what
+      // reports it. The label is hidden at this width, so the button's text
+      // going from empty to "1" is exactly the pill appearing. A menu that is
+      // painted over or pointer-dead fails here; the hit-test probe above is
+      // only a tripwire.
       await popover.locator('text=High').first().click();
       await expect
         .poll(async () => page.locator('[data-testid="board-filter-btn"]').innerText(), { timeout: 5000 })
         .toBe('1');
+
+      // The icon-only square is too narrow for the icon and the pill, so the
+      // button widens to hold it: the pill stays inside the button's border, and
+      // the button keeps the height of its icon-only neighbour.
+      const fit = await page.evaluate(() => {
+        const button = document.querySelector('[data-testid="board-filter-btn"]')!.getBoundingClientRect();
+        const pill = document.querySelector('[data-testid="board-filter-btn-count"]')!.getBoundingClientRect();
+        const neighbour = document.querySelector('[data-testid="manage-labels-btn"]')!.getBoundingClientRect();
+        return {
+          buttonLeft: button.left,
+          buttonRight: button.right,
+          buttonHeight: button.height,
+          pillLeft: pill.left,
+          pillRight: pill.right,
+          neighbourHeight: neighbour.height,
+        };
+      });
+      expect(fit.pillRight, 'the count pill spills past the Filter button').toBeLessThanOrEqual(fit.buttonRight - 1);
+      expect(fit.pillLeft, 'the count pill spills past the Filter button').toBeGreaterThanOrEqual(fit.buttonLeft + 1);
+      expect(Math.abs(fit.buttonHeight - fit.neighbourHeight), 'the Filter button changed height').toBeLessThanOrEqual(1);
+      // The search pays for the wider button, down to the trade's own floor and no further.
+      const filteredSearchWidth = await readSearchWidth(page);
+      expect(filteredSearchWidth, `the search field is ${filteredSearchWidth}px with a filter active`).toBeGreaterThanOrEqual(FILTERED_SEARCH_FLOOR_PX);
     } finally {
       await browser.close();
     }

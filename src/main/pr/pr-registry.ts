@@ -149,6 +149,32 @@ export async function commitAnchorSelfVerifies(repoCwd: string): Promise<boolean
   return capable.length > 0 && capable.every((connector) => connector.verifiesCommitOwnership === true);
 }
 
+/** Builds web links to one repository's commits; see {@link commitWebLinks}. */
+export interface CommitWebLinks {
+  /** The connector's platform name, for the link's tooltip ("Open on GitHub"). */
+  providerName: string;
+  url(sha: string): string | null;
+}
+
+/**
+ * Web links to the commits of the repository at `repoCwd`, from the connector
+ * that owns its PRIMARY remote (`origin` first), or null when none does or the
+ * remotes cannot be read. Only the primary remote is consulted, so a repo
+ * whose `origin` no connector owns never links to an `upstream`'s pages.
+ * Whether a given commit has been pushed is the caller's check. NEVER THROWS:
+ * `readRemoteUrls` never rejects and `commitWebUrl` is pure.
+ */
+export async function commitWebLinks(repoCwd: string): Promise<CommitWebLinks | null> {
+  const remoteUrls = await readRemoteUrls(repoCwd);
+  if (!remoteUrls || remoteUrls.length === 0) return null;
+  const primary = remoteUrls.slice(0, 1);
+  const owner = selectOwningConnectors(connectors, primary, { allowSecondaryFallback: false })
+    .find((connector) => connector.commitWebUrl);
+  if (!owner?.commitWebUrl) return null;
+  const build = owner.commitWebUrl.bind(owner);
+  return { providerName: owner.name, url: (sha) => build(primary, sha) };
+}
+
 /** Resolve the PR associated with a commit SHA via the connectors that own this repo's remote. */
 export async function resolvePRByCommit(
   repoCwd: string,

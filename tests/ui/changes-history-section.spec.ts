@@ -2,14 +2,16 @@
  * UI tests for the Changes rail's collapsible History section
  * (`changes-history-section`, ChangesHistorySection.tsx).
  *
- * History lives at the BOTTOM of the rail, collapsed by default: only the
- * header row (`changes-history-toggle`) shows, carrying a live commit count -
- * which works because the CommitGraphPanel body stays MOUNTED (display:none)
- * while collapsed and reports its count up via onLoaded. Expanding is a
- * per-task choice persisted in the detail_view_state blob as
- * `changesHistoryOpen` (written only when true), so it survives dialog
- * close/reopen and app restart. The command-terminal Changes embed has no
- * task, so it renders no section at all.
+ * History lives at the BOTTOM of the rail, open by default, and lists only
+ * commits (no Uncommitted row: the scope control above the files is how the
+ * working tree is reached). Collapsed, only the header row
+ * (`changes-history-toggle`) shows, still carrying a live commit count - which
+ * works because the CommitGraphPanel body stays MOUNTED (height 0) while
+ * collapsed and reports its count up via onLoaded. Collapsing is a per-task
+ * choice persisted in the detail_view_state blob as `changesHistoryCollapsed`
+ * (written only when true), so it survives dialog close/reopen and app
+ * restart. The command-terminal Changes embed has no task, so it renders no
+ * section at all.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -108,7 +110,7 @@ const preConfig = `
       updated_at: ts,
     });
 
-    // The "app restart" fixture: this task's blob already carries an expanded
+    // The "app restart" fixture: this task's blob already carries a collapsed
     // History section (and an open panel), so first open must restore both
     // without any interaction.
     state.tasks.push({
@@ -127,7 +129,7 @@ const preConfig = `
       archived_at: null,
       created_at: ts,
       updated_at: ts,
-      detail_view_state: JSON.stringify({ changesOpen: true, changesHistoryOpen: true }),
+      detail_view_state: JSON.stringify({ changesOpen: true, changesHistoryCollapsed: true }),
     });
 
     return { currentProjectId: '${PROJECT_ID}' };
@@ -155,61 +157,61 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes rail: History section', () => {
-  test('collapsed by default with a live commit count; expanding reveals the graph and persists across dialog close/reopen', async () => {
+  test('open by default with only commit rows; collapsing keeps a live count and persists across dialog close/reopen', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=History Section Task').first();
     await card.click();
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
     await page.locator('[data-testid="changes-toggle"]').click();
 
-    // Collapsed default: header row present, graph hidden.
+    // Open default: the graph shows its commit rows and no Uncommitted row.
     const section = page.locator('[data-testid="changes-history-section"]');
     await section.waitFor({ state: 'visible', timeout: 10000 });
     const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
-    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('[data-testid="commit-graph-panel"]')).not.toBeVisible();
-
-    // The count is live WHILE collapsed - the mounted-hidden graph fetched and
-    // reported it up. This is the assertion that fails if collapse ever
-    // becomes an unmount.
-    await expect(historyToggle).toContainText('3', { timeout: 10000 });
-
-    // Expand: the graph (uncommitted row + commit rows) appears.
-    await historyToggle.click();
     await expect(historyToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('[data-testid="commit-graph-panel"]')).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('[data-testid="commit-history-uncommitted"]')).toBeVisible();
     await expect(page.locator('[data-testid="commit-graph-row"]')).toHaveCount(3, { timeout: 10000 });
+    await expect(page.locator('[data-testid="commit-history-uncommitted"]')).toHaveCount(0);
+
+    // Collapse: the graph hides and the count stays live - the mounted-hidden
+    // graph fetched and reported it up. This is the assertion that fails if
+    // collapse ever becomes an unmount.
+    await historyToggle.click();
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('[data-testid="commit-graph-panel"]')).not.toBeVisible();
+    await expect(historyToggle.locator('[data-testid="changes-history-count"]')).toHaveText('3', { timeout: 10000 });
 
     // Close the dialog (panel state persists per task) and reopen: the
-    // section comes back expanded.
+    // section comes back collapsed.
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
     await card.click();
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
-    await expect(historyToggle).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
-    await expect(page.locator('[data-testid="commit-graph-panel"]')).toBeVisible();
-
-    // Collapse again (restores the default for later tests) and close.
-    await historyToggle.click();
-    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false', { timeout: 10000 });
     await expect(page.locator('[data-testid="commit-graph-panel"]')).not.toBeVisible();
+
+    // Expand again (restores the default for later tests) and close.
+    await historyToggle.click();
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('[data-testid="commit-graph-panel"]')).toBeVisible();
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('a persisted changesHistoryOpen: true blob restores the section expanded on first open', async () => {
+  test('a persisted changesHistoryCollapsed: true blob restores the section collapsed on first open', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=History Restored Task').first();
     await card.click();
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     // changesOpen: true in the blob opens the panel without a pill click, and
-    // changesHistoryOpen: true restores the section expanded - the graph is
-    // visible with no interaction at all.
-    await expect(page.locator('[data-testid="changes-history-toggle"]')).toHaveAttribute('aria-expanded', 'true', { timeout: 10000 });
-    await expect(page.locator('[data-testid="commit-graph-panel"]')).toBeVisible({ timeout: 10000 });
+    // changesHistoryCollapsed: true restores the section collapsed - the graph
+    // is hidden with no interaction at all, its count still in the header.
+    const historyToggle = page.locator('[data-testid="changes-history-toggle"]');
+    await expect(historyToggle).toHaveAttribute('aria-expanded', 'false', { timeout: 10000 });
+    await expect(page.locator('[data-testid="commit-graph-panel"]')).not.toBeVisible();
+    await expect(historyToggle.locator('[data-testid="changes-history-count"]')).toHaveText('3', { timeout: 10000 });
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

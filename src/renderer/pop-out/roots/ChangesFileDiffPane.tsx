@@ -15,12 +15,14 @@ import type { DisplayedFileDiffContent } from './PopOutChangesFileRoot';
  * once content exists - keeping Monaco (this module's import graph) out of the
  * root chunk and the loading surface stable while both load in parallel.
  */
-export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid, projectPath, worktreePath, scrollKey }: {
+export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid, isRange = false, projectPath, worktreePath, scrollKey }: {
   filePath: string;
   entry: GitDiffFileEntry;
   content: DisplayedFileDiffContent;
   scope?: GitDiffScope;
   commitOid?: string;
+  /** The diff is a completed task's commit range, not a working tree. */
+  isRange?: boolean;
   projectPath: string;
   worktreePath?: string;
   scrollKey: string;
@@ -45,7 +47,8 @@ export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid
         isFocused
         worktreePath={worktreePath}
         projectPath={projectPath}
-        blameEligible={!commitOid && scope !== 'staged'}
+        // Blame reads the working tree's file: never for a commit or a range.
+        blameEligible={!commitOid && !isRange && scope !== 'staged'}
         // The root's full-body spinner is this window's ONE loading indicator;
         // a second one in the editor area would shift ~20px at hand-off.
         showEditorBootSpinner={false}

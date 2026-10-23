@@ -105,7 +105,7 @@ function LeftoverSection({
     <section className="flex flex-col gap-1.5" data-testid={testId} aria-label={label}>
       <div className="flex items-center gap-2 mb-0.5">
         <span className="text-xs font-medium text-fg-muted">{label}</span>
-        <CountBadge count={processes.length} variant="accent" size="sm" />
+        <CountBadge count={processes.length} variant="tinted" size="pill" className="text-fg-muted" />
       </div>
       {spansTasks
         ? groupByTask(processes).map((group) => (

@@ -1,7 +1,18 @@
 import { type StateCreator } from 'zustand';
 import { useProjectStore } from '../project-store';
-import type { GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
+import type { ConversationTabRequest, GitDiffScope, Task, TaskDetailViewState } from '../../../shared/types';
 import type { SessionStore } from './types';
+
+/** A completed task view's tabs. */
+export type CompletedTab = 'summary' | 'changes' | 'conversation' | 'usage' | 'description';
+
+/** Where to open a completed task's view; see `completedViewRequest`. */
+export interface CompletedViewRequest {
+  taskId: string;
+  tab: CompletedTab;
+  /** For the Conversation tab: the column (and stay) to open on. */
+  conversationTab?: ConversationTabRequest;
+}
 
 export interface TaskChangesPanelSlice {
   /** Task IDs whose Changes panel is open (persists across dialog open/close). */
@@ -121,12 +132,12 @@ export interface TaskChangesPanelSlice {
    */
   changesHistoryHeight: Record<string, number>;
   /**
-   * Whether the Changes rail's History section is expanded, keyed by task ID.
-   * Absent means collapsed - the default: history is a navigation axis, not the
-   * headline, so the vertical budget goes to the file tree until the user asks
-   * for commits. Persisted (only when true) in the `detail_view_state` blob.
+   * Task IDs whose Changes rail History section the user collapsed. Absent
+   * means open - the default: a task's commits are what the panel is for, as
+   * much as its files. Persisted (only when collapsed) in the
+   * `detail_view_state` blob.
    */
-  changesHistoryOpen: Record<string, boolean>;
+  changesHistoryCollapsed: Record<string, true>;
   /**
    * Non-task sentinel ids whose dialog is maximized (persists across dialog
    * open/close). Holds only the create dialogs ('new-task-dialog',
@@ -136,6 +147,13 @@ export interface TaskChangesPanelSlice {
    * so it never holds a real task id.
    */
   maximizedTasks: Set<string>;
+  /**
+   * A one-shot request to show a completed task's view on a given tab, set by
+   * whatever opens it from outside (the archived card menu's Show changes and
+   * View conversation). The view applies it when it mounts or when one arrives
+   * for its task, then clears it. Never persisted.
+   */
+  completedViewRequest: CompletedViewRequest | null;
   /**
    * Internal hydration guard: task ids already seeded from their persisted
    * `detail_view_state` blob this session. Lives in store state (not module
@@ -211,6 +229,9 @@ export interface TaskChangesPanelSlice {
    *  the History section returns to its default height. */
   setChangesHistoryHeight: (taskId: string, height: number | null) => void;
   setChangesHistoryOpen: (taskId: string, open: boolean) => void;
+  requestCompletedView: (request: CompletedViewRequest) => void;
+  /** Clear the request, only when it is still the one for `taskId`. */
+  clearCompletedViewRequest: (taskId: string) => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -259,9 +280,9 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
   const historyHeight = state.changesHistoryHeight[taskId];
   if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
-  // Written only when true: absent = collapsed, the default. Mirrors changesOpen's
-  // asymmetry so a collapse simply drops the key from the next blob write.
-  if (state.changesHistoryOpen[taskId]) blob.changesHistoryOpen = true;
+  // Written only when collapsed: absent = open, the default. Mirrors changesOpen's
+  // asymmetry so reopening simply drops the key from the next blob write.
+  if (state.changesHistoryCollapsed[taskId]) blob.changesHistoryCollapsed = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -292,15 +313,23 @@ export function commandTerminalChangesEntityId(slot: string): string {
 /**
  * Non-task entity ids that share the Changes-panel setters (the create dialogs
  * and the Edit Columns dialog) but have no `tasks` row to persist into, plus
- * every Command Terminal window id (`command-terminal::<slot>`). They must not
- * schedule a `detail_view_state` save: the DB UPDATE would be a no-op, and the
+ * every Command Terminal window id (`command-terminal::<slot>`) and the
+ * prefixed ids of a task's other Changes hosts: the standalone dialog
+ * (`dialog-<id>`), the detached window (`popout-<id>`) and a completed task's
+ * Changes tab (`completed-<id>`). They must not schedule a `detail_view_state`
+ * save: the DB UPDATE would be a no-op against an id no row has, and the
  * Command Terminal would otherwise emit a spurious IPC write on every Changes
- * interaction.
+ * interaction. Their state lives for the session.
  */
 const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'board-manager-dialog']);
 
+/** The prefix of a completed task's Changes tab entity id (`completed-<taskId>`). */
+export const COMPLETED_CHANGES_ENTITY_PREFIX = 'completed-';
+
+const NON_TASK_DETAIL_VIEW_PREFIXES = [`${COMMAND_TERMINAL_ENTITY_PREFIX}::`, 'dialog-', 'popout-', COMPLETED_CHANGES_ENTITY_PREFIX];
+
 function isNonTaskDetailViewId(entityId: string): boolean {
-  return NON_TASK_DETAIL_VIEW_IDS.has(entityId) || entityId.startsWith(`${COMMAND_TERMINAL_ENTITY_PREFIX}::`);
+  return NON_TASK_DETAIL_VIEW_IDS.has(entityId) || NON_TASK_DETAIL_VIEW_PREFIXES.some((prefix) => entityId.startsWith(prefix));
 }
 
 /**
@@ -353,7 +382,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   browserUrlRefreshTokens: {},
   changesSelectedCommit: {},
   changesHistoryHeight: {},
-  changesHistoryOpen: {},
+  changesHistoryCollapsed: {},
+  completedViewRequest: null,
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
@@ -474,17 +504,28 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   },
 
   setChangesHistoryOpen: (taskId, open) => {
-    const current = get().changesHistoryOpen;
-    if ((current[taskId] ?? false) === open) return;
+    const current = get().changesHistoryCollapsed;
+    // The record holds collapses, so open is the absence of a key.
+    const isOpen = !current[taskId];
+    if (isOpen === open) return;
     if (open) {
-      set({ changesHistoryOpen: { ...current, [taskId]: true } });
-    } else {
       // Drop the key rather than storing false, so the record mirrors the blob's
-      // written-only-when-true shape and stays bounded.
+      // written-only-when-collapsed shape and stays bounded.
       const { [taskId]: _removed, ...rest } = current;
-      set({ changesHistoryOpen: rest });
+      set({ changesHistoryCollapsed: rest });
+    } else {
+      set({ changesHistoryCollapsed: { ...current, [taskId]: true } });
     }
     scheduleDetailViewSave(taskId, get);
+  },
+
+  requestCompletedView: (request) => {
+    set({ completedViewRequest: request });
+  },
+
+  clearCompletedViewRequest: (taskId) => {
+    if (get().completedViewRequest?.taskId !== taskId) return;
+    set({ completedViewRequest: null });
   },
 
   toggleMaximized: (taskId) => {
@@ -576,7 +617,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     const browserOpenTasks = new Set(get().browserOpenTasks);
     const changesSelectedCommit = { ...get().changesSelectedCommit };
     const changesHistoryHeight = { ...get().changesHistoryHeight };
-    const changesHistoryOpen = { ...get().changesHistoryOpen };
+    const changesHistoryCollapsed = { ...get().changesHistoryCollapsed };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -596,7 +637,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.browserOpen) browserOpenTasks.add(task.id);
       if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
       if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
-      if (blob.changesHistoryOpen) changesHistoryOpen[task.id] = true;
+      if (blob.changesHistoryCollapsed) changesHistoryCollapsed[task.id] = true;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -612,7 +653,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       browserOpenTasks,
       changesSelectedCommit,
       changesHistoryHeight,
-      changesHistoryOpen,
+      changesHistoryCollapsed,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,
