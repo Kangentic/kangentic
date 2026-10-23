@@ -143,6 +143,45 @@ function MountContentDiffEditor({ content, onMount, ...diffEditorProps }: MountC
   );
 }
 
+/** A diff view model DiffViewer owns. Disposing it is all DiffViewer does with one. */
+interface DisposableViewModel {
+  dispose(): void;
+}
+
+/**
+ * A disposer for the diff view model attached to `diffEditor`, read from
+ * monaco's private state, or null when that state is not where monaco 0.57
+ * keeps it.
+ *
+ * Only the view model @monaco-editor/react attaches before onMount needs this.
+ * Its `setModel({ original, modified })` has the editor build one, and monaco
+ * never disposes it. `setModel` wraps it in `RefCounted.create` and never
+ * releases that reference (diffEditorWidget.js `setModel`, utils.js
+ * `BaseRefCounted`). monaco has no getter for it either (`getModel()` returns
+ * the text models), so this reads the widget's `_diffModel` observable. A
+ * missing field returns null at the first check, and the identity check
+ * against `getModel()` keeps a field that now holds something else from being
+ * disposed. A null leaves that one view model alive, as every swap did before
+ * Sentry DESKTOP-22, and tests/ui/diff-swap-stale-view-model.spec.ts goes red.
+ */
+function readAttachedViewModel(diffEditor: MonacoDiffEditor): DisposableViewModel | null {
+  const diffModelObservable: unknown = Reflect.get(diffEditor, '_diffModel');
+  if (typeof diffModelObservable !== 'object' || diffModelObservable === null) return null;
+  const readObservable: unknown = Reflect.get(diffModelObservable, 'get');
+  if (typeof readObservable !== 'function') return null;
+  const viewModel: unknown = readObservable.call(diffModelObservable);
+  if (typeof viewModel !== 'object' || viewModel === null) return null;
+  const textModels = diffEditor.getModel();
+  if (textModels === null || Reflect.get(viewModel, 'model') !== textModels) return null;
+  const dispose: unknown = Reflect.get(viewModel, 'dispose');
+  if (typeof dispose !== 'function') return null;
+  return {
+    dispose: () => {
+      dispose.call(viewModel);
+    },
+  };
+}
+
 export function DiffViewer({
   original,
   modified,
@@ -523,6 +562,11 @@ export function DiffViewer({
   // advanced by every swap. Tagged with the editor so a remount (leaving a
   // preview) never compares against the previous editor's text.
   const appliedContentRef = useRef<(DiffEditorContent & { editor: MonacoDiffEditor }) | null>(null);
+  // The diff view model attached to the mounted editor, which DiffViewer owns:
+  // adopted from the library in handleEditorMount, replaced by every swap, and
+  // disposed with its editor. Tagged with that editor, like appliedContentRef,
+  // so a remount's teardown never disposes the next editor's.
+  const ownedViewModelRef = useRef<{ editor: MonacoDiffEditor; viewModel: DisposableViewModel } | null>(null);
   // True only while the swap below detaches and reattaches the models. The
   // editor's scroll and diff events in that window describe a model-less or
   // freshly built editor, never the reader's position or a real diff.
@@ -551,8 +595,24 @@ export function DiffViewer({
   // arrived while monaco was still loading.
   //
   // This does not reopen the disposal problem described where the DiffEditor
-  // renders: the library creates both models, the swap creates and disposes
-  // none, and unmount disposes the same two models in the library's order.
+  // renders: the library creates both text models, the swap creates and
+  // disposes none, and unmount disposes the same two in the library's order.
+  //
+  // The swap does replace the diff VIEW model, which DiffViewer owns (Sentry
+  // DESKTOP-22). A view model computes its diff in an async autorun that awaits
+  // the worker, checks its own cancellation token, and then normalizes the
+  // reply against the models' current text (monaco 0.57
+  // diffEditorViewModel.js:209-221). A reply for the old text that lands after
+  // the flush asks for lines the shorter new text lacks, and the autorun
+  // rejects with "Illegal value for lineNumber". Only a cancelled token stops
+  // it, and monaco never cancels the token of a view model it built itself.
+  // `setModel({ original, modified })` keeps a reference to it that it never
+  // releases, so before this every swap left one alive on the shared models,
+  // recomputing after each later swap. So the swap disposes the outgoing view
+  // model once it is detached and before the flush, and attaches a fresh one
+  // from createViewModel. The first swap disposes the view model the library
+  // attached at mount, which handleEditorMount adopts.
+  // tests/ui/diff-swap-stale-view-model.spec.ts reproduces both.
   //
   // Reattaching also resets both editors to the top and drops the alignment
   // zones until the new diff lands. A file switch is positioned by the
@@ -603,13 +663,18 @@ export function DiffViewer({
     contentSwapInProgressRef.current = true;
     try {
       diffEditor.setModel(null);
+      // Detached now, so the outgoing view model can go before the flush.
+      ownedViewModelRef.current?.viewModel.dispose();
+      ownedViewModelRef.current = null;
       // A refresh usually changes the modified side alone, so the original
       // keeps its text and its tokens.
       if (originalChanged) models.original.setValue(next.original);
       if (modifiedChanged) models.modified.setValue(next.modified);
       monacoInstance.editor.setModelLanguage(models.original, next.language);
       monacoInstance.editor.setModelLanguage(models.modified, next.language);
-      diffEditor.setModel(models);
+      const viewModel = diffEditor.createViewModel(models);
+      ownedViewModelRef.current = { editor: diffEditor, viewModel };
+      diffEditor.setModel(viewModel);
     } finally {
       contentSwapInProgressRef.current = false;
     }
@@ -707,6 +772,22 @@ export function DiffViewer({
     // The library built the models from the content MountContentDiffEditor
     // held at its mount, which is what the swap compares against.
     appliedContentRef.current = { ...mountContent, editor: diffEditor };
+    // Adopt the view model the library attached before this ran, so the first
+    // swap disposes it like any other (see readAttachedViewModel).
+    const libraryViewModel = readAttachedViewModel(diffEditor);
+    ownedViewModelRef.current = libraryViewModel === null ? null : { editor: diffEditor, viewModel: libraryViewModel };
+    // Dispose the owned view model with its editor. The diff editor's own
+    // onDidDispose never fires in monaco 0.57 (DelegatingEditor declares the
+    // emitter and nothing fires it), so this listens on the modified editor.
+    // By then nothing is attached. The library disposes the text models before
+    // the editor, and the widget detaches as they go (see where the DiffEditor
+    // renders).
+    diffEditor.getModifiedEditor().onDidDispose(() => {
+      const owned = ownedViewModelRef.current;
+      if (owned === null || owned.editor !== diffEditor) return;
+      ownedViewModelRef.current = null;
+      owned.viewModel.dispose();
+    });
     // Keep the ORIGINAL editor wrappable. Monaco force-sets BOTH wordWrap overrides to
     // 'off' on it whenever the diff renders inline ("never wrap hidden editor"), but its
     // side-by-side branch restores only wordWrapOverride1, and override2 outranks
@@ -1216,7 +1297,9 @@ export function DiffViewer({
           // Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
           // The content swap (see "Put new content into the mounted editor
           // DETACHED" above) keeps this intact, because it reuses these same two
-          // models and never creates or disposes one.
+          // models and never creates or disposes one. The diff view models it
+          // swaps are DiffViewer's own, and the last one is disposed with the
+          // editor (handleEditorMount).
           <div ref={editorContainerRef} className="h-full w-full">
             <MountContentDiffEditor
               height="100%"

@@ -818,22 +818,20 @@ export async function readModifiedFirstChangeLine(target: Page): Promise<number>
  * that the last one did. Monaco can have a second compute for the same content
  * pending or in flight (measured: an option update or a debounced content
  * change right after the first result, and under CI load two computes started
- * together). Its stale-result guard is a single token that only cancels on
- * dispose. While DiffViewer swapped content in place, a result for the OLD
- * file that landed after the swap was applied against the new line counts and
+ * together), and a test that moves on then reads a diff that is about to
+ * change.
+ *
+ * A late result for an OLD file used to throw as well. Its stale-result guard
+ * is a single token that only cancels on dispose, and monaco never disposes a
+ * view model that `setModel({ original, modified })` built, so after a swap
+ * the old file's reply was applied against the new line counts:
  * `UnchangedRegion.fromDiffs` threw "startLineNumber 11 cannot be after
  * endLineNumberExclusive 2" (gamma's insertion line against beta's one line,
- * in changes-diff-scroll-memory.spec.ts), an unhandled rejection that
- * collectPageErrors reports. The detached swap disposes the old diff view
- * model, and with it that token, but a second compute for the SAME content
- * still lands late. Nor is the disposal immediate: DiffEditorWidget.setDiffModel
- * releases the outgoing view model in a `setTimeout(..., 0)`, so for one timer
- * tick after `setModel(null)` it is still alive, still holds an uncancelled
- * token, and still listens to the shared text models. A reply that is already
- * queued when the swap runs (likely under load, where the synchronous `setValue`
- * of a long file is slow) lands on it against the incoming file's line counts.
- * That is why a caller must settle the diff BEFORE it starts a swap, not only
- * after it.
+ * in changes-diff-scroll-memory.spec.ts), and `normalizeRangeMapping` threw
+ * "Illegal value for lineNumber" (Sentry DESKTOP-22). DiffViewer now owns the
+ * view model and disposes the outgoing one before each swap flushes the new
+ * text, so a stale reply is dropped. diff-swap-stale-view-model.spec.ts pins
+ * that with the worker's replies held across the swap.
  *
  * Two signals, because neither is enough alone. `waitForDiff()` resolves once
  * the editor's diff is up to date, which covers a compute that has started.
