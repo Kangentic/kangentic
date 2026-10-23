@@ -2012,7 +2012,7 @@ export const EventType = {
    * for an adapter that declares `AgentAdapter.backgroundCommands`: Claude's
    * own hook remaps, the event bridge's `appendBackgroundLaunch` directive for
    * the others, and the Codex rollout and Kimi wire parsers. See
-   * `docs/activity-detection.md` for the hold and every way it releases.
+   * `docs/architecture/activity/index.md` for the hold and every way it releases.
    */
   BackgroundShellStart: 'background_shell_start',
   /**

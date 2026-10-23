@@ -69,7 +69,7 @@ stand in the way:
 - Its approval always continues in Auto Edit or Default, never in the destination column's mode.
 - An approval would have to be armed at spawn, so a column switched to Manual mid-plan could not
   stop it.
-- Nothing would write the marker the [plan approval gate](../../activity-detection.md#plan-approval-gate)
+- Nothing would write the marker the [plan approval gate](../../architecture/activity/event-types.md#plan-approval-gate)
   pairs with the plan exit.
 
 ## Settings Merge

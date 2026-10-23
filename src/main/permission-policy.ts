@@ -42,7 +42,7 @@ export function isFirstPartyPermissionAllowed(permission: string): boolean {
  * The pane is untrusted web content that an AGENT can navigate, so this stays far
  * tighter than the first-party set: camera, microphone, geolocation,
  * notifications, MIDI, serial, HID, USB, and fullscreen all stay denied, per
- * `docs/embedded-browser.md` decision 5.
+ * `docs/architecture/embedded-browser/decision-log.md` decision 5.
  *
  * `clipboard-sanitized-write` is the one grant, and it is here for a specific
  * reason rather than as a convenience. This pass added a permission CHECK handler
@@ -53,7 +53,7 @@ export function isFirstPartyPermissionAllowed(permission: string): boolean {
  * permission is gesture-gated, cannot READ the clipboard, and is what a real
  * browser allows without prompting. Clipboard READ stays denied.
  *
- * See `docs/embedded-browser.md` decision 14.
+ * See `docs/architecture/embedded-browser/decision-log.md` decision 14.
  */
 const ALLOWED_EMBEDDED_BROWSER_PERMISSIONS = new Set<string>([
   'clipboard-sanitized-write',

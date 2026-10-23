@@ -6,7 +6,7 @@ description: Diagnose activity-engine issues - a task shows active or idle wrong
 
 A playbook for diagnosing why a task's board indicator shows the wrong state (active/thinking when it should be idle, idle when work is still running, or stuck). Reference this skill when investigating activity-engine behavior so the diagnostic method and known failure signatures are already in context.
 
-`docs/activity-detection.md` is the authoritative architecture reference: read the relevant section instead of re-deriving behavior from the symptom. `src/main/activity-engine/README.md` is the code-reader quick ref.
+`docs/architecture/activity/activity-engine.md` is the authoritative architecture reference: read the relevant section instead of re-deriving behavior from the symptom. `src/main/activity-engine/README.md` is the code-reader quick ref.
 
 **Route the symptom first.** If the engine state is correct but a renderer surface *buckets* it wrong (sidebar active/idle counts, card-pill grouping), that is a classification bug, not an engine bug: route through `.claude/rules/activity-state-classification.md` and the `requiresUserInteraction` / `isActive` helpers in `src/shared/activity-state.ts`, not this playbook. This skill is for the engine's own state being wrong.
 
@@ -28,7 +28,7 @@ thinking IFF (turnActive OR subagentDepth > 0 OR bgShells > 0) AND NOT permissio
 
 `src/main/activity-engine/engine/predicate.ts` (`derivePredicate`); `bgShells` = named (`activeBackgroundShellIds`) + anonymous (`anonymousBackgroundShellCount`). `permissionPending` forces `permission`. Every wrong indicator is one of two things: a predicate input is wrong (a counter stuck high or cleared early), or a watchdog / forced transition overrode the predicate. Triage is identifying which.
 
-**A third set is deliberately NOT in that sum:** `exemptBackgroundShellIds` holds shells the agent said are services: their launching command carried `--kangentic-no-activity-hold` (`/preview`'s exit watcher, which blocks for hours), or the agent marked them with `kangentic_mark_background_service` (transition trigger `event:bg-shell-service:mcp`). They are tracked for liveness but contribute nothing to activity, and the debug overlay reports them on their own "Background shells (exempt)" row. **An exempt shell showing up while the session reads idle is the feature working, not the bug** - do not "fix" it. Full mechanics: [Opting a background shell out of the hold](../../../docs/activity-detection.md#opting-a-background-shell-out-of-the-hold). Note that exempting a shell also re-arms the three watchdog holds that gate on `bgShells === 0`, so a session running one can legitimately hit stale-thinking / stuck-pending-tools / stuck-subagent.
+**A third set is deliberately NOT in that sum:** `exemptBackgroundShellIds` holds shells the agent said are services: their launching command carried `--kangentic-no-activity-hold` (`/preview`'s exit watcher, which blocks for hours), or the agent marked them with `kangentic_mark_background_service` (transition trigger `event:bg-shell-service:mcp`). They are tracked for liveness but contribute nothing to activity, and the debug overlay reports them on their own "Background shells (exempt)" row. **An exempt shell showing up while the session reads idle is the feature working, not the bug** - do not "fix" it. Full mechanics: [Opting a background shell out of the hold](../../../docs/architecture/activity/background-shells.md#opting-a-background-shell-out-of-the-hold). Note that exempting a shell also re-arms the three watchdog holds that gate on `bgShells === 0`, so a session running one can legitimately hit stale-thinking / stuck-pending-tools / stuck-subagent.
 
 ## Evidence-gathering ladder
 
@@ -45,7 +45,7 @@ Work this order. Each step narrows to a single session, then to a single transit
 
 ## Reading a transition trace
 
-The trigger-label and counter-delta reference is in `docs/activity-detection.md`, section "Reading a transition trace". Interpretation that is playbook, not reference:
+The trigger-label and counter-delta reference is in `docs/architecture/activity/activity-engine.md`, section "Reading a transition trace". Interpretation that is playbook, not reference:
 
 - **The recovery counters read 0 in a clean session.** Any non-zero counter names the silent recovery path that fired (`bgShellHatch`, `staleThinking`, `stuckPendingTools`, `stuckSubagent`, `forceThinking`, `forceIdle`, `unmatchedBgShellEnd`, `ignoredInnerSubagentStop`, `duplicateSubagentStop`, `duplicateSubagentStart`) - start there. `internalAgentToolEvent` is the eleventh and is benign: tool events from Claude Code's own internal agents (an `agent_id` with no SubagentStart) that the engine only logged.
 - **In a bg-shell incident, the first thing to check is the end-label variant:** `event:bg-shell-ended:<shellId>` is a Tier A PID-exit drain (the watcher saw the OS process leave) OR the output-quiescence reclaim (#225); `event:bg-shell-ended:transcript` is the definitive drain from a tracked shell's own terminal `<task-notification>` observed directly in the durable session transcript (#386); `event:bg-shell-ended:watcher` is the anonymous count-heuristic drain. A named shell that vanished via the cap rather than any of the above is the #216 signature.
@@ -138,7 +138,7 @@ and bumps `duplicateSubagentStart`, which is the tell on a session recorded afte
 `duplicateSubagentStop` also rose for the same agent, the first run's stop landed late.
 One ordering stays open by design: if the first run's stop lands after the continuation's start,
 the depth reads 0 for the rest of the continuation (see "Re-started live subagent" in
-`docs/activity-detection.md`). Pinned by `session-032-restarted-live-subagent.jsonl`, replayed
+`docs/architecture/activity/index.md`). Pinned by `session-032-restarted-live-subagent.jsonl`, replayed
 in `activity-engine-turn-ended.test.ts` (ids-stripped red-green).
 
 Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-shell-no-end.jsonl` (#175), `session-012-auto-bg-named-shell-live.jsonl` (#212), `session-005-waiting-for-input-idle-hint.jsonl`, `session-006-ask-user-question-resume.jsonl`, `session-010-subagent-permission-resume.jsonl` (#194), and the directory (trace-bundle) fixtures `session-013-stuck-foreground-e2e/`, `session-020-false-active-parked-housekeeping/` (#294), `session-021-false-active-resume-picker/` (#331), `session-022-false-active-repainting-past-180s/` (#364), and `session-024-fast-heal-hook-less-resume/` (the #331/#364 fast-heal follow-up) - each has separate `events.jsonl`, `pty-chunks.jsonl`, `status-deltas.jsonl`, `meta.json`. Plus `session-025-false-idle-monitor-untracked.jsonl`, `session-026-false-active-injected-ctrl-c-kills-subagent.jsonl`, `session-030-duplicate-named-subagent-stop.jsonl` (#759), and `session-032-restarted-live-subagent.jsonl` (#835).

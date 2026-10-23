@@ -255,7 +255,7 @@ This ensures agents load project-level configuration (`.claude/`, `.gemini/`, `C
 ## See Also
 
 - [Handoff](handoff.md) - Cross-agent context transfer: extraction, packaging, delivery
-- [Activity Detection](../../activity-detection.md) - Event processing, state derivation, subagent-aware transitions
+- [Activity Detection](../../architecture/activity/index.md) - Event processing, state derivation, subagent-aware transitions
 - [Session Lifecycle](../../session-lifecycle.md) - Spawn flow, resume, crash recovery
-- [Worktree Strategy](../../worktree-strategy.md) - Worktree creation, sparse-checkout, hook delivery
+- [Worktree Strategy](../../architecture/worktrees/index.md) - Worktree creation, sparse-checkout, hook delivery
 - [Configuration](../../configuration.md) - Permission modes

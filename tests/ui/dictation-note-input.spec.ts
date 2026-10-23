@@ -1317,7 +1317,7 @@ test.describe('dictation into the Browser pane note input', () => {
 
   test('release with auto-submit ON only FILLS a guest field - it never submits', async () => {
     // DICTATION NEVER SUBMITS IN A GUEST (see the header of
-    // guest-text-target.ts and decision 24 in docs/embedded-browser.md):
+    // guest-text-target.ts and decision 24 in docs/architecture/embedded-browser/decision-log.md):
     // pressing Enter in someone else's page commits a form we know nothing
     // about. `createGuestSink`'s `submit` does not even read its `autoSubmit`
     // argument, so the call sequence [probe, write, write] must hold exactly

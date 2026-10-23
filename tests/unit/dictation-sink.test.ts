@@ -187,7 +187,7 @@ describe('createTerminalSink - submit', () => {
   it('calls onSubmitSettled even when the submit call REJECTS', async () => {
     // The highest-value case in this file. `onSubmitSettled` is what releases
     // the session id from the per-session paste-guard Set (decision 22 in
-    // docs/embedded-browser.md). If this regressed from `.finally` to `.then`,
+    // docs/architecture/embedded-browser/decision-log.md). If this regressed from `.finally` to `.then`,
     // a rejected submit would strand the session id in that guard forever -
     // every later press for it silently refused as "busy", which is exactly
     // the bug report ("works sometimes, seems to need a reset") the guard was

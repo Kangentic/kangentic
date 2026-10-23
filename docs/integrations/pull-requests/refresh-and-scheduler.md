@@ -56,4 +56,4 @@ A task is eligible when its PR can still change or be found: a non-terminal link
 
 Timer-leak safety: each `setTimeout` is created outside `runWithProjectLogContext` (each check wraps its own work inside it, and the sweep's handlers attach outside the run, since a promise reaction takes the async context current when it is attached), is `.unref()`'d so it never blocks a clean quit, and is explicitly cleared on switch/delete/shutdown. A stale-switch guard skips a check whose project is no longer focused.
 
-The background remote-fetch scheduler (`src/main/git/git-fetch-scheduler.ts`, documented under [Background remote refresh](../../worktree-strategy.md#background-remote-refresh)) mirrors this lifecycle exactly and is started, re-armed, and stopped at the same four sites.
+The background remote-fetch scheduler (`src/main/git/git-fetch-scheduler.ts`, documented under [Background remote refresh](../../architecture/worktrees/worktree-lifecycle.md#background-remote-refresh)) mirrors this lifecycle exactly and is started, re-armed, and stopped at the same four sites.

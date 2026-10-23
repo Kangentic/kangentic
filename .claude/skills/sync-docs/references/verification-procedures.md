@@ -78,20 +78,20 @@ enumeration being compared.
 3. For each `CREATE TABLE`, extract all column definitions (name, type, constraints)
 4. For each `ALTER TABLE ... ADD COLUMN`, add the column to the table
 5. Build cumulative schema per table
-6. Read `docs/database.md`
+6. Read `docs/database/index.md`
 7. Find each table's schema section
 8. Compare: report missing columns, extra columns, type mismatches
 
 ### Seed Data
 1. In the migration files (especially `default-data.ts`), find all `INSERT` statements in migration functions
 2. Extract default swimlanes (name, role, position), actions, and transitions
-3. Read `docs/database.md`
+3. Read `docs/database/storage-model.md`
 4. Find the seed data section
 5. Compare: report missing or changed seed entries
 
 ### Migration List
 1. Count all migrations and extract their descriptions (from comments or function names)
-2. Read `docs/database.md`
+2. Read `docs/database/migrations.md`
 3. Find the migration history section
 4. Compare: report missing migrations
 

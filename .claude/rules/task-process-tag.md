@@ -81,7 +81,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   kept, the second pass keeps. A process
   whose directory cannot be read is never
   killed. Do not add a kill path that skips any of these, and do not exempt processes by name: each
-  protection rests on a measured mechanism (`docs/worktree-strategy.md`, "What the reap kills").
+  protection rests on a measured mechanism (`docs/architecture/worktrees/process-reaping.md`, "What the reap kills").
   An untagged client outside Kangentic (the user's browser, Android Studio) is no evidence, by
   decision: a dev server open in a browser tab must still stop at Done.
 - **On macOS a withheld orphan in the worktree is the task's.** SIP hides the environment of
@@ -210,7 +210,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the listed residuals (`killChildTreeByPid` after a host loss or at quit, `killProcess` for the
   janitor and where no identity Stop is registered). The removal-failure reap kills through the host's
   identity-checked Stop (`setIdentityTreeStop`). What still names a bare pid, and why, is in
-  `docs/worktree-strategy.md`, "Parent pids Windows reuses". Do not add a terminate primitive
+  `docs/architecture/worktrees/process-reaping.md`, "Parent pids Windows reuses". Do not add a terminate primitive
   outside `process-kill-sites.test.ts`'s classified files, or a tree-kill package.
 
 ## Enforcement (self-maintaining)

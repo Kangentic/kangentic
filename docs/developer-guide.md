@@ -533,12 +533,12 @@ npm run lint                      # ESLint over src/ and packages/protocol/src/,
 - [Architecture](architecture.md) -- Process model, data flow, IPC channels, stores
 - [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume
 - [Transition Engine](transition-engine.md) -- Action types, templates, execution flow
-- [Database](database.md) -- Full schema reference, migrations, connection management
+- [Database](database/index.md) -- Full schema reference, migrations, connection management
 - [Agent Integration](integrations/agents/index.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Configuration](configuration.md) -- Config cascade, all settings keys, permission modes
 - [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging, fuses
-- [Activity Detection](activity-detection.md) -- Event pipeline, thinking/idle state
-- [Worktree Strategy](worktree-strategy.md) -- Branch naming, sparse-checkout, hook delivery
+- [Activity Detection](architecture/activity/index.md) -- Event pipeline, thinking/idle state
+- [Worktree Strategy](architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery
 - [User Guide](user-guide.md) -- End-user feature walkthrough
 
 ## Documentation Maintenance

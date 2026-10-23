@@ -24,7 +24,7 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Architecture](architecture.md) -- Process model, data flow, IPC channels, stores
 - [Session Lifecycle](session-lifecycle.md) -- State machine, spawn flow, queue, suspend, resume, crash recovery
 - [Transition Engine](transition-engine.md) -- Column automations and their adapters, templates and escaping, execution flow, priority rules, cross-agent handoff
-- [Database](database.md) -- Schema (including session_transcript_chunks and handoffs tables), migrations, repository pattern, connection management
+- [Database](database/index.md) -- Schema (including session_transcript_chunks and handoffs tables), migrations, repository pattern, connection management
 - [Command Terminal](command-terminal.md) - The second window-manager layer: slot-keyed windows, global geometry against per-project population, the reattach and branch rules, and the title-bar controls
 - [Activity Marks](activity-marks.md) - The nine activity glyphs: upstream ownership, why motion is composited, the click the mark ate, and the geometry and sizing history
 
@@ -37,9 +37,9 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Mobile Bridge](integrations/mobile-bridge/index.md) - Desktop half of the mobile companion app: `@kangentic/protocol` package, pairing ceremony, signed device roster, capability verbs, relay transport
 - [Handoff](integrations/agents/handoff.md) -- Cross-agent context transfer: extraction, packaging, markdown rendering, prompt delivery
 - [MCP Server](integrations/mcp-server/index.md) -- Board management tools for agents, file-based command queue, .mcp.json safety
-- [Embedded Browser](embedded-browser.md) - Browser pane architecture: webview capture, draw and inspect modes, the paste engine, multi-modal prompt submission
-- [Activity Detection](activity-detection.md) -- Event pipeline, thinking/idle state, subagent-aware transitions
-- [Worktree Strategy](worktree-strategy.md) -- Branch naming, sparse-checkout, hook delivery, cleanup
+- [Embedded Browser](architecture/embedded-browser/index.md) - Browser pane architecture: webview capture, draw and inspect modes, the paste engine, multi-modal prompt submission
+- [Activity Detection](architecture/activity/index.md) -- Event pipeline, thinking/idle state, subagent-aware transitions
+- [Worktree Strategy](architecture/worktrees/index.md) -- Branch naming, sparse-checkout, hook delivery, cleanup
 
 ### Operations
 - [Analytics](analytics.md) -- Telemetry events, opt-out, privacy

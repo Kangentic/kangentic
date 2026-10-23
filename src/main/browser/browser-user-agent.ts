@@ -14,7 +14,7 @@ import type { WebContents } from 'electron';
  * thing to change.
  *
  * This reverses the rejection recorded in decision 15 of
- * `docs/embedded-browser.md`; decision 41 records why and what it costs.
+ * `docs/architecture/embedded-browser/decision-log.md`; decision 41 records why and what it costs.
  */
 
 /** Idempotent, and a no-op on a string that carries no Electron token. */

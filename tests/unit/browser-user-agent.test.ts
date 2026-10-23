@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { applyBrowserUserAgent, stripElectronToken } from '../../src/main/browser/browser-user-agent';
 
 /**
- * The Browser pane's user agent (decision 41 in docs/embedded-browser.md).
+ * The Browser pane's user agent (decision 41 in docs/architecture/embedded-browser/decision-log.md).
  *
  * The `Electron/` token is what some web application firewalls reject: measured
  * with curl against such a host, a user agent carrying it got an HTML block page

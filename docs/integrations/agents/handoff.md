@@ -121,5 +121,5 @@ GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript
 
 - [Agent Integration](index.md) - Adapter interface, per-agent CLI details
 - [Session Lifecycle](../../session-lifecycle.md) - Spawn flow, suspend, resume
-- [Database](../../database.md) - Schema for handoffs table
+- [Database](../../database/index.md) - Schema for handoffs table
 - [MCP Server](../mcp-server/index.md) - `kangentic_get_handoff_context` and `kangentic_get_transcript` tools

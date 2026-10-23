@@ -969,7 +969,7 @@ export class ActivityEngine {
    * depth-0 case (already cleared, so the predicate lands on `idle` once
    * `permissionPending` clears), or still true when the prompt was raised
    * inside a LIVE subagent (`subagentDepth > 0` keeps the parent's
-   * `turnActive` set - see "Subagent depth" in docs/activity-detection.md),
+   * `turnActive` set - see "Subagent depth" in docs/architecture/activity/predicate.md),
    * in which case the predicate correctly falls back to `thinking` rather
    * than `idle`. This mirrors the approved-tool clear, which also touches
    * neither field - a rejection and an approval leave identical downstream

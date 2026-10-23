@@ -7,7 +7,7 @@
  * dead end for the user unless someone says so.
  *
  * The pane no longer sends the `Electron/<version>` token (decision 41 in
- * `docs/embedded-browser.md`, which reverses the rejection recorded in decision
+ * `docs/architecture/embedded-browser/decision-log.md`, which reverses the rejection recorded in decision
  * 15). It was removed because a web application firewall rejected it on
  * ordinary pages, not to get past Google. Whether Google still refuses without
  * it is not measured, and it may use more than the user agent string, so this
