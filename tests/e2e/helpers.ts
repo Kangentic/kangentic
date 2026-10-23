@@ -283,21 +283,47 @@ export async function launchApp(options?: {
   // process now instead of at worker teardown, which is worth doing when the
   // reason we are retrying at all is that the runner is short on capacity.
   //
+  // The same handling covers a third transient: launch() and firstWindow() both
+  // succeed but the page then never reaches `load` or never renders the app
+  // shell in time. The post-window readiness wait (`load`, then the shell
+  // selector) used to sit after this loop with a 30s Playwright default for
+  // `load`, so one slow load failed the whole hook with no retry (observed on
+  // CI as "page.waitForLoadState: Timeout 30000ms exceeded" in
+  // agent-activity-special-modes.spec.ts, which only passed on the CI retry).
+  // Readiness now lives inside each attempt, so a stuck renderer gets the same
+  // kill-and-relaunch as a missing window. `load` is kept rather than dropped:
+  // the shell selector alone would also pass on a page that is still loading.
+  //
   // Budget: this runs in beforeAll, which gets the electron project's 45s test
-  // timeout, and the rest of this function can spend ~15s of it on
-  // waitForSelector. So cap each window wait well under the old 30s and stop
-  // retrying once the launch phase has eaten launchPhaseBudgetMs, rather than
-  // letting three long attempts blow the hook's budget by themselves.
+  // timeout, and callers spend the remainder on createProject and the like. So
+  // the whole launch-to-shell phase shares one deadline (launchPhaseBudgetMs),
+  // every wait is clamped to what is left of it, and a retry only starts when
+  // the leftover can fit a useful attempt. Three long attempts can therefore
+  // never blow the hook's budget by themselves. A healthy launch takes a few
+  // seconds and never touches these caps.
   const maxLaunchAttempts = 3;
   const baseRetryDelayMs = 1500;
   const firstWindowTimeoutMs = 12_000;
-  const launchPhaseBudgetMs = 26_000;
+  const shellReadyTimeoutMs = 12_000;
+  const launchPhaseBudgetMs = 35_000;
+  const minimumAttemptBudgetMs = 9_000;
+  const minimumWaitTimeoutMs = 1_000;
   const launchStartedAt = Date.now();
+  // Playwright treats a timeout of 0 as "wait forever", so never go below a floor.
+  const boundedTimeoutMs = (capMs: number, deadlineAt: number): number =>
+    Math.max(minimumWaitTimeoutMs, Math.min(capMs, deadlineAt - Date.now()));
+  const launchPhaseDeadlineAt = launchStartedAt + launchPhaseBudgetMs;
+  // When HEADED=1 (user-invoked), maximize so the user can watch.
+  // Otherwise (CI/automated), just let it run at default size.
+  const isHeaded = process.env.HEADED === '1' || process.env.HEADED === 'true';
+
   let app: ElectronApplication | undefined;
   let page: Page | undefined;
   let lastLaunchError: Error | undefined;
+  let attemptsMade = 0;
 
   for (let attempt = 1; attempt <= maxLaunchAttempts; attempt++) {
+    attemptsMade = attempt;
     let pendingApp: ElectronApplication | undefined;
     try {
       pendingApp = await electron.launch({
@@ -313,20 +339,53 @@ export async function launchApp(options?: {
         },
         colorScheme: 'dark',
       });
-      page = await pendingApp.firstWindow({ timeout: firstWindowTimeoutMs });
+      const pendingPage = await pendingApp.firstWindow({
+        timeout: boundedTimeoutMs(firstWindowTimeoutMs, launchPhaseDeadlineAt),
+      });
+
+      await watchProcessDeaths(pendingApp, pendingPage);
+
+      await pendingApp.evaluate(({ BrowserWindow }, headed) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (headed) {
+          win.maximize();
+        } else {
+          // Ensure window is large enough for DnD tests even when not headed.
+          // Move off-screen so it doesn't steal focus or cover user's work.
+          // Drag tests use adjacent-only drags to avoid coordinate issues.
+          win.setSize(1920, 1080);
+          win.setPosition(-2000, -2000);
+        }
+      }, isHeaded);
+
+      // Both readiness waits share one deadline so their sum stays bounded.
+      const shellReadyDeadlineAt = Math.min(Date.now() + shellReadyTimeoutMs, launchPhaseDeadlineAt);
+      // Wait for the full page to load (scripts, styles, etc.)
+      await pendingPage.waitForLoadState('load', {
+        timeout: boundedTimeoutMs(shellReadyTimeoutMs, shellReadyDeadlineAt),
+      });
+      // Wait for React to actually render the app shell
+      await pendingPage.waitForSelector('text=Kangentic', {
+        timeout: boundedTimeoutMs(shellReadyTimeoutMs, shellReadyDeadlineAt),
+      });
+
+      // Publish only a fully ready attempt, so a failed attempt can never leave
+      // its page behind for the caller.
       app = pendingApp;
+      page = pendingPage;
       break;
     } catch (error) {
       lastLaunchError = error as Error;
-      // If launch() resolved and firstWindow() was what failed, that process is
-      // still running. Release it now rather than at worker teardown. Skip the
-      // graceful close: an app with no window is the case whose close() hangs.
+      // If launch() resolved and a later step failed, that process is still
+      // running. Release it now rather than at worker teardown. Skip the
+      // graceful close: an app that never became ready is the case whose
+      // close() hangs.
       if (pendingApp) await killAppProcess(pendingApp);
 
       const elapsedMs = Date.now() - launchStartedAt;
-      const budgetLeft = elapsedMs < launchPhaseBudgetMs;
+      const retryDelayMs = baseRetryDelayMs * attempt;
+      const budgetLeft = launchPhaseBudgetMs - elapsedMs - retryDelayMs >= minimumAttemptBudgetMs;
       if (attempt < maxLaunchAttempts && budgetLeft) {
-        const retryDelayMs = baseRetryDelayMs * attempt;
         console.error(`electron launch attempt ${attempt} failed after ${elapsedMs}ms, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
         await new Promise(resolve => setTimeout(resolve, retryDelayMs));
         continue;
@@ -339,31 +398,8 @@ export async function launchApp(options?: {
   }
 
   if (!app || !page) {
-    throw new Error(`electron.launch() failed after ${maxLaunchAttempts} attempts: ${lastLaunchError?.message}`);
+    throw new Error(`electron did not reach a rendered app shell after ${attemptsMade} of ${maxLaunchAttempts} attempts (launch, first window, load, shell): ${lastLaunchError?.message}`);
   }
-
-  await watchProcessDeaths(app, page);
-
-  // When HEADED=1 (user-invoked), maximize so the user can watch.
-  // Otherwise (CI/automated), just let it run at default size.
-  const isHeaded = process.env.HEADED === '1' || process.env.HEADED === 'true';
-  await app.evaluate(({ BrowserWindow }, headed) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (headed) {
-      win.maximize();
-    } else {
-      // Ensure window is large enough for DnD tests even when not headed.
-      // Move off-screen so it doesn't steal focus or cover user's work.
-      // Drag tests use adjacent-only drags to avoid coordinate issues.
-      win.setSize(1920, 1080);
-      win.setPosition(-2000, -2000);
-    }
-  }, isHeaded);
-
-  // Wait for the full page to load (scripts, styles, etc.)
-  await page.waitForLoadState('load');
-  // Wait for React to actually render the app shell
-  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { app, page };
 }
