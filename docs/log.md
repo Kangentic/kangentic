@@ -2,6 +2,25 @@
 
 ## 2026-10-22
 
+**Update** with the second round's three cheap tests. None met its bar; each found something to fix.
+
+- **Drift** (`node scripts/measure-docs-structure.mjs drift`): 128 commits changed the flat file with
+  a source file, and 2,054 of their 2,065 changed lines mapped to a concept. Recall was 0.785 (bar
+  0.8); 87 commits had every touched concept predicted, 18 none, mostly source files at paths that
+  no longer exist. The predicted concepts' median size was 67% of the whole file (bar 25%): a commit
+  touched a median of 1 concept and flagged 4, because `adapter-types.md` lists the whole adapters
+  folder and `src/shared/types.ts`, and `agent-adapter.ts` feeds four concepts. The flat row would
+  have flagged 110 of the 128 commits.
+- **Retrieval** (`node scripts/measure-docs-structure.mjs retrieval`, granite-r2): MRR@10 0.700 flat
+  against 0.728 concepts under the embedding model (bar +0.1), 0.700 against 0.621 under BM25, and
+  recall@5 0.875 for both. `codeChunks` cuts both layouts into the same blind 1,600-character slices,
+  so the split changes little but one description line per passage.
+- **Routing** (Haiku 5.5 at low effort, 96 calls, $0.03): a concept in the top three picks 0.917 of
+  the time from the index (22 entries) against 0.875 from the heading outline (158 entries), with
+  first picks equal at 0.813 (bar +10 points). The index lost where a description left out the fact
+  asked about: Antigravity's says nothing about tokenizing its own hook commands. Most adapter
+  descriptions read alike, which is what routing on descriptions cannot survive.
+
 **Creation** of the second round, fixed here before any of it ran. The first round asked narrow
 questions that each carried a keyword to grep for, and nothing told the agent where the docs index
 was, so it never had a reason to route through one. The theory behind the concept layout (written up
