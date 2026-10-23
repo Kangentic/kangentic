@@ -15,7 +15,7 @@ sources:
   - resource: src/shared/activity-state.ts
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx
   - resource: src/shared/types.ts
-    title: ActivityState, ActivityReason, ActivityDetectionStrategy
+    title: ActivityState, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode
 ---
 # Activity engine
 

@@ -21,8 +21,11 @@ node scripts/docs-bundle.mjs sources <changed file>...
 
 which prints, per file, each concept whose sources list the file or a folder above it. A concept
 followed by brackets lists the file only for the parts named there, as in
-`docs/settings/app-config.md [AppConfig, DEFAULT_CONFIG]` for `src/shared/types.ts`: open it only
-when the diff touches one of them. That lookup replaces a hand-kept mapping table. When a change touches a file no concept lists, decide which
+`docs/settings/app-config.md [AppConfig, DEFAULT_CONFIG]` for `src/shared/types.ts`. Check the
+concepts whose brackets name something the diff touches first. A title can miss a symbol the
+concept documents, so before skipping any other bracketed concept, grep it for the identifiers the
+diff changed, and skip it only when that finds nothing. That lookup replaces a hand-kept mapping
+table. When a change touches a file no concept lists, decide which
 concept documents it and add the file to that concept's `sources:` in the same change, so the next
 lookup finds it.
 

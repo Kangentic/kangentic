@@ -6,6 +6,9 @@ tags: [ipc, channels, config, git, browser]
 sources:
   - resource: src/shared/ipc-channels.ts
     title: IPC channel constants
+  - resource: src/main/ipc/handlers/git-diff.ts
+  - resource: src/shared/pop-out.ts
+    title: PopOutKind and the pop-out window params
 ---
 # App IPC channels
 

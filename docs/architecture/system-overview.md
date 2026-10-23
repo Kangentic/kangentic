@@ -24,6 +24,7 @@ sources:
   - resource: src/main/boards/board-registry.ts
   - resource: src/main/boards/shared/types.ts
     title: BoardAdapter interface
+  - resource: src/preload/preload.ts
 ---
 # System overview
 
