@@ -135,6 +135,8 @@ function WindowManagerSurface({
   const windows = layerStore((state) => state.windows);
   const tileTree = layerStore((state) => state.tileTree);
   const tileTreeRect = layerStore((state) => state.tileTreeRect);
+  // An expanded window covers the tiles, so their seams are not there to drag.
+  const tilesShown = layerStore((state) => state.expandedWindowId === null);
 
   // The tile tree lives inside this pixel sub-region of the overlay (the whole
   // overlay for edge-snap pairs; a half-snapped window's footprint for a group
@@ -203,7 +205,7 @@ function WindowManagerSurface({
             tiledRect={tileLayout?.rects.get(managedWindow.id) ?? null}
           />
         ))}
-        {tileTree && tileLayout?.seams.map((seam) => (
+        {tileTree && tilesShown && tileLayout?.seams.map((seam) => (
           <TileSplitter
             key={`${seam.splitId}:${seam.index}`}
             seam={seam}

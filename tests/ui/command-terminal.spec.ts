@@ -2203,6 +2203,96 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Expand - a terminal's Expand fills the panel with it; the others keep
+  // running behind it, unresized, and list in the rail's Running section, each
+  // with its own Stop. Restore brings the grid back.
+  // ---------------------------------------------------------------------------
+  test.describe('Expand', () => {
+    async function openTerminals(page: Page, count: number): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      for (let opened = 2; opened <= count; opened += 1) {
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(opened, { timeout: 5000 });
+      }
+    }
+
+    const frameOf = (page: Page, slot: string) =>
+      page.locator('[data-testid^="window-frame-"]', { has: page.locator(`[data-command-slot="${slot}"]`) });
+    const runningSlots = (page: Page) => page.getByTestId('command-terminal-running-row').evaluateAll(
+      (rows) => rows.map((row) => row.getAttribute('data-command-slot')),
+    );
+
+    test('Expand shows only beside another terminal, fills the panel, and Restore brings the grid back', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTerminals(page, 1);
+        await expect(page.getByTestId('command-bar-expand')).toHaveCount(0);
+
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect(page.getByTestId('command-bar-expand')).toHaveCount(2);
+
+        const firstExpand = page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand');
+        await firstExpand.click();
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        await expect(firstExpand).toHaveAccessibleName('Restore the grid');
+        const areaBox = await page.getByTestId('command-terminal-area').boundingBox();
+        const expandedBox = await frameOf(page, 'slot-1').boundingBox();
+        expect(Math.abs((expandedBox?.width ?? 0) - (areaBox?.width ?? 0))).toBeLessThanOrEqual(3);
+        // The other keeps running behind it, hidden from the pointer and the keyboard.
+        await expect(frameOf(page, 'slot-2')).toHaveAttribute('aria-hidden', 'true');
+        await expect(frameOf(page, 'slot-2')).toHaveAttribute('inert', '');
+        await expect(page.locator('[data-testid^="tile-splitter-"]')).toHaveCount(0);
+        expect(await runningSlots(page)).toEqual(['slot-2']);
+
+        await firstExpand.click();
+        await expect(page.locator('[data-testid^="window-frame-"][aria-hidden="true"]')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-running')).toHaveCount(0);
+        await expect(page.locator('[data-testid^="tile-splitter-"]')).toHaveCount(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a Running row expands its terminal, and its Stop ends it while the expanded one stays', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTerminals(page, 3);
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        expect(await runningSlots(page)).toEqual(['slot-2', 'slot-3']);
+
+        // A row's title expands that terminal in its place.
+        await page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-3"]')
+          .getByTestId('command-terminal-running-expand').click();
+        await expect(frameOf(page, 'slot-3')).toHaveAttribute('data-expanded', 'true');
+        expect(await runningSlots(page)).toEqual(['slot-1', 'slot-2']);
+
+        // A row's mark is that terminal's own Stop: it ends without being brought back.
+        const stopButton = page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-2"]')
+          .getByTestId('command-terminal-running-stop');
+        await expect(stopButton).toHaveAccessibleDescription('Stop. It moves to Earlier.');
+        await stopButton.click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect(frameOf(page, 'slot-3')).toHaveAttribute('data-expanded', 'true');
+        await expect.poll(() => runningSlots(page), { timeout: 3000 }).toEqual(['slot-1']);
+
+        // With one left beside it, stopping that one leaves nothing to expand over.
+        await page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-1"]')
+          .getByTestId('command-terminal-running-stop').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-running')).toHaveCount(0);
+        await expect(page.getByTestId('command-bar-expand')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Earlier - the rail lists the project's ended conversations (main's
   // `commandTerminalHistory:list`, seeded here through
   // `window.__mockCommandTerminalHistory`) and resumes one: in place of a

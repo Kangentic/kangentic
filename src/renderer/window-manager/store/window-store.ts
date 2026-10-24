@@ -236,6 +236,14 @@ export interface WindowStoreState {
    *  half-snapped/floating window is confined to THAT window's footprint, leaving
    *  the rest of the overlay as free board. Meaningless when `tileTree` is null. */
   tileTreeRect: FractionalRect;
+  /**
+   * A host-arranged layer's EXPANDED window (the Command Terminal panel's
+   * Expand): it fills the whole overlay while every other window stays mounted
+   * at its own tile, hidden, so none of them refits. Null shows the tiles.
+   * Transient, never persisted, and cleared when that window closes or fewer
+   * than two remain.
+   */
+  expandedWindowId: string | null;
 
   /** Open a window for an anchor, or focus the existing one for that anchor. */
   openWindow: (input: OpenWindowInput) => string;
@@ -304,6 +312,8 @@ export interface WindowStoreState {
    * reset. Ids the store does not hold, and dormant windows, are skipped.
    */
   arrangeTiles: (windowIds: readonly string[]) => void;
+  /** Expand one window over the others (and focus it), or show the tiles again (null). */
+  setExpandedWindow: (id: string | null) => void;
   toggleMaximizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
   /** Snapshot the current layout into the persisted, anchor-anchored form. */
@@ -389,6 +399,7 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
     zCounter: 0,
     tileTree: null,
     tileTreeRect: FULL_TILE_RECT,
+    expandedWindowId: null,
 
     openWindow: (input) => {
       const kind = input.kind ?? options.kind;
@@ -456,6 +467,9 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         order: [...current.order, id],
         focusedWindowId: id,
         zCounter,
+        // A window opened while another is expanded takes its place in front, so
+        // what the user just started is what they see.
+        ...(current.expandedWindowId !== null ? { expandedWindowId: id } : {}),
       }));
       return id;
     },
@@ -490,7 +504,8 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         const nextOrder = current.order.filter((candidate) => candidate !== id);
         const focusedWindowId =
           current.focusedWindowId === id ? (nextOrder[nextOrder.length - 1] ?? null) : current.focusedWindowId;
-        return { windows: nextWindows, order: nextOrder, focusedWindowId, tileTree: base.tileTree, tileTreeRect: base.tileTreeRect };
+        const expandedWindowId = current.expandedWindowId === id ? null : current.expandedWindowId;
+        return { windows: nextWindows, order: nextOrder, focusedWindowId, expandedWindowId, tileTree: base.tileTree, tileTreeRect: base.tileTreeRect };
       });
     },
 
@@ -947,7 +962,11 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
           const candidate = current.windows[id];
           return candidate !== undefined && !isWindowDormant(candidate);
         });
-        if (ids.length === 0) return current.tileTree ? { tileTree: null, tileTreeRect: FULL_TILE_RECT } : current;
+        if (ids.length === 0) {
+          return current.tileTree || current.expandedWindowId
+            ? { tileTree: null, tileTreeRect: FULL_TILE_RECT, expandedWindowId: null }
+            : current;
+        }
         const nextWindows = { ...current.windows };
         if (ids.length === 1) {
           // A tree needs two leaves, so a lone window floats over the whole overlay.
@@ -958,8 +977,12 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
             geometry: FULL_TILE_RECT,
             restoreGeometry: null,
           };
-          return { windows: nextWindows, tileTree: null, tileTreeRect: FULL_TILE_RECT };
+          // A lone window already fills the overlay; there is nothing to expand over.
+          return { windows: nextWindows, tileTree: null, tileTreeRect: FULL_TILE_RECT, expandedWindowId: null };
         }
+        const expandedWindowId = current.expandedWindowId !== null && ids.includes(current.expandedWindowId)
+          ? current.expandedWindowId
+          : null;
         const tree = hostArrangementTree(ids, nextTileId);
         if (!tree) return current;
         const markTiled = (node: TileNode): void => {
@@ -975,8 +998,14 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         for (const id of ids.slice(4)) {
           nextWindows[id] = { ...nextWindows[id], state: 'floating', leafId: null, geometry: FULL_TILE_RECT, restoreGeometry: null };
         }
-        return { windows: nextWindows, tileTree: tree, tileTreeRect: FULL_TILE_RECT };
+        return { windows: nextWindows, tileTree: tree, tileTreeRect: FULL_TILE_RECT, expandedWindowId };
       });
+    },
+
+    setExpandedWindow: (id) => {
+      if (id !== null && !get().windows[id]) return;
+      set((current) => (current.expandedWindowId === id ? current : { expandedWindowId: id }));
+      if (id !== null) get().focusWindow(id);
     },
 
     toggleMaximizeWindow: (id) => {
@@ -1133,6 +1162,8 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
             zCounter: Object.keys(restored.windows).length,
             tileTree: restored.tileTree,
             tileTreeRect: restored.tileTreeRect,
+            // A restored layout regenerates every window id, so none is expanded.
+            expandedWindowId: null,
           };
         }
 

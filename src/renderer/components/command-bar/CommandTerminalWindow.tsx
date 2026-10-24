@@ -16,10 +16,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, SquareChevronRight } from 'lucide-react';
-import { ActivityMark } from '../ActivityMark';
-import { IconSlot } from '../IconSlot';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -31,7 +28,7 @@ import { resolveTerminalBackground } from '../../hooks/useTerminal';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
-import { transientKey, type TransientKillOutcome } from '../../stores/session-store/transient-session-slice';
+import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { findAdoptableTransientSession } from '../../stores/session-store/transient-recovery';
 import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 import { useBoardStore } from '../../stores/board-store';
@@ -47,6 +44,8 @@ import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
+import { StopButtonIcon } from './StopButtonIcon';
+import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
@@ -87,45 +86,6 @@ function resolveMountAttach(slot: string): MountAttach {
   return null;
 }
 
-/**
- * The Stop button glyph, carrying the same activity ring the task-detail header folds into its
- * pause button (`PauseButtonIcon`), but with a STOP square centered instead of pause bars - the
- * command terminal stops (kills the PTY); it never pauses. Activity is encoded by the ring:
- *   - thinking (agent working): a rotating active ring around the stop square.
- *   - idle/permission (needs you): a static attention ring around the stop square.
- *   - not yet running / no activity: the plain red CircleStop (rest state).
- *
- * Ring and square are one packaged mark, so the hand-computed `47 16` dash that used to be
- * duplicated here and in `TaskDetailHeader` is gone. See `PauseButtonIcon` for why 20 is the
- * size that reproduces the old glyph exactly.
- *
- * These branches return DIFFERENT element types, so activity changing swaps the whole subtree
- * rather than re-rendering one, and a node destroyed mid-press makes Chromium drop the click.
- * The single `IconSlot` below the branching is the one element the swap does NOT destroy, and
- * it absorbs the pointer on the glyph's behalf. Wrapping once rather than inside each branch
- * is what makes that structural: a future branch cannot forget it. `PauseButtonIcon` has the
- * same shape over five branches and does the same.
- */
-function StopButtonIcon({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
-  // The slot is 20 across every state, while each glyph keeps the size it already drew at
-  // (the 20px mark reads level with the 18px lucide glyphs), so the button never resizes.
-  return <IconSlot size={20}>{stopGlyph({ isThinking, isIdle, stopping })}</IconSlot>;
-}
-
-function stopGlyph({ isThinking, isIdle, stopping }: { isThinking: boolean; isIdle: boolean; stopping: boolean }): ReactNode {
-  if (stopping) return <Loader2 size={18} className="animate-spin" />;
-  if (isThinking || isIdle) {
-    return (
-      <ActivityMark
-        mark={isThinking ? 'control-stop-working' : 'control-stop-idle'}
-        size={20}
-        className={isThinking ? 'text-active' : 'text-attention'}
-      />
-    );
-  }
-  return <CircleStop size={18} />;
-}
-
 interface CommandTerminalWindowProps {
   managedWindow: ManagedWindow;
   /** True while the frame is maximized (driven by the window store). */
@@ -144,6 +104,13 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const commandTerminalEntityId = commandTerminalChangesEntityId(slot);
   const layerStore = useLayerStore();
   const closeWindow = layerStore((state) => state.closeWindow);
+  const setExpandedWindow = layerStore((state) => state.setExpandedWindow);
+  const canExpand = layerStore((state) => Object.keys(state.windows).length > 1);
+  const isExpanded = layerStore((state) => state.expandedWindowId === windowId);
+  const handleToggleExpanded = useCallback(
+    () => setExpandedWindow(isExpanded ? null : windowId),
+    [setExpandedWindow, isExpanded, windowId],
+  );
   const { hideLayer, resumeBeside } = useCommandTerminalLayer();
 
   // What this window attaches to at mount, decided ONCE, before the first
@@ -498,22 +465,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const handleTerminate = useCallback(async () => {
     if (stopping) return;
     setStopping(true);
-    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
-    let outcome: TransientKillOutcome = 'no-session';
-    try {
-      if (currentProjectId) {
-        outcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
-      }
-    } catch {
-      outcome = 'failed';
-    }
-    if (outcome === 'failed') {
-      useToastStore.getState().addToast({
-        title: "Couldn't stop the terminal",
-        message: 'Its process may still be running.',
-        variant: 'error',
-      });
-    }
+    await killCommandTerminalInSlot(slot);
     closeWindow(windowId);
     // This runs on essentially every Stop, not just the rare path: closeWindow is a
     // plain Zustand set(), so React cannot commit the unmount between these two
@@ -720,6 +672,24 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
             anchorRef={kebabWrapRef}
           />
 
+          {/* Expand fills the panel with this terminal; the others keep running
+              behind it and list in the rail. Only beside another terminal: a
+              lone one already fills the panel. */}
+          {canExpand && (
+            <Tooltip label={isExpanded ? 'Restore the grid' : 'Expand terminal'}>
+              <button
+                type="button"
+                onClick={handleToggleExpanded}
+                className={`p-1.5 rounded transition-colors flex-shrink-0 ${
+                  isExpanded ? 'bg-surface-hover text-fg' : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover'
+                }`}
+                aria-label={isExpanded ? 'Restore the grid' : 'Expand terminal'}
+                data-testid="command-bar-expand"
+              >
+                {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         {/* Commands palette: rendered once at the header root. Commands is kebab-only

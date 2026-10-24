@@ -101,6 +101,58 @@ describe('isHostArranged', () => {
   });
 });
 
+describe('setExpandedWindow', () => {
+  it('expands one window and focuses it, and null shows the tiles again', () => {
+    const { store, ids } = arranged(3);
+    store.getState().setExpandedWindow(ids[1]);
+    expect(store.getState()).toMatchObject({ expandedWindowId: ids[1], focusedWindowId: ids[1] });
+    // The tiles stay as they were underneath, so nothing behind it refits.
+    expect(isHostArranged(store.getState().windows, store.getState().tileTree, store.getState().tileTreeRect)).toBe(true);
+    store.getState().setExpandedWindow(null);
+    expect(store.getState().expandedWindowId).toBeNull();
+  });
+
+  it('ignores a window the store does not hold', () => {
+    const { store } = arranged(2);
+    store.getState().setExpandedWindow('no-such-window');
+    expect(store.getState().expandedWindowId).toBeNull();
+  });
+
+  it('lets go when the expanded window closes', () => {
+    const { store, ids } = arranged(3);
+    store.getState().setExpandedWindow(ids[0]);
+    store.getState().closeWindow(ids[0]);
+    expect(store.getState().expandedWindowId).toBeNull();
+  });
+
+  it('keeps the expanded window when another closes, and lets go once it is the only one left', () => {
+    const { store, ids } = arranged(3);
+    store.getState().setExpandedWindow(ids[0]);
+    store.getState().closeWindow(ids[1]);
+    store.getState().arrangeTiles([ids[0], ids[2]]);
+    expect(store.getState().expandedWindowId).toBe(ids[0]);
+    store.getState().closeWindow(ids[2]);
+    store.getState().arrangeTiles([ids[0]]);
+    expect(store.getState().expandedWindowId).toBeNull();
+  });
+
+  it('a window opened while one is expanded takes its place in front', () => {
+    const { store, ids } = arranged(2);
+    store.getState().setExpandedWindow(ids[0]);
+    const opened = store.getState().openWindow({ anchor: 'slot-3', sessionId: null, title: 'Terminal 3' });
+    expect(store.getState().expandedWindowId).toBe(opened);
+  });
+
+  it('is never part of a saved layout, and a restore clears it', () => {
+    const { store, ids } = arranged(2);
+    store.getState().setExpandedWindow(ids[0]);
+    const saved = store.getState().serializeWorkspace();
+    expect(JSON.stringify(saved)).not.toContain('expanded');
+    store.getState().applyWorkspace(saved, () => null, () => true);
+    expect(store.getState().expandedWindowId).toBeNull();
+  });
+});
+
 describe('windowIdsInReadingOrder', () => {
   it('reads a grid by its structure, so seams that cross never reorder it', () => {
     const { store, ids } = arranged(4);

@@ -22,7 +22,7 @@
  * backdrop click) keeps everything alive; a terminal's Stop kills its PTY.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
 import {
@@ -37,6 +37,8 @@ import {
 import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-manager';
 import { CommandTerminalPanel } from './CommandTerminalPanel';
 import { CommandTerminalRail } from './CommandTerminalRail';
+import type { RunningCommandTerminal } from './CommandTerminalRail';
+import { killCommandTerminalInSlot } from './stop-command-terminal';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -349,6 +351,22 @@ function useArrangeOnPopulationChange(): void {
   }), []);
 }
 
+/** The terminals behind the expanded one, in the order they tile, for the
+ *  rail's Running list; null while none is expanded. */
+function useRunningBehindExpanded(): RunningCommandTerminal[] | null {
+  const expandedWindowId = commandWindowManager.store((state) => state.expandedWindowId);
+  const windowIds = commandWindowManager.store(useShallow((state) =>
+    (state.expandedWindowId === null
+      ? []
+      : windowIdsInReadingOrder(state.tileTree).filter((id) => id !== state.expandedWindowId))));
+  const slots = commandWindowManager.store(useShallow((state) =>
+    windowIds.map((id) => state.windows[id]?.anchor ?? '')));
+  return useMemo(
+    () => (expandedWindowId === null ? null : windowIds.map((windowId, index) => ({ windowId, slot: slots[index] }))),
+    [expandedWindowId, windowIds, slots],
+  );
+}
+
 /** Every slot is taken: the Command Terminal windows (the store is a module
  *  singleton that outlives the layer's mount) plus the project's live
  *  terminals, which include any a phone started with the layer closed. Both
@@ -506,6 +524,21 @@ export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
     resumeCommandTerminalConversation(entry.agentSessionId);
   }, []);
+  const running = useRunningBehindExpanded();
+  const handleExpand = useCallback((windowId: string) => {
+    commandWindowManager.store.getState().setExpandedWindow(windowId);
+    // The frame stops being inert on the commit after the expand, so the
+    // keyboard follows the click into that terminal a frame later.
+    requestAnimationFrame(() => {
+      // arrival-focus-ok: the user's own click on this terminal's Running row.
+      document.querySelector<HTMLElement>(`[data-testid="window-frame-${windowId}"] .xterm-helper-textarea`)?.focus();
+    });
+  }, []);
+  const handleStopRunning = useCallback(async (terminal: RunningCommandTerminal) => {
+    await killCommandTerminalInSlot(terminal.slot);
+    // The arrange bridge re-tiles the rest; with one left, nothing stays expanded.
+    commandWindowManager.store.getState().closeWindow(terminal.windowId);
+  }, []);
 
   return (
     <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
@@ -523,8 +556,11 @@ export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
                 projectId={projectId}
                 atCap={atCap}
                 resumesInPlace={resumesInPlace}
+                running={running}
                 onNewTerminal={handleNewTerminal}
                 onResume={handleResume}
+                onExpand={handleExpand}
+                onStop={handleStopRunning}
               />
             )}
           />

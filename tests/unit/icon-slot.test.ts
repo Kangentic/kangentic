@@ -1,7 +1,7 @@
 /**
  * Unit coverage for IconSlot's own contract, pinned once at the unit tier instead of
  * with a slow browser test per adoption site. IconSlot is adopted at three places
- * (StopButtonIcon in CommandTerminalWindow.tsx, PauseButtonIcon in
+ * (StopButtonIcon in command-bar/StopButtonIcon.tsx, PauseButtonIcon in
  * TaskDetailHeader.tsx, StateGlyph in MonitorCard.tsx), but only StopButtonIcon's
  * adoption is exercised end-to-end (tests/ui/command-terminal.spec.ts, "Stop still
  * fires when the activity mark changes mid-press"). StateGlyph's Tooltip sits on
