@@ -24,8 +24,10 @@
  *   #7 - When projectId is missing (getSessionProjectId returns undefined):
  *        - renderer still receives SESSION_IDLE_TIMEOUT
  *        - withTaskLock is NOT entered (no DB writes, no cancel)
- *        - a task session is still suspended; a Command Terminal (transient,
- *          already suspended by the sweep) is not suspended a second time
+ *        - a task session is still suspended
+ *        - a Command Terminal is dropped with no announce and no suspend,
+ *          with or without a project: the sweep never times one out (a
+ *          suspend would end it), so a late report must not mark it paused
  *
  * Mock strategy mirrors split-lock-cas.test.ts:
  *   - electron and ipcMain are mocked so registerSessionHandlers can be called
@@ -586,7 +588,7 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-orphan');
   });
 
-  it('tells the renderer about a Command Terminal but does not suspend it again: the sweep already did', async () => {
+  it('drops a Command Terminal: no announce, no suspend, no task record', async () => {
     context.sessionManager.getSession.mockReturnValue(
       { id: 'sess-command', taskId: 'task-command', transient: true } as Session,
     );
@@ -598,19 +600,14 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
     // Intentional fixed wait - we cannot poll for non-occurrence.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
-      IPC.SESSION_IDLE_TIMEOUT,
-      'sess-command',
-      'task-command',
-      10,
-      undefined,
-    );
+    // An announce would make the renderer mark the live terminal suspended.
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
     expect(mockGetProjectRepos).not.toHaveBeenCalled();
   });
 
-  it('treats a Command Terminal in a resolved project the same: announced, never paused through a task record', async () => {
+  it('drops a Command Terminal in a resolved project the same way: never paused through a task record', async () => {
     context.sessionManager.getSessionProjectId.mockReturnValue('proj-1');
     context.sessionManager.getSession.mockReturnValue(
       { id: 'sess-command', taskId: 'task-command', transient: true } as Session,
@@ -624,13 +621,7 @@ describe('idle-timeout listener - early exit when projectId is missing', () => {
     // queued task lock time to run its block, were the listener to enter it.
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
-      IPC.SESSION_IDLE_TIMEOUT,
-      'sess-command',
-      'task-command',
-      10,
-      'proj-1',
-    );
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
     expect(context.sessionManager.suspend).not.toHaveBeenCalled();
     expect(mockGetProjectRepos).not.toHaveBeenCalled();
     expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();

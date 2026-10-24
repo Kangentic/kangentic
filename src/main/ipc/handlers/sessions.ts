@@ -20,6 +20,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { trackFeatureUsed, trackMilestone } from '../../analytics/usage';
 import { parseModelId } from '../../../shared/model-id';
 import { requiresUserInteraction } from '../../../shared/activity-state';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { captureSessionMetrics, readTranscriptToolResultTokens, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
@@ -583,17 +584,22 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     // card to toast for. Its pane shows it paused, and its own lifecycle
     // (`registerWorkflowAgentLifecycle`) records what it spent.
     if (session?.workflowId) return;
+    // A Command Terminal is never paused: a suspend ends it, and its
+    // conversation with it. The sweep never times one out
+    // (SessionManager's `isIdleTimeoutExempt`); should a report reach here
+    // anyway, it is dropped, since announcing it would mark the live terminal
+    // suspended in the renderer.
+    if (session && isCommandTerminalSession(session)) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     const announce = (): void => {
       if (!context.mainWindow.isDestroyed()) {
         broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
       }
     };
-    // A Command Terminal has no task record to write: the sweep suspended it
-    // already (SessionManager's `requestSuspend`). A task session with no
-    // project cannot be recorded either, so it is suspended as it always was.
-    if (session?.transient || !projectId) {
-      if (!session?.transient) void context.sessionManager.suspend(sessionId);
+    // A task session with no project cannot be recorded, so it is suspended
+    // as it always was.
+    if (!projectId) {
+      void context.sessionManager.suspend(sessionId);
       announce();
       return;
     }

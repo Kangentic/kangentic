@@ -83,7 +83,8 @@ workflow's own agent are never paused. An agent paused at a permission prompt do
 it was asking about.
 
 **When idle** (off by default). Pauses any agent that has waited on you for the minutes you set (30
-by default). It counts idle waits only, not a permission prompt.
+by default). It counts idle waits only, not a permission prompt. It never pauses a Command
+Terminal: a pause would end the terminal, and its conversation with it.
 
 Either way the agent stays paused until you resume it: a restart does not bring it back, and
 neither does memory recovering or a move into a column that starts agents. Resume it from its card

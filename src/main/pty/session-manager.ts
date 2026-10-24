@@ -3,7 +3,7 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
-import { isCommandTerminalSession } from '../../shared/session-owner';
+import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -771,15 +771,24 @@ export class SessionManager extends EventEmitter {
           });
         }
       },
+      // A Command Terminal is never paused: a suspend ends it, and its
+      // conversation with it, since it has no record to resume. The sweep
+      // skips it before it times anything out, as the low-memory pause does
+      // (`isPauseEligible`). A workflow's own agent is transient too but stays
+      // in the sweep.
+      isIdleTimeoutExempt: (sessionId) => {
+        const session = this.registry.get(sessionId);
+        return session !== undefined && isCommandTerminalSession(session);
+      },
       // The idle sweep's suspend. A task's agent is NOT suspended here: the
       // 'idle-timeout' listener (ipc/handlers/sessions.ts) pauses it through
       // `pauseTaskSession`, which records the pause before the PTY goes down.
       // Suspending here first left the record `running` for a quit in the
-      // gap to resume on the next launch. A Command Terminal and a workflow's
-      // own agent have no task record to write, so they are suspended here.
+      // gap to resume on the next launch. A workflow's own agent has no task
+      // record to write, so it is suspended here.
       requestSuspend: (sessionId) => {
         const session = this.registry.get(sessionId);
-        if (session && (session.transient || session.workflowId)) void this.suspend(sessionId);
+        if (session && isWorkflowAgentSession(session)) void this.suspend(sessionId);
       },
       isSessionRunning: (sessionId) => this.registry.get(sessionId)?.status === 'running',
       getSessionRootPid: (sessionId) => {
@@ -2540,9 +2549,12 @@ export class SessionManager extends EventEmitter {
    * emitted, so every exit listener (the crash push, a phone's
    * `session-ended`, the renderer's status patch) has already read the row.
    *
-   * A suspend (the idle timeout, a project relocate) ends it the same way: a
-   * Command Terminal has no record to resume from, so a suspended row would
-   * only hold its slot and a window on a dead PTY.
+   * A suspend ends it the same way: a Command Terminal has no record to
+   * resume from, so a suspended row would only hold its slot and a window on
+   * a dead PTY. No automatic path suspends one: the idle sweep skips it
+   * (`isIdleTimeoutExempt`), the low-memory pause never picks it
+   * (`isPauseEligible`), and a project relocate kills it. This is the
+   * backstop for a suspend that reaches one anyway.
    *
    * Skipped during quit: `killAll()` exits every terminal, and its bounded
    * drain (synchronous-shutdown.md) is no place for removals and broadcasts.

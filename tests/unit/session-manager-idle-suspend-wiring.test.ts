@@ -1,14 +1,19 @@
 /**
- * Wiring test for SessionManager's `requestSuspend` telemetry callback, which
- * the idle-timeout sweep calls just before it reports the timeout.
+ * Wiring test for the two SessionManager telemetry callbacks the idle-timeout
+ * sweep asks: `isIdleTimeoutExempt`, before it times a session out, and
+ * `requestSuspend`, just before it reports the timeout.
+ *
+ * A Command Terminal is exempt. A suspend ends it, and its conversation with
+ * it (it has no record to resume), so the sweep never times it out, the same
+ * way the low-memory pause never picks it (`isPauseEligible`). A workflow's
+ * own agent is transient too, but it is no Command Terminal: it stays in the
+ * sweep and is suspended here, since it has no task record to write.
  *
  * A task's agent must NOT be suspended here. The 'idle-timeout' listener
  * (ipc/handlers/sessions.ts) pauses it through `pauseTaskSession`, which
  * writes the paused record before the PTY goes down. Suspending here first
  * flipped the registry with the record still `running`, so a quit in the gap
  * resumed the agent on the next launch, breaking "paused until you resume it".
- * A Command Terminal and a workflow's own agent have no task record, so they
- * are still suspended here.
  *
  * Structure mirrors session-manager-branch-pushed-wiring.test.ts: capture the
  * callbacks object SessionManager hands to `new SessionTelemetry` and drive it.
@@ -40,6 +45,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 let capturedCallbacks: {
   requestSuspend?: (sessionId: string) => void;
+  isIdleTimeoutExempt?: (sessionId: string) => boolean;
 } | null = null;
 
 vi.mock('../../src/main/activity-engine/session-telemetry', () => {
@@ -57,7 +63,7 @@ interface RegistryAccess {
   registry: { set: (id: string, session: Record<string, unknown>) => void };
 }
 
-describe('SessionManager idle-sweep suspend wiring', () => {
+describe('SessionManager idle-sweep wiring', () => {
   let manager: SessionManager;
   let suspendSpy: ReturnType<typeof vi.spyOn>;
 
@@ -73,27 +79,58 @@ describe('SessionManager idle-sweep suspend wiring', () => {
     });
   }
 
-  it('leaves a task\'s agent for the idle-timeout listener to pause, record first', () => {
-    register('sess-task', { taskId: 'task-1' });
+  function isExempt(sessionId: string): boolean | undefined {
+    if (!capturedCallbacks?.isIdleTimeoutExempt) throw new Error('isIdleTimeoutExempt was not wired');
+    return capturedCallbacks.isIdleTimeoutExempt(sessionId);
+  }
 
-    capturedCallbacks?.requestSuspend?.('sess-task');
+  describe('isIdleTimeoutExempt', () => {
+    it('exempts a Command Terminal: a suspend would end it and lose its conversation', () => {
+      register('sess-terminal', { taskId: 'terminal-1', transient: true });
 
-    expect(suspendSpy).not.toHaveBeenCalled();
+      expect(isExempt('sess-terminal')).toBe(true);
+    });
+
+    it('leaves a task\'s agent in the sweep', () => {
+      register('sess-task', { taskId: 'task-1' });
+
+      expect(isExempt('sess-task')).toBe(false);
+    });
+
+    it('leaves a workflow\'s own agent in the sweep, though it is transient too', () => {
+      register('sess-workflow', { taskId: 'wf-1', transient: true, workflowId: 'wf-1' });
+
+      expect(isExempt('sess-workflow')).toBe(false);
+    });
+
+    it('answers false for a session it does not hold', () => {
+      expect(isExempt('sess-unknown')).toBe(false);
+    });
   });
 
-  it('suspends a Command Terminal, which has no task record to write', () => {
-    register('sess-terminal', { taskId: 'terminal-1', transient: true });
+  describe('requestSuspend', () => {
+    it('leaves a task\'s agent for the idle-timeout listener to pause, record first', () => {
+      register('sess-task', { taskId: 'task-1' });
 
-    capturedCallbacks?.requestSuspend?.('sess-terminal');
+      capturedCallbacks?.requestSuspend?.('sess-task');
 
-    expect(suspendSpy).toHaveBeenCalledWith('sess-terminal');
-  });
+      expect(suspendSpy).not.toHaveBeenCalled();
+    });
 
-  it('suspends a workflow\'s own agent, which has no task record to write', () => {
-    register('sess-workflow', { taskId: 'wf-1', transient: true, workflowId: 'wf-1' });
+    it('never suspends a Command Terminal, which a suspend would end', () => {
+      register('sess-terminal', { taskId: 'terminal-1', transient: true });
 
-    capturedCallbacks?.requestSuspend?.('sess-workflow');
+      capturedCallbacks?.requestSuspend?.('sess-terminal');
 
-    expect(suspendSpy).toHaveBeenCalledWith('sess-workflow');
+      expect(suspendSpy).not.toHaveBeenCalled();
+    });
+
+    it('suspends a workflow\'s own agent, which has no task record to write', () => {
+      register('sess-workflow', { taskId: 'wf-1', transient: true, workflowId: 'wf-1' });
+
+      capturedCallbacks?.requestSuspend?.('sess-workflow');
+
+      expect(suspendSpy).toHaveBeenCalledWith('sess-workflow');
+    });
   });
 });
