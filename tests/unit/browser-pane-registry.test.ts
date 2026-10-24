@@ -869,6 +869,61 @@ describe('BrowserPaneRegistry', () => {
       ).resolves.toBeNull();
     });
 
+    /**
+     * Detach, dock and the failed-detach recovery name the guests they are
+     * replacing. A recovery names two: the docked guest that died when the window
+     * opened and the window's own pane, which stays alive for a moment after the
+     * window closes. Skipping only one of them hands back a handle about to die.
+     */
+    describe('excludeWebContentsIds', () => {
+      /** A second live pane for task-1, so two guests compete for the same wait. */
+      const REGISTER_A2: RegisterSurfaceInput = {
+        ...REGISTER_A,
+        handle: 'pane_a2a2a2a2',
+        webContentsId: 12,
+      };
+
+      beforeEach(() => {
+        registry.register(REGISTER_A);
+        registry.register(REGISTER_A2);
+        seedGuests(fakeGuest(11), fakeGuest(12));
+      });
+
+      it('skips every guest it names, in either order, and resolves null when all are named', async () => {
+        await expect(
+          registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [11, 12] }, 20),
+        ).resolves.toBeNull();
+        await expect(
+          registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [12, 11] }, 20),
+        ).resolves.toBeNull();
+      });
+
+      it('returns the pane that is not named', async () => {
+        await expect(
+          registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [11] }, 20),
+        ).resolves.toMatchObject({ sessionId: 'pane_a2a2a2a2' });
+        await expect(
+          registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [12] }, 20),
+        ).resolves.toMatchObject({ sessionId: 'pane_aaaaaaaa' });
+      });
+
+      it('skips nothing when the list is empty', async () => {
+        await expect(
+          registry.waitForLivePane({ taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [] }, 20),
+        ).resolves.toMatchObject({ sessionId: 'pane_aaaaaaaa' });
+      });
+
+      it('keeps waiting past the named guests and resolves on the successor that registers', async () => {
+        seedGuests(fakeGuest(11), fakeGuest(12), fakeGuest(13));
+        const pending = registry.waitForLivePane(
+          { taskId: 'task-1', projectId: 'proj-1', excludeWebContentsIds: [11, 12] },
+          1000,
+        );
+        registry.register({ ...REGISTER_A, handle: 'pane_a3a3a3a3', webContentsId: 13 });
+        await expect(pending).resolves.toMatchObject({ sessionId: 'pane_a3a3a3a3' });
+      });
+    });
+
     it('resolves null on timeout when nothing registers', async () => {
       seedGuests();
       await expect(

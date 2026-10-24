@@ -969,7 +969,7 @@ export class BrowserPaneRegistry {
    * that pane is the thing the pane's arrival reclaims.
    */
   async waitForLivePane(
-    target: { taskId: string; projectId: string; excludeWebContentsId?: number },
+    target: { taskId: string; projectId: string; excludeWebContentsIds?: readonly number[] },
     timeoutMs: number,
   ): Promise<BrowserPaneEntry | null> {
     const findLive = (): BrowserPaneEntry | null => {
@@ -980,12 +980,10 @@ export class BrowserPaneRegistry {
         // Detaching and docking REPLACE the guest: the old `<webview>` unmounts
         // as the new document mounts, and for a moment both are registered. A
         // caller moving the pane between windows must wait for the successor,
-        // so it names the predecessor and this skips it. Without that the wait
-        // resolves instantly against the guest that is on its way out, and the
-        // handle handed back is dead before it is used.
-        if (target.excludeWebContentsId !== undefined && entry.webContentsId === target.excludeWebContentsId) {
-          continue;
-        }
+        // so it names the predecessors and this skips them. Without that the
+        // wait resolves instantly against a guest that is on its way out, and
+        // the handle handed back is dead before it is used.
+        if (target.excludeWebContentsIds?.includes(entry.webContentsId)) continue;
         const guest = electronWebContents.fromId(entry.webContentsId);
         if (!guest || guest.isDestroyed()) continue;
         return entry;
