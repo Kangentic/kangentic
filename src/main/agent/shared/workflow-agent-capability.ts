@@ -21,8 +21,19 @@ import type { AgentAdapter } from '../agent-adapter';
 export function canBeWorkflowAgent(
   adapter: Pick<AgentAdapter, 'kangenticMcp' | 'supportsCallerSessionId' | 'capturesInteractiveSessionId' | 'createSessionId'>,
 ): boolean {
-  const resumable = adapter.supportsCallerSessionId
+  return adapter.kangenticMcp === 'per-session' && canResumeConversationById(adapter);
+}
+
+/**
+ * Whether Kangentic knows an interactive conversation's id and can resume it
+ * by that id: it chose the id, the CLI creates one before launch, or the
+ * session's own id is captured after launch. The workflow agent resumes by it,
+ * and a Command Terminal resumes an earlier conversation the same way.
+ */
+export function canResumeConversationById(
+  adapter: Pick<AgentAdapter, 'supportsCallerSessionId' | 'capturesInteractiveSessionId' | 'createSessionId'>,
+): boolean {
+  return adapter.supportsCallerSessionId
     || typeof adapter.createSessionId === 'function'
     || adapter.capturesInteractiveSessionId === true;
-  return adapter.kangenticMcp === 'per-session' && resumable;
 }

@@ -1,0 +1,142 @@
+import type Database from 'better-sqlite3';
+
+/**
+ * The newest conversations kept per project. More than any screen's Earlier
+ * list fits, so a maximized panel or the phone's list has more than the rail
+ * shows; older rows are pruned as new ones arrive.
+ */
+export const COMMAND_TERMINAL_HISTORY_LIMIT = 50;
+
+export interface CommandTerminalHistoryRow {
+  agent_session_id: string;
+  agent_name: string;
+  label: string | null;
+  cwd: string;
+  started_at: string;
+  touched_at: string | null;
+  ended_at: string | null;
+  updated_at: string;
+}
+
+const COLUMNS = 'agent_session_id, agent_name, label, cwd, started_at, touched_at, ended_at, updated_at';
+
+/**
+ * The conversations a project's Command Terminals held (migration 91). Written
+ * from main as a terminal's agent reports its session id, is used, is named and
+ * ends (`CommandTerminalHistory`), and read for the panel's Earlier list and a
+ * resume.
+ */
+export class CommandTerminalHistoryRepository {
+  constructor(private db: Database.Database) {}
+
+  /**
+   * Record a conversation when its terminal's agent reports its id. A row that
+   * already exists (a resumed conversation reports the same id again) keeps its
+   * start and touch, and takes the newest cwd and agent.
+   */
+  recordConversation(entry: { agentSessionId: string; agentName: string; cwd: string; label: string | null; touched: boolean }): void {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO command_terminal_history (${COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+      ON CONFLICT(agent_session_id) DO UPDATE SET
+        agent_name = excluded.agent_name,
+        cwd = excluded.cwd,
+        label = COALESCE(command_terminal_history.label, excluded.label),
+        touched_at = COALESCE(command_terminal_history.touched_at, excluded.touched_at),
+        ended_at = NULL,
+        updated_at = excluded.updated_at
+    `).run(
+      entry.agentSessionId,
+      entry.agentName,
+      entry.label,
+      entry.cwd,
+      now,
+      entry.touched ? now : null,
+      now,
+    );
+    this.prune();
+  }
+
+  /** The terminal was used: its conversation is worth offering back. */
+  markTouched(agentSessionId: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare(
+      'UPDATE command_terminal_history SET touched_at = COALESCE(touched_at, ?), updated_at = ? WHERE agent_session_id = ?',
+    ).run(now, now, agentSessionId);
+  }
+
+  /** The terminal's name. First write wins, as the live label's does. */
+  setLabel(agentSessionId: string, label: string): void {
+    this.db.prepare(
+      'UPDATE command_terminal_history SET label = COALESCE(label, ?) WHERE agent_session_id = ?',
+    ).run(label, agentSessionId);
+  }
+
+  /**
+   * The conversation ended: its terminal stopped, or the agent moved the
+   * terminal to another conversation. A row nobody used is deleted, since there
+   * is nothing in it to resume.
+   */
+  markEnded(agentSessionId: string, endedAt: string = new Date().toISOString()): void {
+    this.db.prepare('DELETE FROM command_terminal_history WHERE agent_session_id = ? AND touched_at IS NULL').run(agentSessionId);
+    this.db.prepare(
+      'UPDATE command_terminal_history SET ended_at = ?, updated_at = ? WHERE agent_session_id = ?',
+    ).run(endedAt, endedAt, agentSessionId);
+    this.prune();
+  }
+
+  delete(agentSessionId: string): void {
+    this.db.prepare('DELETE FROM command_terminal_history WHERE agent_session_id = ?').run(agentSessionId);
+  }
+
+  get(agentSessionId: string): CommandTerminalHistoryRow | null {
+    const row = this.db.prepare(
+      `SELECT ${COLUMNS} FROM command_terminal_history WHERE agent_session_id = ?`,
+    ).get(agentSessionId) as CommandTerminalHistoryRow | undefined;
+    return row ?? null;
+  }
+
+  /**
+   * Used conversations, newest first. A row with no `ended_at` belongs to a
+   * terminal still open or one open at the last quit (a quit removes no row);
+   * the caller leaves out the ones still live. No LIMIT: the prune already
+   * bounds the table, and the caller drops live and purged rows after this, so
+   * a limit here would leave the list short of resumable rows.
+   */
+  listUsed(): CommandTerminalHistoryRow[] {
+    return this.db.prepare(
+      `SELECT ${COLUMNS} FROM command_terminal_history
+       WHERE touched_at IS NOT NULL
+       ORDER BY COALESCE(ended_at, updated_at) DESC, rowid DESC`,
+    ).all() as CommandTerminalHistoryRow[];
+  }
+
+  /**
+   * Whether a board task or a workflow already owns this conversation. A
+   * `/resume` inside a terminal can switch to one, and that conversation
+   * belongs to its card, not to the terminal's history.
+   */
+  isOwnedElsewhere(agentSessionId: string): boolean {
+    if (this.db.prepare('SELECT 1 FROM sessions WHERE agent_session_id = ? LIMIT 1').get(agentSessionId)) return true;
+    return this.db.prepare('SELECT 1 FROM workflows WHERE agent_session_id = ? LIMIT 1').get(agentSessionId) !== undefined;
+  }
+
+  /**
+   * Keep the newest ended rows. A row with no `ended_at` is never pruned: it
+   * may be a live terminal nobody has used yet, whose touch would otherwise
+   * find no row to mark. The list backfills `ended_at` on rows a quit left
+   * open (`markEnded`), so they age out from there.
+   */
+  private prune(): void {
+    this.db.prepare(`
+      DELETE FROM command_terminal_history
+      WHERE ended_at IS NOT NULL AND agent_session_id NOT IN (
+        SELECT agent_session_id FROM command_terminal_history
+        WHERE ended_at IS NOT NULL
+        ORDER BY ended_at DESC, rowid DESC
+        LIMIT ?
+      )
+    `).run(COMMAND_TERMINAL_HISTORY_LIMIT);
+  }
+}

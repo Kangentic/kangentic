@@ -421,6 +421,13 @@ export class SimulatedSessionManager extends EventEmitter {
     return () => undefined;
   }
 
+  /** Sessions `TerminalSubmit.submitContent` marked used (`SessionManager.markUserInput`). */
+  readonly userInputMarks: string[] = [];
+
+  markUserInput(sessionId: string): void {
+    this.userInputMarks.push(sessionId);
+  }
+
   drain(sessionId: string): Promise<void> {
     if (sessionId !== this.sessionId) return Promise.resolve();
     if (this.pending.length === 0 && this.flushTimer === null) return Promise.resolve();

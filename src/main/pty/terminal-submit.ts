@@ -271,6 +271,8 @@ export class TerminalSubmit {
     text: string,
     opts: SubmitContentOptions = {},
   ): Promise<void> {
+    // Pasted content is something sent into the conversation, whoever sent it.
+    this.sessionManager.markUserInput(sessionId);
     return this.pasteEngine.pasteAndSubmit(sessionId, text, opts);
   }
 

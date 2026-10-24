@@ -1311,6 +1311,14 @@ export interface Session {
    *  Monitor and the phone all read it from this row. */
   commandTerminalLabel?: string | null;
   /**
+   * Someone typed, pasted or sent something into this session's terminal
+   * (`writeCarriesUserContent`, src/shared/terminal-input-content.ts), or it
+   * resumed a conversation. Set once, in main, and announced on
+   * `session-changed`. An unused Command Terminal is replaced in place when the
+   * user resumes an earlier conversation from it, and leaves no history row.
+   */
+  hasUserInput?: boolean;
+  /**
    * Parallel-session discriminator for the terminal badge. Null/undefined (main
    * session, or legacy/transient sessions) shows as "Main"; a swimlane id (the
    * column this session is isolated to) shows as "Isolated". See
@@ -6865,6 +6873,9 @@ export interface SpawnSessionInput {
    * ignored, so nothing starts in the bottom panel's strip.
    */
   restoredGrid?: { cols: number; rows: number };
+  /** Start the session as already used (`Session.hasUserInput`): a resumed
+   *  Command Terminal holds a conversation from its first frame. */
+  hasUserInput?: boolean;
 }
 
 export interface SpawnTransientSessionInput {
@@ -6879,6 +6890,27 @@ export interface SpawnTransientSessionInput {
   /** See `SpawnSessionInput.cols`/`rows` - the same seed-the-real-grid escape hatch. */
   cols?: number;
   rows?: number;
+  /**
+   * Resume this earlier conversation (`CommandTerminalHistoryEntry`) instead of
+   * starting a fresh one. The terminal starts on the agent that held it, keeps
+   * its name, and stays on the checked-out branch: a resume never fetches or
+   * checks out.
+   */
+  resumeAgentSessionId?: string;
+}
+
+/**
+ * One earlier conversation a project's Command Terminals held, for the panel's
+ * Earlier list. Only conversations someone used, whose terminal has ended, and
+ * whose agent can still find the transcript.
+ */
+export interface CommandTerminalHistoryEntry {
+  agentSessionId: string;
+  /** The terminal's name when it ended, or null if it was never named. */
+  label: string | null;
+  agentName: string;
+  /** UTC ISO time the conversation ended. */
+  endedAt: string;
 }
 
 export interface SpawnTransientSessionResult {
@@ -7707,6 +7739,10 @@ export interface ElectronAPI {
      *  Monitor row and a post-reload adopt agree with the pill. Last write
      *  wins, unlike the label: HEAD moves, and the newest reading is true. */
     setTransientBranch: (sessionId: string, branch: string) => Promise<void>;
+    /** A project's earlier Command Terminal conversations, newest first. */
+    listCommandTerminalHistory: (projectId: string) => Promise<CommandTerminalHistoryEntry[]>;
+    /** A project's earlier conversations changed: re-list them. */
+    onCommandTerminalHistoryChanged: (callback: (projectId: string) => void) => () => void;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of

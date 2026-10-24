@@ -7,7 +7,7 @@
 ## Schema
 
 * [Board tables](board-tables.md) - Columns, defaults, indexes and write rules for the board tables, covering swimlanes, tasks (worktree, PR, override pins, workflow route), column_automations, automation_runs, background_calls, workflows, task_links, task_moves, backlog, attachments, project_meta and remote_item_cache.
-* [Session tables](session-tables.md) - Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, the conversation_turn_usage and turn_spawn_links token ledger, and session_activity_intervals.
+* [Session tables](session-tables.md) - Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, the conversation_turn_usage and turn_spawn_links token ledger, session_activity_intervals, and command_terminal_history.
 * [Knowledge Graph tables](knowledge-graph-tables.md) - Schema of the per-project retrieval store behind the Knowledge Graph, covering memory_chunks and its corpora and indexes, the FTS5 table and triggers, sqlite-vec tables, memory_index_state, the transcript archive, memory_task_summaries, memory_meta keys and memory_doc_sums.
 
 ## Change and access

@@ -363,6 +363,12 @@ const api: ElectronAPI = {
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
     setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
+    listCommandTerminalHistory: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_LIST, projectId),
+    onCommandTerminalHistoryChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
+      ipcRenderer.on(IPC.COMMAND_TERMINAL_HISTORY_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.COMMAND_TERMINAL_HISTORY_CHANGED, handler);
+    },
     setFocused: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionIds),
     setMounted: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_MOUNTED, sessionIds),
     notifyUserInterrupt: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_NOTIFY_USER_INTERRUPT, sessionId),

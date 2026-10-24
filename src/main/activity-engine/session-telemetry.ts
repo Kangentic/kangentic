@@ -242,6 +242,12 @@ export class SessionTelemetry {
    * while same-id churn (a status rewrite every ~10s) stays quiet.
    */
   private readonly lastReportedAgentSessionIds = new Map<string, string>();
+  /**
+   * PTY sessions that have had a status write. The first one is a baseline:
+   * before it, the cached usage is the spawn's model-only seed, and a resumed
+   * conversation's first report carries its whole history's output against it.
+   */
+  private readonly statusWriteSeen = new Set<string>();
   private readonly eventCache = new Map<string, SessionEvent[]>();
   /**
    * Tool calls the session's track made in earlier runs (earlier session
@@ -612,8 +618,11 @@ export class SessionTelemetry {
     // the last reported value keeps same-id status churn quiet. Capturing
     // here also closes the one-shot channels (the Set), so a later PTY
     // scrollback echo can never override a status-reported id.
+    let conversationSwitched = false;
     if (this.callbacks.onAgentSessionId && usage.sessionId && typeof usage.sessionId === 'string') {
-      if (this.lastReportedAgentSessionIds.get(sessionId) !== usage.sessionId) {
+      const previouslyReportedId = this.lastReportedAgentSessionIds.get(sessionId);
+      if (previouslyReportedId !== usage.sessionId) {
+        conversationSwitched = previouslyReportedId !== undefined;
         this.lastReportedAgentSessionIds.set(sessionId, usage.sessionId);
         this.agentSessionIdChecked.add(sessionId);
         this.callbacks.onAgentSessionId(sessionId, usage.sessionId);
@@ -626,7 +635,16 @@ export class SessionTelemetry {
       this.agentSessionIdChecked.add(sessionId);
     }
 
-    const previousUsage = this.usage.getSessionUsage(sessionId);
+    // A write that reports another conversation than the last one (a `/resume`
+    // or `/clear` inside the terminal), or the session's first write (whose
+    // cached usage is only the spawn's seed, while a resumed conversation
+    // reports its whole history), compares two different conversations'
+    // totals. It sets the baseline instead: growth against it is no proof of
+    // work. Counting it as work held a resumed or switched terminal "working"
+    // for the heartbeat's 30 s.
+    const firstStatusWrite = !this.statusWriteSeen.has(sessionId);
+    this.statusWriteSeen.add(sessionId);
+    const previousUsage = firstStatusWrite || conversationSwitched ? undefined : this.usage.getSessionUsage(sessionId);
 
     // Stamp the authoritative cumulative tool-call count onto the payload.
     // It lives in the accumulator and survives the bounded event cache, so the
@@ -882,6 +900,7 @@ export class SessionTelemetry {
     this.sessionParsers.delete(sessionId);
     this.agentSessionIdChecked.delete(sessionId);
     this.lastReportedAgentSessionIds.delete(sessionId);
+    this.statusWriteSeen.delete(sessionId);
     this.prCommandDetector.removeSession(sessionId);
     this.pushCommandDetector.removeSession(sessionId);
     this.planModeTrail.removeSession(sessionId);

@@ -2910,6 +2910,28 @@
           session.commandTerminalBranch = trimmed;
         }
       },
+      // A project's earlier Command Terminal conversations. Seed with
+      // window.__mockCommandTerminalHistory = { [projectId]: CommandTerminalHistoryEntry[] };
+      // nothing seeded answers an empty list, as a project with no ended
+      // terminals does.
+      listCommandTerminalHistory: async function (projectId) {
+        var seeded = typeof window !== 'undefined' && window.__mockCommandTerminalHistory;
+        var entries = (seeded && seeded[projectId]) || [];
+        return entries.slice();
+      },
+      // Tests fire it via window.__mockFireCommandTerminalHistoryChanged(projectId).
+      onCommandTerminalHistoryChanged: function (callback) {
+        if (typeof window === 'undefined') return function () {};
+        if (!window.__mockCommandTerminalHistoryListeners) window.__mockCommandTerminalHistoryListeners = [];
+        window.__mockCommandTerminalHistoryListeners.push(callback);
+        window.__mockFireCommandTerminalHistoryChanged = function (projectId) {
+          (window.__mockCommandTerminalHistoryListeners || []).forEach(function (listener) { listener(projectId); });
+        };
+        return function () {
+          window.__mockCommandTerminalHistoryListeners = (window.__mockCommandTerminalHistoryListeners || [])
+            .filter(function (listener) { return listener !== callback; });
+        };
+      },
       killTransient: async function (sessionId) {
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
         if (index === -1) return;

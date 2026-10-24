@@ -18,6 +18,7 @@ import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
+import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -52,9 +53,16 @@ const UNATTENDED_GIT_BUDGET_MS = 6_000;
  * to a phone come from here, mapped in its `START_REFUSAL_CODES`. `slot-taken`
  * is internal (a desktop window asked for a slot a phone's terminal holds) and
  * only ever reaches the renderer's toast. `spawn-failed` (the shell did not
- * start) reaches a phone only as the generic start failure.
+ * start) reaches a phone only as the generic start failure. `conversation-gone`
+ * refuses a resume of a conversation with no record, or whose agent cannot
+ * resume it.
  */
-export type CommandTerminalStartErrorCode = 'unknown-project' | 'command-terminal-limit' | 'slot-taken' | 'spawn-failed';
+export type CommandTerminalStartErrorCode =
+  | 'unknown-project'
+  | 'command-terminal-limit'
+  | 'slot-taken'
+  | 'spawn-failed'
+  | 'conversation-gone';
 
 export class CommandTerminalStartError extends Error {
   readonly code: CommandTerminalStartErrorCode;
@@ -217,7 +225,12 @@ export async function startCommandTerminal(
     const projectRoot = resolveProjectRoot(project.path);
     const config = context.configManager.getEffectiveConfig(projectRoot);
 
-    const agentName = project.default_agent || DEFAULT_AGENT;
+    // A resume runs on the agent that held the conversation, which may not be
+    // the project's default any more.
+    const resume = input.resumeAgentSessionId
+      ? resolveResumedConversation(context, input.projectId, input.resumeAgentSessionId)
+      : null;
+    const agentName = resume?.agentName ?? (project.default_agent || DEFAULT_AGENT);
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
 
@@ -230,7 +243,11 @@ export async function startCommandTerminal(
     const transientTaskId = uuidv4();
     const sessionId = uuidv4();
 
-    const { branch, checkoutError } = await checkOutStartBranch(context, projectRoot, input);
+    // A resume never fetches or checks out: it picks a conversation up where
+    // the project is, and moving HEAD could move it under a sibling terminal.
+    const { branch, checkoutError } = resume
+      ? { branch: await readCheckedOutBranch(gitAt(projectRoot)), checkoutError: undefined }
+      : await checkOutStartBranch(context, projectRoot, input);
     if (checkoutError && input.unattended) {
       console.log(`[COMMAND_TERMINAL] phone start in ${input.projectId.slice(0, 8)}: ${checkoutError}`);
     }
@@ -290,6 +307,8 @@ export async function startCommandTerminal(
       // instead of the CLI's own default.
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
+      // The conversation to pick up, through the CLI's own resume.
+      ...(resume ? { sessionId: resume.agentSessionId, resume: true } : {}),
     };
     const command = adapter.buildCommand(commandOptions);
 
@@ -322,6 +341,9 @@ export async function startCommandTerminal(
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
       cols: input.cols,
       rows: input.rows,
+      // A resumed terminal holds a conversation from its first frame, so it is
+      // used already: another Earlier click never replaces it.
+      ...(resume ? { agentSessionId: resume.agentSessionId, resuming: true, hasUserInput: true } : {}),
     });
 
     // A shell that could not start (a configured shell not on PATH) comes back
@@ -337,6 +359,10 @@ export async function startCommandTerminal(
       );
     }
 
+    // A resumed terminal keeps the name it had. Seeded before any prompt, so
+    // the namer (first write wins) leaves it alone.
+    if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
+
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a
     // third answer to the same question and was removed rather than renamed.
@@ -346,6 +372,32 @@ export async function startCommandTerminal(
     // The spawned row now holds the slot itself (it is in the registry), and a
     // failed start must free it.
     reservation.release();
+  }
+}
+
+/**
+ * The earlier conversation a resume picks up, or the refusal. Read from the
+ * project's own history (command-terminal-history.ts), never from the renderer.
+ */
+function resolveResumedConversation(
+  context: IpcContext,
+  projectId: string,
+  agentSessionId: string,
+): { agentSessionId: string; agentName: string; label: string | null } {
+  const row = context.commandTerminalHistory?.find(projectId, agentSessionId) ?? null;
+  const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
+  if (!row || !adapter || !canResumeConversationById(adapter)) {
+    throw new CommandTerminalStartError('conversation-gone', 'That conversation can no longer be resumed.');
+  }
+  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label };
+}
+
+/** The branch the checkout is on, or "unknown" when git cannot say. */
+async function readCheckedOutBranch(git: GitClient): Promise<string> {
+  try {
+    return (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+  } catch {
+    return 'unknown';
   }
 }
 
@@ -377,13 +429,7 @@ async function checkOutStartBranch(
   const gitDeadline = Date.now() + UNATTENDED_GIT_BUDGET_MS;
   const pastDeadline = (): boolean => unattended && Date.now() > gitDeadline;
 
-  const readCurrentBranch = async (): Promise<string> => {
-    try {
-      return (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
-    } catch {
-      return 'unknown';
-    }
-  };
+  const readCurrentBranch = (): Promise<string> => readCheckedOutBranch(git);
 
   // A phone start never moves HEAD under another live agent in this folder.
   // Nobody is at the desk to see the branch change under it, so it starts
@@ -456,11 +502,17 @@ async function checkOutStartBranch(
 }
 
 /**
- * Transient sessions are ephemeral Claude Code terminals spawned from the
- * command bar (Ctrl+Shift+P) or a paired phone. They run at the project root
- * with no task association, no DB persistence, and no resume capability.
+ * Transient sessions are the agent terminals spawned from the command bar
+ * (Ctrl+Shift+P) or a paired phone. They run at the project root with no task
+ * association and no `sessions` row; the conversations they held are recorded
+ * apart (command-terminal-history.ts) so an ended one can be resumed.
  */
 export function registerTransientSessionHandlers(context: IpcContext): void {
+  // The panel's Earlier list. A read: it changes nothing, and a project the
+  // desktop does not have open answers too.
+  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_LIST, (_, projectId: string) =>
+    context.commandTerminalHistory?.list(projectId) ?? []);
+
   ipcMain.handle(IPC.SESSION_SPAWN_TRANSIENT, async (_, input: SpawnTransientSessionInput) => {
     // The desktop layer only ever spawns for the project it shows. A phone's
     // start goes straight to startCommandTerminal and needs no open project.
@@ -486,9 +538,9 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
 
   // Session-keyed model/effort injection for transient (command-terminal)
   // sessions. These have no task row, so the task-keyed
-  // TASK_SET_RUNTIME_OVERRIDE handler cannot serve them. There is nothing to
-  // persist (transient sessions are not resumable), so this is a best-effort
-  // live slash-command inject only. Mutates no per-task state, so it does not
+  // TASK_SET_RUNTIME_OVERRIDE handler cannot serve them. A Command Terminal
+  // keeps no settings record (a resumed one starts on the project defaults),
+  // so this is a best-effort live slash-command inject only. Mutates no per-task state, so it does not
   // take a task lock.
   ipcMain.handle(
     IPC.SESSION_INJECT_SETTINGS,

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Session tables
-description: Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, the conversation_turn_usage and turn_spawn_links token ledger, and session_activity_intervals.
+description: Schema and invariants for sessions (status, suspended_by, PTY grid, tool_breakdown), usage_history per-leg cost deltas, transcript chunks, handoffs, session_messages_sent, the conversation_turn_usage and turn_spawn_links token ledger, session_activity_intervals, and command_terminal_history.
 tags: [database, schema, sessions, usage]
 sources:
   - resource: src/main/db/migrations/project-schema.ts
@@ -10,6 +10,8 @@ sources:
   - resource: src/main/retrieval/conversation/conversation-usage-store.ts
   - resource: src/main/activity-engine/activity-interval-store.ts
   - resource: src/main/pty/buffer/transcript-writer.ts
+  - resource: src/main/db/repositories/command-terminal-history-repository.ts
+  - resource: src/main/ipc/helpers/command-terminal-history.ts
 ---
 # Session tables
 
@@ -275,3 +277,26 @@ Durable activity-disposition ledger. One row per continuous span a session spent
 One row per INTERVAL, not per transition: a `permission` to `idle` crossing stays inside the same `'idle'`-disposition interval, so nothing closes and reopens. `enter_trigger` / `exit_trigger` carry the engine's own `TransitionTrigger` labels, so a consumer can tell a hook-authoritative park (`event:idle`) from a watchdog guess (`timer:stale-thinking`), and a genuine human reply (`event:prompt`) from the agent resuming itself (`event:prompt:pty-activity`). `started_at` / `ended_at` are TEXT UTC ISO 8601 mirrors of `started_ms` / `ended_ms`, written by the store from the same value so the two representations cannot drift; `ended_at` is NULL exactly when `ended_ms` is (the interval is still open). Indices: `idx_activity_intervals_task` (task_id), `idx_activity_intervals_session` (session_id), `idx_activity_intervals_started` (started_ms), `idx_activity_intervals_open` (session_id, ended_ms - resolves the one open interval per session without holding row ids across a restart). Deliberately has NO `sessions` DELETE cascade, for the same reason as `conversation_turn_usage`: it is a durable ledger, so an interval outlives the session row that produced it. Both ordinary ends close the open interval: the PTY's `exit`, and `session-removed` for a direct `SessionManager.remove()`, which deletes the registry row synchronously and so lands before that exit can resolve a project (see [Suspend and cleanup](../architecture/sessions/suspend-and-cleanup.md)). Only an abrupt end that fires neither, an app crash or an OS kill, leaves an interval permanently open; consumers filter `ended_ms IS NOT NULL`.
 
 Module: `src/main/activity-engine/` (store `ActivityIntervalStore`, recorder `ActivityIntervalRecorder`). Read directly via the `kangentic_get_activity_intervals` MCP tool (see [Session tools](../integrations/mcp-server/session-tools.md#kangentic_get_activity_intervals)) or `kangentic_query_db`, and indirectly by the usage dashboard: `getActiveTotals` sums this ledger behind `usage:getDashboardStats`, backing the `activeMs` / `activeSessionsCovered` KPI pair and the per-project Avg Active column. See [Activity engine](../architecture/activity/activity-engine.md#durable-activity-interval-history), which owns this ledger.
+
+## command_terminal_history table
+
+The conversations a project's Command Terminals held, so the Command Terminal panel's Earlier list (and a resume) can offer one back after its terminal ended. A Command Terminal has no `sessions` row, whose `task_id` is a foreign key to tasks, and its registry row goes when it ends, so it keeps this record instead. One row per agent conversation.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| agent_session_id | TEXT | PRIMARY KEY | |
+| agent_name | TEXT | NOT NULL | |
+| label | TEXT | | NULL |
+| cwd | TEXT | NOT NULL | |
+| started_at | TEXT | NOT NULL | |
+| touched_at | TEXT | | NULL |
+| ended_at | TEXT | | NULL |
+| updated_at | TEXT | NOT NULL | |
+
+Written in main by `CommandTerminalHistory` (`src/main/ipc/helpers/command-terminal-history.ts`) from `SessionManager`'s events, for every terminal, one a phone started included:
+- A row is written when the agent reports its session id. A `/clear` or `/resume` inside a terminal reports a new id, which stamps the previous row's `ended_at` and writes a new one.
+- `touched_at` is set once someone used the terminal (`Session.hasUserInput`). Only touched rows are listed, and an untouched row is deleted when it ends, so a terminal nobody used leaves nothing behind.
+- `label` takes the terminal's name, first write wins.
+- `ended_at` is stamped when the terminal ends.
+
+Rows are written as the id is captured rather than at the end because a quit removes no row (`killAll` never calls `remove()`). A row left open by a quit is listed once no live terminal holds it, and the list stamps its `ended_at` from `updated_at`. An id that a `sessions` or `workflows` row owns is never recorded: a `/resume` into a task's or a workflow's conversation belongs to its card. The list drops a row whose agent can no longer find the transcript (`locateSessionHistoryFile`), since it can never be resumed. Pruned to the newest 50 ended rows (`COMMAND_TERMINAL_HISTORY_LIMIT`). A row with no `ended_at` is never pruned, so an unused live terminal's row is still there when it is first touched. All timestamps are UTC ISO 8601. Index: `idx_command_terminal_history_ended` (ended_at), which the prune filters and sorts on.
