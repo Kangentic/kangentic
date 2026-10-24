@@ -354,12 +354,24 @@ describe('SESSION_SPAWN_TRANSIENT handler: cold-spawn checkout policy', () => {
     expect(result.branch).toBe('trunk');
   });
 
-  it('refuses a start from the desktop layer while no project is open', async () => {
+  // A detached Command Terminal window starts terminals for its own project
+  // while the main window shows another one, or the welcome screen.
+  it('starts a desktop terminal in the project it names, with no project open in the main window', async () => {
     const context = createMockContext();
     context.currentProjectId = null;
     registerTransientSessionHandlers(context as never);
 
-    await expect(callSpawnHandler({ projectId: 'proj-1', slot: 'slot-1' })).rejects.toThrow(/no project is currently open/);
+    await callSpawnHandler({ projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(context.projectRepo.getById).toHaveBeenCalledWith('proj-1');
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'proj-1', cwd: PROJECT_ROOT }));
+  });
+
+  it('refuses a desktop start for a project it does not know', async () => {
+    const context = registerWith();
+    context.projectRepo.getById.mockReturnValue(undefined);
+
+    await expect(callSpawnHandler({ projectId: 'ghost', slot: 'slot-1' })).rejects.toMatchObject({ code: 'unknown-project' });
   });
 });
 

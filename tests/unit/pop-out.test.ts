@@ -7,7 +7,7 @@
  * collapse to a single key.
  */
 import { describe, it, expect } from 'vitest';
-import { popOutInstanceKey, parsePopOutInstanceKey, isPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { popOutInstanceKey, parsePopOutInstanceKey, parseProjectPopOutInstanceKey, isPopOutKind, isProjectPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
 import { IPC } from '../../src/shared/ipc-channels';
 
 describe('POPOUT_KINDS / POP_OUT_SURFACES parity', () => {
@@ -172,6 +172,64 @@ describe('parsePopOutInstanceKey', () => {
     expect(parsePopOutInstanceKey('changes::t1')).toBeNull();
     expect(parsePopOutInstanceKey('changes:p1:')).toBeNull();
     expect(parsePopOutInstanceKey('')).toBeNull();
+  });
+});
+
+/**
+ * A project-scoped surface (the detached Command Terminal) is one window per
+ * PROJECT: its key carries the project id and nothing else, and the closing
+ * consumer reads it back with its own parser, so the task kinds' parse result
+ * keeps the task id its callers rely on.
+ */
+describe('project-scoped surfaces', () => {
+  const projectScopedKinds = POPOUT_KINDS.filter((kind) => POP_OUT_SURFACES[kind].scope === 'project');
+
+  it('covers the detached Command Terminal', () => {
+    expect(projectScopedKinds).toEqual(['command-terminal']);
+    expect(projectScopedKinds.every(isProjectPopOutKind)).toBe(true);
+  });
+
+  it.each(projectScopedKinds)('keys a "%s" window by its project id alone, so a rename finds the same window', (kind) => {
+    const key = popOutInstanceKey(kind, { projectId: 'p1', projectName: 'Board' });
+    expect(key).toBe(`${kind}:p1`);
+    expect(popOutInstanceKey(kind, { projectId: 'p1', projectName: 'Renamed' })).toBe(key);
+    expect(parseProjectPopOutInstanceKey(key)).toEqual({ kind, projectId: 'p1' });
+  });
+
+  it('keeps the two parsers apart: neither reads the other\'s keys', () => {
+    expect(parsePopOutInstanceKey('command-terminal:p1')).toBeNull();
+    expect(parsePopOutInstanceKey('command-terminal:p1:t1')).toBeNull();
+    expect(parseProjectPopOutInstanceKey('changes:p1:t1')).toBeNull();
+    expect(parseProjectPopOutInstanceKey('stats')).toBeNull();
+    expect(parseProjectPopOutInstanceKey('command-terminal:')).toBeNull();
+    expect(parseProjectPopOutInstanceKey('bogus:p1')).toBeNull();
+  });
+
+  it('titles the window by the project name its params carry', () => {
+    expect(resolveSurfaceTitle(POP_OUT_SURFACES['command-terminal'], { projectId: 'p1', projectName: 'Kangentic' }))
+      .toBe('Command Terminal - Kangentic');
+  });
+
+  /**
+   * The window hosts live terminals and runs no App.tsx, so every push its
+   * terminals read must be declared, or main never fans it to this window.
+   */
+  it('declares the session pushes its terminals read, and the PTY-dims echo', () => {
+    const channels = POP_OUT_SURFACES['command-terminal'].channels;
+    for (const channel of [
+      IPC.SESSION_STATUS,
+      IPC.SESSION_REMOVED,
+      IPC.SESSION_EXIT,
+      IPC.SESSION_USAGE,
+      IPC.SESSION_ACTIVITY,
+      IPC.SESSION_FIRST_OUTPUT,
+      IPC.SESSION_PTY_RESIZED,
+      IPC.GIT_DIFF_CHANGED,
+      IPC.COMMAND_TERMINAL_HISTORY_CHANGED,
+      IPC.CONFIG_CHANGED,
+    ]) {
+      expect(channels).toContain(channel);
+    }
   });
 });
 

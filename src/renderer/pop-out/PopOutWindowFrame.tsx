@@ -1,5 +1,5 @@
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
-import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, X } from 'lucide-react';
+import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, SquareTerminal, X } from 'lucide-react';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import type { PopOutKind } from '../../shared/pop-out';
 import { Tooltip } from '../components/Tooltip';
@@ -14,6 +14,7 @@ const SURFACE_ICONS: Record<PopOutKind, typeof ChartColumn> = {
   monitor: Activity,
   'changes-file': FileDiff,
   'knowledge-graph': Brain,
+  'command-terminal': SquareTerminal,
 };
 
 /**

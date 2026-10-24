@@ -510,13 +510,22 @@ function panelMinSize(terminalCount: number): { width: number; height: number } 
   };
 }
 
-export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
+/**
+ * Where the layer is drawn: `panel` floats over the board in the main window;
+ * `window` fills a window of its own (the detached Command Terminal), whose OS
+ * frame already moves, sizes and closes it, so it draws the rail and the
+ * terminals with no panel header, backdrop or geometry of its own.
+ */
+export type CommandTerminalHost = 'panel' | 'window';
+
+export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () => void; host?: CommandTerminalHost }) {
   // The panel's own host is the body-level layer root, stamped
   // `data-window-layer-root`, so light dismiss treats the whole panel as a window.
-  const [layerRoot] = useState(() => getPortalHost(COMMAND_LAYER_ROOT_ID));
+  const [layerRoot] = useState(() => (host === 'panel' ? getPortalHost(COMMAND_LAYER_ROOT_ID) : null));
   // The window engine renders INTO the panel's terminal area, once it exists.
   const [terminalArea, setTerminalArea] = useState<HTMLElement | null>(null);
   const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const projectName = useProjectStore((state) => state.currentProject?.name ?? '');
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const atCap = useCommandTerminalAtCap(projectId);
   const resumesInPlace = useResumesInPlace(projectId);
@@ -539,10 +548,35 @@ export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
     // The arrange bridge re-tiles the rest; with one left, nothing stays expanded.
     commandWindowManager.store.getState().closeWindow(terminal.windowId);
   }, []);
+  const handleOpenInNewWindow = useCallback(() => {
+    if (!projectId) return;
+    // Hide first: the terminals unmount here and the layout saves, so this
+    // window has stopped drawing them before the new window draws its own.
+    onHide();
+    void window.electronAPI.popOut.open('command-terminal', { projectId, projectName });
+  }, [projectId, projectName, onHide]);
+
+  const rail = (
+    <CommandTerminalRail
+      projectId={projectId}
+      atCap={atCap}
+      resumesInPlace={resumesInPlace}
+      running={running}
+      onNewTerminal={handleNewTerminal}
+      onResume={handleResume}
+      onExpand={handleExpand}
+      onStop={handleStopRunning}
+    />
+  );
 
   return (
     <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
-      {createPortal(
+      {layerRoot === null ? (
+        <div className="flex flex-1 min-h-0" data-testid="command-terminal-detached">
+          {rail}
+          <div ref={setTerminalArea} className="relative flex-1 min-w-0" data-testid="command-terminal-area" />
+        </div>
+      ) : createPortal(
         // Above board windows (z-40), below true modal dialogs / popovers (z-50)
         // that this layer itself spawns (BranchPicker, ConfirmDialog).
         <div className="fixed left-0 right-0 top-10 bottom-9 z-[45] pointer-events-none" data-testid="command-terminal-layer">
@@ -551,18 +585,8 @@ export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
             onHide={onHide}
             minSize={panelMinSize(terminalCount)}
             onTerminalAreaReady={setTerminalArea}
-            rail={(
-              <CommandTerminalRail
-                projectId={projectId}
-                atCap={atCap}
-                resumesInPlace={resumesInPlace}
-                running={running}
-                onNewTerminal={handleNewTerminal}
-                onResume={handleResume}
-                onExpand={handleExpand}
-                onStop={handleStopRunning}
-              />
-            )}
+            onOpenInNewWindow={handleOpenInNewWindow}
+            rail={rail}
           />
         </div>,
         layerRoot,
