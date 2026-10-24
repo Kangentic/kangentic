@@ -114,7 +114,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   mapping the replica convergence test pins.
 - **The panel can live in a window of its own, and then never also in the app.** Open in new
   window opens the project-scoped pop-out `command-terminal` (`command-terminal:<projectId>`,
-  see `pop-out-surface-registry.md`). That renderer seeds its own project store from the params
+  see `pop-out-surface-registry.md`), and stays off while a terminal is still starting: main
+  holds that slot reserved until the start lands, so the new window could neither find the
+  terminal nor take its slot. That renderer seeds its own project store from the params
   and never calls `projects.open`, which would switch the main window's board. It mounts the
   terminals only once its config, session list and agent list have landed, or a window cannot
   find the terminal already in its slot and starts a second one. It maps the session pushes the

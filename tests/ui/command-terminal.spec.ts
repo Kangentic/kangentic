@@ -2682,6 +2682,28 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    // Main holds a starting terminal's slot reserved until its start lands, so
+    // a window opened then could neither find that terminal nor take its slot.
+    test('the header button stays off while a terminal is still starting', async () => {
+      const { browser, page } = await launchWithState(`${detachedPreConfig({ liveTerminal: false })}
+        window.electronAPI.sessions.spawnTransient = function () {
+          return new Promise(function () {});
+        };`);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        const popOutButton = page.getByTestId('command-terminal-panel-pop-out');
+        await expect(popOutButton).toBeDisabled();
+        await expect(popOutButton).toHaveAccessibleDescription('Wait for the terminals to start.');
+        await popOutButton.click({ force: true });
+        expect((await popOutCalls(page)).filter((call) => call.type === 'open')).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('while the window is open, Ctrl+Shift+P and the title-bar toggle bring it forward', async () => {
       const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
       try {

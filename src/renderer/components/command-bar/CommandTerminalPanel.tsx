@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ReactNode } from 'react';
 import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
@@ -87,9 +88,11 @@ interface CommandTerminalPanelProps {
   minSize: PanelSize;
   /** Move the panel into a window of its own. */
   onOpenInNewWindow: () => void;
+  /** Why Open in new window is off right now, or null when it is on. */
+  openInNewWindowDisabledReason: string | null;
 }
 
-export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSize, onOpenInNewWindow }: CommandTerminalPanelProps) {
+export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSize, onOpenInNewWindow, openInNewWindowDisabledReason }: CommandTerminalPanelProps) {
   const areaRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
@@ -271,11 +274,18 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
           >
             <SquareTerminal size={14} className="text-fg-muted flex-shrink-0" />
             <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">Command Terminal</span>
-            <Tooltip label="Move the panel to its own window. The terminals keep running.">
+            <Tooltip
+              label={tipLabel({
+                disabled: openInNewWindowDisabledReason !== null,
+                disabledReason: openInNewWindowDisabledReason,
+                tip: 'Move the panel to its own window. The terminals keep running.',
+              })}
+            >
               <button
                 type="button"
                 onClick={onOpenInNewWindow}
-                className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
+                disabled={openInNewWindowDisabledReason !== null}
+                className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
                 aria-label="Open in new window"
                 data-testid="command-terminal-panel-pop-out"
               >
