@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Transient sessions
-description: "How Command Terminals and workflow agents run as transient sessions with no DB row: startCommandTerminal's slot claim and four-terminal cap, cold-spawn checkout, spawn-failed handling, the kill flow, and rebuilding slots after a renderer reload."
+description: "How Command Terminals and workflow agents run as transient sessions with no DB row: startCommandTerminal's slot claim and four-terminal cap, cold-spawn checkout, spawn-failed handling, resuming an earlier conversation, the kill flow, and rebuilding slots after a renderer reload."
 tags: [sessions, transient, command-terminal, slots]
 sources:
   - resource: src/main/ipc/handlers/transient-sessions.ts
@@ -14,7 +14,7 @@ Command Terminals are ephemeral agent terminals spawned from the command bar (Ct
 
 - **No task association** - run at the project root with no Kanban task
 - **No DB persistence** - no session record in the database
-- **No resume capability** - killed on close; a suspend ends the terminal, since there is nothing to resume
+- **No resume in place** - killed on close, and a suspend ends the terminal, since no task record keeps its place. What survives is the conversation: `CommandTerminalHistory` records each one the terminal held (`command_terminal_history`), and a later start can resume it by id (see [Resume](#resume))
 - **Queued like any spawn** - at the concurrency limit the row starts `queued` and already holds its slot
 
 A workflow's own agent is the other transient session. It shares the first two and the queue, but
@@ -87,6 +87,23 @@ first await and released once the spawn has registered its row or the start has 
 
 An unattended (phone) start runs the same steps with a non-interactive 5 s fetch, one 6 s git
 budget, and no checkout while another running or queued session's cwd is the project root.
+
+The start reads everything from the project its input names, never from the main window's
+current project, so it needs no project open on the desktop: a phone and the detached Command
+Terminal window both rely on that.
+
+### Resume
+
+A start with `resumeAgentSessionId` resumes an earlier conversation instead of a fresh one. It
+reads the conversation's row from the project's history (`resolveResumedConversation`), refusing
+with `conversation-gone` when the row is missing or its agent cannot resume by id
+(`canResumeConversationById`). It then claims the conversation (`claimResume`), refusing with
+`conversation-open` while a live terminal or another resume holds it, so two agents never write
+one transcript. The command is built with the conversation's id and `resume`, the spawn is marked
+`resuming` and touched (`hasUserInput`), and the terminal's label is seeded from the row so the
+namer skips it. The claim settles in the `finally`: a start that made no terminal releases it at
+once, and one that did keeps it until the agent reports the conversation's id or the terminal
+ends.
 
 ## Kill Flow (`SESSION_KILL_TRANSIENT`)
 

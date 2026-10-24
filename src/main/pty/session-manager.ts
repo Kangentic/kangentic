@@ -772,8 +772,9 @@ export class SessionManager extends EventEmitter {
           });
         }
       },
-      // A Command Terminal is never paused: a suspend ends it, and its
-      // conversation with it, since it has no record to resume. The sweep
+      // A Command Terminal is never paused: it has no task record to resume
+      // in place, so a suspend ends the terminal the user was looking at (its
+      // conversation only survives as an Earlier row). The sweep
       // skips it before it times anything out, as the low-memory pause does
       // (`isPauseEligible`). A workflow's own agent is transient too but stays
       // in the sweep.
@@ -3023,8 +3024,8 @@ export class SessionManager extends EventEmitter {
     if (!session) return;
     // A Command Terminal ENDS when its agent exits (desktop and phone alike):
     // its window closes as it does on Stop, and no shell is left for a phone's
-    // `interactive-terminal` to type into. It has no record to resume and no
-    // task to report on, so the exit-code override and the kept `exited` row
+    // `interactive-terminal` to type into. It has no task record to resume or
+    // report on, so the exit-code override and the kept `exited` row
     // below do not apply. Immediate, since the tree saw the agent gone. A
     // workflow's own agent takes the task path: its exited row is how the pane
     // notices a resume that failed and starts it over.

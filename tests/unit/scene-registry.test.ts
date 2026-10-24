@@ -875,9 +875,9 @@ describe('scene registry', () => {
       // The predicate that decides whether a task window's terminal keeps Escape. boot.js reads the
       // same one, so a change here must be mirrored there.
       { marker: "matches(':hover')", source: 'src/renderer/utils/terminal-clipboard.ts' },
-      // How a parked or retained window is marked. boot.js skips an inert frame, which has nothing
-      // left to close.
-      { marker: 'inert={isDormant', source: 'src/renderer/window-manager/components/WindowFrame.tsx' },
+      // How a parked or retained window, or one hidden behind an expanded Command Terminal, is
+      // marked. boot.js skips an inert frame, which has nothing left to close.
+      { marker: 'inert={isHidden', source: 'src/renderer/window-manager/components/WindowFrame.tsx' },
     ];
     for (const { marker, source } of markers) {
       const rendererSource = fs.readFileSync(path.join(REPO_ROOT, source), 'utf-8');

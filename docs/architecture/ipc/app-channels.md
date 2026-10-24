@@ -13,6 +13,7 @@ sources:
     title: Pop-out window lifecycle
   - resource: src/main/ipc/helpers/task-windows.ts
     title: Closing a task's windows when its work ends
+  - resource: src/renderer/pop-out/pop-out-changed.ts
 ---
 # App IPC channels
 
