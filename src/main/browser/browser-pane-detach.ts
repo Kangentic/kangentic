@@ -7,6 +7,7 @@ import {
   type DriverResult,
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
+import { openPaneForCallerTask, PANE_OPEN_TIMEOUT_MS } from './browser-pane-opener';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
 import {
   applyViewport,
@@ -46,12 +47,26 @@ import {
  * directions wait for the SUCCESSOR guest (naming the predecessor so the
  * overlap cannot satisfy the wait early) and then resolve it through `withGuest`
  * exactly as the cold open path does, so "it returned" means "it is driveable".
+ *
+ * ## Why a failed detach closes its own window
+ *
+ * Opening the window already unmounted the in-app pane, so a detach that gives
+ * up has taken the agent's surface away. It used to give up and leave the
+ * window open: an OS window nothing tracked, holding no registered pane, which
+ * `list_panes` could not see and `close_pane` could not reach. So every failure
+ * after the window opens closes it again, which docks the pane back into the
+ * task window, and the error names the surface the agent has now.
  */
 
 /** Long enough for a second renderer process to boot, load the app shell, mount
  *  the pane and have its guest reach `dom-ready`. Docking is the same work in
  *  reverse inside an already-running renderer, so it shares the bound. */
 const DETACH_TIMEOUT_MS = 20_000;
+
+/** How long a failed detach waits for the in-app pane to come back after it
+ *  closes the window. A remount inside the running app window, the same work
+ *  an opened pane does, so it takes the open path's bound. */
+const RECOVER_TIMEOUT_MS = PANE_OPEN_TIMEOUT_MS;
 
 export interface DetachPaneInput {
   projectId: string;
@@ -95,23 +110,24 @@ function paneStatus(sessionId: string): BrowserPaneStatus | null {
 }
 
 /**
- * Wait for the pane that replaces `previousWebContentsId`, then confirm it is
- * actually driveable before handing its handle back.
+ * Wait for the pane that replaces the guests in `previousWebContentsIds`, then
+ * confirm it is actually driveable before handing its handle back.
  */
 async function awaitSuccessorPane(
   input: { projectId: string; taskId: string; callerSessionId?: string; callerTaskId?: string },
-  previousWebContentsId: number | undefined,
+  previousWebContentsIds: readonly number[],
   capability: BrowserCapability,
   config: ResolvedBrowserAutomationConfig,
   timedOutDetail: string,
+  timeoutMs: number = DETACH_TIMEOUT_MS,
 ): Promise<DriverResult<BrowserPaneStatus>> {
   const entry = await browserPaneRegistry.waitForLivePane(
     {
       taskId: input.taskId,
       projectId: input.projectId,
-      excludeWebContentsId: previousWebContentsId,
+      excludeWebContentsIds: previousWebContentsIds,
     },
-    DETACH_TIMEOUT_MS,
+    timeoutMs,
   );
   if (!entry) return failure('detach-timeout', timedOutDetail);
 
@@ -140,6 +156,103 @@ function liveOwnPane(projectId: string, taskId: string) {
   return browserPaneRegistry
     .getByTaskId(taskId, projectId)
     .find((entry) => entry.kind === 'pane' && browserPaneRegistry.resolveLiveGuest(entry).ok);
+}
+
+/** Where a surface is, in the words an agent can repeat to the user. */
+function describeRecoveredSurface(pane: BrowserPaneStatus): string {
+  if (pane.kind === 'lane' || pane.visibility === 'offscreen') {
+    return `offscreen as ${pane.sessionId}, which the user cannot see`;
+  }
+  if (pane.visibility === 'hidden') return `back in the task window as ${pane.sessionId}, hidden behind the terminal`;
+  if (pane.visibility === 'parked') return `back in the task window as ${pane.sessionId}, in a window the user closed`;
+  return `back in the task window as ${pane.sessionId}`;
+}
+
+/**
+ * Undo a detach that could not finish: close the window it opened, then hand
+ * the agent a driveable surface and say which.
+ *
+ * In this order, because the surface that comes back depends on it:
+ *
+ * 1. Mark the window's own pane, if one registered, as a deliberate close.
+ *    Closing destroys its guest, and without the mark the hand-off would stand
+ *    a lane up for a page that is about to come back anyway.
+ * 2. Close the window, unless the user already did. That IS a dock: the
+ *    in-app pane reclaims its slot.
+ * 3. Wait for that pane, as `dock` does. Before anything else, because in a
+ *    backgrounded project the opener's offscreen path would hand back the
+ *    hand-off lane, which the returning pane reclaims a moment later, and that
+ *    handle would be dead on its next call.
+ * 4. Else open one through the opener, the path that already guarantees a
+ *    driveable surface whether the project is open or not.
+ * 5. Else name any live surface the task still has.
+ */
+async function abandonDetach(
+  input: DetachPaneInput & { callerTaskId: string },
+  previousWebContentsId: number,
+  cause: DriverError,
+): Promise<{ ok: false; error: DriverError }> {
+  const { projectId, callerSessionId, callerTaskId, capability, config } = input;
+  const windowKey = { projectId, taskId: callerTaskId };
+
+  // The user may have closed the window during the wait. Then there is nothing
+  // to close, and a pane other than the docked one is the in-app pane already
+  // back, which must be neither marked nor skipped.
+  const windowOpen = popOutWindowManager.has('browser', windowKey);
+  // Before the close, every pane of this task other than the one that was
+  // docked belongs to the detached window. Read here rather than threaded in,
+  // so a pane that registered just after the wait gave up is caught too.
+  const detachedPanes = windowOpen
+    ? browserPaneRegistry
+        .getByTaskId(callerTaskId, projectId)
+        .filter((entry) => entry.kind === 'pane' && entry.webContentsId !== previousWebContentsId)
+    : [];
+  if (detachedPanes.length > 0) {
+    browserPaneRegistry.markDeliberateClose(detachedPanes.map((entry) => entry.sessionId));
+  }
+  if (windowOpen) popOutWindowManager.close('browser', windowKey);
+
+  const closedNote = `${cause.detail} The detached window was closed`;
+  const returned = await awaitSuccessorPane(
+    { projectId, taskId: callerTaskId, callerSessionId, callerTaskId },
+    // The window's own guests are still alive for a moment after `close()`, so
+    // the wait must skip every one of them. The docked guest died when the
+    // window opened, and skipping it too keeps the wait off it either way.
+    [previousWebContentsId, ...detachedPanes.map((entry) => entry.webContentsId)],
+    capability,
+    config,
+    'The pane did not come back into the task window.',
+    RECOVER_TIMEOUT_MS,
+  );
+  if (returned.ok) {
+    return failure(
+      cause.kind,
+      `${closedNote}, so the pane is ${describeRecoveredSurface(returned.data)}. The page reloaded, and any earlier surface handle is dead: use ${returned.data.sessionId} from now on.`,
+    );
+  }
+
+  const opened = await openPaneForCallerTask({ projectId, callerSessionId, callerTaskId, capability, config });
+  if (opened.ok) {
+    return failure(
+      cause.kind,
+      `${closedNote}, and your task's Browser surface is ${describeRecoveredSurface(opened.data.pane)}. Any earlier surface handle is dead: use ${opened.data.pane.sessionId} from now on.`,
+    );
+  }
+
+  const remaining = browserPaneRegistry
+    .getByTaskId(callerTaskId, projectId)
+    .map((entry) => paneStatus(entry.sessionId))
+    .find((pane): pane is BrowserPaneStatus => pane !== null && pane.alive);
+  if (remaining) {
+    return failure(
+      cause.kind,
+      `${closedNote}, and your task's Browser surface is ${describeRecoveredSurface(remaining)}. Use ${remaining.sessionId} from now on.`,
+    );
+  }
+  return failure(
+    cause.kind,
+    `${closedNote}, but no Browser surface came back for this task (${opened.error.kind}: ${opened.error.detail}). Call kangentic_browser_open_pane to open one.`,
+  );
 }
 
 /**
@@ -173,7 +286,7 @@ export async function popOutPaneForCallerTask(
     if (!status) {
       return failure(
         'pane-destroyed',
-        'A detached Browser window is open for this task but its page is gone. Ask the user to close it, then retry.',
+        'A detached Browser window is open for this task but holds no page. Call kangentic_browser_dock to close it and bring the pane back into the task window, then retry.',
       );
     }
     return resizeExistingWindow(input, status);
@@ -209,17 +322,19 @@ export async function popOutPaneForCallerTask(
 
   if (input.maximized === true) window.maximize();
 
+  // From here on the window exists and the in-app pane is gone, so every
+  // failure goes through `abandonDetach` rather than returning as is.
   const ready = await awaitSuccessorPane(
     { projectId, taskId: callerTaskId, callerSessionId, callerTaskId },
-    previousWebContentsId,
+    [previousWebContentsId],
     input.capability,
     config,
-    `The detached Browser window did not come up within ${DETACH_TIMEOUT_MS / 1000}s. Call kangentic_browser_list_panes to see what is open.`,
+    `The detached Browser window's pane did not come up within ${DETACH_TIMEOUT_MS / 1000}s.`,
   );
-  if (!ready.ok) return ready;
+  if (!ready.ok) return abandonDetach({ ...input, callerTaskId }, previousWebContentsId, ready.error);
 
   const sized = await resizeExistingWindow(input, ready.data);
-  if (!sized.ok) return sized;
+  if (!sized.ok) return abandonDetach({ ...input, callerTaskId }, previousWebContentsId, sized.error);
   return {
     ok: true,
     data: {
@@ -317,13 +432,12 @@ export async function dockPaneForCallerTask(
   }
 
   const detached = liveOwnPane(projectId, callerTaskId);
-  const previousWebContentsId = detached?.webContentsId;
 
   popOutWindowManager.close('browser', { projectId, taskId: callerTaskId });
 
   const ready = await awaitSuccessorPane(
     { projectId, taskId: callerTaskId, callerSessionId, callerTaskId },
-    previousWebContentsId,
+    detached ? [detached.webContentsId] : [],
     input.capability,
     config,
     `The Browser pane did not come back into the task window within ${DETACH_TIMEOUT_MS / 1000}s. It may be that the task's detail window is closed; call kangentic_browser_open_pane to bring it back.`,

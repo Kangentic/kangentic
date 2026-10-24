@@ -20,8 +20,9 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   // Task-scoped surfaces (changes / browser) title their window with the task's
   // title so the detached window is associable to its task; a global surface
   // (stats, Agent Monitor) has no task, so the frame falls back to its own name.
-  // board-store is hydrated by those surfaces' bootstrap, so the title lands once
-  // it loads.
+  // board-store is hydrated by those surfaces' bootstrap (`loadAmbientBoard`), so
+  // the title lands once it loads. It holds the main window's open project only,
+  // so a backgrounded task's window keeps the surface name.
   //
   // Keyed off the shared GLOBAL_KINDS set rather than an inline `=== 'stats'`,
   // for the reason that set exists: a new global kind would otherwise fall

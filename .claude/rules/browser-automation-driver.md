@@ -60,7 +60,11 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   argument that could name another project's task. `close_pane` defaults to the caller's project and
   crosses projects only on an explicit `includeOtherProjects`, because a backgrounded project may have
   an agent mid-verification in its pane. Either way the response names the scope it applied and lists
-  what it actually closed, so a partial result can never be reported as complete.
+  what it actually closed, so a partial result can never be reported as complete. A detached window
+  counts: `close_pane` closes a pane's pop-out window and a bare call closes the caller's own even
+  with no pane in it, both reported in `closedWindows`, and `pop_out` closes the window it opened on
+  any failure and names the surface left. A window no tool could see or close is what the agent was
+  left with when a detach gave up.
 - **Every pane target is caller-scoped.** `registerBrowserTools` takes a `BrowserToolDependencies`
   carrying the URL-path `projectId` (always present) and the optional `callerSessionId`, mirroring
   `registerSteeringTools`. `ResolveTargetSelector.projectId` is required and explicitly nullable, so
@@ -209,6 +213,12 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   over the saved sidecar (red-green: deleting that preference fails the case).
   `tests/unit/mcp-server-instructions-browser.test.ts` fails if `isolated: true` reappears in the
   server instructions, where it would send an agent to a zod schema error instead of a browser.
+- **Test (detached window):** `tests/unit/browser-pane-detach.test.ts` pins that every failure
+  after the window opens closes it, before waiting for the pane to come back, and names the surface
+  left (red-green: returning the failure as is fails every case in its "cannot finish" block).
+  `tests/unit/browser-pane-opener.test.ts` pins that `close_pane` clears the open flag before it
+  closes a window, so the close cannot turn into a dock. `tests/ui/browser-pop-out-pane.spec.ts`
+  boots a real Browser pop-out and pins that it mounts and registers its pane.
 - **Test (pane-bounded capture):** `tests/unit/browser-capture-bounds.test.ts` holds its own
   statement of Chromium's `requested_image_size` rule, checks it reproduces the shipped bug, and
   asserts no planned capture exceeds its pane across display scales 1 to 2, four pane sizes, and

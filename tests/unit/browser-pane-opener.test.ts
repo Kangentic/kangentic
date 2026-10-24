@@ -130,6 +130,8 @@ function installHost(overrides: Partial<BrowserPaneOpenerHost> = {}): void {
       sent.push({ channel, args });
       return true;
     },
+    hasDetachedWindow: () => false,
+    closeDetachedWindow: () => false,
     ...overrides,
   }));
 }
@@ -786,8 +788,8 @@ describe('closePanes', () => {
   });
 
   it('reports a pane that did not close as skipped rather than claiming success', async () => {
-    // A popped-out pane is the expected straggler: it is mutually exclusive with
-    // the in-app mount, so clearing the open flag does not unmount it.
+    // A renderer that never acted on the push leaves its pane registered, and
+    // main cannot tell that from a close still landing.
     const other = pane({ sessionId: 'sess-b', taskId: 'task-2' });
     vi.mocked(browserPaneRegistry.listForProject).mockReturnValue({
       panes: [pane(), other],
@@ -824,5 +826,193 @@ describe('closePanes', () => {
     installHost({ send: () => false });
     const result = await closePanes(closeInput({ all: true }));
     expect(result).toMatchObject({ ok: false, error: { kind: 'app-not-ready' } });
+  });
+
+  describe('detached windows', () => {
+    /** Records the order of the close push and the window closes. */
+    let order: string[] = [];
+    const closedWindowCalls: { projectId: string; taskId: string }[] = [];
+
+    /**
+     * `closableTaskIds` is the subset whose window is still there when the close
+     * lands. A window the user closed between the check and the close reports
+     * false, as the real host does.
+     */
+    function installDetachedHost(detachedTaskIds: string[], closableTaskIds: string[] = detachedTaskIds): void {
+      installHost({
+        send: (channel, ...args) => {
+          order.push('close-request');
+          sent.push({ channel, args });
+          return true;
+        },
+        hasDetachedWindow: (_projectId, taskId) => detachedTaskIds.includes(taskId),
+        closeDetachedWindow: (projectId, taskId) => {
+          order.push(`close-window:${taskId}`);
+          closedWindowCalls.push({ projectId, taskId });
+          return closableTaskIds.includes(taskId);
+        },
+      });
+    }
+
+    beforeEach(() => {
+      order = [];
+      closedWindowCalls.length = 0;
+    });
+
+    it("closes the caller's own detached window on a bare call even when nothing registered in it", async () => {
+      // The shape a detach that never mounted its pane left behind: an OS
+      // window on screen and no surface for it in the registry, so the target
+      // lookup finds nothing. Refusing `no-pane-open` there left the user's
+      // window open with no tool able to reach it.
+      installDetachedHost([CALLER_TASK]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(result).toMatchObject({
+        ok: true,
+        data: { closed: [], closedWindows: [{ projectId: PROJECT, taskId: CALLER_TASK }], skipped: [] },
+      });
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_CLOSE_REQUEST, args: [PROJECT, [CALLER_TASK]] });
+    });
+
+    it('clears the open flag BEFORE closing the window, so the close does not turn into a dock', async () => {
+      // Closing a detached window is a dock: with the task's open flag still
+      // set, the in-app pane mounts again and the browser comes back instead of
+      // going away.
+      installDetachedHost([CALLER_TASK]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      await closePanes(closeInput());
+
+      expect(order).toEqual(['close-request', `close-window:${CALLER_TASK}`]);
+    });
+
+    it('closes the window as well as the lane a bare call resolved', async () => {
+      // close_pane used to report the hand-off lane closed while the detached
+      // window stayed open.
+      installDetachedHost([CALLER_TASK]);
+      vi.mocked(browserPaneRegistry.list).mockReturnValue([offscreenSurface()] as never);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: true,
+        entry: { sessionId: 'lane_standin1' },
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(result.ok === true && result.data.closed.map((entry) => entry.sessionId)).toEqual(['lane_standin1']);
+      expect(result.ok === true && result.data.closedWindows).toEqual([{ projectId: PROJECT, taskId: CALLER_TASK }]);
+      expect(order).toEqual(['close-request', `close-window:${CALLER_TASK}`]);
+    });
+
+    it('closes a pane that lives in a detached window by closing the window, not by skipping it', async () => {
+      const detachedPane = pane({ sessionId: 'pane_detached', taskId: 'task-2' });
+      vi.mocked(browserPaneRegistry.listForProject).mockReturnValue({
+        panes: [pane(), detachedPane],
+        otherProjectPaneCount: 0,
+        unknownProjectPaneCount: 0,
+      } as never);
+      installDetachedHost(['task-2']);
+
+      const result = await closePanes(closeInput({ all: true }));
+
+      expect(closedWindowCalls).toEqual([{ projectId: PROJECT, taskId: 'task-2' }]);
+      expect(result.ok === true && result.data.closed.map((entry) => entry.sessionId)).toEqual([
+        CALLER_SESSION,
+        'pane_detached',
+      ]);
+      expect(result.ok === true && result.data.skipped).toEqual([]);
+      expect(browserPaneRegistry.markDeliberateClose).toHaveBeenCalledWith([CALLER_SESSION, 'pane_detached']);
+    });
+
+    it('does not report a window whose close found nothing to close', async () => {
+      // The window was there when the call looked and gone when it closed (the
+      // user closed it first). The close was still requested, but reporting the
+      // window as closed by this call would claim an action that never happened.
+      installDetachedHost([CALLER_TASK], []);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(result).toMatchObject({ ok: true, data: { closed: [], closedWindows: [], skipped: [] } });
+      // The push and the close attempt both still went out.
+      expect(sent[0]).toMatchObject({ channel: IPC.BROWSER_PANE_CLOSE_REQUEST, args: [PROJECT, [CALLER_TASK]] });
+      expect(order).toEqual(['close-request', `close-window:${CALLER_TASK}`]);
+    });
+
+    it('reports only the windows that actually closed when one of two is already gone', async () => {
+      // Two panes in two detached windows; only task-2's window is still there to
+      // close. The filter has to keep the one that closed, not drop or keep both.
+      const detachedPane = pane({ sessionId: 'pane_detached', taskId: 'task-2' });
+      vi.mocked(browserPaneRegistry.listForProject).mockReturnValue({
+        panes: [pane(), detachedPane],
+        otherProjectPaneCount: 0,
+        unknownProjectPaneCount: 0,
+      } as never);
+      installDetachedHost([CALLER_TASK, 'task-2'], ['task-2']);
+
+      const result = await closePanes(closeInput({ all: true }));
+
+      expect(closedWindowCalls).toEqual([
+        { projectId: PROJECT, taskId: CALLER_TASK },
+        { projectId: PROJECT, taskId: 'task-2' },
+      ]);
+      expect(result.ok === true && result.data.closedWindows).toEqual([{ projectId: PROJECT, taskId: 'task-2' }]);
+    });
+
+    it('touches no window when none is open', async () => {
+      installDetachedHost([]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: true,
+        entry: { sessionId: CALLER_SESSION },
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(closedWindowCalls).toEqual([]);
+      expect(result.ok === true && result.data.closedWindows).toEqual([]);
+    });
+
+    it('still refuses a bare call with no surface and no window', async () => {
+      installDetachedHost([]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      const result = await closePanes(closeInput());
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'no-pane-open' } });
+      expect(sent).toEqual([]);
+    });
+
+    it("does not reach the caller's window when the call named another target", async () => {
+      // Only the implicit default means "my own browser". A call that named a
+      // sibling's handle closes that, and nothing of the caller's.
+      installDetachedHost([CALLER_TASK]);
+      vi.mocked(browserPaneRegistry.resolveTarget).mockReturnValue({
+        ok: false,
+        kind: 'no-pane-open',
+        detail: 'none',
+      } as never);
+
+      const result = await closePanes(closeInput({ sessionId: 'pane_sibling' }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'no-pane-open' } });
+      expect(closedWindowCalls).toEqual([]);
+    });
   });
 });
