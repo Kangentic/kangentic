@@ -1,6 +1,11 @@
 /**
- * The Command Terminal panel's left rail: Earlier, the project's ended
- * conversations newest first, and New terminal at its foot.
+ * The Command Terminal panel's left rail: Running while one terminal is
+ * expanded, Earlier (the project's ended conversations, newest first), and New
+ * terminal at its foot.
+ *
+ * Running lists the terminals behind the expanded one. Each row's mark is that
+ * terminal's own Stop button, so one can be stopped without bringing it back,
+ * and its title expands it instead.
  *
  * Earlier shows as many rows as fit the rail and never scrolls: the list is a
  * way back to a recent conversation, not an archive. A row resumes its
@@ -13,8 +18,19 @@ import { History, SquarePlus } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
+import { useSessionStore } from '../../stores/session-store';
+import { transientKey } from '../../stores/session-store/transient-session-slice';
+import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
+import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
+import { StopButtonIcon } from './StopButtonIcon';
 import { useCommandTerminalHistory } from './useCommandTerminalHistory';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
+
+/** A terminal behind the expanded one, as the Running list names it. */
+export interface RunningCommandTerminal {
+  windowId: string;
+  slot: string;
+}
 
 /** One Earlier row (44px) plus the 2px gap between rows. */
 const EARLIER_ROW_PITCH_PX = 46;
@@ -57,17 +73,87 @@ function useRowsThatFit(listRef: React.RefObject<HTMLDivElement | null>): number
   return rows;
 }
 
+interface RunningRowProps {
+  projectId: string | null;
+  terminal: RunningCommandTerminal;
+  onExpand: (windowId: string) => void;
+  onStop: (terminal: RunningCommandTerminal) => Promise<void>;
+}
+
+/** One terminal behind the expanded one: its live Stop button, then its name. */
+function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) {
+  const sessionId = useSessionStore((state) =>
+    projectId ? state.transientSessions[transientKey(projectId, terminal.slot)]?.sessionId ?? null : null);
+  const label = useSessionStore((state) =>
+    sessionId ? state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null : null);
+  const activity = useSessionStore((state) => (sessionId ? state.sessionActivity[sessionId] : undefined));
+  const [stopping, setStopping] = useState(false);
+  const name = commandTerminalDisplayName(label, terminal.slot);
+  const isThinking = sessionId !== null && isActive(activity);
+  const isIdle = sessionId !== null && requiresUserInteraction(activity);
+
+  const handleStop = async (): Promise<void> => {
+    if (stopping) return;
+    setStopping(true);
+    // The row unmounts with its window; nothing to reset after.
+    await onStop(terminal);
+  };
+
+  return (
+    <div className="flex h-9 flex-shrink-0 items-center gap-2.5 rounded-md px-2 hover:bg-surface-hover" data-testid="command-terminal-running-row" data-command-slot={terminal.slot}>
+      <Tooltip label="Stop. It moves to Earlier.">
+        <button
+          type="button"
+          onClick={() => void handleStop()}
+          disabled={stopping}
+          className={`inline-flex flex-shrink-0 items-center justify-center rounded-full disabled:cursor-not-allowed ${
+            stopping ? 'text-fg-muted' : isThinking || isIdle ? '' : 'text-red-400'
+          }`}
+          aria-label={`Stop ${name}`}
+          data-testid="command-terminal-running-stop"
+        >
+          <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
+        </button>
+      </Tooltip>
+      <Tooltip label={name}>
+        <button
+          type="button"
+          onClick={() => onExpand(terminal.windowId)}
+          className="min-w-0 flex-1 truncate text-left text-[13px] text-fg"
+          aria-label={`Expand ${name}`}
+          data-testid="command-terminal-running-expand"
+        >
+          {name}
+        </button>
+      </Tooltip>
+    </div>
+  );
+}
+
 interface CommandTerminalRailProps {
   projectId: string | null;
   /** Every terminal slot is taken. */
   atCap: boolean;
   /** A row would resume in place of the unused terminal, rather than beside it. */
   resumesInPlace: boolean;
+  /** The terminals behind the expanded one, in the order they tile; null while none is expanded. */
+  running: RunningCommandTerminal[] | null;
   onNewTerminal: () => void;
   onResume: (entry: CommandTerminalHistoryEntry) => void;
+  onExpand: (windowId: string) => void;
+  onStop: (terminal: RunningCommandTerminal) => Promise<void>;
 }
 
-export function CommandTerminalRail({ projectId, atCap, resumesInPlace, onNewTerminal, onResume }: CommandTerminalRailProps) {
+export function CommandTerminalRail({
+  projectId,
+  atCap,
+  resumesInPlace,
+  running,
+  onNewTerminal,
+  onResume,
+  onExpand,
+  onStop,
+}: CommandTerminalRailProps) {
   const { entries, hide } = useCommandTerminalHistory(projectId);
   const listRef = useRef<HTMLDivElement>(null);
   const rowsThatFit = useRowsThatFit(listRef);
@@ -80,10 +166,21 @@ export function CommandTerminalRail({ projectId, atCap, resumesInPlace, onNewTer
       className="flex w-[248px] flex-shrink-0 flex-col border-r border-edge px-2 pt-2.5 select-none"
       data-testid="command-terminal-rail"
     >
+      {running && running.length > 0 && (
+        <>
+          <div className="px-2 pt-3 pb-1 text-xs text-fg-muted">Running</div>
+          <div className="flex flex-shrink-0 flex-col gap-0.5" data-testid="command-terminal-running">
+            {running.map((terminal) => (
+              <RunningRow key={terminal.windowId} projectId={projectId} terminal={terminal} onExpand={onExpand} onStop={onStop} />
+            ))}
+          </div>
+          <div className="mx-0 mt-2.5 mb-1 h-px flex-shrink-0 bg-edge" aria-hidden />
+        </>
+      )}
       <div className="px-2 pt-3 pb-1 text-xs text-fg-muted">Earlier</div>
       <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden" data-testid="command-terminal-earlier">
         {entries.length === 0 ? (
-          <div className="px-2 py-1 text-xs text-fg-faint" data-testid="command-terminal-earlier-empty">
+          <div className="px-2 py-1 text-sm text-fg-faint" data-testid="command-terminal-earlier-empty">
             Stop a terminal and you can resume it from here.
           </div>
         ) : (

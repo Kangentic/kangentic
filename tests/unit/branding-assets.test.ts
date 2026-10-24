@@ -79,7 +79,8 @@ const ACTIVITY_MARK_CONSUMERS = [
   'src/renderer/components/board/ActivityReasonTooltip.tsx',
   'src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx',
   'src/renderer/components/command-bar/CommandTerminalIcon.tsx',
-  'src/renderer/components/command-bar/CommandTerminalWindow.tsx',
+  // The Command Terminal's Stop glyph, drawn in each terminal's header and in the rail's Running list.
+  'src/renderer/components/command-bar/StopButtonIcon.tsx',
   'src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx',
   // The Agent Monitor shows the same agent activity as a board card, on three
   // surfaces. Its non-activity states (finished, paused) stay lucide: the branding

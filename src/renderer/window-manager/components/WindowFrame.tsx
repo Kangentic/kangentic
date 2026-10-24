@@ -43,9 +43,16 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   const isFocused = layerStore((state) => state.focusedWindowId === managedWindow.id);
   const isParked = managedWindow.parked === true;
   // A host-arranged layer's lone window needs no focus line: nothing beside it
-  // could be the one taking keys.
+  // could be the one taking keys. Neither does an expanded one.
   const hostArranged = layer.hostArranged === true;
-  const showFocusLine = layerStore((state) => !hostArranged || Object.keys(state.windows).length > 1);
+  const showFocusLine = layerStore((state) =>
+    !hostArranged || (state.expandedWindowId === null && Object.keys(state.windows).length > 1));
+  // A host-arranged layer can expand one window over the rest: it fills the
+  // overlay, and the others stay mounted at their own rects, hidden, so none of
+  // their terminals refits until the grid comes back.
+  const expandedWindowId = layerStore((state) => (hostArranged ? state.expandedWindowId : null));
+  const isExpanded = expandedWindowId === managedWindow.id;
+  const isBehindExpanded = expandedWindowId !== null && !isExpanded;
 
   // The ONE place every user close converges (the X, Escape, light dismiss,
   // middle-click all end here after the exit animation), so the layer's
@@ -106,9 +113,12 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   // A tiled window's rect comes from the tile tree (resolved by WindowLayer), not
   // its own geometry. Falls back to geometry if the resolved rect is missing.
   const pixelRect =
-    isTiled && tiledRect
-      ? tiledRect
-      : fractionalToPixels(isMaximized ? MAXIMIZED_GEOMETRY : managedWindow.geometry, containerSize);
+    isExpanded
+      ? fractionalToPixels(MAXIMIZED_GEOMETRY, containerSize)
+      : isTiled && tiledRect
+        ? tiledRect
+        : fractionalToPixels(isMaximized ? MAXIMIZED_GEOMETRY : managedWindow.geometry, containerSize);
+  const isHidden = isDormant || isBehindExpanded;
 
   // Whenever the rendered size changes (snap, maximize, restore, resize-commit,
   // overlay resize) OR the window's state transitions (floating <-> snapped <->
@@ -165,7 +175,7 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       // compositing, which makes CDP Page.captureScreenshot never resolve and
       // wedges every later command for that guest (measured on Electron 41). An
       // opacity-0 subtree keeps compositing, so the agent can still screenshot
-      // its own pane.
+      // its own pane. A window behind an expanded one hides the same way.
       style={{
         position: 'absolute',
         left: pixelRect.left,
@@ -173,12 +183,13 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         width: pixelRect.width,
         height: pixelRect.height,
         zIndex: managedWindow.zIndex,
-        ...(isDormant
+        ...(isHidden
           ? { opacity: 0, pointerEvents: 'none' as const }
           : {}),
       }}
-      aria-hidden={isDormant || undefined}
-      inert={isDormant || undefined}
+      aria-hidden={isHidden || undefined}
+      inert={isHidden || undefined}
+      data-expanded={isExpanded || undefined}
       className={`pointer-events-auto group bg-surface-raised border border-edge ${
         showFocusLine ? 'focus-within:border-accent/40' : ''
       } ${isMaximized || isTiled || hostArranged ? 'rounded-none' : 'rounded-lg'
