@@ -103,6 +103,11 @@ function defaultTaskWindowState() {
   };
 }
 
+/**
+ * A Command Terminal never floats: the panel tiles whatever layout it loads, so this floating
+ * blob opens as one terminal filling the default panel beside its rail, and that pane is the
+ * surface measured. The blob stays as the shape a saved pre-panel layout has.
+ */
 function defaultCommandTerminalState() {
   return {
     config: {

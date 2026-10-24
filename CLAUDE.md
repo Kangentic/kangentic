@@ -115,11 +115,13 @@ source file maps to.
 - **HMR / dev-mode parity** - The team dogfoods Kangentic from `npm start` daily, so dev mode
   must be visually and behaviourally indistinguishable from a production boot. Patterns A
   through D and their enforcement: `.claude/rules/hmr-patterns.md`.
-- **Command Terminal** - Ctrl+Shift+P opens an ephemeral "transient" session with no DB
-  persistence, hosted in a SECOND window-manager layer (`components/command-bar/`) separate
-  from the board task-detail layer. Windows are keyed by a durable SLOT, geometry is global
-  but population is per-project (reconciled before the layer mounts), a reattach NEVER fetches
-  or checks out, and the branch is a per-project fact re-derived by one layer bridge.
+- **Command Terminal** - Ctrl+Shift+P opens one panel: a rail (Earlier conversations, New
+  terminal) beside up to four auto-tiled "transient" sessions, hosted in a SECOND window-manager
+  layer (`components/command-bar/`) separate from the board task-detail layer. Windows are keyed
+  by a durable SLOT, geometry is global but population is per-project (reconciled before the
+  layer mounts), a reattach NEVER fetches or checks out, the branch is a per-project fact
+  re-derived by one layer bridge, ended conversations are recorded and resumable, and the panel
+  can move to a window of its own but never shows in both.
   Rules: `.claude/rules/command-terminal.md`. Design history: [docs/architecture/renderer/command-terminal.md](docs/architecture/renderer/command-terminal.md).
 - **Activity marks** - The nine agent/terminal activity glyphs are owned upstream in
   `@kangentic/branding`, NOT hand-authored here, and render only through
@@ -239,7 +241,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `external-scripts-parity.md` - unbundled bridge/plugin scripts register in `EXTERNAL_SCRIPTS` and are copied by both `build.js` and `dev.js`.
 - `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts`.
 - `activity-marks.md` - marks come from `@kangentic/branding` via `ActivityMark`; composited motion only; `IconSlot` for element-type swaps.
-- `command-terminal.md` - slot-keyed windows, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, a terminal that ends when its agent exits, and no pause that reaches one.
+- `command-terminal.md` - slot-keyed windows in an auto-tiled panel, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, a terminal that ends when its agent exits, no pause that reaches one, resumable Earlier conversations, and a detached window that never shows beside the panel.
 - `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks at KanbanBoard's `tasksPerLane`, never per-lane.
 - `keybindings-registry.md` - shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc keydown listeners.
 - `keyboard-drag-intent.md` - `IntentKeyboardSensor` is the only dnd-kit keyboard sensor, and it arms only on Tab-placed focus.

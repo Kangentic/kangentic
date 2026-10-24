@@ -4,22 +4,27 @@ paths:
   - "src/renderer/stores/session-store/transient-session-slice.ts"
   - "src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx"
   - "src/renderer/components/layout/TitleBar.tsx"
+  - "src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx"
+  - "src/renderer/pop-out/surfaces/command-terminal-surface.tsx"
   - "src/main/ipc/handlers/transient-sessions.ts"
+  - "src/main/ipc/helpers/command-terminal-history.ts"
   - "src/main/agent/shared/command-terminal-namer.ts"
   - "src/main/mobile-bridge/handlers/command-terminal.ts"
 ---
-# Rule: the Command Terminal layer is slot-keyed, its geometry is global, and its population is per-project
+# Rule: the Command Terminal panel is slot-keyed, its geometry is global, and its population is per-project
 
-Ctrl+Shift+P opens an ephemeral "transient" session with no DB persistence, hosted in a SECOND
-window-manager layer (`CommandTerminalLayer` + `CommandTerminalWindow` in
-`components/command-bar/`), separate from the board task-detail layer: the same engine
-(`src/renderer/window-manager/`) instantiated twice via `createWindowManagerStore` and
-distributed through `WindowManagerProvider` context. So a Command Terminal is a movable,
-resizable, maximizable, snappable window over a slight backdrop blur. Several of its
-non-obvious properties were each settled against a bug: a window-local branch pill that
-disagreed with the Monitor row, a reconcile that ran too late and spawned a PTY under the wrong
-project, and a pending-open flag armed on a project switch that never landed. Design history and
-the rejected alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs/architecture/renderer/command-terminal.md).
+Ctrl+Shift+P opens the Command Terminal: one PANEL over a slight backdrop blur, holding a rail
+(Earlier conversations, a Running list while a terminal is expanded, and New terminal at its
+foot) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
+row, and each is a window of a SECOND window-manager layer (`CommandTerminalLayer` +
+`CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail layer:
+the same engine (`src/renderer/window-manager/`) instantiated twice via `createWindowManagerStore`.
+The layer is `hostArranged`, so the panel tiles the terminals and they never float on their own.
+Several of its non-obvious properties were each settled against a bug: a window-local branch pill
+that disagreed with the Monitor row, a reconcile that ran too late and spawned a PTY under the
+wrong project, a pending-open flag armed on a project switch that never landed, and a When idle
+sweep that ended two terminals and lost their conversations. Design history and the rejected
+alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs/architecture/renderer/command-terminal.md).
 
 ## The rule
 
@@ -28,28 +33,62 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   `transientSessions` map in `transient-session-slice.ts` tracks them by
   `transientKey(projectId, slot)` (`${projectId}::${slot}`), and the value carries `projectId`
   and `slot` so consumers can filter by project. The map is preserved across HMR via
-  `import.meta.hot.data`; on a hard reload `syncSessions()` best-effort re-pairs surviving
-  transient PTYs to slots.
+  `import.meta.hot.data`; on a hard reload `syncSessions()` re-pairs surviving transient PTYs to
+  their slots.
 - **MAIN owns the cap and the slot allocation.** `startCommandTerminal`
   (`transient-sessions.ts`) is the one start path, run by the desktop's `session:spawnTransient`
-  and the bridge's `command-terminal` verb alike. It counts the project's non-exited Command
-  Terminal rows plus a synchronous reservation map, so a phone start and a desktop New in flight
-  together cannot pass the cap or share a slot. The renderer proposes a slot only for a window it
-  is opening, from the union of window anchors and the replica's live Command Terminal rows, and handles a
+  and the bridge's `command-terminal` verb alike, and it routes by the input's `projectId`, never
+  the main window's current project. It counts the project's non-exited Command Terminal rows plus
+  a synchronous reservation map, so a phone start and a desktop New in flight together cannot pass
+  the cap or share a slot. The renderer proposes a slot only for a window it is opening, from the
+  union of window anchors and the replica's live Command Terminal rows, and handles a
   `slot-taken` throw. Never pick or cap slots from the window store alone: a phone terminal has
   no window.
+- **The panel arranges its terminals; nothing floats.** One terminal fills the terminal area, two
+  sit side by side, three are one tall beside two stacked, four are a two by two grid split by
+  columns (`hostArrangementTree`, `arrangeTiles`). Starting or stopping a terminal rebuilds the
+  preset, and a dragged seam holds until the count changes (`isHostArranged`). The pane floor is
+  `COMMAND_LAYER_OPTIONS.minSize` (320 x 200): what four terminals keep beside the 248px rail at
+  the 900 x 600 window floor. There is no per-terminal pop-out, float or maximize. The panel's
+  own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
+  the status bar), it moves by its header and resizes from its edges with a preview committed on
+  release, and it maximizes. A layout saved before the panel (floating windows) is re-tiled on
+  load. Never bump the shared `WORKSPACE_SCHEMA_VERSION` for it: board layouts use it too.
+- **Expand and swap move the real terminals, never a copy.** Expand fills the panel with one
+  terminal (`expandedWindowId`, transient, never saved); the others stay mounted at their tile
+  rects, hidden and `inert` like a dormant window, with no PTY resize, and list in the rail's
+  Running section, whose Stop ends one. A header drag swaps two terminals (`swap-drag.ts`): the
+  real frame moves by saved-and-restored inline styles, a ghost marks the landing tile, PTY
+  resizes are held by the manager-resize gate until the drop, and the drop commits
+  `swapWindows`. A second xterm on a live PTY is the bug class terminal ownership exists to
+  prevent, so a `DragOverlay` copy is never the answer. The kebab's "Swap with" is the keyboard
+  path. Escape cancels a drag in flight in the capture phase (`keybindings-registry.md`).
 - **A terminal ENDS when its agent exits, and every end goes through
-  `SessionManager.endCommandTerminal`.** It kills, removes the row, and deletes the session
-  directory only after the exit (the files are detached first so `remove()` keeps them, and a
-  still-exiting agent's SessionEnd hook has somewhere to write). It refuses a task's session. A
-  PTY that exits on its own removes its row in the spawn flow's `onPtyExited`. A Command Terminal
-  must never be left as a bare shell a paired phone can type into.
-- **No pause reaches a Command Terminal.** A suspend ends one (it has no record to resume), and
-  its conversation with it. The low-memory pause never picks one (`isPauseEligible`), and the When
-  idle sweep skips one before either of its callbacks (`isIdleTimeoutExempt`, answered with
-  `isCommandTerminalSession`): an idle-timeout report alone makes the renderer mark the live row
-  suspended. A workflow's own agent stays in the sweep. A new automatic pause or suspend path
-  skips Command Terminals too.
+  `SessionManager.endCommandTerminal`.** It kills, removes the row (whose `session-removed`
+  stamps the conversation's history row ended), and deletes the session directory only after the
+  exit (the files are detached first
+  so `remove()` keeps them, and a still-exiting agent's SessionEnd hook has somewhere to write).
+  It refuses a task's session. A PTY that exits on its own removes its row in the spawn flow's
+  `onPtyExited`. A Command Terminal must never be left as a bare shell a paired phone can type
+  into.
+- **An ended conversation is recorded, and Earlier resumes it.** `CommandTerminalHistory`
+  (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
+  the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the
+  previous row and starts a new one, and it skips an id a task or workflow owns. An untouched row
+  is deleted when it ends. Earlier lists only rows a user touched
+  (`Session.hasUserInput`, set in main from the input's content, never from xterm replies, focus
+  reports or the repaint nudge) whose agent can resume by id (`canResumeConversationById`) and
+  still find the transcript, and that no live terminal or in-flight resume holds. A resume is a start with `resumeAgentSessionId`; main claims the
+  conversation first (`claimResume`) and refuses a second with `conversation-open`, and a row it
+  cannot resume with `conversation-gone`. A row resumes IN PLACE of the focused terminal only
+  while nothing has reached that terminal; a used terminal is never replaced, and the resume opens
+  beside it.
+- **No pause reaches a Command Terminal.** A suspend still ends one (its conversation lands in
+  Earlier like any other end, so nothing is lost, but the user did not ask). The low-memory pause
+  never picks one (`isPauseEligible`), and the When idle sweep skips one before either of its
+  callbacks (`isIdleTimeoutExempt`, answered with `isCommandTerminalSession`): an idle-timeout
+  report alone makes the renderer mark the live row suspended. A workflow's own agent stays in
+  the sweep. A new automatic pause or suspend path skips Command Terminals too.
 - **The agent-absence sweep judges Command Terminals, and the SessionEnd hook fast-paths it.** Do
   not reintroduce a transient exclusion in `isAgentAbsenceCandidate`. The sweep judges a terminal
   only once its agent showed it started (its first SessionStart, or its first alt-screen entry) or
@@ -66,15 +105,30 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   PowerShell prompt for seconds. The pane mounts under the overlay with output dropped, so its
   fit sizes the PTY before the agent's first frame. `command-terminal-launch-overlay.spec.ts` and
   `session-manager-agent-ready.test.ts` pin it.
-- **The desktop window follows a main-initiated end through ONE removal subscriber.**
-  `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`) closes the slot's window when a
-  `session-removed` push names a session the `transientSessions` map still points at. A
-  renderer-initiated end (Stop, a branch switch) must scrub its map entry BEFORE it sends the
-  kill, or the subscriber closes the window a second time (a branch switch would lose its window).
-  Do not move this into App.tsx's removal handler, whose mapping the replica convergence test pins.
+- **A window follows a main-initiated end through ONE removal subscriber per renderer.**
+  `useCloseCommandWindowOnRemoval` (mounted in `AppLayout`, and in the detached window's root)
+  closes the slot's window when a `session-removed` push names a session the `transientSessions`
+  map still points at. A renderer-initiated end (Stop, a branch switch, a resume in place) must
+  scrub its map entry BEFORE it sends the kill, or the subscriber closes the window a second time
+  (a branch switch would lose its window). Do not move this into App.tsx's removal handler, whose
+  mapping the replica convergence test pins.
+- **The panel can live in a window of its own, and then never also in the app.** Open in new
+  window opens the project-scoped pop-out `command-terminal` (`command-terminal:<projectId>`,
+  see `pop-out-surface-registry.md`). That renderer seeds its own project store from the params
+  and never calls `projects.open`, which would switch the main window's board. It mounts the
+  terminals only once its config, session list and agent list have landed, or a window cannot
+  find the terminal already in its slot and starts a second one. It maps the session pushes the
+  way App.tsx does and publishes its own focused set, since main streams a session's bytes only to
+  the renderers that named it. In the main window the panel never mounts beside it: the push that
+  reports it open clears `commandBarVisible` (which is what asks main for the terminals' output),
+  the mount site is guarded, and every way of opening the panel focuses the window instead.
+  Closing the window brings the panel back through the pending-open flag, only while that project
+  is current and still has a terminal running: a window closed by its last Stop must not start a
+  fresh terminal.
 - **Naming runs in MAIN**, by `CommandTerminalNamer` on the Automation agent (its model and
   effort, in the shared answer home), and is off when no Automation agent is set: the terminal
-  keeps "Command Terminal N". Display reads `commandTerminalLabel` off the registry row through
+  keeps "Command Terminal N". A resumed terminal is seeded with its conversation's label, so the
+  namer skips it. Display reads `commandTerminalLabel` off the registry row through
   `commandTerminalDisplayName`; there is no renderer-side label. The namer needs the prompt's
   text on the Prompt event, so `startCommandTerminal` passes `capturePromptText` and an adapter
   whose hooks are per-session (Claude) copies its prompt payload into `detail`. Never set that
@@ -82,11 +136,13 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
 - **An unattended (phone) start never blocks and never moves HEAD under a live session.** Its
   fetch is non-interactive with a 5 s abort, its git phase has one 6 s budget, and it stays on the
   current branch when another running or queued session's cwd is the project root. Every failure
-  falls back to the current HEAD and still launches. Desktop New keeps its existing behavior.
-- **A reattach NEVER fetches or checks out.** Hiding the layer (Ctrl+Shift+P, Ctrl+Shift+W,
-  backdrop click) keeps every PTY alive; reopening reattaches each slot. The default-base
-  checkout, plus its dirty-tree stay-put guard, runs on a COLD spawn only, because moving HEAD
-  under a running agent is the class of thing #558 refused.
+  falls back to the current HEAD and still launches. Desktop New keeps its existing behavior. A
+  phone resume is the same unattended start. A phone sends `list-earlier` or `resume` only on the
+  snapshot's `earlierConversationsOffered`.
+- **A reattach NEVER fetches or checks out.** Hiding the panel (Ctrl+Shift+P, Ctrl+Shift+W, its
+  Hide button, a backdrop click, Open in new window) keeps every PTY alive; reopening reattaches
+  each slot. The default-base checkout, plus its dirty-tree stay-put guard, runs on a COLD spawn
+  only, because moving HEAD under a running agent is the class of thing #558 refused.
 - **The branch is a PER-PROJECT fact, not a per-window one.** Every terminal of a project runs
   in the same project root and shares one HEAD, so a window keeps no local branch state: the
   pill reads its map entry's `branch`, and ONE layer bridge (`useTrackHeadBranch` in
@@ -96,34 +152,28 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   agree with the pill. The Changes panel embed passes the effective default base as
   `baseBranch`, never `"HEAD"`.
 - **GEOMETRY is global, POPULATION is per-project, and the reconcile runs BEFORE the layer
-  mounts.** The layout blob (`AppConfig.commandTerminalWorkspace`) is shared across all
-  projects, but which slots get windows is reconciled to the current project's live transient
-  sessions on open (`reconcileCommandTerminalWindows` + `planCommandWindowReconciliation` in
+  mounts.** The panel's place (`AppConfig.commandTerminalPanel`) and the terminals' layout
+  (`AppConfig.commandTerminalWorkspace`) are shared across all projects, but which slots get
+  windows is reconciled to the current project's live transient sessions on open
+  (`reconcileCommandTerminalWindows` + `planCommandWindowReconciliation` in
   `command-window-reconcile.ts`). Project switching keeps every slot's PTY alive in the map, with
   no stash or restore. The reconcile closes carried-over windows whose slot has no live session
   for the new project (keeping one default terminal) and opens a window for every live session
   that lacks one. It must run in `useCommandBar.open()` and in the empty-store branch of
   `useEnsureCommandWindow`, not in a bridge effect: a carried-over window committed into the
   store spawns a fresh PTY under the wrong project before a later reconcile could close it.
-- **There is NO per-window close button.** It was removed to avoid the task-detail "close this
-  window" confusion. A window's Stop destroys THAT window's session and closes the window;
-  stopping the last one hides the layer. The header is responsive (priority-plus via
-  `useHeaderPillOverflow`): only Stop, the title, and the window controls are protected, and the
-  pills and branch picker fold into the kebab as the window narrows. The divider precedes the
-  window-frame cluster (kebab, THEN divider, THEN pop-out and maximize), mirroring
-  `TaskDetailHeader`. That is not a "second-to-last control" rule; this header has no close
-  button, so an untiled terminal legitimately reads kebab then maximize.
-- **The title bar hosts TWO purpose-built buttons, not one overloaded control.** A plain
-  open/close TOGGLE (`quick-session-button`) that never spawns, so there is always a one-click
-  way to hide the layer even when a window is maximized over the backdrop; and, rendered only
-  while the layer is open, a "New terminal" button to its LEFT (`quick-session-new-terminal`),
-  disabled once windows and live terminals together hold `MAX_COMMAND_TERMINALS` slots. Only the TOGGLE carries the aggregate activity tone; "New
-  terminal" is hardcoded `tone="rest"`, since it represents an action, not the state of any
-  existing terminal. A thin divider mounts and unmounts together with the button. This pair is
-  the LEFT-MOST icons in the title bar's right-aligned button row: that row is right-anchored,
-  so an element's distance from the window edge is fixed by whatever comes AFTER it. Keeping the
-  conditionally-mounted button first means it never shifts Quick Find, stats, settings, or the
-  OS window controls.
+- **There is NO per-terminal close button.** A terminal's Stop destroys THAT terminal's session
+  and closes its window; stopping the last one hides the panel. The header reads Stop, the title,
+  the pills, the kebab, then Expand (only beside another terminal). It is responsive
+  (priority-plus via `useHeaderPillOverflow`): only Stop, the title, the kebab and Expand are
+  protected, and the pills and branch picker fold into the kebab as the terminal narrows. The
+  focus line shows only while two or more terminals are visible.
+- **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
+  (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
+  panel even when it is maximized over the backdrop. It carries the aggregate activity tone. New
+  terminal lives at the rail's foot (`command-terminal-new`), disabled with its reason once
+  windows and live terminals together hold `MAX_COMMAND_TERMINALS` slots, as are the Earlier
+  rows.
 - **Count and tone come from the UNSCOPED session list, through one shared selector.** Both the
   toggle and the sidebar indicator read `selectCommandTerminalSummary`
   (`transient-session-slice.ts`), which derives count and tone from `sessions`
@@ -133,16 +183,16 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   after a reload.
 - **Transient is not the same as Command Terminal.** A workflow's own agent is transient too (no
   task, no `sessions` row) and carries `workflowId`. Anything about the Command Terminal (the
-  count, the slot cap and re-pairing, window reconciliation, the Monitor's terminal rows, the end
-  on a PTY exit or suspend, `endCommandTerminal`, the namer, the leftover reap, and the phone's
-  terminal list, lifecycle feed and push context) asks `isCommandTerminalSession`
+  count, the slot cap and re-pairing, window reconciliation, the history, the Monitor's terminal
+  rows, the end on a PTY exit or suspend, `endCommandTerminal`, the namer, the leftover reap, and
+  the phone's terminal list, lifecycle feed and push context) asks `isCommandTerminalSession`
   (`src/shared/session-owner.ts`), never `transient` alone. A workflow agent ended as a terminal
   loses the row its Workflows pane reads, so its Pause turns into a restart.
 - **Arm the pending-open flag only once a project switch is CONFIRMED.** The sidebar indicator
-  switches project and reopens the layer via the same `setPendingOpenCommandTerminal` flag the
+  switches project and reopens the panel via the same `setPendingOpenCommandTerminal` flag the
   notification-click path uses. Awaiting `openProject` is not enough: it also RESOLVES without
   switching (a moved or renamed folder routes to the "Locate Folder" dialog). Re-read
-  `currentProject` after the await and leave the flag disarmed unless it landed, or the layer
+  `currentProject` after the await and leave the flag disarmed unless it landed, or the panel
   opens on the OUTGOING project.
 
 ## Enforcement (self-maintaining)
@@ -151,12 +201,21 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   decides which slots get windows on open. `tests/unit/command-terminal-summary.test.ts` locks
   the shared count/tone selector, and `tests/unit/command-terminal-name.test.ts` the titles. All
   run in CI via `npm run test:unit`.
+- **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
+  seam that holds until the count changes, the expanded window (focused, never saved, released on
+  close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
+- **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
+  touched filter, the owned-id skip, pruning, the resume claim),
+  `tests/unit/transient-session-resume.test.ts` (the resume start, `conversation-gone` and
+  `conversation-open`), `tests/unit/session-manager-user-input.test.ts` (what counts as touched),
+  and `tests/unit/command-terminal-resume-request.test.ts` (the renderer's per-slot resume
+  requests).
 - **Test (spawn and branch):** `tests/unit/transient-session-spawn-dirty-guard.test.ts`,
   `transient-session-spawn-ensure-trust.test.ts`, `transient-session-branch.test.ts`,
   `transient-session-adopt.test.ts`, and the two `session-manager-command-terminal-*` tests pin
   the cold-spawn checkout guard, the trust write, and the branch and label round-trips. The
-  dirty-guard file also pins main's slot allocation, the cap, concurrent reservations and the
-  unattended start's guards.
+  dirty-guard file also pins main's slot allocation, the cap, concurrent reservations, the
+  unattended start's guards, and that a desktop start needs no current project.
 - **Test (ending):** `tests/unit/session-manager-end-command-terminal.test.ts` (the end order, the
   directory kept until the exit with real files, and the task-session refusal),
   `session-manager-agent-absence.test.ts` (terminals are judged and ended, the start-evidence
@@ -172,15 +231,21 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   (a late report for a terminal is dropped unannounced), and `idle-agent-pause.test.ts` (the
   low-memory pause). This rule's `paths:` do not cover the sweep files, so these tests are what
   catches a change there.
-- **Test (UI):** `tests/ui/command-terminal.spec.ts`, `command-terminal-branch.spec.ts`, and
-  `sidebar-command-terminals.spec.ts` cover the window chrome, the branch pill, and the sidebar
-  indicator. `command-terminal.spec.ts` also covers a removal push closing its window and a
-  branch switch keeping it.
-- **Review:** the header layout ordering and the title-bar button placement are visual
-  conventions with no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
+- **Test (detached window):** `tests/unit/pop-out.test.ts` (the project key and its parser),
+  `tests/unit/pop-out-window-manager.test.ts` (the project params check) and
+  `tests/unit/pop-out-changed.test.ts` (the open hides the panel; the close reopens it only for
+  the current project with a terminal running).
+- **Test (UI):** `tests/ui/command-terminal.spec.ts` covers the panel (layout, move, resize,
+  maximize), the rail and Earlier, Expand, Swap, Open in new window (including a page booted as
+  the detached window that adopts its running terminal and starts no second one), a removal push
+  closing its window, and a branch switch keeping it. `command-terminal-branch.spec.ts` and
+  `sidebar-command-terminals.spec.ts` cover the branch pill and the sidebar indicator.
+- **Review:** the header layout ordering and the title-bar placement are visual conventions with
+  no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
 
 ## Scope
 
-The Command Terminal layer, its transient session slice, and the two title-bar controls. Shared
-window-manager behavior (pop-out, the min-pane-width floor on tiling) lives in the engine and
-applies to task-detail windows too, so it is governed where the engine is, not here.
+The Command Terminal panel, its layer and detached window, its transient session slice, its
+history, and the title-bar toggle. Shared window-manager behavior (the `hostArranged` option, the
+tile presets, the min-pane floor on tiling, expand and swap state) lives in the engine and is
+governed where the engine is, not here.

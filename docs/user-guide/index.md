@@ -20,7 +20,7 @@
 ## Agents and sessions
 
 * [Sessions and worktrees](sessions-and-worktrees.md) - Where an agent runs and how its session survives: per-task git worktrees versus the project folder, branch naming and base branch order, the FIFO session queue, resume after restart and user-paused sessions, and pausing idle agents when memory is low or after an idle timer.
-* [Command Terminal](command-terminal.md) - The ephemeral Command Terminal window layer (Ctrl+Shift+P): opening, hiding versus stopping, up to four numbered windows per project, the branch picker, why a terminal ends with its agent, phone-started terminals, and what survives a project switch.
+* [Command Terminal](command-terminal.md) - The Command Terminal panel (Ctrl+Shift+P): opening, hiding versus stopping, up to four tiled terminals per project, expand and swap, resuming earlier conversations, its own window, the branch picker, why a terminal ends with its agent, phone-started terminals, and what survives a project switch.
 * [Agent Monitor and usage stats](agent-monitor.md) - The Agent Monitor (Mod+Shift+M) that watches every agent across all projects, with card, table and list layouts, grouping, filters, live output peek and in-place task detail, plus the Usage Stats dashboard (Mod+Shift+U) with cost and token metrics, ranges and background calls.
 * [Conversation memory and Knowledge Graph](knowledge-graph.md) - The on-device conversation index (keyword and semantic search, the conversation viewer with column tabs) and the Knowledge Graph map (Mod+Shift+A): flying the 3D map, colour modes, filters, asking questions, Index card sources, task summaries, source code indexing, and Prior work on a task.
 

@@ -237,6 +237,14 @@ The heartbeat may force-think ONLY on a non-authoritative idle (`!state.idleAuth
 
 One caller asserts provenance from OUTSIDE the hook stream. The ORDINARY settings-change restart (`restartSessionForSettingsChange` called with no `resumePrompt`) respawns with `--resume` under a contract of "no prompt, no auto_command", but the CLI's resume-picker context reload is an internal turn that fires no hooks while growing `total_output_tokens` - exactly the shape the heartbeat force-thinks. So a ContextBar model switch painted a parked agent `thinking` for a fixed 30s (`DEFAULT_STALE_AFTER_HEARTBEAT_FORCED_MS`). `ActivityEngine.markIdleAuthoritative(sessionId)` (reached through `SessionManager` and `SessionTelemetry`) sets the flag on an already-idle session without committing a transition, asserting only what the restart already guarantees. It is the one writer that is neither a turn-end, a `forceIdle`, nor a watchdog hatch, and it no-ops silently on three conditions: the engine is disposed; the session has no engine state yet (a respawn still `queued` behind `SessionQueue` has not reached `initSession`, so that resume is **not** covered and can still be force-thought); or the session is not idle (a fresh-intent respawn is seeded `thinking`).
 
+Two status writes are never proof of work, because they compare two different conversations'
+totals: a session's FIRST write, whose cached usage is only the spawn's model seed while a resumed
+conversation reports its whole history, and a write whose agent session id differs from the last
+one reported (a `/resume` or `/clear` inside the session). `processStatusUpdate` treats either as
+a new baseline, with no previous usage to grow against, so neither force-thinks nor keeps a
+thinking state warm. Without it a Command Terminal resumed from its Earlier list, or switched
+with `/resume`, read as working for the heartbeat's 30 seconds.
+
 The SAME function is also rung 3 of the auto_command delivery ladder, called with a `resumePrompt` so the command rides the spawn as the CLI's prompt argument (see [Command Injection](../automations/command-injection.md)). That call deliberately SKIPS the assertion (`if (resumedSessionId && !options.resumePrompt)`): a resume carrying a prompt starts a real turn, so claiming the session is authoritatively idle would be a lie, and the heartbeat force-thinking it is then correct rather than the bug described above.
 
 The heartbeat's `markThinkingSignal` keep-warm - which refreshes `lastSignalAt` so a genuinely-thinking session survives the 180s stale-thinking watchdog - fires only on **proof of work**: OUTPUT tokens grew since the previous status write, AND no `idle_hint` is pending. Each condition closes a distinct false-ACTIVE pin, both caused by parked-TUI statusline churn re-blinding the (`signal`-anchored) net:
