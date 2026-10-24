@@ -740,4 +740,20 @@ describe('createWriteBatcher', () => {
       });
     });
   });
+
+  describe('paced-write observer', () => {
+    it('is told each paced write with its queue wait, and never a batched one', () => {
+      const wheelUp = '\x1b[<64;10;5M';
+      const write = vi.fn<(payload: string) => void>();
+      const observer = vi.fn<(data: string, queuedMs: number) => void>();
+      const batcher = createWriteBatcher(write, 16, 8, observer);
+      batcher.schedule('typed');
+      batcher.writePaced(wheelUp);
+      expect(observer).toHaveBeenCalledTimes(1);
+      expect(observer.mock.calls[0][0]).toBe(wheelUp);
+      expect(observer.mock.calls[0][1]).toBeGreaterThanOrEqual(0);
+      expect(write).toHaveBeenCalledWith('typed');
+      expect(write).toHaveBeenCalledWith(wheelUp);
+    });
+  });
 });

@@ -13,6 +13,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import type { spawn } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { HostCliProcesses, leadingExecutable } from '../../src/main/pty/host/host-cli-processes';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import type { PtyHostCliSpawnParams, PtyHostEvent } from '../../src/main/pty/host/protocol';
@@ -91,6 +92,57 @@ describe('host CLI runs: the Windows stop pins the run\'s pid', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
+  });
+});
+
+/**
+ * CreateProcess runs on the thread that flushes every terminal, so the start is
+ * a `timeSyncWork` span named for the program (`cli:spawn:<program>`): a stall
+ * report then says which run's start held the loop. The child is a stand-in
+ * that never runs, so this holds on every platform and leaves nothing to stop.
+ */
+describe('host CLI runs: the spawn is timed as a span named for the program', () => {
+  afterEach(() => setSyncSpanLabelSink(null));
+
+  /** Starts `params` and returns what the sink and the spawn call saw, in order. */
+  function startRecording(params: PtyHostCliSpawnParams): Array<string | null> {
+    // The sink hears a span's label as it opens and null as it closes (nothing
+    // encloses it here), so the call into child_process sits between the two.
+    const order: Array<string | null> = [];
+    setSyncSpanLabelSink((label) => order.push(label));
+    const spawnChild = (() => {
+      order.push('child_process.spawn');
+      return Object.assign(new EventEmitter(), {
+        pid: 4321,
+        exitCode: null,
+        signalCode: null,
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        stdin: Object.assign(new EventEmitter(), { write: () => true, end: () => undefined }),
+        kill: vi.fn(),
+      });
+    }) as unknown as typeof spawn;
+    new HostCliProcesses(() => undefined, spawnChild, NOT_THIS_PROCESS).start(params);
+    return order;
+  }
+
+  const fakeRun: PtyHostCliSpawnParams = {
+    processId: 1,
+    command: 'agent-cli',
+    args: ['-p', 'hello'],
+    cwd: '/mock/project',
+    shell: false,
+    env: {},
+    detached: false,
+  };
+
+  it('labels a direct run with the program it starts', () => {
+    expect(startRecording(fakeRun)).toEqual(['cli:spawn:agent-cli', 'child_process.spawn', null]);
+  });
+
+  it('labels a shell run with the executable its command line starts, not the whole line', () => {
+    expect(startRecording({ ...fakeRun, command: '"agent-cli" -p "a prompt that names git"', args: [], shell: true }))
+      .toEqual(['cli:spawn:agent-cli', 'child_process.spawn', null]);
   });
 });
 

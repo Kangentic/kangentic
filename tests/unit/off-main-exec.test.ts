@@ -15,19 +15,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
+const { execFileMock, execMock } = vi.hoisted(() => ({ execFileMock: vi.fn(), execMock: vi.fn() }));
 vi.mock('node:child_process', () => ({
-  exec: vi.fn(),
+  exec: execMock,
   execFile: execFileMock,
 }));
 
+import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { execFileAsync, setOffMainExecutor, type OffMainExecutor } from '../../src/main/utility-process/off-main-exec';
-import { launchesOwnBinary, leadingExecutable, ownExecutables, runHostExec, setMainExecutable } from '../../src/main/pty/host/host-exec';
+import { launchesOwnBinary, leadingExecutable, ownExecutables, runHostExec, setMainExecutable, spawnSpanLabel } from '../../src/main/pty/host/host-exec';
 import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 afterEach(() => {
   setOffMainExecutor(null);
   execFileMock.mockReset();
+  execMock.mockReset();
 });
 
 describe('off-main-exec', () => {
@@ -119,6 +121,45 @@ describe('off-main-exec', () => {
 
 describe('host-exec', () => {
   const ownExecutable = path.resolve('/mock/Kangentic.exe');
+
+  it('labels a spawn span with the program it starts', () => {
+    expect(spawnSpanLabel('cli', 'C:\\Program Files\\Git\\cmd\\git.exe', 'win32')).toBe('cli:spawn:git');
+    expect(spawnSpanLabel('cli', 'C:\\Users\\dev\\AppData\\Roaming\\npm\\claude.cmd', 'win32')).toBe('cli:spawn:claude');
+    expect(spawnSpanLabel('exec', '/usr/bin/gh', 'linux')).toBe('exec:spawn:gh');
+    expect(spawnSpanLabel('cli', '', 'linux')).toBe('cli:spawn');
+  });
+
+  describe('the spawn is timed as a span named for the program', () => {
+    // The sink hears a span's label as it opens and null as it closes (nothing
+    // encloses it here), so the call into node:child_process sits between the two.
+    afterEach(() => setSyncSpanLabelSink(null));
+
+    it('times an exec of a command line as exec:spawn:<the command it starts>', async () => {
+      const order: Array<string | null> = [];
+      setSyncSpanLabelSink((label) => order.push(label));
+      execMock.mockImplementation((_command: string, _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+        order.push('child_process.exec');
+        callback(null, 'out', '');
+      });
+
+      await expect(runHostExec({ kind: 'exec', command: 'gh pr list --state open', options: {} })).resolves.toEqual({ ok: true, stdout: 'out', stderr: '' });
+
+      expect(order).toEqual(['exec:spawn:gh', 'child_process.exec', null]);
+    });
+
+    it('times an execFile as exec:spawn:<its file>', async () => {
+      const order: Array<string | null> = [];
+      setSyncSpanLabelSink((label) => order.push(label));
+      execFileMock.mockImplementation((_file: string, _args: string[], _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+        order.push('child_process.execFile');
+        callback(null, 'out', '');
+      });
+
+      await expect(runHostExec({ kind: 'execFile', file: 'git', args: ['status'], options: {} })).resolves.toEqual({ ok: true, stdout: 'out', stderr: '' });
+
+      expect(order).toEqual(['exec:spawn:git', 'child_process.execFile', null]);
+    });
+  });
 
   it('recognizes a request to launch the host\'s own executable, by path or by name', () => {
     const byPath: HostExecRequest = { kind: 'execFile', file: ownExecutable, args: [], options: {} };
