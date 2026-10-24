@@ -2293,6 +2293,131 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Swap - drag a terminal by its header onto another's tile, as a board card
+  // is dragged: the real terminal floats, a ghost marks where it lands, and the
+  // terminal there previews in its old tile. The kebab's "Swap with" does the
+  // same from the keyboard.
+  // ---------------------------------------------------------------------------
+  test.describe('Swap', () => {
+    async function openThree(page: Page): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      for (let opened = 2; opened <= 3; opened += 1) {
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(opened, { timeout: 5000 });
+      }
+      await expect.poll(async () => (await commandTileLayout(page))?.slots.length ?? 0, { timeout: 3000 }).toBe(2);
+    }
+
+    /** The slots in reading order, from the store's tile tree. */
+    const readingOrder = (page: Page) => page.evaluate(() => {
+      interface StoreTile { kind: 'leaf' | 'split'; windowId?: string; children?: StoreTile[] }
+      const state = (window as unknown as {
+        __zustandStores?: { commandWindow?: { getState: () => { windows: Record<string, { anchor: string }>; tileTree: StoreTile | null } } };
+      }).__zustandStores?.commandWindow?.getState();
+      const slots: string[] = [];
+      const walk = (node: StoreTile | null | undefined): void => {
+        if (!node) return;
+        if (node.kind === 'leaf' && node.windowId) slots.push(state?.windows[node.windowId]?.anchor ?? '?');
+        else node.children?.forEach(walk);
+      };
+      walk(state?.tileTree);
+      return slots;
+    });
+
+    const frameOf = (page: Page, slot: string) =>
+      page.locator('[data-testid^="window-frame-"]', { has: page.locator(`[data-command-slot="${slot}"]`) });
+
+    async function pressOnHeader(page: Page, slot: string): Promise<{ x: number; y: number }> {
+      const title = await page.locator(`[data-command-slot="${slot}"]`).getByTestId('command-bar-label').boundingBox();
+      if (!title) throw new Error(`no title for ${slot}`);
+      const start = { x: title.x + title.width / 2, y: title.y + title.height / 2 };
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      return start;
+    }
+
+    test('dragging a header onto another tile previews the swap, and the release swaps them', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openThree(page);
+        // Three tile as 1 tall on the left, 2 above 3 on the right.
+        expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
+        const tallBox = await frameOf(page, 'slot-1').boundingBox();
+        const sourceBox = await frameOf(page, 'slot-3').boundingBox();
+        if (!tallBox || !sourceBox) throw new Error('no frames');
+
+        await pressOnHeader(page, 'slot-3');
+        await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
+
+        // Mid-drag: the real terminal floats tilted, a ghost marks the tall tile,
+        // and terminal 1 previews in terminal 3's old tile.
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', /matrix/);
+        const ghost = page.getByTestId('command-terminal-swap-ghost');
+        await expect(ghost).toBeVisible();
+        await expect(ghost).toContainText('Command Terminal 3');
+        const ghostBox = await ghost.boundingBox();
+        expect(Math.abs((ghostBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        const previewBox = await frameOf(page, 'slot-1').boundingBox();
+        expect(Math.abs((previewBox?.y ?? 0) - sourceBox.y)).toBeLessThanOrEqual(3);
+        expect(Math.abs((previewBox?.height ?? 0) - sourceBox.height)).toBeLessThanOrEqual(3);
+        // Nothing is committed until the release.
+        expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
+
+        await page.mouse.up();
+        await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
+        await expect(ghost).toHaveCount(0);
+        // Each terminal took the other's size, and the drag left no style behind.
+        const landedBox = await frameOf(page, 'slot-3').boundingBox();
+        expect(Math.abs((landedBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', 'none');
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('opacity', '1');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Escape mid-drag puts everything back and swaps nothing', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openThree(page);
+        const tallBox = await frameOf(page, 'slot-1').boundingBox();
+        if (!tallBox) throw new Error('no frame');
+        await pressOnHeader(page, 'slot-3');
+        await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
+        await expect(page.getByTestId('command-terminal-swap-ghost')).toBeVisible();
+
+        await page.keyboard.press('Escape');
+        await expect(page.getByTestId('command-terminal-swap-ghost')).toHaveCount(0);
+        await page.mouse.up();
+        expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
+        const restoredBox = await frameOf(page, 'slot-1').boundingBox();
+        expect(Math.abs((restoredBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', 'none');
+        // The panel is still open: the Escape cancelled the drag, not the layer.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(3);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('"Swap with" in a terminal\'s menu swaps it without a drag', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openThree(page);
+        await page.locator('[data-command-slot="slot-3"]').locator('[aria-label="Actions"]').click();
+        const swapItems = page.getByTestId('command-bar-kebab-swap');
+        await expect(swapItems).toHaveCount(2);
+        await swapItems.filter({ hasText: 'Swap with Command Terminal 1' }).click();
+        await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Earlier - the rail lists the project's ended conversations (main's
   // `commandTerminalHistory:list`, seeded here through
   // `window.__mockCommandTerminalHistory`) and resumes one: in place of a

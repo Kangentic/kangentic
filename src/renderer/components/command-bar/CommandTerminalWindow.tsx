@@ -16,7 +16,8 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
+import { ArrowLeftRight, CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -40,12 +41,13 @@ import { ShortcutGlyph, shortcutIcon } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { useLayerStore } from '../../window-manager';
+import { useLayerStore, windowIdsInReadingOrder } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { StopButtonIcon } from './StopButtonIcon';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
+import { startCommandTerminalSwapDrag } from './swap-drag';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
@@ -86,6 +88,23 @@ function resolveMountAttach(slot: string): MountAttach {
   return null;
 }
 
+/** "Swap with <name>": the keyboard's way to do what dragging a header does. */
+function SwapWithItem({ slot, onSelect }: { slot: string; onSelect: () => void }) {
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const label = useSessionStore((state) => {
+    const sessionId = projectId ? state.transientSessions[transientKey(projectId, slot)]?.sessionId : undefined;
+    return sessionId ? state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null : null;
+  });
+  return (
+    <KebabMenuItem
+      icon={<ArrowLeftRight size={14} />}
+      label={`Swap with ${commandTerminalDisplayName(label, slot)}`}
+      onClick={onSelect}
+      data-testid="command-bar-kebab-swap"
+    />
+  );
+}
+
 interface CommandTerminalWindowProps {
   managedWindow: ManagedWindow;
   /** True while the frame is maximized (driven by the window store). */
@@ -111,6 +130,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     () => setExpandedWindow(isExpanded ? null : windowId),
     [setExpandedWindow, isExpanded, windowId],
   );
+  // The other terminals in the order they tile, for "Swap with" and the drag.
+  // None while one is expanded: only one tile is on screen then.
+  const swapTargetIds = layerStore(useShallow((state) =>
+    (state.expandedWindowId === null ? windowIdsInReadingOrder(state.tileTree).filter((id) => id !== windowId) : [])));
+  const swapTargetSlots = layerStore(useShallow((state) => swapTargetIds.map((id) => state.windows[id]?.anchor ?? '')));
+  const swapWindows = layerStore((state) => state.swapWindows);
+  // A press on the header's empty space starts a swap drag; its controls keep their clicks.
+  const handleHeaderPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (swapTargetIds.length === 0) return;
+    if ((event.target as HTMLElement).closest('button, a, input, [role="button"], [role="menu"], [role="menuitem"]')) return;
+    startCommandTerminalSwapDrag(event, { windowId, windowIds: [windowId, ...swapTargetIds], swap: swapWindows });
+  }, [swapTargetIds, windowId, swapWindows]);
   const { hideLayer, resumeBeside } = useCommandTerminalLayer();
 
   // What this window attaches to at mount, decided ONCE, before the first
@@ -498,7 +529,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
           reclaim the space above it and fold into the kebab as the window narrows
           (useHeaderPillOverflow). */}
-      <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] border-b border-edge flex-shrink-0 select-none min-w-0">
+      <div
+        ref={headerRef}
+        className={`flex items-center gap-3 px-4 h-[54px] border-b border-edge flex-shrink-0 select-none min-w-0 ${
+          swapTargetIds.length > 0 ? 'cursor-grab active:cursor-grabbing' : ''
+        }`}
+        onPointerDown={handleHeaderPointerDown}
+        data-testid="command-bar-header"
+      >
         {/* Leading cluster: Stop (protected, measured as one unit). */}
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
           {/* StopButtonIcon's branches all render through IconSlot, so the node under the
@@ -641,6 +679,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                           label={action.label}
                           onClick={() => { close(); handleShortcutExecute(action); }}
                           data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                        />
+                      ))}
+                    </>
+                  )}
+                  {swapTargetIds.length > 0 && (
+                    <>
+                      <KebabMenuDivider />
+                      {swapTargetIds.map((targetId, index) => (
+                        <SwapWithItem
+                          key={targetId}
+                          slot={swapTargetSlots[index]}
+                          onSelect={() => { close(); swapWindows(windowId, targetId); }}
                         />
                       ))}
                     </>

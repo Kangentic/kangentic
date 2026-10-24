@@ -153,6 +153,41 @@ describe('setExpandedWindow', () => {
   });
 });
 
+describe('swapWindows', () => {
+  it('swaps two terminals between their tiles, keeping every tile and seam', () => {
+    const { store, ids } = arranged(3);
+    const root = store.getState().tileTree;
+    if (!root || root.kind !== 'split') throw new Error('expected a split');
+    store.getState().setSeamRatio(root.id, 0, 0.6);
+    const leafOfFirst = store.getState().windows[ids[0]].leafId;
+    const leafOfThird = store.getState().windows[ids[2]].leafId;
+
+    store.getState().swapWindows(ids[2], ids[0]);
+    const state = store.getState();
+    // The tall left tile now holds the third terminal, and the first sits where it was.
+    expect(windowIdsInReadingOrder(state.tileTree)).toEqual([ids[2], ids[1], ids[0]]);
+    expect(state.windows[ids[2]].leafId).toBe(leafOfFirst);
+    expect(state.windows[ids[0]].leafId).toBe(leafOfThird);
+    expect(state.tileTree?.kind === 'split' ? state.tileTree.sizes[0] : null).toBeCloseTo(0.6, 6);
+    expect(findWindowTreeViolations(state.windows, state.tileTree)).toEqual([]);
+    // Still the preset, so the panel does not re-tile and reset the seam.
+    expect(isHostArranged(state.windows, state.tileTree, state.tileTreeRect)).toBe(true);
+  });
+
+  it('leaves the layout alone for the same window, an unknown one, or a lone window', () => {
+    const { store, ids } = arranged(2);
+    const before = store.getState();
+    store.getState().swapWindows(ids[0], ids[0]);
+    store.getState().swapWindows(ids[0], 'no-such-window');
+    expect(store.getState().tileTree).toBe(before.tileTree);
+    expect(store.getState().windows).toBe(before.windows);
+
+    const lone = arranged(1);
+    lone.store.getState().swapWindows(lone.ids[0], 'no-such-window');
+    expect(lone.store.getState().tileTree).toBeNull();
+  });
+});
+
 describe('windowIdsInReadingOrder', () => {
   it('reads a grid by its structure, so seams that cross never reorder it', () => {
     const { store, ids } = arranged(4);

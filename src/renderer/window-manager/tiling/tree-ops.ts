@@ -60,6 +60,23 @@ export function collectWindowIds(tree: TileNode | null): string[] {
 }
 
 /**
+ * Swap two windows between their leaves: each takes the other's place, and the
+ * leaves, splits and sizes stay exactly as they were. Returns the same tree when
+ * either window is not in it, or they are the same window.
+ */
+export function swapWindowsInTree(tree: TileNode, firstWindowId: string, secondWindowId: string): TileNode {
+  if (firstWindowId === secondWindowId) return tree;
+  if (!treeContainsWindow(tree, firstWindowId) || !treeContainsWindow(tree, secondWindowId)) return tree;
+  const swap = (node: TileNode): TileNode => {
+    if (node.kind === 'split') return { ...node, children: node.children.map(swap) };
+    if (node.windowId === firstWindowId) return { ...node, windowId: secondWindowId };
+    if (node.windowId === secondWindowId) return { ...node, windowId: firstWindowId };
+    return node;
+  };
+  return swap(tree);
+}
+
+/**
  * Remove the leaf for `windowId`. Its container drops that child and renormalises
  * the remaining siblings to fill the freed space; a container left with a single
  * child collapses into that child. Returns the new tree, or null if the tree
