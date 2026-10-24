@@ -247,7 +247,11 @@ drop. Escape, a pointer cancel or the window losing focus puts everything back. 
 Open in new window moves the panel for one project into an OS window of its own: the pop-out kind
 `command-terminal`, the one project-scoped kind (`command-terminal:<projectId>`; see
 [App IPC channels](../ipc/app-channels.md)). Closing that window brings the panel back to the app,
-and the terminals keep running throughout.
+and the terminals keep running throughout. The button stays off while a terminal is still
+starting: main holds that slot reserved until the start lands (a cold start's fetch and checkout
+can take seconds), so a window opened then would find no session in the slot, ask main for it,
+and be refused with `slot-taken`. The window opens at least at the app window's own 900 x 600
+floor, which keeps four terminals at the pane floor.
 
 The window is a renderer of its own with no App.tsx, which is where most of its rules come from:
 

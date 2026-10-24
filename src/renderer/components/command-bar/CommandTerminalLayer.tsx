@@ -379,6 +379,21 @@ function useCommandTerminalAtCap(projectId: string | null): boolean {
   return new Set([...windowSlots, ...liveSlots]).size >= MAX_COMMAND_TERMINALS;
 }
 
+/**
+ * Why Open in new window is off: a terminal is still starting, its window not
+ * yet paired with a session. Main holds that slot reserved until the start
+ * lands, so the new window could neither find the terminal nor take the slot.
+ */
+const TERMINALS_STARTING_REASON = 'Wait for the terminals to start.';
+
+/** Whether a window in the panel is still waiting for its terminal's session. */
+function useTerminalsStarting(projectId: string | null): boolean {
+  const windowSlots = commandWindowManager.store(useShallow((state) =>
+    Object.values(state.windows).map((managedWindow) => managedWindow.anchor)));
+  return useSessionStore((state) =>
+    projectId !== null && windowSlots.some((slot) => !state.transientSessions[transientKey(projectId, slot)]));
+}
+
 /** Persist the GLOBAL command-terminal layout: debounced save on every change,
  *  plus a flush on hide (unmount) and before unload. */
 function useCommandWorkspacePersistence(): void {
@@ -529,6 +544,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const atCap = useCommandTerminalAtCap(projectId);
   const resumesInPlace = useResumesInPlace(projectId);
+  const terminalsStarting = useTerminalsStarting(projectId);
   const handleNewTerminal = useCallback(() => { spawnAdditionalCommandTerminal(); }, []);
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
     resumeCommandTerminalConversation(entry.agentSessionId);
@@ -586,6 +602,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
             minSize={panelMinSize(terminalCount)}
             onTerminalAreaReady={setTerminalArea}
             onOpenInNewWindow={handleOpenInNewWindow}
+            openInNewWindowDisabledReason={terminalsStarting ? TERMINALS_STARTING_REASON : null}
             rail={rail}
           />
         </div>,
