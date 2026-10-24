@@ -43,7 +43,15 @@ import { createWriteQueue, type WriteQueue } from './write-queue';
 import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
-import type { HostExecRequest, HostExecResult, HostProcessInfo, PtyHostEvent, SeedFrameResult } from './host/protocol';
+import type {
+  HostExecRequest,
+  HostExecResult,
+  HostProcessInfo,
+  PtyHostDevMethod,
+  PtyHostEvent,
+  PtyHostRequestMap,
+  SeedFrameResult,
+} from './host/protocol';
 import { isShuttingDown } from '../shutdown-state';
 import { DEFAULT_CONFIG, EventType } from '../../shared/types';
 import type {
@@ -3429,6 +3437,19 @@ export class SessionManager extends EventEmitter {
       });
     }
     return stats;
+  }
+
+  /**
+   * Dev diagnostics: one of the pty host's dev-only requests (the round-trip
+   * probe, the host's own lag report, a CPU profile of its thread), for the
+   * inspection server. A production host refuses every one of them.
+   */
+  requestPtyHostDiagnostic<M extends PtyHostDevMethod>(
+    method: M,
+    params: PtyHostRequestMap[M]['params'],
+    timeoutMs?: number,
+  ): Promise<PtyHostRequestMap[M]['result']> {
+    return this.host.transport.request(method, params, timeoutMs === undefined ? undefined : { timeoutMs });
   }
 
   /**

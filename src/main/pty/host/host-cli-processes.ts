@@ -18,7 +18,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { childHasExited, stopChildTree } from '../../shared/child-tree-stop';
-import { launchesOwnBinary, leadingExecutable, ownExecutables } from './host-exec';
+import { launchesOwnBinary, leadingExecutable, ownExecutables, spawnSpanLabel } from './host-exec';
 import { toPtyHostError, type PtyHostCliSpawnParams, type PtyHostEvent } from './protocol';
 
 export { leadingExecutable };
@@ -58,8 +58,8 @@ export class HostCliProcesses {
     let child: ChildProcessWithoutNullStreams;
     try {
       // Labelled: this is the cost moved here from main, paid on the thread
-      // that also carries terminal output.
-      child = timeSyncWork('cli:spawn', () => this.spawnChild(params.command, params.args, {
+      // that also carries terminal output. The label names the program.
+      child = timeSyncWork(spawnSpanLabel('cli', executable), () => this.spawnChild(params.command, params.args, {
         cwd: params.cwd,
         shell: params.shell,
         windowsHide: true,

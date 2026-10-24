@@ -38,6 +38,8 @@ src/devtools/
     inspection-server.ts     ← localhost HTTP bridge (SessionEvent injection is inline here)
     cdp.ts                   ← webContents.debugger.attach wrapper
     screenshot.ts            ← Page.captureScreenshot plumbing
+    scroll-latency-route.ts  ← POST /scroll-latency: arm both rings, drive the wheel, read and join
+    scroll-latency-report.ts ← the pure join and stats behind it
     ephemeral-projects.ts    ← --ephemeral preview project setup
     preview-task-title.ts    ← preview window title
     seed-*.ts                ← board/data seeders (usage, git changes, conversation, backlog)
@@ -119,7 +121,29 @@ Zustand store must be registered to become readable; the
 `renderer/lag-recorder.ts` holds the two dev-only performance rings: the
 event-loop lag sampler (WHEN the thread blocked) and the
 `long-animation-frame` ring with per-script attribution (WHAT ran). Both
-are served by `/event-loop-lag`.
+are served by `/event-loop-lag`, beside main's report and the pty host's
+own (`ptyHost`, from its `devLagReport` request).
+
+### Scroll latency (`main/scroll-latency-route.ts`, `main/scroll-latency-report.ts`)
+
+`POST /scroll-latency` (tool `kangentic_devtools_scroll_latency`) times a
+fullscreen agent's scroll from the wheel to the painted frame. It arms two
+rings that live in shipped code with dev-gated writes, since the pty host
+may not import this tree: the renderer's
+(`src/renderer/utils/scroll-latency-probe.ts`: wheel, report, paced send,
+arrival, parse, paint) and the host's
+(`src/main/diagnostics/pty-round-trip-probe.ts`: PTY write, first output,
+flush, and how late each flush timer fired). It then drives trusted wheel
+ticks through CDP, or records a person's own scrolling for a window, and
+joins the rings. Every interval is taken on one process's clock; IPC and
+main come from pairing the renderer's k-th report with the host's k-th.
+`profileHost` adds a CPU profile of the host thread. For a zero-quota
+floor, point a preview's `agent.cliPaths.claude` at a `.cmd` that runs
+`tests/fixtures/mock-claude-scroll.js`, which answers each wheel report at
+once (`scroll-load=<hz>` in a task's prompt makes it a streaming load).
+`tornPaints` counts frames painted while an answer was partly delivered.
+It also counts an answer made of several whole repaints, so check a high
+count against the raw bytes (`kangentic_devtools_terminal_forensics`).
 
 Fiber walking lives in `preload/react-fiber-walker.ts`, not here: it rides
 `__REACT_DEVTOOLS_GLOBAL_HOOK__` to walk fibers from a DOM node and to

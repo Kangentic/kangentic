@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Dev-only inspection tools
-description: "The dev-only kangentic_devtools_* MCP tools for inspecting a running preview instance: store and engine state, DOM and React queries, event-loop lag, terminal forensics and PTY input, and the gates that keep them out of production builds."
+description: "The dev-only kangentic_devtools_* MCP tools for inspecting a running preview instance: store and engine state, DOM and React queries, event-loop lag, scroll latency, terminal forensics and PTY input, and the gates that keep them out of production builds."
 tags: [mcp, devtools, preview]
 sources:
   - resource: src/devtools/mcp/register.ts

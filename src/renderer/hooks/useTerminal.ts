@@ -8,6 +8,8 @@ import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences 
 import { createTerminalLinkHandler } from '../utils/terminal-link-handler';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
+import { noteScrollLatencyParsed, noteScrollLatencyStage } from '../utils/scroll-latency-probe';
+import { isSingleKeystroke } from '../../shared/round-trip-input';
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { onTerminalRefocus } from '../utils/focused-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
@@ -1322,11 +1324,26 @@ export function useTerminal(options: UseTerminalOptions) {
     // synchronously; concatenating those into a single ipcRenderer.invoke
     // avoids N round-trips across the process boundary. PTY byte order is
     // preserved for sequential pty.write calls, so concatenation is safe.
-    const batcher = createWriteBatcher((payload) => {
-      if (options.sessionId) {
-        window.electronAPI.sessions.write(options.sessionId, payload);
-      }
-    });
+    const probedSessionId = options.sessionId;
+    const batcher = createWriteBatcher(
+      (payload) => {
+        // Dev only: a typed character's send, for the keystroke-to-echo timer.
+        // Classified on the payload the host receives, not on each onData, so
+        // two keys joined into one write count as the host counts them.
+        if (__KANGENTIC_DEV__ && probedSessionId && isSingleKeystroke(payload)) {
+          noteScrollLatencyStage(probedSessionId, 'send', { chars: payload.length, queuedMs: 0, input: 'key' });
+        }
+        if (options.sessionId) {
+          window.electronAPI.sessions.write(options.sessionId, payload);
+        }
+      },
+      undefined,
+      undefined,
+      // Dev only: the scroll-latency probe times each paced report's queue wait.
+      __KANGENTIC_DEV__ && probedSessionId
+        ? (data, queuedMs) => noteScrollLatencyStage(probedSessionId, 'send', { chars: data.length, queuedMs, input: 'mouse' })
+        : undefined,
+    );
     writeBatcherRef.current = batcher;
 
     // Enable Ctrl+C copy (when text selected), Ctrl+V paste, and Ctrl+Enter newline
@@ -1415,8 +1432,14 @@ export function useTerminal(options: UseTerminalOptions) {
         // single report produces is CLAUDE_CODE_SCROLL_SPEED's territory, not
         // this path's - see write-batcher.ts for the schemes tried and
         // rejected. Ordering against typed bytes holds.
-        if (isMouseReport(data)) batcher.writePaced(data, mouseReportLane(data));
-        else batcher.schedule(data);
+        if (isMouseReport(data)) {
+          batcher.writePaced(data, mouseReportLane(data));
+          // Dev only. This stamp dates the report for the wheel-to-report leg;
+          // the queue wait comes from the batcher's own observer.
+          if (__KANGENTIC_DEV__ && options.sessionId) noteScrollLatencyStage(options.sessionId, 'report', { chars: data.length });
+        } else {
+          batcher.schedule(data);
+        }
       });
 
       // Debounced PTY resize - coalesces rapid dimension changes so the
@@ -1637,6 +1660,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // steadily through the drag is both smoother and cheaper than stall-then-burst.
       shouldHold: () => scrollbackPendingRef.current,
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
+      onSliceParsed: __KANGENTIC_DEV__ ? (chars) => noteScrollLatencyParsed(sessionId, chars) : undefined,
     });
     incomingResumeRef.current = () => queue.kick();
     incomingResetRef.current = () => queue.reset();
@@ -1672,6 +1696,7 @@ export function useTerminal(options: UseTerminalOptions) {
 
     const cleanup = window.electronAPI.sessions.onData((incomingSessionId, data) => {
       if (incomingSessionId !== sessionId) return;
+      if (__KANGENTIC_DEV__) noteScrollLatencyStage(sessionId, 'arrive', { chars: data.length });
       repaintNudge.noteOutput();
       queue.push(data);
     });

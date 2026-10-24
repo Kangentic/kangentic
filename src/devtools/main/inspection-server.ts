@@ -302,6 +302,22 @@ async function handleRequest(
     return respondScreenshot(window, url, response);
   }
 
+  // Wheel-to-paint timing for a fullscreen agent's terminal (see
+  // scroll-latency-route.ts). Needs CDP to drive the wheel and read the
+  // renderer's ring, and the session manager to reach the pty host's.
+  if (route === 'POST /scroll-latency') {
+    const sessionManager = options.getSessionManager();
+    if (!sessionManager) {
+      return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
+    }
+    const body = await readJsonBody(request);
+    const { respondScrollLatency } = await import('./scroll-latency-route');
+    return respondScrollLatency(body, window, sessionManager, stallProfileDirectory(app.getPath('userData')), {
+      json: (statusCode, payload) => respondJson(response, statusCode, payload),
+      error: (statusCode, kind, detail) => respondError(response, statusCode, kind, detail),
+    });
+  }
+
   if (route === 'GET /screenshot-element') {
     return respondScreenshotElement(window, url, response);
   }
@@ -650,7 +666,18 @@ async function respondEventLoopLag(
   // evaluation is far below the 16 ms floor `recentSlowSyncWork` records.
   const engine = getWorkflowEngine();
   const workflowEngine = engine ? { budgetMs: 2, ...engine.stats() } : { unavailable: 'not-registered' };
-  respondJson(response, 200, { ts: new Date().toISOString(), main, worker, workflowEngine, stallProfiler, renderer });
+  // The pty host's own report: its stalls, delay windows, GC, and every span
+  // per label (main's `pty-host:` labels are only the spans of 16 ms and over).
+  let ptyHost: unknown = { unavailable: 'no-session-manager' };
+  const sessionManager = options.getSessionManager();
+  if (sessionManager) {
+    try {
+      ptyHost = await sessionManager.requestPtyHostDiagnostic('devLagReport', {});
+    } catch (error) {
+      ptyHost = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  respondJson(response, 200, { ts: new Date().toISOString(), main, ptyHost, worker, workflowEngine, stallProfiler, renderer });
 }
 
 /** Per-session terminal output-pipeline stats (in-process). Diagnoses

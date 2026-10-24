@@ -29,6 +29,8 @@ import type { PreviewInstanceRecord } from '../shared/types';
  */
 
 const DEFAULT_TIMEOUT_MS = 5000;
+/** The longest window `/scroll-latency` records; the route caps a drive to fit it. */
+const SCROLL_LATENCY_MAX_WINDOW_MS = 110_000;
 
 interface CallBridgeOptions {
   method: 'GET' | 'POST';
@@ -516,6 +518,41 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     },
     async ({ instanceId }) =>
       toolResult(await callBridge({ method: 'GET', path: '/pty-pipeline', instanceId })),
+  );
+
+  server.registerTool(
+    'kangentic_devtools_scroll_latency',
+    {
+      description:
+        'Time a fullscreen agent terminal\'s scroll (or, with `drive.kind: "keys"`, typing) from the input to the painted frame and split it into the agent\'s share and Kangentic\'s. Also reports each session\'s output totals over the window (host flushes, characters, backpressure pauses, renderer arrivals) and CPU time per app process. Arms a probe in the renderer and one in the pty host, then either drives trusted wheel ticks into `sessionId`\'s terminal (`drive`) or records whatever scrolling happens for `durationMs` (no `drive`: scroll by hand meanwhile). Per session it reports p50/p95/max of each leg: xterm\'s wheel handling, the paced input queue, IPC and main (both directions, from pairing renderer and host reports by order), the agent\'s answer (PTY write to its first output, `isolated` = answered before the next report left), the host\'s flush wait, the parse and the paint wait, plus a one-line `summary`. Also the 16 ms flush timer\'s real delay, the host\'s event-loop delay, host stalls and labelled work in the window, renderer long frames, and with `profileHost` a CPU profile of the host thread (top self time, saved as a .cpuprofile). The window must be on screen and unoccluded or no frames paint. Dev-only.',
+      inputSchema: z.object({
+        sessionId: z.string().optional().describe('The session whose terminal to drive, or to narrow the report to. Required with `drive`.'),
+        durationMs: z.number().int().positive().max(SCROLL_LATENCY_MAX_WINDOW_MS).optional().describe('Record-only window when `drive` is omitted. Default 15000.'),
+        input: z.enum(['mouse', 'key']).optional().describe('Record-only windows: time wheel reports (default) or typed keystrokes.'),
+        drive: z.object({
+          kind: z.enum(['wheel', 'keys']).optional().describe('wheel (default) scrolls; keys types x then Backspace `ticks` times each into the focused terminal, never Enter. Time keys on an idle session: into a streaming one the stream stands in for the echo.'),
+          ticks: z.number().int().positive().max(500).optional().describe('Wheel ticks per direction, or x/Backspace pairs. Default 20. Cut to what fits a 110 s window.'),
+          intervalMs: z.number().positive().max(5000).optional().describe('Milliseconds between ticks. Default 50. Use 300+ for isolated notches.'),
+          direction: z.enum(['up', 'down', 'up-then-down']).optional().describe('Default up-then-down, which leaves the view where it started.'),
+          deltaY: z.number().positive().max(2000).optional().describe('CSS pixels per tick. Default 100, one Windows wheel notch.'),
+          settleMs: z.number().min(0).max(30000).optional().describe('Wait after the last tick for its answer. Default 1500.'),
+        }).optional().describe('Drive the wheel instead of waiting for a person to scroll.'),
+        profileHost: z.boolean().optional().describe('Also CPU-profile the pty host thread for the window. Default false.'),
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ sessionId, durationMs, input, drive, profileHost, instanceId }) => toolResult(
+      await callBridge({
+        method: 'POST',
+        path: '/scroll-latency',
+        body: { sessionId, durationMs, input, drive, profileHost },
+        instanceId,
+        // The route plans and clamps the window itself; waiting out its
+        // longest window keeps this side from planning it a second time.
+        timeoutMs: SCROLL_LATENCY_MAX_WINDOW_MS + 30_000,
+      }),
+    ),
   );
 
   server.registerTool(

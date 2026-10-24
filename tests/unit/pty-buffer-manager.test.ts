@@ -122,6 +122,305 @@ describe('PtyBufferManager', () => {
     });
   });
 
+  describe('a flush that reaches no one drains the whole buffer', () => {
+    const MEGABYTE_OF_OUTPUT = 'x'.repeat(1024 * 1024);
+
+    it('sends an off-screen session\'s whole backlog in one flush, so a flood cannot pile up', () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn(), hasFlushConsumer: () => false });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, MEGABYTE_OF_OUTPUT);
+      vi.advanceTimersByTime(20);
+
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      expect((onFlush.mock.calls[0][1] as string).length).toBe(MEGABYTE_OF_OUTPUT.length);
+      expect(manager.getBufferStats(SESSION)?.pendingBytes).toBe(0);
+      vi.useRealTimers();
+    });
+
+    it('keeps slicing a session someone receives, which backpressure paces', () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn(), hasFlushConsumer: () => true });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, MEGABYTE_OF_OUTPUT);
+      vi.advanceTimersByTime(20);
+
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      expect((onFlush.mock.calls[0][1] as string).length).toBe(256 * 1024);
+      expect(manager.getBufferStats(SESSION)?.pendingBytes).toBe(MEGABYTE_OF_OUTPUT.length - 256 * 1024);
+      vi.useRealTimers();
+    });
+
+    it('reports the pending size after an append and after each slice', () => {
+      vi.useFakeTimers();
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn(), hasFlushConsumer: () => true, onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, MEGABYTE_OF_OUTPUT);
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, MEGABYTE_OF_OUTPUT.length);
+      vi.advanceTimersByTime(20);
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, MEGABYTE_OF_OUTPUT.length - 256 * 1024);
+      vi.useRealTimers();
+    });
+
+    it('slices when the consumer check is omitted', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createManager();
+
+      manager.onData(SESSION, MEGABYTE_OF_OUTPUT);
+      vi.advanceTimersByTime(20);
+
+      expect((onFlush.mock.calls[0][1] as string).length).toBe(256 * 1024);
+      vi.useRealTimers();
+    });
+  });
+
+  describe('a replay drain reports the emptied pending buffer', () => {
+    // A session paused on a large pending backlog (BackpressureController
+    // .recordPending) resumes when the pending size reports zero. A terminal
+    // that mounts and replays drains that backlog through reportDrain instead
+    // of a flush, so reportDrain must report the zero itself. The flush path
+    // reports zero too, so each positive test pins a nonzero report right
+    // before the drain and keeps everything between the two synchronous: the
+    // zero that follows can then only come from the drain.
+    const PENDING_OUTPUT = 'backlog the terminal has not received yet';
+    const ALT_FRAME = '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame';
+    const RACE_BYTES = 'RACE_BYTES';
+
+    // Restore real timers even when an assertion throws first: leaked fake
+    // timers hang the headless parser's macrotask flush in every later
+    // serialize test.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('getScrollback reports zero pending once it drains a backlog', () => {
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn(), hasFlushConsumer: () => true, onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, PENDING_OUTPUT);
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, PENDING_OUTPUT.length);
+
+      manager.getScrollback(SESSION);
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, 0);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('a parsed-grid replay snapshot reports zero pending as soon as it drains, before its serialize resolves', async () => {
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn(), onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, ALT_FRAME);
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, ALT_FRAME.length);
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      // The pre-serialize drain is synchronous, so its report lands ahead of
+      // the await and a paused session resumes without waiting on the parser.
+      expect(onPendingChange).toHaveBeenLastCalledWith(SESSION, 0);
+
+      await pendingSnapshot;
+      manager.removeSession(SESSION);
+    });
+
+    it('a parsed-grid replay snapshot reports zero again after its tail fold drains the bytes that raced it', async () => {
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush: vi.fn(), onDrain: vi.fn(), onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, ALT_FRAME);
+
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION); // do not await yet
+      manager.onData(SESSION, RACE_BYTES); // lands during the await window
+      const snapshot = await pendingSnapshot;
+
+      // The race bytes ride the reply (the frame route's tail fold), so they
+      // left the pending buffer through the drain and not through a flush.
+      expect(snapshot).toContain(RACE_BYTES);
+      // Append, pre-serialize drain, race append, tail-fold drain. No flush
+      // tick reports in between: a replay sample in flight holds it.
+      expect(onPendingChange.mock.calls).toEqual([
+        [SESSION, ALT_FRAME.length],
+        [SESSION, 0],
+        [SESSION, RACE_BYTES.length],
+        [SESSION, 0],
+      ]);
+
+      manager.removeSession(SESSION);
+    });
+
+    it('getScrollback reports nothing when the pending buffer is already empty', () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn(), onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+
+      manager.onData(SESSION, PENDING_OUTPUT);
+      vi.advanceTimersByTime(20);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      // The flush reported its own zero. Clear it so only a drain report can show.
+      onPendingChange.mockClear();
+
+      manager.getScrollback(SESSION);
+      expect(onPendingChange).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+
+    it('an alt-screen replay snapshot reports nothing when there is nothing pending to drain', async () => {
+      const onFlush = vi.fn();
+      const onPendingChange = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn(), onPendingChange });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, ALT_FRAME);
+      // Let the ordinary 16ms tick deliver the bytes first, so both the
+      // pre-serialize drain and the tail fold find an empty buffer.
+      await expect
+        .poll(() => onFlush.mock.calls.length > 0, { timeout: 2000, interval: 10 })
+        .toBe(true);
+      // The flush reported its own zero. Clear it so only a drain report can show.
+      onPendingChange.mockClear();
+
+      await manager.getReplaySnapshot(SESSION);
+      expect(onPendingChange).not.toHaveBeenCalled();
+
+      manager.removeSession(SESSION);
+    });
+  });
+
+  describe('the answer to input flushes on the next loop turn', () => {
+    /** A fullscreen agent's session: the prompt flush applies in the alt screen only. */
+    function createAltScreenManager() {
+      const created = createManager();
+      created.manager.onData(SESSION, '\x1b[?1049h');
+      vi.advanceTimersByTime(20);
+      created.onFlush.mockClear();
+      return created;
+    }
+
+    it('flushes output that follows input without waiting for the 16 ms timer', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createAltScreenManager();
+
+      manager.noteInput(SESSION);
+      manager.onData(SESSION, 'repaint for a wheel tick');
+      // Never synchronous: chunks read in the same loop turn still go out together.
+      expect(onFlush).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onFlush).toHaveBeenCalledWith(SESSION, 'repaint for a wheel tick', expect.any(Number));
+
+      vi.useRealTimers();
+    });
+
+    it('batches output with no input before it on the timer', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createAltScreenManager();
+
+      manager.onData(SESSION, 'agent streaming on its own');
+      vi.advanceTimersByTime(1);
+      expect(onFlush).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(16);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it('goes back to the timer once the input is old', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createAltScreenManager();
+
+      manager.noteInput(SESSION);
+      vi.advanceTimersByTime(300);
+      manager.onData(SESSION, 'output long after the keystroke');
+      vi.advanceTimersByTime(1);
+      expect(onFlush).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(16);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it('ignores input for a session it does not hold', () => {
+      const { manager } = createManager();
+      expect(() => manager.noteInput('nonexistent')).not.toThrow();
+    });
+
+    it('keeps a normal-buffer session on the timer after input', () => {
+      // An inline renderer taller than its terminal redraws in several chunks
+      // over ~13 ms; the timer is what keeps that redraw in one paint.
+      vi.useFakeTimers();
+      const { manager, onFlush } = createManager();
+
+      manager.noteInput(SESSION);
+      manager.onData(SESSION, 'inline redraw, first chunk');
+      vi.advanceTimersByTime(1);
+      expect(onFlush).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(16);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+
+      vi.useRealTimers();
+    });
+
+    it('drains a backlog past one slice on the timer, even right after input', () => {
+      vi.useFakeTimers();
+      const { manager, onFlush } = createAltScreenManager();
+      const immediateSpy = vi.spyOn(globalThis, 'setImmediate');
+
+      manager.noteInput(SESSION);
+      manager.onData(SESSION, 'x'.repeat(1024 * 1024));
+      vi.advanceTimersByTime(5);
+
+      // The first slice goes out on the next turn; the rest of a backlog past
+      // one slice is a stream and waits for the timer, not the next turn.
+      expect(immediateSpy).toHaveBeenCalledTimes(1);
+      expect(onFlush).toHaveBeenCalledTimes(1);
+      immediateSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('holds for a replay sample on the timer, never a next-turn loop', async () => {
+      vi.useFakeTimers();
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush, onDrain: vi.fn() });
+      manager.initSession(SESSION, '', 80, 24);
+      manager.onData(SESSION, '\x1b[?1049h\x1b[2J\x1b[1;1Halt frame');
+      vi.advanceTimersByTime(20);
+      onFlush.mockClear();
+
+      // Wedge the parser so the sample stays in flight (up to its 1 s deadline).
+      interface ManagerInternals {
+        buffers: Map<string, { headless: { serialize: () => Promise<string> } }>;
+      }
+      const bufferState = (manager as unknown as ManagerInternals).buffers.get(SESSION);
+      if (!bufferState) throw new Error('test setup: session buffer state missing');
+      bufferState.headless.serialize = () => new Promise<string>(() => {});
+      const pendingSnapshot = manager.getReplaySnapshot(SESSION);
+
+      const immediateSpy = vi.spyOn(globalThis, 'setImmediate');
+      manager.noteInput(SESSION);
+      manager.onData(SESSION, 'answer while the sample is held');
+      vi.advanceTimersByTime(100);
+      // The answer's flush goes on the next turn once; the held re-arms that
+      // follow go on the 16 ms timer. A hold that re-armed on the next turn
+      // would spin for the whole sample (up to 1 s).
+      expect(immediateSpy).toHaveBeenCalledTimes(1);
+      expect(onFlush).not.toHaveBeenCalled();
+      immediateSpy.mockRestore();
+
+      await vi.advanceTimersByTimeAsync(1100);
+      await pendingSnapshot;
+      vi.useRealTimers();
+      manager.removeSession(SESSION);
+    });
+  });
+
   describe('resize reports width changes truthfully and preserves scrollback', () => {
     it('reports colsChanged=true on the first resize to a new width (no initial-resize swallow)', () => {
       const onFlush = vi.fn();

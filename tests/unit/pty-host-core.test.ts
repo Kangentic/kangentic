@@ -14,6 +14,8 @@ import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
 import { ROOT_PID_POLL_MS, ROOT_PID_WAIT_LIMIT_MS } from '../../src/main/pty/host/root-pid-gate';
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
+import { BACKPRESSURE_LOW_WATER, PENDING_HIGH_WATER, PENDING_LOW_WATER } from '../../src/main/pty/buffer/backpressure-controller';
+import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostCommand, PtyHostEvent, PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
@@ -149,6 +151,233 @@ describe('PtyHostCore', () => {
     // 'unwatched' + 'focused' + 'tapped' is 22.
     expect(events).toContainEqual({ type: 'tap', sessionId: 'session-1', data: 'tapped', endOffset: 22 });
     expect(events).not.toContainEqual({ type: 'data', sessionId: 'session-1', data: 'tapped' });
+  });
+
+  describe('a pending buffer that piles up (the flood that once grew to the string limit)', () => {
+    // A PTY delivers 64 KB reads; a megabyte a tick is four times what one
+    // flush slice drains.
+    const READ = 'x'.repeat(64 * 1024);
+    const READS_PER_TICK = 16;
+    const MEGABYTE = READ.length * READS_PER_TICK;
+    /** What one flush ships to a consumer (MAX_BYTES_PER_FLUSH in the buffer manager). */
+    const FLUSH_SLICE_CHARS = 256 * 1024;
+    const TICKS_PAST_HIGH_WATER = Math.ceil(PENDING_HIGH_WATER / (READ.length * READS_PER_TICK)) * 2;
+
+    function feedOneTick(fake: FakePty): void {
+      for (let read = 0; read < READS_PER_TICK; read++) fake.feed(READ);
+    }
+
+    it('pauses a watched PTY past the high water and resumes it once the slices are drained and acknowledged', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      // The renderer acknowledges every slice it gets, as a fast one does, so
+      // in-flight never pauses it: only the pending buffer can.
+      let acknowledged = 0;
+      const acknowledgeDelivered = (): void => {
+        const delivered = events.reduce((total, event) => total + (event.type === 'data' ? event.data.length : 0), 0);
+        core.handleCommand({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
+        acknowledged = delivered;
+      };
+
+      for (let tick = 0; tick < TICKS_PAST_HIGH_WATER && !vi.mocked(fake.pty.pause).mock.calls.length; tick++) {
+        feedOneTick(fake);
+        await flush();
+        acknowledgeDelivered();
+      }
+      expect(fake.pty.pause).toHaveBeenCalledTimes(1);
+
+      // Paused, the PTY delivers nothing more; the backlog drains a slice a tick.
+      for (let tick = 0; tick < 40 && !vi.mocked(fake.pty.resume).mock.calls.length; tick++) {
+        await flush();
+        acknowledgeDelivered();
+      }
+      expect(fake.pty.resume).toHaveBeenCalledTimes(1);
+    });
+
+    it('drains an unwatched session whole every tick, so it never pauses', async () => {
+      const { core, fake } = makeCore();
+      core.spawn(spawnParams());
+
+      for (let tick = 0; tick < TICKS_PAST_HIGH_WATER; tick++) {
+        feedOneTick(fake);
+        await flush();
+      }
+
+      expect(fake.pty.pause).not.toHaveBeenCalled();
+      expect(core.getDiagnostics().pipeline[0].pendingBytes).toBe(0);
+    });
+
+    it('slices a tapped session\'s flush like a focused one, though no renderer shows it', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      // Tapped and never focused: a phone streams it, so its taps are the only
+      // consumer of the flush. A flush nobody receives drains whole (the test
+      // above); one a phone receives is sliced to what one message can carry.
+      core.handleCommand({ type: 'setTapped', sessionIds: ['session-1'] });
+
+      fake.feed('x'.repeat(MEGABYTE));
+      await flush();
+
+      const taps = events.filter((event): event is Extract<PtyHostEvent, { type: 'tap' }> => event.type === 'tap');
+      expect(events.filter((event) => event.type === 'data')).toEqual([]);
+      expect(taps.length).toBeGreaterThan(0);
+      expect(taps[0].data.length).toBeLessThanOrEqual(FLUSH_SLICE_CHARS);
+      // The rest of the megabyte waits for the next tick instead of riding this one.
+      const tapped = taps.reduce((total, tap) => total + tap.data.length, 0);
+      const { pendingBytes } = core.getDiagnostics().pipeline[0];
+      expect(pendingBytes).toBeGreaterThan(0);
+      expect(pendingBytes).toBe(MEGABYTE - tapped);
+    });
+
+    it('resumes a PTY the backlog paused as soon as a replay sample drains the pending buffer', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      // The renderer acknowledges every slice it gets, so in-flight stays low and
+      // only the pending buffer can have paused the PTY.
+      let acknowledged = 0;
+      const acknowledgeDelivered = (): void => {
+        const delivered = events.reduce((total, event) => total + (event.type === 'data' ? event.data.length : 0), 0);
+        core.handleCommand({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
+        acknowledged = delivered;
+      };
+      for (let tick = 0; tick < TICKS_PAST_HIGH_WATER && !vi.mocked(fake.pty.pause).mock.calls.length; tick++) {
+        feedOneTick(fake);
+        await flush();
+        acknowledgeDelivered();
+      }
+      expect(fake.pty.pause).toHaveBeenCalledTimes(1);
+
+      // The slices alone are far from resuming it: a slice a tick, and the pending
+      // buffer is still several times the low water. Only the in-flight half of the
+      // resume condition is met, so the drain below is the one thing that changes.
+      const beforeReplay = core.getDiagnostics().pipeline[0];
+      expect(beforeReplay.paused).toBe(true);
+      expect(beforeReplay.pendingBytes).toBeGreaterThan(PENDING_LOW_WATER);
+      expect(beforeReplay.inFlightBytes).toBeLessThanOrEqual(BACKPRESSURE_LOW_WATER);
+      expect(fake.pty.resume).not.toHaveBeenCalled();
+
+      // The session is in the normal buffer, so this is the byte replay: it takes
+      // the whole pending buffer into its reply. No timer advances after it, so
+      // no flush could have been what resumed the PTY.
+      await core.handleRequest('getScrollback', { sessionId: 'session-1', settle: false });
+
+      expect(core.getDiagnostics().pipeline[0]).toMatchObject({ pendingBytes: 0, paused: false });
+      expect(fake.pty.resume).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the answer to input flushes on the next loop turn (the write command stamps the session)', () => {
+    // In the alt screen, output within 250 ms of input to the session's PTY is
+    // the answer someone waits on, and flushes on the next loop turn instead of
+    // the 16 ms timer. PtyBufferManager pins the timing; these pin that the
+    // host core's `write` command is what stamps the input.
+    const dataEvents = (events: PtyHostEvent[]) => events.filter((event): event is Extract<PtyHostEvent, { type: 'data' }> => event.type === 'data');
+
+    /** A focused session already in the alt screen, as a fullscreen agent's is, with the enter flushed. */
+    async function altScreenSession() {
+      const created = makeCore();
+      created.core.spawn(spawnParams());
+      created.core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      created.fake.feed('\x1b[?1049h');
+      await flush();
+      created.events.length = 0;
+      return created;
+    }
+
+    it('flushes a session\'s output on the next loop turn once input was written to its PTY, not on the 16 ms timer', async () => {
+      const { core, events, fake } = await altScreenSession();
+
+      core.handleCommand({ type: 'write', ptyId: 1, data: 'x' });
+      expect(fake.write).toHaveBeenCalledWith('x');
+      fake.feed('repaint for a keystroke');
+      // Never synchronous: chunks read in the same loop turn still leave together.
+      expect(dataEvents(events)).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(dataEvents(events)).toEqual([{ type: 'data', sessionId: 'session-1', data: 'repaint for a keystroke' }]);
+    });
+
+    it('batches the same output on the 16 ms timer when no input was written before it', async () => {
+      const { events, fake } = await altScreenSession();
+
+      fake.feed('repaint with no keystroke');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dataEvents(events)).toEqual([]);
+      await flush();
+
+      expect(dataEvents(events)).toEqual([{ type: 'data', sessionId: 'session-1', data: 'repaint with no keystroke' }]);
+    });
+
+    it('stamps only the session whose PTY was written to: another session and a raw PTY write leave the rest on the timer', async () => {
+      const first = createFakePty(4242);
+      const second = createFakePty(4343);
+      const raw = createFakePty(4444);
+      const { core, events, spawnPty } = makeCore({ fake: first });
+      core.spawn(spawnParams({ ptyId: 1, sessionId: 'session-1' }));
+      spawnPty.mockReturnValueOnce(second.pty);
+      core.spawn(spawnParams({ ptyId: 2, sessionId: 'session-2' }));
+      spawnPty.mockReturnValueOnce(raw.pty);
+      core.spawnRaw(rawSpawnParams({ ptyId: 9 }));
+      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1', 'session-2'] });
+      first.feed('\x1b[?1049h');
+      second.feed('\x1b[?1049h');
+      await flush();
+      events.length = 0;
+
+      core.handleCommand({ type: 'write', ptyId: 9, data: 'probe input' });
+      core.handleCommand({ type: 'write', ptyId: 2, data: 'x' });
+      expect(raw.write).toHaveBeenCalledWith('probe input');
+      expect(second.write).toHaveBeenCalledWith('x');
+      expect(first.write).not.toHaveBeenCalled();
+      first.feed('output of the session nobody typed into');
+      second.feed('output of the session that got the keystroke');
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(dataEvents(events)).toEqual([{ type: 'data', sessionId: 'session-2', data: 'output of the session that got the keystroke' }]);
+      await flush();
+      expect(dataEvents(events).map((event) => event.sessionId)).toEqual(['session-2', 'session-1']);
+    });
+  });
+
+  describe('a production host refuses the dev-only requests', () => {
+    // vitest defines __KANGENTIC_DEV__ as false, so the core here is a packaged
+    // build's. handleRequest is not async: the refusal is a synchronous throw
+    // naming the method. The message is the core's own, because the work behind
+    // `devCpuProfile` throws a different "dev-only" message of its own, and a
+    // looser match would stay green with the core's guard gone.
+    const devRequests: Array<[string, (core: PtyHostCore) => unknown]> = [
+      ['devArmRoundTripProbe', (core) => core.handleRequest('devArmRoundTripProbe', { durationMs: 1000 })],
+      ['devReadRoundTripProbe', (core) => core.handleRequest('devReadRoundTripProbe', {})],
+      ['devLagReport', (core) => core.handleRequest('devLagReport', {})],
+      ['devCpuProfile', (core) => core.handleRequest('devCpuProfile', { durationMs: 100 })],
+    ];
+
+    it.each(devRequests)('refuses %s', (method, request) => {
+      const { core } = makeCore();
+      expect(() => request(core)).toThrow(`${method} is dev-only`);
+    });
+  });
+
+  describe('the host\'s spawn spans (the labels a stall report names)', () => {
+    afterEach(() => setSyncSpanLabelSink(null));
+
+    it('times a session PTY spawn as the pty:spawn span, with node-pty called inside it', () => {
+      // The sink hears a span's label as it opens and null as it closes (nothing
+      // encloses it here), so node-pty's call sits between the two.
+      const order: Array<string | null> = [];
+      setSyncSpanLabelSink((label) => order.push(label));
+      const { core, fake, spawnPty } = makeCore();
+      spawnPty.mockImplementationOnce(() => {
+        order.push('node-pty spawn');
+        return fake.pty;
+      });
+
+      core.spawn(spawnParams());
+
+      expect(order).toEqual(['pty:spawn', 'node-pty spawn', null]);
+    });
   });
 
   it('answers getSeedFrame with the parsed frame and the parser offset its snapshot covers', async () => {

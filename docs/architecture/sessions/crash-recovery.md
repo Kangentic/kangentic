@@ -16,6 +16,8 @@ sources:
   - resource: src/main/pty/host/pty-host-client.ts
   - resource: src/main/pty/host/pty-host-core.ts
   - resource: src/main/pty/host/protocol.ts
+  - resource: src/main/pty/host/pty-host-entry.ts
+  - resource: src/main/diagnostics/thread-cpu-profile.ts
 ---
 # Crash recovery and PTY host
 
@@ -96,7 +98,16 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
-  main by pid, since with no terminal open the quit does not wait for the host.
+  main by pid, since with no terminal open the quit does not wait for the host. A spawn holds the
+  host's only thread, the one that flushes every terminal, so each is a `timeSyncWork` span that
+  names its program: `cli:spawn:<program>` for a CLI or git run, `exec:spawn:<program>` for a
+  one-shot, `pty:spawn` for a session PTY. On the dogfooding machine `cli:spawn` held it 105 times
+  in 20 hours, for 16 to 291 ms each, several on a 5-minute cadence (2026-10-24).
+- **Dev diagnostics.** A dev build's host runs its own event-loop monitor and answers four `dev*`
+  requests, which a production host refuses: `devLagReport` (its stalls, delay windows, GC pauses
+  and every span per label, which the inspection server's event-loop-lag route serves as
+  `ptyHost`), `devArmRoundTripProbe` and `devReadRoundTripProbe` (the scroll-latency probe, see
+  [Output streaming](output-streaming.md)), and `devCpuProfile` (a CPU profile of its thread).
 - **Task leftover reap.** The host also scans for and stops what a task's agents left running
   (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
   It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.

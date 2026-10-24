@@ -1,10 +1,13 @@
 ---
 type: Reference
 title: Output streaming
-description: "How PTY output reaches xterm and a phone (16 ms flush, 512 KB ring, tap), why alt-screen sessions replay the parsed grid, and the grid-width mechanisms: deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing."
+description: "How PTY output reaches xterm and a phone (16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
 tags: [terminal, output, scrollback, replay, geometry]
 sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
+  - resource: src/main/pty/buffer/backpressure-controller.ts
+  - resource: src/main/pty/host/pty-host-core.ts
+  - resource: src/devtools/main/scroll-latency-report.ts
   - resource: src/main/pty/buffer/headless-frame.ts
   - resource: src/main/pty/buffer/transcript-writer.ts
   - resource: src/main/pty/buffer/output-peek.ts
@@ -13,6 +16,8 @@ sources:
   - resource: src/renderer/utils/focused-terminals.ts
   - resource: src/renderer/utils/repaint-nudge.ts
   - resource: src/renderer/utils/write-batcher.ts
+  - resource: src/renderer/utils/scroll-latency-probe.ts
+  - resource: src/main/diagnostics/pty-round-trip-probe.ts
   - resource: src/renderer/utils/terminal-mount-registry.ts
   - resource: src/main/ipc/handlers/session-grid-persistence.ts
   - resource: src/shared/xterm-unicode11.ts
@@ -38,6 +43,56 @@ phone needs and reads the rest by request.
 - A 16ms flush interval (~60fps) sends buffered data to main for a session in the focused union,
   which main forwards via IPC `session:data`. A phone's stream gets every flushed byte as `tap`, for
   as long as it holds a `subscribeDataTap` subscription.
+- **In the alt screen, output that answers input flushes on the next loop turn.** For 250 ms after
+  input is written to a session's PTY (`PtyBufferManager.noteInput`, from the host's `write`
+  command), an alt-screen session's flush runs on `setImmediate` instead of the timer. On Windows a
+  16 ms timer fires on the system's ~15.6 ms tick, so the flush waited 16 to 31 ms (20 ms median),
+  and that wait was most of a fullscreen agent's wheel-to-paint time (see "Where a wheel tick's time
+  goes" below). A keystroke's echo is the same case: typing into Claude Code with a flooding session
+  beside it went from 25.8 ms to 10.7 ms keystroke-to-paint at the median (30.2 to 16.3 ms at p95),
+  with no change in CPU. Typing into a session that repaints at 60 Hz sends each of its frames on its
+  own while the keys last: 67 flushes a second against 32 untouched, the same 31 KB/s, 1.5 points
+  more renderer CPU, no long frames. Chunks read in the same loop turn still leave in one flush,
+  output with no recent input keeps the timer's batching, and both re-arms stay on the timer: the
+  replay hold's, so it cannot spin, and a backlog past one slice, which is a stream and would
+  otherwise drain to the renderer every loop turn while someone types. Nothing else spaces prompt
+  flushes apart. A session producing faster than 60 Hz while someone types flushes once per loop
+  turn that read output, held back only by the in-flight backpressure below, and that case is not
+  measured. A minimum spacing between flushes was the alternative, and it was not taken: in the
+  60 Hz case the previous flush is always under 16 ms old, so a keystroke's echo would go back on
+  the timer. Every number in this bullet is from Windows 11. On macOS and Linux a 16 ms timer fires
+  close to 16 ms, so the prompt flush saves less there, and that saving is not measured either.
+- **Inline renderers keep the timer.** A normal-buffer agent whose output is taller than its
+  terminal answers a keystroke by clearing and reprinting itself through the viewport, about 6
+  chunks over 13 ms, and the timer is what kept that redraw in one paint. Gemini CLI in a 10-row
+  bottom panel painted 3% of its echoes half-drawn on the timer and 77% on the next loop turn
+  (2026-10-24, the `tornPaints` stat of `kangentic_devtools_scroll_latency`). In a tall window its
+  echo is one chunk, and the next loop turn took it from 35 ms to 8 ms with nothing torn, so a gate
+  that tells the two cases apart could recover that gain. Claude Code's fullscreen echo also counts
+  as torn on that stat, but its two pieces are identical full repaints, so no paint between them
+  shows anything wrong.
+- **A flush that reaches no one drains the whole buffer.** The 256 KB-per-flush cap
+  (`MAX_BYTES_PER_FLUSH`) protects a renderer or a phone from one huge write, so it applies only
+  when the session is in the focused union or tapped (`hasFlushConsumer`). Before that, an
+  off-screen session writing faster than 256 KB a tick grew its pending buffer without bound until
+  the host died on `RangeError: Invalid string length` (measured: a crash at 533.75 million
+  characters, every session lost and resumed). While it grew, the host spent 98 to 100% of a core
+  slicing the string, and Claude's echo in another session took 69 ms at the median and 176 ms at
+  p95. Draining whole, the same flood cost the host 44.5% and the echo was back at 26 ms.
+- **The pending buffer is a second reason to pause the PTY.** An on-screen flood drains at most
+  256 KB a tick, about 11 MB/s, and the renderer acknowledges that fast, so the in-flight count
+  (`BACKPRESSURE_HIGH_WATER`, 1 MB) never paused it while the pending buffer climbed 5 million
+  characters a second toward the same crash. `BackpressureController.recordPending` pauses the PTY
+  once pending passes `PENDING_HIGH_WATER` (4 MB) and resumes it only when pending is back under
+  one slice and in-flight is low too. Ordinary output never reaches it: Claude streaming a 300-line
+  answer peaked at 1,901 characters pending, a 60 Hz full-screen repaint at 2,359. A pause stops
+  reads only, so typing still reaches a paused session. Sampled back to back for 30 s, an on-screen
+  flood peaked at 4,201,475 characters pending (the high water plus one read) and was paused in 17%
+  of samples. The host's working set stayed between 235 and 297 MB with no climb, so paused output
+  does not pile up below the host instead. The flood delivered 14.8 MB/s at 31% of a core for the
+  host, against 11.3 MB/s at 81% while its pending buffer grew.
+  A phone-streamed session is sliced too, so a phone watching a flood now pauses the agent where
+  the host used to crash.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
 - **Alt-screen sessions - and non-alt sessions whose byte ring spans an effective geometry
   change - replay the parsed grid, not the byte tail.** A raw byte replay is not a
@@ -587,6 +642,23 @@ phone needs and reads the rest by request.
   raises it. This targets the wheel-scroll flavor at the source; single-report multi-line jumps
   the CLI performs internally (Ctrl+End, PageUp/Down) remain exposed and are what the repaint
   nudge below repairs.
+- **Where a wheel tick's time goes.** Measured on 2026-10-24 on Windows 11 with
+  `kangentic_devtools_scroll_latency` (`src/devtools/main/scroll-latency-route.ts`): trusted wheel
+  notches 300 ms apart into a detail-window terminal, running Claude Code 2.1.310 on Haiku in
+  fullscreen over a 500-line answer, with four mock agents repainting at 20 Hz beside it. Claude
+  started its answer to a report 2.5 to 3 ms after it at the median, 15 ms at p95. With the 16 ms
+  flush timer the median wheel-to-paint was 28.5 ms, and 26 ms of that was Kangentic's: the host's
+  flush wait 19 ms, the wait for the next display frame 5 ms, IPC and main under 1 ms, and the paced
+  queue nothing, since notches came slower than its 16 ms floor. With the prompt flush above it is
+  7.5 ms at the median and 22 ms at p95, about 5 ms of it Kangentic's, mostly the display frame. The
+  four streaming agents moved none of these numbers; the host was busy 2% of the window. Claude does
+  not bracket a scroll frame in DEC 2026 under Kangentic. It sends an empty `?2026h`/`?2026l` pair,
+  then the whole ~4.7 KB frame in one piece, then a 3-character tail about 20 ms later, so a paint
+  between the pieces never showed a torn frame. A high-resolution wheel or touchpad is the case the
+  prompt flush does not help: at a tick every 7 ms (143 a second, against the paced queue's 62.5) a
+  report waited 43 ms in the queue at the median and 87 ms at p95, wheel-to-paint was 49 ms and
+  104 ms, and the lane cap dropped 4 of 60 reports. That cost is the mouse pacing above, kept for
+  `claude-code#83714`. Not measured yet: a transcript as long as a day-old task's.
 - **Post-interaction repaint nudge.** A fullscreen TUI intermittently emits a frame that erases
   the grid and then redraws only some of it, leaving either the whole transcript blank or a
   contiguous band of rows missing mid-frame. Its renderer is differential, so it never revisits

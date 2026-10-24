@@ -2,6 +2,7 @@ import { findSafeStartIndex } from './scrollback-utils';
 import { HeadlessFrameBuffer } from './headless-frame';
 import { collectPeekLines, PEEK_LINE_COUNT } from './output-peek';
 import { traceTerminal, type RepaintSettleReason } from '../terminal-trace';
+import { isRoundTripProbeArmed, noteFlushTimer } from '../../diagnostics/pty-round-trip-probe';
 import type { SeedFrameResult } from '../host/protocol';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
@@ -349,6 +350,19 @@ export function findSpawnHandoffClear(
  */
 const REPLAY_SERIALIZE_MAX_WAIT_MS = 1000;
 
+/** The output flush's batching interval, about one 60 Hz frame. The
+ *  scroll-latency report reads it to say what the flush timer was asked for. */
+export const FLUSH_INTERVAL_MS = 16;
+
+/**
+ * How long after input reaches an alt-screen session its output still flushes
+ * on the next loop turn (scheduleFlush). Covers an agent's answer: Claude Code's fullscreen
+ * repaint for a wheel tick started 3 ms after the report at the median and
+ * 15 ms at p95 (2026-10-24), with ConPTY's own render tick inside that. Past
+ * it, output is the agent's own work and batches on the timer as before.
+ */
+const PROMPT_FLUSH_AFTER_INPUT_MS = 250;
+
 function buildDecPrivateModePrefix(activeModes: Set<number>): string {
   if (activeModes.size === 0) return '';
   const sortedModes = Array.from(activeModes).sort((first, second) => first - second);
@@ -386,6 +400,21 @@ interface PtyBufferManagerCallbacks {
    *  RIS). With `onAltScreenEnter` it lets a process that does not own this
    *  buffer (main, while the pty host owns it) mirror the current state. */
   onAltScreenExit?(sessionId: string): void;
+  /**
+   * Whether a flush of this session reaches anyone: a renderer showing it, or
+   * a phone streaming it. Such a flush ships MAX_BYTES_PER_FLUSH slices, and
+   * the renderer's acks pace the PTY's reads. A flush that reaches no one has
+   * nothing pacing its reads, so a capped drain fell behind a flood and the
+   * pending buffer grew without bound: 435 million characters in two minutes
+   * from one off-screen session, every tick re-flattening it, the host thread
+   * pinned, and every other terminal's output late. That flush takes the whole
+   * buffer instead. Omitted, every flush is sliced.
+   */
+  hasFlushConsumer?(sessionId: string): boolean;
+  /** The pending buffer is now `chars` long: after an append, a flushed
+   *  slice, or a replay's drain. The pty host's backpressure pauses the PTY
+   *  when it piles up (`BackpressureController.recordPending`). */
+  onPendingChange?(sessionId: string, chars: number): void;
 }
 
 interface BufferState {
@@ -456,6 +485,12 @@ interface BufferState {
    *  Used by waitForResizeRepaint to detect that the SIGWINCH repaint has
    *  landed (data after the resize stamp) and then quiesced. */
   lastDataAt: number | null;
+  /** Timestamp (Date.now()) of the most recent input written to the session's
+   *  PTY (`noteInput`), or 0 before any. Output inside
+   *  PROMPT_FLUSH_AFTER_INPUT_MS of it is an answer someone is waiting on, so
+   *  scheduleFlush sends it on the next loop turn instead of the timer while
+   *  the session is in the alt screen. */
+  lastInputAt: number;
   /** Where the replayable history begins, or -1 if not decided yet. Used by
    *  getScrollback() to strip shell command noise that precedes the agent's
    *  first draw. A fresh session's is stamped by onData at the spawn handoff
@@ -540,7 +575,9 @@ function clearPendingRepaint(state: BufferState): void {
  * Manages per-session PTY output buffering and scrollback accumulation.
  *
  * Batches raw PTY data at ~60fps (16ms) before forwarding to the renderer,
- * and maintains a scrollback buffer for late-connecting terminals.
+ * except an alt-screen session's output that answers input, which goes on the
+ * next loop turn (scheduleFlush), and maintains a scrollback buffer for late-connecting
+ * terminals.
  */
 export class PtyBufferManager {
   private buffers = new Map<string, BufferState>();
@@ -588,6 +625,7 @@ export class PtyBufferManager {
       pendingRepaintStacked: false,
       repaintSettle: null,
       lastDataAt: null,
+      lastInputAt: 0,
       tuiStartIndex: previousScrollback ? 0 : -1,
       // Armed only for a fresh non-transient spawn (see the field doc), and
       // only within the takeover window - both bounds keep the injected ED3
@@ -747,18 +785,50 @@ export class PtyBufferManager {
       // Reset cached index after truncation
       state.tuiStartIndex = -1;
     }
+    this.callbacks.onPendingChange?.(sessionId, state.buffer.length);
     this.scheduleFlush(sessionId, state);
   }
 
   /**
-   * Arm the 16ms flush timer if one is not already pending. The flush ships at
-   * most `MAX_BYTES_PER_FLUSH` bytes; if a backlog remains it re-arms itself
-   * for the next tick so a large burst drains in bounded, interruptible slices.
+   * Record that input was just written to a session's PTY, so the output that
+   * answers it flushes on the next loop turn while the session is in the alt
+   * screen (see scheduleFlush).
    */
-  private scheduleFlush(sessionId: string, state: BufferState): void {
+  noteInput(sessionId: string): void {
+    const state = this.buffers.get(sessionId);
+    if (state) state.lastInputAt = Date.now();
+  }
+
+  /**
+   * Arm the flush if one is not already pending. The flush ships at most
+   * `MAX_BYTES_PER_FLUSH` bytes; if a backlog remains it re-arms itself for the
+   * next tick so a large burst drains in bounded, interruptible slices.
+   *
+   * Output batches on a FLUSH_INTERVAL_MS timer (~60fps), except within
+   * PROMPT_FLUSH_AFTER_INPUT_MS of input, when it goes on the next loop turn:
+   * that output is an answer someone is waiting on (a fullscreen agent's
+   * repaint for a wheel tick, a keystroke's echo). On Windows a 16 ms timer
+   * fires on the system's ~15.6 ms tick, so it waited 16 to 31 ms (20 ms
+   * median), which was most of the wheel-to-paint time of a Claude Code scroll:
+   * 28 ms median with the timer, 7.5 ms with this (2026-10-24, docs
+   * output-streaming.md). Chunks read in the same loop turn still leave
+   * together, since the flush runs after the turn's reads. `allowPrompt` false
+   * keeps the timer for a re-arm that must not spin, the replay hold below.
+   *
+   * Alt-screen sessions only. An inline renderer whose output is taller than
+   * its terminal answers a keystroke by clearing and reprinting itself through
+   * the viewport in several chunks over ~13 ms, and the timer is what kept that
+   * redraw in one paint: Gemini CLI in a 10-row panel painted 3% of its echoes
+   * half-drawn on the timer and 77% on the next loop turn (2026-10-24).
+   */
+  private scheduleFlush(sessionId: string, state: BufferState, allowPrompt = true): void {
     if (state.flushScheduled) return;
     state.flushScheduled = true;
-    setTimeout(() => {
+    const prompt = allowPrompt && state.inAltScreen && Date.now() - state.lastInputAt < PROMPT_FLUSH_AFTER_INPUT_MS;
+    // Dev only: how late the flush really fires. Read by the round-trip probe.
+    const timerArmedAt = __KANGENTIC_DEV__ && isRoundTripProbeArmed() ? performance.now() : null;
+    const flush = (): void => {
+      if (__KANGENTIC_DEV__ && timerArmedAt !== null) noteFlushTimer(sessionId, prompt ? 0 : FLUSH_INTERVAL_MS, timerArmedAt);
       // Guard: session may have been removed during the 16ms window.
       const current = this.buffers.get(sessionId);
       if (!current) return;
@@ -773,19 +843,26 @@ export class PtyBufferManager {
       // mass-resume boot, so this is a bounded correctness guard, not a
       // live-path tax.
       if (current.replaySamplesInFlight > 0) {
-        this.scheduleFlush(sessionId, current);
+        this.scheduleFlush(sessionId, current, false);
         return;
       }
       if (!current.buffer) return;
-      const end = current.buffer.length > MAX_BYTES_PER_FLUSH
+      // Sliced only when someone receives the flush (see hasFlushConsumer).
+      const sliced = this.callbacks.hasFlushConsumer?.(sessionId) ?? true;
+      const end = sliced && current.buffer.length > MAX_BYTES_PER_FLUSH
         ? surrogateSafeFlushEnd(current.buffer, MAX_BYTES_PER_FLUSH)
         : current.buffer.length;
       const chunk = current.buffer.slice(0, end);
       current.buffer = current.buffer.slice(end);
       this.callbacks.onFlush(sessionId, chunk, current.parserWrittenChars - current.buffer.length);
+      this.callbacks.onPendingChange?.(sessionId, current.buffer.length);
       // Drain any remainder on the next tick instead of waiting for new data.
-      if (current.buffer) this.scheduleFlush(sessionId, current);
-    }, 16);
+      // On the timer even right after input: a backlog past one slice is a
+      // stream, and draining it every loop turn would flood the renderer.
+      if (current.buffer) this.scheduleFlush(sessionId, current, false);
+    };
+    if (prompt) setImmediate(flush);
+    else setTimeout(flush, FLUSH_INTERVAL_MS);
   }
 
   /**
@@ -1191,6 +1268,9 @@ export class PtyBufferManager {
    *  bytes end exactly at the parser offset the caller passes. */
   private reportDrain(sessionId: string, drained: string, endOffset: number): void {
     if (!drained) return;
+    // Every call site has just emptied the pending buffer, so a pause the
+    // backlog took (BackpressureController.recordPending) can resume.
+    this.callbacks.onPendingChange?.(sessionId, 0);
     traceTerminal(sessionId, 'replay-drain', { bytes: drained.length });
     try {
       this.callbacks.onDrain(sessionId, drained, endOffset);
