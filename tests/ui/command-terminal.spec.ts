@@ -365,7 +365,22 @@ function restartBlobPreConfig(): string {
  *  PTYs: the hard-reload path. Each survivor carries the slot main recorded for
  *  it, so syncSessions re-pairs them EXACTLY and on first open both windows
  *  restore and reattach. */
-function hardReloadPreConfig(): string {
+/** The layout a user saved before the panel: two FLOATING windows, as every
+ *  existing config holds it. The panel must re-tile it into its preset. */
+function legacyFloatingBlobSource(): string {
+  return `{
+    version: 1,
+    windows: [
+      { taskId: 'slot-1', title: 'Command Terminal', geometry: { x: 0.1, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' },
+      { taskId: 'slot-2', title: 'Command Terminal', geometry: { x: 0.5, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' }
+    ],
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+    focusedTaskId: 'slot-1'
+  }`;
+}
+
+function hardReloadPreConfig(blobSource: string = twoWindowBlobSource()): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -395,7 +410,7 @@ function hardReloadPreConfig(): string {
       });
       return { currentProjectId: '${HARD_RELOAD_PROJECT_ID}' };
     });
-    window.electronAPI.config.set({ commandTerminalWorkspace: ${twoWindowBlobSource()} });
+    window.electronAPI.config.set({ commandTerminalWorkspace: ${blobSource} });
     ${spawnCounterSource()}
   `;
 }
@@ -1879,6 +1894,30 @@ test.describe('Command Terminal', () => {
           .toEqual(['slot-2', 'slot-1']);
         const restoredLayout = await commandTileLayout(page);
         expect(Math.abs((restoredLayout?.sizes[0] ?? 0) - 0.3)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a layout saved before the panel (floating windows) opens tiled in the panel and reattaches', async () => {
+      // Every existing user's config holds the floating-window blob. The panel
+      // restores it, reconciles it to the live terminals, then tiles it into
+      // its two-up preset: both survivors reattach and nothing spawns.
+      const { browser, page } = await launchWithState(hardReloadPreConfig(legacyFloatingBlobSource()));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect
+          .poll(async () => (await transientEntriesFor(page, HARD_RELOAD_PROJECT_ID)).length, { timeout: 8000, intervals: [100, 200, 500] })
+          .toBe(2);
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect
+          .poll(async () => (await commandTileLayout(page))?.slots ?? [], { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual(['slot-1', 'slot-2']);
+        const layout = await commandTileLayout(page);
+        expect(Math.abs((layout?.sizes[0] ?? 0) - 0.5)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+        expect(await spawnCountFor(page, HARD_RELOAD_PROJECT_ID)).toBe(0);
       } finally {
         await browser.close();
       }
