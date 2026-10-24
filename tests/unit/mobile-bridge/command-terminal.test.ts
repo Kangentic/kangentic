@@ -38,8 +38,15 @@ function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage
   return { type: 'capability-request', requestId: 'req-1', verb: 'command-terminal', payload };
 }
 
-function fakeContext(options: { project?: boolean; endOutcome?: 'ended' | 'not-found' | 'not-command-terminal' } = {}) {
+interface EarlierEntry { agentSessionId: string; label: string | null; agentName: string; endedAt: string }
+
+function fakeContext(options: {
+  project?: boolean;
+  endOutcome?: 'ended' | 'not-found' | 'not-command-terminal';
+  earlier?: EarlierEntry[];
+} = {}) {
   const endCommandTerminal = vi.fn(() => options.endOutcome ?? 'ended');
+  const listHistory = vi.fn(async (_projectId: string) => options.earlier ?? []);
   const context = {
     // No current project: a phone's start must not need one.
     currentProjectId: null,
@@ -47,8 +54,9 @@ function fakeContext(options: { project?: boolean; endOutcome?: 'ended' | 'not-f
       getById: vi.fn((projectId: string) => (options.project === false ? undefined : { id: projectId, path: 'C:/Users/dev/proj' })),
     },
     sessionManager: { endCommandTerminal },
+    commandTerminalHistory: { list: listHistory },
   } as unknown as IpcContext;
-  return { context, endCommandTerminal };
+  return { context, endCommandTerminal, listHistory };
 }
 
 function startedSession(slot: string, label: string | null = null) {
@@ -145,6 +153,92 @@ describe('command-terminal: start', () => {
     const response = await handleCommandTerminal(fakeRequest({ action: 'start', projectId: 'proj-1' }), context);
 
     expect(response).toMatchObject({ ok: false, code: 'command-terminal-start-failed', error: 'EACCES: permission denied, mkdir' });
+  });
+});
+
+/**
+ * The Earlier list on a phone: `list-earlier` reads the same record the
+ * desktop panel's rail does, and `resume` starts a terminal on one entry
+ * through the same unattended start, naming the conversation.
+ */
+describe('command-terminal: earlier conversations', () => {
+  beforeEach(() => {
+    startCommandTerminalMock.mockReset();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('lists the project\'s ended conversations as the desktop\'s rail does, newest first', async () => {
+    const { context, listHistory } = fakeContext({
+      earlier: [
+        { agentSessionId: 'conv-2', label: 'Profile the diff panel', agentName: 'claude', endedAt: '2026-10-24T10:00:00.000Z' },
+        { agentSessionId: 'conv-1', label: null, agentName: 'claude', endedAt: '2026-10-23T09:00:00.000Z' },
+      ],
+    });
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'list-earlier', projectId: 'proj-1' }), context);
+
+    expect(listHistory).toHaveBeenCalledWith('proj-1');
+    expect(response).toEqual({
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: {
+        ok: true,
+        projectId: 'proj-1',
+        conversations: [
+          { agentSessionId: 'conv-2', name: 'Profile the diff panel', endedAt: '2026-10-24T10:00:00.000Z' },
+          { agentSessionId: 'conv-1', name: null, endedAt: '2026-10-23T09:00:00.000Z' },
+        ],
+      },
+    });
+    expect(startCommandTerminalMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a list for an unknown project with its code', async () => {
+    const { context, listHistory } = fakeContext({ project: false });
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'list-earlier', projectId: 'ghost' }), context);
+
+    expect(response).toMatchObject({ ok: false, code: 'unknown-project' });
+    expect(listHistory).not.toHaveBeenCalled();
+  });
+
+  it('resumes a conversation through the unattended start, naming it, and answers like a start', async () => {
+    startCommandTerminalMock.mockResolvedValue(startedSession('slot-2', 'Profile the diff panel'));
+    const { context } = fakeContext();
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'resume', projectId: 'proj-1', agentSessionId: 'conv-2' }), context);
+
+    expect(startCommandTerminalMock).toHaveBeenCalledWith(context, { projectId: 'proj-1', unattended: true, resumeAgentSessionId: 'conv-2' });
+    expect(response).toEqual({
+      type: 'capability-response',
+      requestId: 'req-1',
+      ok: true,
+      payload: { ok: true, sessionId: 'term-9', slot: 2, name: 'Profile the diff panel' },
+    });
+  });
+
+  it.each([
+    ['conversation-gone', 'conversation-gone'],
+    ['conversation-open', 'conversation-open'],
+    ['command-terminal-limit', 'command-terminal-limit'],
+  ])('maps a %s refusal from a resume to the %s code', async (startCode, wireCode) => {
+    startCommandTerminalMock.mockRejectedValue(new CommandTerminalStartErrorStub(startCode, 'refused'));
+    const { context } = fakeContext();
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'resume', projectId: 'proj-1', agentSessionId: 'conv-2' }), context);
+
+    expect(response).toMatchObject({ ok: false, code: wireCode, error: 'refused' });
+  });
+
+  it('refuses a resume for an unknown project before starting anything', async () => {
+    const { context } = fakeContext({ project: false });
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'resume', projectId: 'ghost', agentSessionId: 'conv-2' }), context);
+
+    expect(response).toMatchObject({ ok: false, code: 'unknown-project' });
+    expect(startCommandTerminalMock).not.toHaveBeenCalled();
   });
 });
 

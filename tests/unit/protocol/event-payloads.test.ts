@@ -31,6 +31,7 @@ import {
   parseStartSessionResponsePayload,
   parseTranscriptWindowResponsePayload,
   parseCommandTerminalStartResponsePayload,
+  parseCommandTerminalEarlierResponsePayload,
 } from '../../../packages/protocol/src/wire/payloads';
 import type { JsonValue } from '../../../packages/protocol/src/wire/messages';
 
@@ -801,6 +802,48 @@ describe('read-* response parsers', () => {
     expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminals: {} })).toThrow(/commandTerminals/);
     expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminalsOffered: 'yes' })).toThrow(/commandTerminalsOffered/);
     expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], commandTerminals: [{ sessionId: 's-1' }] })).toThrow(/command terminal/);
+  });
+
+  /**
+   * protocol 0.24.0: the phone's Earlier list. The flag is what keeps a phone
+   * from sending `list-earlier` or `resume` to an older desktop, so absent
+   * must stay absent (read as false), never default to true.
+   */
+  it('parses the Earlier flag, leaves it absent for an older desktop, and rejects a non-boolean', () => {
+    expect(parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], earlierConversationsOffered: true }))
+      .toMatchObject({ earlierConversationsOffered: true });
+    expect('earlierConversationsOffered' in parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [] })).toBe(false);
+    expect(() => parseReadBoardResponsePayload({ projectId: 'p-1', columns: [], tasks: [], earlierConversationsOffered: 1 }))
+      .toThrow(/earlierConversationsOffered/);
+  });
+
+  it('parses a list-earlier answer to exactly its fields, dropping a malformed conversation on its own', () => {
+    expect(parseCommandTerminalEarlierResponsePayload({
+      ok: true,
+      projectId: 'p-1',
+      conversations: [
+        { agentSessionId: 'conv-2', name: 'Profile the diff panel', endedAt: '2026-10-24T10:00:00.000Z', agentName: 'claude' },
+        { agentSessionId: 'conv-1', name: null, endedAt: '2026-10-23T09:00:00.000Z' },
+        { agentSessionId: 'conv-bad', name: 7, endedAt: '2026-10-22T09:00:00.000Z' },
+        { agentSessionId: '', name: null, endedAt: '2026-10-21T09:00:00.000Z' },
+        { name: 'no id', endedAt: '2026-10-20T09:00:00.000Z' },
+        { agentSessionId: 'conv-no-time', name: null },
+      ],
+    })).toEqual({
+      ok: true,
+      projectId: 'p-1',
+      conversations: [
+        { agentSessionId: 'conv-2', name: 'Profile the diff panel', endedAt: '2026-10-24T10:00:00.000Z' },
+        { agentSessionId: 'conv-1', name: null, endedAt: '2026-10-23T09:00:00.000Z' },
+      ],
+    });
+  });
+
+  it('rejects a list-earlier answer with no ok, project or list', () => {
+    expect(() => parseCommandTerminalEarlierResponsePayload({ projectId: 'p-1', conversations: [] })).toThrow(/ok/);
+    expect(() => parseCommandTerminalEarlierResponsePayload({ ok: true, conversations: [] })).toThrow(/projectId/);
+    expect(() => parseCommandTerminalEarlierResponsePayload({ ok: true, projectId: 'p-1' })).toThrow(/conversations/);
+    expect(() => parseCommandTerminalEarlierResponsePayload(null)).toThrow(/object/);
   });
 });
 

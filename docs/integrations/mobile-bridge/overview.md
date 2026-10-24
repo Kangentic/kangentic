@@ -81,7 +81,7 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
     move-task.ts               # routes through handleTaskMove (task-lifecycle-lock + transition engine)
     start-session.ts           # resume or start in the task's current column via startTaskSession (paused: resumeTaskSession; else autoSpawnForTask -> spawnAgent)
     pause-session.ts           # pause a task's live session via pauseTaskSession, the desktop Pause button's own path
-    command-terminal.ts        # start (startCommandTerminal, unattended) or stop (endCommandTerminal) a Command Terminal, refusals by typed code
+    command-terminal.ts        # start or resume (startCommandTerminal, unattended), list-earlier (CommandTerminalHistory.list) or stop (endCommandTerminal) a Command Terminal, refusals by typed code
     interactive-terminal.ts    # raw PTY write/resize/release-size (explicit grant only)
     terminal-size-guard.ts     # restores desktop PTY dims when a phone-held grid releases (any path)
     answer-permission-prompt.ts # binds the response to a specific outstanding prompt id

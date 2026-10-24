@@ -60,6 +60,12 @@ export const AGENT_UNAVAILABLE_ERROR_CODE: CapabilityErrorCode = 'agent-unavaila
 /** The `code` on a `command-terminal` start that failed for any other reason. */
 export const COMMAND_TERMINAL_START_FAILED_ERROR_CODE: CapabilityErrorCode = 'command-terminal-start-failed';
 
+/** The `code` on a `command-terminal` resume of a conversation that can no longer be resumed. */
+export const CONVERSATION_GONE_ERROR_CODE: CapabilityErrorCode = 'conversation-gone';
+
+/** The `code` on a `command-terminal` resume of a conversation a live terminal holds, or another resume is starting. */
+export const CONVERSATION_OPEN_ERROR_CODE: CapabilityErrorCode = 'conversation-open';
+
 const UNSUPPORTED_VERB_ERROR_NAME = 'UnsupportedVerbError';
 
 /**

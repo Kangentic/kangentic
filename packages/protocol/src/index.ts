@@ -49,6 +49,8 @@ export {
   NOT_COMMAND_TERMINAL_ERROR_CODE,
   AGENT_UNAVAILABLE_ERROR_CODE,
   COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
+  CONVERSATION_GONE_ERROR_CODE,
+  CONVERSATION_OPEN_ERROR_CODE,
   MAX_FRAME_LENGTH,
   MAX_DECODED_LENGTH,
   COMPRESSION_THRESHOLD,
@@ -66,6 +68,7 @@ export {
   parseStartSessionResponsePayload,
   parsePauseSessionResponsePayload,
   parseCommandTerminalStartResponsePayload,
+  parseCommandTerminalEarlierResponsePayload,
   isReadStreamSessionStatusWire,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
@@ -104,6 +107,8 @@ export {
   type CommandTerminalRequestPayload,
   type CommandTerminalStartResponsePayload,
   type CommandTerminalStopResponsePayload,
+  type CommandTerminalEarlierConversationWire,
+  type CommandTerminalEarlierResponsePayload,
   type CommandTerminalResponsePayload,
 } from './wire/payloads';
 

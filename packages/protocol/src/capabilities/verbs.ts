@@ -31,6 +31,8 @@
  * agent exits, so no bare shell is left behind for `interactive-terminal` to
  * reach. Stop accepts only a Command Terminal's session. Gate the phone's
  * Terminals button on `ReadBoardSnapshotResponsePayload.commandTerminalsOffered`.
+ * Its `list-earlier` and `resume` actions read and resume the conversations of
+ * terminals that ended; gate them on `earlierConversationsOffered`.
  */
 export const CAPABILITY_VERBS = [
   'read-stream',
