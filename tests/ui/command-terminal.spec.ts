@@ -2574,6 +2574,227 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Open in new window: the panel moves into a window of its own for its
+  // project. The in-app panel never shows beside it, every way of opening the
+  // panel brings the window forward instead, and closing the window brings the
+  // panel back while a terminal still runs. The window itself is a renderer of
+  // its own, booted here the way main boots it: with the pop-out descriptor.
+  // ---------------------------------------------------------------------------
+  test.describe('Open in new window', () => {
+    const DETACHED_PROJECT_ID = 'proj-detached';
+    const DETACHED_PROJECT_NAME = 'Detached Project';
+    const WINDOW_KEY = `command-terminal:${DETACHED_PROJECT_ID}`;
+    const LIVE_TERMINAL_ID = 'sess-detached-live';
+
+    /** One project; with `liveTerminal`, a Command Terminal already running in slot-1. */
+    function detachedPreConfig(options: { liveTerminal: boolean }): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${DETACHED_PROJECT_ID}',
+            name: '${DETACHED_PROJECT_NAME}',
+            path: '/mock/detached',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, { id: 'lane-detached-' + i, position: i, created_at: ts }));
+          });
+          if (${options.liveTerminal}) {
+            state.sessions.push({
+              id: '${LIVE_TERMINAL_ID}',
+              taskId: '${LIVE_TERMINAL_ID}',
+              projectId: '${DETACHED_PROJECT_ID}',
+              pid: 4001,
+              status: 'running',
+              shell: 'bash',
+              cwd: '/mock/detached',
+              startedAt: ts,
+              exitCode: null,
+              resuming: false,
+              transient: true,
+              commandTerminalSlot: 'slot-1',
+              commandTerminalBranch: 'main',
+              commandTerminalLabel: null,
+            });
+          }
+          return { currentProjectId: '${DETACHED_PROJECT_ID}' };
+        });
+      `;
+    }
+
+    async function popOutCalls(page: Page): Promise<Array<{ type: string; kind: string; params: Record<string, unknown> }>> {
+      return page.evaluate(() => (window as unknown as {
+        __mockPopOut: { getCalls: () => Array<{ type: string; kind: string; params: Record<string, unknown> }> };
+      }).__mockPopOut.getCalls());
+    }
+
+    async function firePopOutChanged(page: Page, keys: string[]): Promise<void> {
+      await page.evaluate((openKeys) => {
+        (window as unknown as { __mockFirePopOutChanged: (keys: string[]) => void }).__mockFirePopOutChanged(openKeys);
+      }, keys);
+    }
+
+    async function spawnCount(page: Page): Promise<number> {
+      return page.evaluate(() => ((window as unknown as { __mockSpawnTransientCalls?: unknown[] }).__mockSpawnTransientCalls ?? []).length);
+    }
+
+    async function openPanelWithOneTerminal(page: Page): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await expect.poll(async () => (await transientEntriesFor(page, DETACHED_PROJECT_ID)).length, { timeout: 5000 }).toBe(1);
+    }
+
+    /** A page booted as the project's detached window, as main boots one. */
+    async function launchDetachedWindow(preConfig: string): Promise<{ browser: Browser; page: Page }> {
+      await waitForViteReady();
+      const browser = await chromium.launch({ headless: true });
+      const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+      const page = await context.newPage();
+      await page.addInitScript({ path: MOCK_SCRIPT });
+      await page.addInitScript(`${preConfig}
+        window.electronAPI.popOut.descriptor = {
+          kind: 'command-terminal',
+          params: { projectId: '${DETACHED_PROJECT_ID}', projectName: '${DETACHED_PROJECT_NAME}' },
+        };`);
+      await gotoVite(page, VITE_URL);
+      return { browser, page };
+    }
+
+    test('the header button hides the panel and opens the project\'s window', async () => {
+      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: false }));
+      try {
+        await openPanelWithOneTerminal(page);
+        await page.getByTestId('command-terminal-panel-pop-out').click();
+
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0, { timeout: 3000 });
+        expect(await popOutCalls(page)).toContainEqual({
+          type: 'open',
+          kind: 'command-terminal',
+          params: { projectId: DETACHED_PROJECT_ID, projectName: DETACHED_PROJECT_NAME },
+        });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('while the window is open, Ctrl+Shift+P and the title-bar toggle bring it forward', async () => {
+      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await firePopOutChanged(page, [WINDOW_KEY]);
+
+        await page.keyboard.press('Control+Shift+P');
+        await page.getByTestId('quick-session-button').click();
+
+        await expect.poll(async () => (await popOutCalls(page)).filter((call) => call.type === 'focus').length, { timeout: 3000 }).toBe(2);
+        expect((await popOutCalls(page)).find((call) => call.type === 'focus')).toMatchObject({
+          kind: 'command-terminal',
+          params: { projectId: DETACHED_PROJECT_ID },
+        });
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        expect(await spawnCount(page)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the window opening hides a panel that was showing', async () => {
+      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await openPanelWithOneTerminal(page);
+        await firePopOutChanged(page, [WINDOW_KEY]);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0, { timeout: 3000 });
+        // Its open flag is what asks main for the terminals' output; it is down.
+        await expect.poll(() => page.evaluate(() => (window as unknown as {
+          __zustandStores: { session: { getState: () => { commandBarVisible: boolean } } };
+        }).__zustandStores.session.getState().commandBarVisible), { timeout: 3000 }).toBe(false);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('closing the window brings the panel back with the running terminal, and starts nothing', async () => {
+      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await firePopOutChanged(page, [WINDOW_KEY]);
+        await firePopOutChanged(page, []);
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientPairingFor(page, DETACHED_PROJECT_ID))['slot-1'], { timeout: 5000 }).toBe(LIVE_TERMINAL_ID);
+        expect(await spawnCount(page)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a window closed by stopping its last terminal leaves the panel closed', async () => {
+      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await firePopOutChanged(page, [WINDOW_KEY]);
+        // The window's Stop ends the terminal in main, which announces the removal.
+        await page.evaluate((sessionId) => window.electronAPI.sessions.killTransient(sessionId), LIVE_TERMINAL_ID);
+        await expect.poll(() => page.evaluate((sessionId) => (window as unknown as {
+          __zustandStores: { session: { getState: () => { sessions: Array<{ id: string }> } } };
+        }).__zustandStores.session.getState().sessions.some((session) => session.id === sessionId), LIVE_TERMINAL_ID), { timeout: 3000 }).toBe(false);
+        await firePopOutChanged(page, []);
+
+        // The push decides the reopen as it lands, by arming the pending-open
+        // flag or not, so reading the flag right after it is the whole answer.
+        expect(await page.evaluate(() => (window as unknown as {
+          __zustandStores: { session: { getState: () => { _pendingOpenCommandTerminal: boolean } } };
+        }).__zustandStores.session.getState()._pendingOpenCommandTerminal)).toBe(false);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        expect(await spawnCount(page)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the window shows its project\'s running terminal once the sessions have synced, and starts no second one', async () => {
+      const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await expect(page.getByTestId('command-terminal-detached')).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(async () => (await transientPairingFor(page, DETACHED_PROJECT_ID))['slot-1'], { timeout: 5000 }).toBe(LIVE_TERMINAL_ID);
+        expect(await spawnCount(page)).toBe(0);
+        await expect(page.getByTestId('command-terminal-rail')).toBeVisible();
+        // The OS frame moves, sizes and closes it, so the panel's own chrome is absent.
+        await expect(page.getByTestId('command-terminal-panel')).toHaveCount(0);
+        await expect(page.getByTestId('command-window-backdrop')).toHaveCount(0);
+        await expect(page.getByText(`Command Terminal - ${DETACHED_PROJECT_NAME}`)).toBeVisible();
+        // It asks main for that terminal's output itself.
+        await expect.poll(() => page.evaluate(() => {
+          const calls = (window.electronAPI.sessions as unknown as { __setFocusedCalls: string[][] }).__setFocusedCalls;
+          return calls.at(-1) ?? null;
+        }), { timeout: 5000 }).toEqual([LIVE_TERMINAL_ID]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('stopping the window\'s last terminal closes the window', async () => {
+      const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 15000 });
+        await page.getByTestId('command-bar-terminate-button').click();
+
+        await expect.poll(() => page.evaluate(() => (window as unknown as {
+          __mockWindowControls: { getCalls: () => string[] };
+        }).__mockWindowControls.getCalls()), { timeout: 5000 }).toContain('close');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Per-window Changes panel isolation - each Command Terminal window derives its
   // own Changes-panel entity id from its durable slot
   // (`commandTerminalChangesEntityId(slot)` => 'command-terminal::slot-N'), so

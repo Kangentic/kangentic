@@ -527,12 +527,12 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_LIST, (_, projectId: string) =>
     context.commandTerminalHistory?.list(projectId) ?? []);
 
-  ipcMain.handle(IPC.SESSION_SPAWN_TRANSIENT, async (_, input: SpawnTransientSessionInput) => {
-    // The desktop layer only ever spawns for the project it shows. A phone's
-    // start goes straight to startCommandTerminal and needs no open project.
-    if (!context.currentProjectId) throw new Error('Cannot spawn transient session: no project is currently open');
-    return startCommandTerminal(context, input);
-  });
+  // Routed by the input's project, never the one the main window shows: a
+  // detached Command Terminal window starts terminals for its own project
+  // whatever the board is on, the welcome screen included. An unknown project
+  // is refused inside, as a phone's start is.
+  ipcMain.handle(IPC.SESSION_SPAWN_TRANSIENT, async (_, input: SpawnTransientSessionInput) =>
+    startCommandTerminal(context, input));
 
   // The branch the terminal's checkout is actually on, re-derived from live
   // HEAD by the renderer. A passive holder, last write wins: the Monitor row

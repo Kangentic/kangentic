@@ -237,6 +237,30 @@ describe('PopOutWindowManager.open()', () => {
   });
 
   /**
+   * A project-scoped surface takes a project and no task. Neither the task nor
+   * the global check catches a bad one: params with no project id pass the
+   * global check, and params naming a task pass as a task's.
+   */
+  describe('the project-scoped "command-terminal" surface', () => {
+    it('opens one window per project, titled by the project name', () => {
+      const win = asMockWindow(manager.open('command-terminal', { projectId: 'project-1', projectName: 'Kangentic' }));
+
+      expect(win.options.title).toBe('Command Terminal - Kangentic');
+      expect(manager.open('command-terminal', { projectId: 'project-1', projectName: 'Renamed' })).toBe(win);
+      expect(manager.listOpenKeys()).toEqual(['command-terminal:project-1']);
+    });
+
+    it.each([
+      ['no project id', { projectName: 'Kangentic' }],
+      ['an empty project id', { projectId: '', projectName: 'Kangentic' }],
+      ['a task', { projectId: 'project-1', projectName: 'Kangentic', taskId: 'task-1' }],
+      ['no params', {}],
+    ])('throws for params with %s', (_case, params) => {
+      expect(() => manager.open('command-terminal', params as never)).toThrow(/requires \{ projectId, projectName \}/);
+    });
+  });
+
+  /**
    * `--kangentic-error-reporting` is how the renderer's Sentry.init() call
    * agrees with main's single Sentry decision (mirrors createWindow() in
    * index.ts). A pop-out window that omits it while error reporting is

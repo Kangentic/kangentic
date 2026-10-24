@@ -3,7 +3,7 @@ import { useBoardStore } from '../stores/board-store';
 import { getSurface } from './surface-registry';
 import { usePopOutBootstrap } from './usePopOutBootstrap';
 import { PopOutWindowFrame } from './PopOutWindowFrame';
-import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
+import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, isProjectPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
 import './surfaces';
 import { ToastContainer } from '../components/layout/ToastContainer';
@@ -27,7 +27,7 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   // Keyed off the shared GLOBAL_KINDS set rather than an inline `=== 'stats'`,
   // for the reason that set exists: a new global kind would otherwise fall
   // through to the task-params branch and read `.taskId` off an empty object.
-  const taskId = isGlobalPopOutKind(descriptor.kind)
+  const taskId = isGlobalPopOutKind(descriptor.kind) || isProjectPopOutKind(descriptor.kind)
     ? null
     : (descriptor.params as PopOutTaskParams).taskId;
   const taskTitle = useBoardStore((state) =>
@@ -39,11 +39,16 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   // the same value main gave the BrowserWindow). Needs no board hydration, so
   // it is correct from first paint.
   const fileParams = descriptor.kind === 'changes-file' ? (descriptor.params as PopOutChangesFileParams) : null;
+  // A project's surface titles by the project name its params carry, in the
+  // header and the taskbar alike: the same value main gave the BrowserWindow.
+  const projectTitle = isProjectPopOutKind(descriptor.kind)
+    ? resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params)
+    : null;
   return (
     <ErrorBoundary>
       <PopOutWindowFrame
         kind={descriptor.kind}
-        title={fileParams ? `${fileParams.filePath} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}` : taskTitle ?? undefined}
+        title={fileParams ? `${fileParams.filePath} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}` : projectTitle ?? taskTitle ?? undefined}
         documentTitle={fileParams ? resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params) : undefined}
       >
         <surface.Root params={descriptor.params} />

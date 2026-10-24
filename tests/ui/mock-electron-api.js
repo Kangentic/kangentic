@@ -240,6 +240,7 @@
    */
   function popOutKeyOf(kind, params) {
     if (kind === 'stats' || kind === 'monitor' || kind === 'knowledge-graph') return kind;
+    if (kind === 'command-terminal') return kind + ':' + (params && params.projectId);
     const taskKey = kind + ':' + (params && params.projectId) + ':' + (params && params.taskId);
     if (kind === 'changes-file') return taskKey + ':' + (params && params.filePath);
     return taskKey;

@@ -13,9 +13,9 @@ import { IPC } from './ipc-channels';
 // Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
 import type { GitDiffRange, GitDiffScope, GitDiffStatus } from './types';
 
-export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'knowledge-graph';
+export type PopOutKind = 'stats' | 'changes' | 'browser' | 'monitor' | 'changes-file' | 'knowledge-graph' | 'command-terminal';
 
-export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'knowledge-graph'];
+export const POPOUT_KINDS: readonly PopOutKind[] = ['stats', 'changes', 'browser', 'monitor', 'changes-file', 'knowledge-graph', 'command-terminal'];
 
 export function isPopOutKind(value: string): value is PopOutKind {
   return (POPOUT_KINDS as readonly string[]).includes(value);
@@ -68,6 +68,18 @@ export interface PopOutChangesFileParams extends PopOutTaskParams {
   taskTitle: string;
 }
 
+/**
+ * Params for a surface that belongs to one PROJECT rather than one task: the
+ * Command Terminal panel, detached. Only `projectId` is identity (the instance
+ * key); `projectName` is a boot seed for the window's title, so renaming the
+ * project never opens a second window beside the first.
+ */
+export interface PopOutProjectParams {
+  projectId: string;
+  /** Boot seed: the project's name, for the window title. */
+  projectName: string;
+}
+
 export interface PopOutParamsByKind {
   stats: Record<string, never>;
   changes: PopOutTaskParams;
@@ -75,6 +87,7 @@ export interface PopOutParamsByKind {
   monitor: Record<string, never>;
   'changes-file': PopOutChangesFileParams;
   'knowledge-graph': Record<string, never>;
+  'command-terminal': PopOutProjectParams;
 }
 
 /**
@@ -90,6 +103,14 @@ const GLOBAL_KINDS: readonly PopOutKind[] = ['stats', 'monitor', 'knowledge-grap
  *  set instead of re-spelling `kind === 'stats'`. */
 export function isGlobalPopOutKind(kind: PopOutKind): boolean {
   return GLOBAL_KINDS.includes(kind);
+}
+
+/** Kinds keyed by project alone: one window per project, never per task. */
+const PROJECT_KINDS: readonly PopOutKind[] = ['command-terminal'];
+
+/** True for a kind whose params carry a project and no task. */
+export function isProjectPopOutKind(kind: PopOutKind): boolean {
+  return PROJECT_KINDS.includes(kind);
 }
 
 export type PopOutParams<K extends PopOutKind = PopOutKind> = PopOutParamsByKind[K];
@@ -110,6 +131,7 @@ export const POPOUT_ARG_PREFIX = '--kangentic-popout=';
  */
 export function popOutInstanceKey<K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]): string {
   if (GLOBAL_KINDS.includes(kind)) return kind;
+  if (PROJECT_KINDS.includes(kind)) return `${kind}:${(params as PopOutProjectParams).projectId}`;
   const taskParams = params as PopOutTaskParams;
   const taskKey = `${kind}:${taskParams.projectId}:${taskParams.taskId}`;
   // Per-file surface: one window per file, so the file joins the key. filePath is
@@ -139,14 +161,28 @@ export function parsePopOutInstanceKey(
   const segments = key.split(':');
   if (segments.length < 3) return null;
   const [kind, projectId, taskId] = segments;
-  if (!isPopOutKind(kind) || isGlobalPopOutKind(kind)) return null;
+  if (!isPopOutKind(kind) || isGlobalPopOutKind(kind) || isProjectPopOutKind(kind)) return null;
   if (!projectId || !taskId) return null;
   return { kind, projectId, taskId };
 }
 
+/**
+ * Inverse of {@link popOutInstanceKey} for the PROJECT-SCOPED kinds, read by the
+ * same `popOut:changed` consumer: which project's detached window just closed.
+ * Null for any other kind or a malformed key. Its own function, so the task
+ * kinds' result keeps a task id its callers can rely on.
+ */
+export function parseProjectPopOutInstanceKey(key: string): { kind: PopOutKind; projectId: string } | null {
+  const segments = key.split(':');
+  if (segments.length !== 2) return null;
+  const [kind, projectId] = segments;
+  if (!isPopOutKind(kind) || !isProjectPopOutKind(kind) || !projectId) return null;
+  return { kind, projectId };
+}
+
 export interface PopOutSurfaceMeta {
   kind: PopOutKind;
-  scope: 'global' | 'task';
+  scope: 'global' | 'task' | 'project';
   /** OS window title. */
   title: string;
   defaultBounds: { width: number; height: number };
@@ -331,6 +367,41 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // Progress on an answer in flight. Declared here or a detached window
       // sits on a spinner while the main window watches the answer arrive.
       IPC.KNOWLEDGE_GRAPH_ANSWER_STREAM,
+      IPC.CONFIG_CHANGED,
+    ],
+  },
+  // The Command Terminal panel for ONE project, in a window of its own. Its
+  // in-app panel does not mount while it is open; closing it brings the panel
+  // back to the app while that project still has a terminal running.
+  'command-terminal': {
+    kind: 'command-terminal',
+    scope: 'project',
+    title: 'Command Terminal',
+    defaultBounds: { width: 1180, height: 770 },
+    // The rail beside one terminal at the pane floor, under the frame's title bar.
+    minSize: { width: 600, height: 400 },
+    needsWebview: false,
+    resolveTitle: (params) => `Command Terminal - ${(params as PopOutProjectParams).projectName}`,
+    channels: [
+      // This window runs no App.tsx, so it keeps its own session replica live
+      // from the same pushes the main window's App.tsx maps.
+      IPC.SESSION_STATUS,
+      IPC.SESSION_REMOVED,
+      IPC.SESSION_EXIT,
+      // The pane's context bar.
+      IPC.SESSION_USAGE,
+      // The Stop control's activity mark.
+      IPC.SESSION_ACTIVITY,
+      // Lifts a terminal's launch overlay once its agent is on screen.
+      IPC.SESSION_FIRST_OUTPUT,
+      // The width-drift self-heal every terminal host declares (see 'monitor').
+      // SESSION_DATA is not listed: main routes it to the renderers focused on
+      // the session, and this window publishes its own focused set.
+      IPC.SESSION_PTY_RESIZED,
+      // The branch pills re-read HEAD on every diff-watcher fire.
+      IPC.GIT_DIFF_CHANGED,
+      // The rail's Earlier list.
+      IPC.COMMAND_TERMINAL_HISTORY_CHANGED,
       IPC.CONFIG_CHANGED,
     ],
   },

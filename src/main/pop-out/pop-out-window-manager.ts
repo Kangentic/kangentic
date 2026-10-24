@@ -2,7 +2,7 @@ import { BrowserWindow, nativeImage, screen } from 'electron';
 import type { ConfigManager } from '../config/config-manager';
 import { resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, resolvePopOutBounds, savePopOutBounds } from '../window-utils';
 import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey, resolveSurfaceTitle } from '../../shared/pop-out';
-import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutTaskParams } from '../../shared/pop-out';
+import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutProjectParams, PopOutTaskParams } from '../../shared/pop-out';
 import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
@@ -45,6 +45,14 @@ interface TrackedPopOut {
 
 function isTaskParams(params: PopOutParams): params is PopOutTaskParams {
   return !!params && typeof params === 'object' && 'taskId' in params && 'projectId' in params;
+}
+
+/** A project-scoped surface's params: a project id and the name its title shows, and no task. */
+function isProjectParams(params: PopOutParams): params is PopOutProjectParams {
+  if (!params || typeof params !== 'object' || 'taskId' in params) return false;
+  const candidate = params as Partial<PopOutProjectParams>;
+  return typeof candidate.projectId === 'string' && candidate.projectId.length > 0
+    && typeof candidate.projectName === 'string';
 }
 
 /**
@@ -99,6 +107,9 @@ export class PopOutWindowManager {
     }
     if (meta.scope === 'global' && isTaskParams(params)) {
       throw new Error(`Pop-out surface "${kind}" is global and takes no params`);
+    }
+    if (meta.scope === 'project' && !isProjectParams(params)) {
+      throw new Error(`Pop-out surface "${kind}" requires { projectId, projectName } params and no taskId`);
     }
     if (kind === 'changes-file' && typeof (params as PopOutChangesFileParams).filePath !== 'string') {
       throw new Error(`Pop-out surface "${kind}" requires a filePath param`);

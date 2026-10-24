@@ -175,6 +175,12 @@ export function AppLayout() {
     ? 0
     : terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height;
   const commandBar = useCommandBar();
+  // The current project's terminals in a window of their own: the in-app panel
+  // never mounts beside it (pop-out-surface-registry.md). Only the id keys it.
+  const commandTerminalPopOut = usePopOut('command-terminal', {
+    projectId: currentProject?.id ?? '',
+    projectName: currentProject?.name ?? '',
+  });
   // Destructured for the callback's dep list: `open`/`close` are stable, `isOpen` changes;
   // depending on the fresh `commandBar` object would rebuild the callback every render.
   const { isOpen: commandBarIsOpen, open: openCommandBar, close: closeCommandBar } = commandBar;
@@ -605,7 +611,7 @@ export function AppLayout() {
       {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
       {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
       {settingsOpen && <SettingsPanel />}
-      {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
+      {commandBar.isOpen && !commandTerminalPopOut.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <LeftoverProcessesDialog />

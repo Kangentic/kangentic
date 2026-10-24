@@ -2,6 +2,8 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
+import { usePopOutStore } from '../stores/pop-out-store';
+import { popOutInstanceKey } from '../../shared/pop-out';
 import { useKeybinding } from './useKeybinding';
 import { reconcileCommandTerminalWindows } from '../components/command-bar/CommandTerminalLayer';
 
@@ -41,6 +43,13 @@ export function useCommandBar() {
         message: 'Open a project first.',
         variant: 'warning',
       });
+      return;
+    }
+    // While this project's terminals have a window of their own, every way of
+    // opening the panel brings that window forward instead.
+    const popOutParams = { projectId: currentProject.id, projectName: currentProject.name };
+    if (usePopOutStore.getState().openInstanceKeys[popOutInstanceKey('command-terminal', popOutParams)]) {
+      void window.electronAPI.popOut.focus('command-terminal', popOutParams);
       return;
     }
     // Reconcile the singleton window population to THIS project's live transient

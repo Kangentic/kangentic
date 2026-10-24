@@ -136,6 +136,84 @@ describe('receivePopOutOpenSet', () => {
   });
 
   /**
+   * The detached Command Terminal: its in-app panel never shows beside it, and
+   * closing it brings the panel back only while that project is on screen AND
+   * still has a terminal running. Stopping the last terminal closes the window
+   * too, and reopening the panel then would start a terminal nobody asked for.
+   */
+  describe('the detached Command Terminal', () => {
+    const COMMAND_TERMINAL_KEY = 'command-terminal:p1';
+    const project = { id: 'p1', name: 'Project', path: '/mock/project' };
+
+    function liveTerminal(projectId: string): Record<string, unknown> {
+      return { id: `term-${projectId}`, projectId, transient: true, status: 'running', commandTerminalSlot: 'slot-1', taskId: '' };
+    }
+
+    function seedDetachedTerminals(sessions: Array<Record<string, unknown>>): void {
+      useProjectStore.setState({ currentProject: project });
+      useSessionStore.setState({
+        sessions: sessions as never,
+        commandBarVisible: false,
+        _pendingOpenCommandTerminal: false,
+      });
+      usePopOutStore.setState({ openInstanceKeys: { [COMMAND_TERMINAL_KEY]: true } });
+    }
+
+    afterEach(() => useProjectStore.setState({ currentProject: null }));
+
+    it('hides the in-app panel when its project\'s window opens', () => {
+      useProjectStore.setState({ currentProject: project });
+      useSessionStore.setState({ commandBarVisible: true });
+
+      receivePopOutOpenSet([COMMAND_TERMINAL_KEY]);
+
+      expect(useSessionStore.getState().commandBarVisible).toBe(false);
+    });
+
+    it('leaves the panel alone when another project\'s window opens', () => {
+      useProjectStore.setState({ currentProject: project });
+      useSessionStore.setState({ commandBarVisible: true });
+
+      receivePopOutOpenSet(['command-terminal:p2']);
+
+      expect(useSessionStore.getState().commandBarVisible).toBe(true);
+    });
+
+    it('asks for the panel again when the window closes with a terminal still running', () => {
+      seedDetachedTerminals([liveTerminal('p1')]);
+
+      receivePopOutOpenSet([]);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(true);
+    });
+
+    it('does not reopen the panel once the last terminal stopped', () => {
+      seedDetachedTerminals([{ ...liveTerminal('p1'), status: 'exited' }, liveTerminal('p2')]);
+
+      receivePopOutOpenSet([]);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+    });
+
+    it('does not reopen the panel when the board is on another project', () => {
+      seedDetachedTerminals([liveTerminal('p1')]);
+      useProjectStore.setState({ currentProject: { id: 'p2', name: 'Other', path: '/mock/other' } });
+
+      receivePopOutOpenSet([]);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+    });
+
+    it('the raw setOpen (the HMR re-sync) never reopens it', () => {
+      seedDetachedTerminals([liveTerminal('p1')]);
+
+      usePopOutStore.getState().setOpen([]);
+
+      expect(useSessionStore.getState()._pendingOpenCommandTerminal).toBe(false);
+    });
+  });
+
+  /**
    * The window can outlive a board switch, so the closed state must be persisted
    * against the project named by the KEY, not whichever board is open now.
    */
