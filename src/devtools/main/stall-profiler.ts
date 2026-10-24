@@ -378,6 +378,49 @@ export function summarizeProfile(profile: Profiler.Profile, tailMs?: number): Pi
   };
 }
 
+/**
+ * Where a thread spent its busy time over a whole profile: the share of
+ * samples that were not idle, and the functions with the most self time
+ * across all of them. Unlike `summarizeProfile`, which keeps only the longest
+ * busy run (that run is a stall), this adds up every busy sample, because a
+ * busy terminal host is many short slices, not one block. The scroll-latency
+ * route summarizes the pty host's profile with it.
+ */
+export function summarizeBusyProfile(profile: Profiler.Profile, topCount = 15): {
+  sampledMs: number;
+  busyMs: number;
+  topFrames: StallFrame[];
+} {
+  const nodesById = new Map<number, Profiler.ProfileNode>();
+  for (const node of profile.nodes) nodesById.set(node.id, node);
+  const samples = profile.samples ?? [];
+  const deltasMs = (profile.timeDeltas ?? []).map((deltaUs) => deltaUs / 1000);
+  let sampledMs = 0;
+  let busyMs = 0;
+  const selfMsByKey = new Map<string, StallFrame>();
+  samples.forEach((nodeId, index) => {
+    const deltaMs = deltasMs[index] ?? 0;
+    sampledMs += deltaMs;
+    const node = nodesById.get(nodeId);
+    const functionName = node?.callFrame.functionName ?? '';
+    // `(program)` (VM work outside JS) and `(garbage collector)` stay in: both hold the thread.
+    if (!node || functionName === '(idle)' || functionName === '(root)') return;
+    busyMs += deltaMs;
+    const location = frameLocation(node.callFrame);
+    const name = functionName || '(anonymous)';
+    const key = `${name}@${location}`;
+    const entry = selfMsByKey.get(key) ?? { functionName: name, location, selfMs: 0 };
+    entry.selfMs += deltaMs;
+    selfMsByKey.set(key, entry);
+  });
+  const roundTenth = (value: number): number => Math.round(value * 10) / 10;
+  const topFrames = [...selfMsByKey.values()]
+    .sort((left, right) => right.selfMs - left.selfMs)
+    .slice(0, topCount)
+    .map((frame) => ({ ...frame, selfMs: roundTenth(frame.selfMs) }));
+  return { sampledMs: roundTenth(sampledMs), busyMs: roundTenth(busyMs), topFrames };
+}
+
 function frameLocation(callFrame: Profiler.ProfileNode['callFrame']): string {
   if (!callFrame.url) return '';
   const segments = callFrame.url.replace(/\\/g, '/').split('/');

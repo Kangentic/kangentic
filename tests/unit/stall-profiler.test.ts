@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Profiler } from 'node:inspector';
-import { summarizeProfile } from '../../src/devtools/main/stall-profiler';
+import { summarizeBusyProfile, summarizeProfile } from '../../src/devtools/main/stall-profiler';
 
 /** root -> (idle); root -> dispatch -> parseTranscript. */
 function profileOf(samples: number[]): Profiler.Profile {
@@ -55,6 +55,39 @@ describe('summarizeProfile', () => {
     expect(summary.topFrames.map((frame) => [frame.functionName, frame.selfMs])).toEqual([
       ['parseTranscript', 2],
       ['dispatch', 1],
+    ]);
+  });
+});
+
+describe('summarizeBusyProfile', () => {
+  it('adds up every busy sample and ranks functions by self time', () => {
+    const profile: Profiler.Profile = {
+      nodes: [
+        { id: 1, callFrame: { functionName: '(root)', scriptId: '0', url: '', lineNumber: -1, columnNumber: -1 }, children: [2, 3, 4] },
+        { id: 2, callFrame: { functionName: '(idle)', scriptId: '0', url: '', lineNumber: -1, columnNumber: -1 } },
+        { id: 3, callFrame: { functionName: 'parse', scriptId: '1', url: 'file:///app/node_modules/xterm-headless.js', lineNumber: 9, columnNumber: 0 } },
+        { id: 4, callFrame: { functionName: 'spawn', scriptId: '2', url: 'node:child_process', lineNumber: 0, columnNumber: 0 } },
+      ],
+      startTime: 0,
+      endTime: 6000,
+      samples: [2, 3, 3, 2, 3, 4],
+      timeDeltas: [1000, 1000, 1000, 1000, 1000, 1000],
+    };
+    const summary = summarizeBusyProfile(profile);
+    expect(summary.sampledMs).toBe(6);
+    expect(summary.busyMs).toBe(4);
+    expect(summary.topFrames[0]).toEqual({ functionName: 'parse', location: 'node_modules/xterm-headless.js:10', selfMs: 3 });
+    expect(summary.topFrames[1].functionName).toBe('spawn');
+  });
+
+  it('keeps every busy run, where summarizeProfile keeps only the longest', () => {
+    // Two busy runs split by idle: 3 ms in the parser, then 2 ms in its caller.
+    const summary = summarizeBusyProfile(profileOf([4, 4, 4, 2, 3, 3, 2]));
+
+    expect(summary.busyMs).toBe(5);
+    expect(summary.topFrames.map((frame) => [frame.functionName, frame.selfMs])).toEqual([
+      ['parseTranscript', 3],
+      ['dispatch', 2],
     ]);
   });
 });

@@ -292,6 +292,109 @@ describe('createIncomingWriteQueue', () => {
   });
 });
 
+describe('createIncomingWriteQueue onSliceParsed', () => {
+  /** Fake xterm that holds every write callback until the test runs it, so a
+   *  test decides exactly when xterm "finishes parsing" a slice. */
+  function deferredTerminal(): { term: Terminal; parsedCallbacks: Array<() => void> } {
+    const parsedCallbacks: Array<() => void> = [];
+    const term = {
+      write(_data: string, callback?: () => void): void {
+        if (callback) parsedCallbacks.push(callback);
+      },
+    } as unknown as Terminal;
+    return { term, parsedCallbacks };
+  }
+
+  it('is told about a slice only once xterm has parsed it, exactly once, and ahead of its ack', () => {
+    const { term, parsedCallbacks } = deferredTerminal();
+    const events: string[] = [];
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => false,
+      ack: (bytes) => events.push(`ack:${bytes}`),
+      onSliceParsed: (chars) => events.push(`parsed:${chars}`),
+    });
+
+    queue.push('hello');
+    // Handed to xterm, not parsed yet: neither the hook nor the ack has run.
+    expect(parsedCallbacks).toHaveLength(1);
+    expect(events).toEqual([]);
+
+    parsedCallbacks[0]();
+    expect(events).toEqual(['parsed:5', 'ack:5']);
+  });
+
+  it('reports each slice of a split input with its own length, in order', async () => {
+    const { term } = fakeTerminal();
+    const parsedLengths: number[] = [];
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => false,
+      ack: vi.fn(),
+      onSliceParsed: (chars) => parsedLengths.push(chars),
+      chunkSize: 4,
+    });
+
+    queue.push('abcdef'); // chunk 4 -> 4 + 2
+    await flush();
+    expect(parsedLengths).toEqual([4, 2]);
+  });
+
+  it('is not told about slices dropped by shouldDrop, which are still acked', async () => {
+    const { term, writes } = fakeTerminal();
+    const onSliceParsed = vi.fn();
+    const ack = vi.fn();
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => true,
+      ack,
+      onSliceParsed,
+      chunkSize: 4,
+    });
+
+    queue.push('abcdef');
+    await flush();
+    expect(writes).toEqual([]);
+    expect(onSliceParsed).not.toHaveBeenCalled();
+    const totalAcked = ack.mock.calls.reduce((sum, call) => sum + call[0], 0);
+    expect(totalAcked).toBe(6);
+  });
+
+  it('is not told about bytes dropped because there is no terminal, which are still acked', async () => {
+    const onSliceParsed = vi.fn();
+    const ack = vi.fn();
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => null,
+      shouldDrop: () => false,
+      ack,
+      onSliceParsed,
+    });
+
+    queue.push('orphaned');
+    await flush();
+    expect(onSliceParsed).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith(8);
+  });
+
+  it('is not told about held bytes that reset drops, which are still acked', () => {
+    const { term } = deferredTerminal();
+    const onSliceParsed = vi.fn();
+    const ack = vi.fn();
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => false,
+      ack,
+      onSliceParsed,
+      chunkSize: 4,
+    });
+
+    queue.push('abcdefgh'); // 'abcd' handed to xterm (never parses), 'efgh' held
+    expect(queue.reset()).toBe(4);
+    expect(onSliceParsed).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledWith(4);
+  });
+});
+
 describe('writeChunkedToTerminal', () => {
   it('writes a small string in one call and fires onDone', async () => {
     const { term, writes } = fakeTerminal();
