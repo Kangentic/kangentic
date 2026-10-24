@@ -71,6 +71,9 @@ describe('TerminalSubmit', () => {
       expect(pasteEngine.calls[0].sessionId).toBe(SESSION_ID);
       expect(pasteEngine.calls[0].text).toBe('hello world');
       expect(pasteEngine.calls[0].options).toEqual({ bracketed: true, source: 'test' });
+      // Pasted content (a phone's message, dictation, Browser Send) is use of
+      // the terminal, so an unused Command Terminal stops being replaceable.
+      expect(sessionManager.userInputMarks).toEqual([SESSION_ID]);
       sessionManager.dispose();
     });
   });

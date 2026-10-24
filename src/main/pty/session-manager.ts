@@ -4,6 +4,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
+import { writeCarriesUserContent } from '../../shared/terminal-input-content';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -2042,10 +2043,31 @@ export class SessionManager extends EventEmitter {
   write(sessionId: string, data: string, origin: WriteOrigin = 'system'): void {
     const session = this.registry.get(sessionId);
     if (!session?.pty || data.length === 0) return;
+    // xterm's own replies (device attributes, cursor position, focus and mouse
+    // reports) arrive here as 'user' too, so only a write that carries a key
+    // or text marks the session used.
+    if (origin === 'user' && !session.hasUserInput && writeCarriesUserContent(data)) {
+      this.markUserInput(sessionId);
+    }
     // Into the PTY's write queue in the host, which a renderer's keystrokes
     // share: 4 KB chunks, a bracketed paste kept whole, FIFO across every
     // writer, so a key typed during a paste can never land inside it.
     this.host.post({ type: 'enqueueWrite', ptyId: session.pty.ptyId, data, origin });
+  }
+
+  /**
+   * Record that someone typed, pasted or sent something into this session
+   * (`Session.hasUserInput`), once, and announce it on 'session-changed'. A
+   * Command Terminal that is still unused is replaced in place when the user
+   * resumes an earlier conversation from it. Content delivered by paste
+   * (`TerminalSubmit.submitContent`: the phone, dictation, Browser Send) calls
+   * this directly, since it reaches the PTY as raw writes.
+   */
+  markUserInput(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session || session.hasUserInput) return;
+    session.hasUserInput = true;
+    this.emit('session-changed', sessionId, toSession(session));
   }
 
   /**
@@ -2549,9 +2571,10 @@ export class SessionManager extends EventEmitter {
    * emitted, so every exit listener (the crash push, a phone's
    * `session-ended`, the renderer's status patch) has already read the row.
    *
-   * A suspend ends it the same way: a Command Terminal has no record to
-   * resume from, so a suspended row would only hold its slot and a window on
-   * a dead PTY. No automatic path suspends one: the idle sweep skips it
+   * A suspend ends it the same way: a Command Terminal has no session record
+   * to resume in place (its conversation is offered back from the panel's
+   * Earlier list, as a new terminal), so a suspended row would only hold its
+   * slot and a window on a dead PTY. No automatic path suspends one: the idle sweep skips it
    * (`isIdleTimeoutExempt`), the low-memory pause never picks it
    * (`isPauseEligible`), and a project relocate kills it. This is the
    * backstop for a suspend that reaches one anyway.

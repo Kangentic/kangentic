@@ -37,6 +37,7 @@ function makeTelemetry(
   notRunning: Set<string>,
   engineOverrides: Partial<NonNullable<SessionTelemetryOptions['activityEngineOptions']>> = {},
   idleTimeoutExempt: Set<string> = new Set(),
+  onAgentSessionId?: (sessionId: string, agentSessionId: string) => void,
 ): SessionTelemetry {
   const staleThinkingTimeoutMs = engineOverrides.staleThinkingTimeoutMs ?? 600_000;
   const options: SessionTelemetryOptions = {
@@ -73,6 +74,7 @@ function makeTelemetry(
       },
       isSessionRunning: (sessionId) => !notRunning.has(sessionId),
       isIdleTimeoutExempt: (sessionId) => idleTimeoutExempt.has(sessionId),
+      ...(onAgentSessionId ? { onAgentSessionId } : {}),
     },
     options,
   );
@@ -681,6 +683,38 @@ describe('SessionTelemetry activity decisions', () => {
       vi.advanceTimersByTime(500); // total 1100ms since the Prompt event > the 1000ms stale window
       expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
       localTelemetry.dispose();
+    });
+
+    // A `/resume` (or `/clear`) inside a terminal makes the status file report
+    // another conversation, whose totals have nothing to do with the last
+    // write's. Red-green: drop `conversationSwitched` from the baseline choice
+    // and the switch reads as 50 -> 4000 output growth, so the heartbeat forces
+    // a parked terminal "working" for the forced-turn grace.
+    it('sets a new baseline, never a heartbeat, when the status reports another conversation', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), {}, new Set(), () => {});
+      localTelemetry.initSession('s1');
+      localTelemetry.processStatusUpdate('s1', { ...usage(100, 50), sessionId: 'conversation-a' });
+      vi.advanceTimersByTime(1_500);
+      localTelemetry.processStatusUpdate('s1', { ...usage(90_000, 4_000), sessionId: 'conversation-b' });
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      // The new conversation's own growth still counts once it is the baseline.
+      vi.advanceTimersByTime(1_500);
+      localTelemetry.processStatusUpdate('s1', { ...usage(90_000, 4_400), sessionId: 'conversation-b' });
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+      localTelemetry.dispose();
+    });
+
+    // A resumed terminal's spawn seeds usage with the model alone, and its
+    // agent's first status reports the resumed conversation's whole output.
+    // Red-green: drop `firstStatusWrite` from the baseline choice and that
+    // first report reads as 0 -> 4000 growth over the seed.
+    it("treats a session's first status write as the baseline even over a seeded usage", () => {
+      telemetry.initSession('s1');
+      telemetry.setSessionUsage('s1', { model: { id: 'claude-opus-4-8', displayName: 'Opus' } });
+      vi.advanceTimersByTime(1_500);
+      telemetry.processStatusUpdate('s1', usage(90_000, 4_000));
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
     });
   });
 

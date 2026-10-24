@@ -70,6 +70,11 @@ import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
 import { CommandTerminalNamer } from '../agent/shared/command-terminal-namer';
 import { CommandTerminalLeftoverReaper } from './helpers/command-terminal-leftovers';
+import { CommandTerminalHistory } from './helpers/command-terminal-history';
+import { CommandTerminalHistoryRepository } from '../db/repositories/command-terminal-history-repository';
+import { agentRegistry } from '../agent/agent-registry';
+import { canResumeConversationById } from '../agent/shared/workflow-agent-capability';
+import { broadcast } from '../pop-out/window-broadcast';
 import { startPlanApprovalWriter } from '../plan-approval/plan-approval-writer';
 import { reapTaskLeftovers } from './helpers/task-cleanup';
 import { isShuttingDown } from '../shutdown-state';
@@ -314,6 +319,32 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     isShuttingDown,
   });
   commandTerminalLeftovers.start();
+
+  // The conversations Command Terminals held, for the panel's Earlier list
+  // and a resume. Written from session events here in main, so a terminal a
+  // phone started, or one in a project not open on the desktop, is recorded.
+  const commandTerminalHistory = new CommandTerminalHistory({
+    sessionManager,
+    getRepository: (projectId) => {
+      try {
+        return new CommandTerminalHistoryRepository(getProjectDb(projectId));
+      } catch {
+        return null;
+      }
+    },
+    conversationAvailable: async (agentName, agentSessionId, cwd) => {
+      const adapter = agentRegistry.get(agentName);
+      if (!adapter || !canResumeConversationById(adapter)) return false;
+      try {
+        return (await adapter.locateSessionHistoryFile(agentSessionId, cwd)) !== null;
+      } catch {
+        return false;
+      }
+    },
+    notifyChanged: (projectId) => broadcast(requireContext().mainWindow, IPC.COMMAND_TERMINAL_HISTORY_CHANGED, projectId),
+  });
+  commandTerminalHistory.start();
+  context.commandTerminalHistory = commandTerminalHistory;
 
   // Each live task session's plan approval decision, which the agent's plan
   // approval hook reads when the plan prompt appears.

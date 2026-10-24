@@ -88,6 +88,12 @@ export interface ManagedSession {
    */
   commandTerminalLabel?: string | null;
   /**
+   * Someone typed, pasted or sent something into this session (see
+   * `Session.hasUserInput`). Set once by `SessionManager.markUserInput`, or at
+   * spawn for a resumed Command Terminal.
+   */
+  hasUserInput?: boolean;
+  /**
    * For a transient session, epoch ms of the agent's own SessionEnd hook (a
    * `/exit`), cleared by a later SessionStart (a `/clear` ends and starts in
    * one go). While it is set the agent-absence sweep may judge the session
@@ -281,6 +287,7 @@ export function toSession(session: ManagedSession): Session {
     commandTerminalSlot: session.commandTerminalSlot ?? null,
     commandTerminalBranch: session.commandTerminalBranch ?? null,
     commandTerminalLabel: session.commandTerminalLabel ?? null,
+    hasUserInput: session.hasUserInput || undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,
   };

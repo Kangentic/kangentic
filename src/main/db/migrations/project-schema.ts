@@ -1978,6 +1978,28 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!hasForkPointShaColumn) {
     db.exec('ALTER TABLE tasks ADD COLUMN fork_point_sha TEXT DEFAULT NULL');
   }
+
+  // Table: command_terminal_history - the conversations Command Terminals
+  // held, so the panel's Earlier list can resume one after its terminal ended.
+  // A Command Terminal has no `sessions` row (its task_id is a foreign key to
+  // tasks), so it keeps its own. One row per agent conversation, keyed by the
+  // agent's session id. A row is listed only once someone used the terminal
+  // (`touched_at`), so an untouched terminal leaves nothing behind. No backfill:
+  // terminals before this kept no record.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS command_terminal_history (
+      agent_session_id TEXT PRIMARY KEY,
+      agent_name TEXT NOT NULL,
+      label TEXT,
+      cwd TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      touched_at TEXT,
+      ended_at TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  // The prune keeps the newest ended rows, so it filters and sorts on ended_at.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_command_terminal_history_ended ON command_terminal_history(ended_at)');
 }
 
 /**

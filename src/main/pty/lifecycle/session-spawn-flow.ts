@@ -471,6 +471,7 @@ export async function performSpawn(
     workflowId: input.workflowId ?? null,
     commandTerminalSlot: input.commandTerminalSlot ?? null,
     commandTerminalBranch: input.commandTerminalBranch ?? null,
+    hasUserInput: input.hasUserInput === true || undefined,
     isolatedSwimlaneId: input.isolatedSwimlaneId,
     exitSequence: input.exitSequence ?? ['\x03'],
     // Asked for this platform's own console only: a WSL shell's close (ConPTY

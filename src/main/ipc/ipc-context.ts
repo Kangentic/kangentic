@@ -15,6 +15,7 @@ import type { TranscriptionService } from '../transcription/transcription-servic
 import type { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import type { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import type { DesktopNotifier } from '../notifications/desktop-notifier';
+import type { CommandTerminalHistory } from './helpers/command-terminal-history';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -115,4 +116,11 @@ export interface IpcContext {
    * src/main/notifications/desktop-notifier.ts.
    */
   desktopNotifier: DesktopNotifier;
+  /**
+   * The record of the conversations Command Terminals held, for the panel's
+   * Earlier list and a resume. Assigned once the handlers are registered;
+   * absent in contexts built for tests. See
+   * src/main/ipc/helpers/command-terminal-history.ts.
+   */
+  commandTerminalHistory?: CommandTerminalHistory;
 }
