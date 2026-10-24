@@ -130,7 +130,7 @@ test.describe('Command Terminal reload recovery', () => {
       .poll(async () => (await liveTerminals(page)).length, { timeout: 30000, intervals: [250, 500, 1000] })
       .toBe(1);
 
-    await page.locator('[data-testid="quick-session-new-terminal"]').click();
+    await page.locator('[data-testid="command-terminal-new"]').click();
     await expect
       .poll(async () => (await liveTerminals(page)).length, { timeout: 30000, intervals: [250, 500, 1000] })
       .toBe(2);

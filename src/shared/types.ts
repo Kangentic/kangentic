@@ -4676,6 +4676,12 @@ export interface AppConfig {
    *  Null until a layout is first saved. See
    *  src/renderer/components/command-bar/ + window-manager/persistence/. */
   commandTerminalWorkspace: SerializedWorkspace | null;
+  /** GLOBAL position and size of the Command Terminal panel over the board, as
+   *  fractions of the area between the title bar and the status bar, and whether
+   *  it is maximized. Shared across all projects, like the layout above. Null
+   *  until the panel is first moved, resized or maximized. Renderer-authoritative,
+   *  always written whole. See src/renderer/components/command-bar/. */
+  commandTerminalPanel: CommandTerminalPanelGeometry | null;
   /** GLOBAL in-app layout for the Agent Monitor's task-detail window layer: which
    *  details are open over the monitor and how they are arranged. One blob, not
    *  keyed by project, because the monitor is cross-project by design (its windows
@@ -4925,6 +4931,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   lastActiveTaskByProject: {},
   workspaceByProject: {},
   commandTerminalWorkspace: null,
+  commandTerminalPanel: null,
   monitorWorkspace: null,
   discoveredModelsByAgent: {},
   discoveredContextWindowsByAgent: {},
@@ -6897,6 +6904,16 @@ export interface SpawnTransientSessionInput {
    * checks out.
    */
   resumeAgentSessionId?: string;
+}
+
+/** Where the Command Terminal panel sits: fractions (0..1) of the area between
+ *  the title bar and the status bar, plus whether it fills that area. */
+export interface CommandTerminalPanelGeometry {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  maximized: boolean;
 }
 
 /**

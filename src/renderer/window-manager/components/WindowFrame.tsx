@@ -42,6 +42,10 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   const parkWindow = layerStore((state) => state.parkWindow);
   const isFocused = layerStore((state) => state.focusedWindowId === managedWindow.id);
   const isParked = managedWindow.parked === true;
+  // A host-arranged layer's lone window needs no focus line: nothing beside it
+  // could be the one taking keys.
+  const hostArranged = layer.hostArranged === true;
+  const showFocusLine = layerStore((state) => !hostArranged || Object.keys(state.windows).length > 1);
 
   // The ONE place every user close converges (the X, Escape, light dismiss,
   // middle-click all end here after the exit animation), so the layer's
@@ -175,9 +179,10 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       }}
       aria-hidden={isDormant || undefined}
       inert={isDormant || undefined}
-      className={`pointer-events-auto group bg-surface-raised border border-edge focus-within:border-accent/40 ${
-        isMaximized || isTiled ? 'rounded-none' : 'rounded-lg'
-      } ${isTiled ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}
+      className={`pointer-events-auto group bg-surface-raised border border-edge ${
+        showFocusLine ? 'focus-within:border-accent/40' : ''
+      } ${isMaximized || isTiled || hostArranged ? 'rounded-none' : 'rounded-lg'
+      } ${isTiled || hostArranged ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}
       data-testid={`window-frame-${managedWindow.id}`}
     >
       {/* Focus cue driven by REAL focus (:focus-within), not the sticky
@@ -186,10 +191,12 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
           actually holds keyboard focus (its terminal or a control) - so it drops the
           moment focus moves to a dialog or another window, matching the blinking
           cursor. Always rendered; CSS toggles visibility, so no layout shift. */}
-      <div
-        className="pointer-events-none absolute inset-x-0 top-0 z-20 hidden h-0.5 bg-accent/70 animate-pulse group-focus-within:block"
-        aria-hidden
-      />
+      {showFocusLine && (
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 hidden h-0.5 bg-accent/70 animate-pulse group-focus-within:block"
+          aria-hidden
+        />
+      )}
       <WindowContent
         managedWindow={managedWindow}
         isFocused={isFocused}
@@ -197,7 +204,7 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
         titleBarPointerDown={titleBarPointerDown}
         requestClose={requestClose}
       />
-      {!isMaximized && !isTiled && (
+      {!isMaximized && !isTiled && !hostArranged && (
         <WindowResizeHandles windowId={managedWindow.id} onHandlePointerDown={resize.handlePointerDown} />
       )}
     </div>

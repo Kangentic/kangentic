@@ -356,7 +356,7 @@ test.describe('Sidebar Command Terminal indicator', () => {
 
       // "New terminal" renders only while the Command Terminal layer is open, so
       // its presence is the cheap signal that the layer reopened on the new project.
-      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('[data-testid="command-terminal-new"]')).toBeVisible({ timeout: 5000 });
     } finally {
       await browser.close();
     }
@@ -372,7 +372,7 @@ test.describe('Sidebar Command Terminal indicator', () => {
     try {
       await page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`).click();
 
-      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('[data-testid="command-terminal-new"]')).toBeVisible({ timeout: 5000 });
 
       // Still on the same project - the click must not have re-opened anything.
       const currentProjectId = await page.evaluate(async () => {
@@ -476,7 +476,7 @@ test.describe('Sidebar Command Terminal indicator', () => {
       // give any latent open() a fixed budget beyond the dialog wait above,
       // then assert. "New terminal" renders only while the layer is open.
       await page.waitForTimeout(300);
-      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="command-terminal-new"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -738,7 +738,7 @@ test.describe('Notification click reopen (App.tsx sibling of the sidebar indicat
       // Negative assertion (cannot poll for "never opens"; see anti-pattern 6):
       // give any latent open() a fixed budget beyond the dialog wait above.
       await page.waitForTimeout(300);
-      await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="command-terminal-new"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

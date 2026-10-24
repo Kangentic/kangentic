@@ -30,6 +30,7 @@ import {
   wrapTreeWithRoot,
 } from '../tiling/tree-ops';
 import type { TileInsertSide } from '../tiling/tree-ops';
+import { hostArrangementTree } from '../tiling/host-arrangement';
 import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
 import { findWindowTreeViolations } from './tree-invariants';
 import { monitorAnchorToTaskId } from './monitor-anchor';
@@ -296,6 +297,13 @@ export interface WindowStoreState {
   enforceMinPaneSize: (minWidthPx: number, minHeightPx: number, overlayWidthPx: number, overlayHeightPx: number) => void;
   /** Pull a window out of tiling (drag-out); dissolves the group to floating. */
   untileWindow: (id: string) => void;
+  /**
+   * Lay `windowIds` out to fill the whole overlay, in reading order, for a
+   * host-arranged layer (the Command Terminal panel), in the preset for their
+   * count (`tiling/host-arrangement.ts`). Rebuilds the tree, so seam sizes
+   * reset. Ids the store does not hold, and dormant windows, are skipped.
+   */
+  arrangeTiles: (windowIds: readonly string[]) => void;
   toggleMaximizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
   /** Snapshot the current layout into the persisted, anchor-anchored form. */
@@ -930,6 +938,44 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
           nextFootprint = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
         }
         return { windows: nextWindows, tileTree: prunedTree, tileTreeRect: clampGeometry(nextFootprint) };
+      });
+    },
+
+    arrangeTiles: (windowIds) => {
+      set((current) => {
+        const ids = windowIds.filter((id) => {
+          const candidate = current.windows[id];
+          return candidate !== undefined && !isWindowDormant(candidate);
+        });
+        if (ids.length === 0) return current.tileTree ? { tileTree: null, tileTreeRect: FULL_TILE_RECT } : current;
+        const nextWindows = { ...current.windows };
+        if (ids.length === 1) {
+          // A tree needs two leaves, so a lone window floats over the whole overlay.
+          nextWindows[ids[0]] = {
+            ...nextWindows[ids[0]],
+            state: 'floating',
+            leafId: null,
+            geometry: FULL_TILE_RECT,
+            restoreGeometry: null,
+          };
+          return { windows: nextWindows, tileTree: null, tileTreeRect: FULL_TILE_RECT };
+        }
+        const tree = hostArrangementTree(ids, nextTileId);
+        if (!tree) return current;
+        const markTiled = (node: TileNode): void => {
+          if (node.kind === 'split') {
+            node.children.forEach(markTiled);
+            return;
+          }
+          nextWindows[node.windowId] = { ...nextWindows[node.windowId], state: 'tiled', leafId: node.id, restoreGeometry: null };
+        };
+        markTiled(tree);
+        // Past the preset's four, a window has no place; it floats over the grid
+        // rather than being left pointing into a tree that no longer holds it.
+        for (const id of ids.slice(4)) {
+          nextWindows[id] = { ...nextWindows[id], state: 'floating', leafId: null, geometry: FULL_TILE_RECT, restoreGeometry: null };
+        }
+        return { windows: nextWindows, tileTree: tree, tileTreeRect: FULL_TILE_RECT };
       });
     },
 

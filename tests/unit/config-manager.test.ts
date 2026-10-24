@@ -511,6 +511,23 @@ describe('Config Manager -- terminal.* project-override migration', () => {
   });
 });
 
+describe('Config Manager -- commandTerminalPanel replace semantics', () => {
+  it('defaults to null, round-trips a panel rect, and a null write resets it', async () => {
+    const cm = await createConfigManager();
+    expect(cm.load().commandTerminalPanel).toBeNull();
+
+    const geometry = { x: 0.1, y: 0.05, w: 0.8, h: 0.9, maximized: true };
+    cm.save({ commandTerminalPanel: geometry });
+    expect(cm.load().commandTerminalPanel).toEqual(geometry);
+
+    // The renderer writes the whole rect; a null write must not merge into the old one.
+    cm.save({ commandTerminalPanel: null });
+    expect(cm.load().commandTerminalPanel).toBeNull();
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.commandTerminalPanel).toBeNull();
+  });
+});
+
 describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
   it('set({ commandTerminalWorkspace: null }) REPLACES the previous blob, not deep-merges it', async () => {
     // A realistic minimal serialized-workspace blob (shape mirrors SerializedWorkspace).

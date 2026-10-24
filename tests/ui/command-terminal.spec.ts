@@ -303,17 +303,25 @@ function spawnCounterSource(): string {
   `;
 }
 
-/** A version-1 serialized command workspace with two floating windows (slot-1,
- *  slot-2), as `serializeWorkspace` would produce. `taskId` is the on-disk field
- *  that carries the slot anchor. */
+/** A version-1 serialized command workspace with two tiled windows, as
+ *  `serializeWorkspace` writes the panel's two-up layout after the user dragged
+ *  its seam: slot-2 on the LEFT at 0.3 of the width, slot-1 on the right.
+ *  Neither is what a fresh layout would give (slot-1 first, an even split), so
+ *  a restore that kept them proves the blob was applied. `taskId` is the on-disk
+ *  field that carries the slot anchor. */
 function twoWindowBlobSource(): string {
   return `{
     version: 1,
     windows: [
-      { taskId: 'slot-1', title: 'Command Terminal', geometry: { x: 0.1, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' },
-      { taskId: 'slot-2', title: 'Command Terminal', geometry: { x: 0.5, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' }
+      { taskId: 'slot-1', title: 'Command Terminal', geometry: { x: 0, y: 0, w: 1, h: 1 }, restoreGeometry: null, state: 'tiled' },
+      { taskId: 'slot-2', title: 'Command Terminal', geometry: { x: 0, y: 0, w: 1, h: 1 }, restoreGeometry: null, state: 'tiled' }
     ],
-    tileTree: null,
+    tileTree: {
+      kind: 'split',
+      direction: 'horizontal',
+      children: [{ kind: 'leaf', taskId: 'slot-2' }, { kind: 'leaf', taskId: 'slot-1' }],
+      sizes: [0.3, 0.7]
+    },
     tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
     focusedTaskId: 'slot-1'
   }`;
@@ -706,58 +714,31 @@ async function commandWindowAnchors(page: Page): Promise<string[]> {
   });
 }
 
-/** Fractional geometry, keyed by slot anchor, for every command-terminal window in
- *  the singleton store. Used to verify a restored window carries the PERSISTED
- *  blob geometry (not a freshly-opened default rect) - a population-count
- *  assertion alone cannot distinguish "restored from the blob" from "reconciled
- *  open at the default size", which is exactly the bug this covers. */
-async function commandWindowGeometryBySlot(
-  page: Page,
-): Promise<Record<string, { x: number; y: number; w: number; h: number }>> {
+/** The command layer's tile tree as the panel lays it out: the slots in the
+ *  order the root split holds them, and the root split's sizes. Used to verify
+ *  a restored layout carries the PERSISTED blob (its order and its dragged seam)
+ *  rather than a fresh preset - a population-count assertion alone cannot
+ *  distinguish "restored from the blob" from "reconciled open in a fresh
+ *  layout", which is exactly the bug this covers. */
+async function commandTileLayout(page: Page): Promise<{ slots: string[]; sizes: number[] } | null> {
   return page.evaluate(() => {
+    interface StoreTile { kind: 'leaf' | 'split'; windowId?: string; children?: StoreTile[]; sizes?: number[] }
     const stores = (window as unknown as {
       __zustandStores?: {
-        commandWindow?: {
-          getState: () => {
-            windows: Record<string, { anchor: string; geometry: { x: number; y: number; w: number; h: number } }>;
-          };
-        };
+        commandWindow?: { getState: () => { windows: Record<string, { anchor: string }>; tileTree: StoreTile | null } };
       };
     }).__zustandStores;
-    const windows = stores?.commandWindow?.getState().windows ?? {};
-    const bySlot: Record<string, { x: number; y: number; w: number; h: number }> = {};
-    for (const managedWindow of Object.values(windows)) {
-      bySlot[managedWindow.anchor] = managedWindow.geometry;
-    }
-    return bySlot;
+    const state = stores?.commandWindow?.getState();
+    const tree = state?.tileTree;
+    if (!state || !tree || tree.kind !== 'split') return null;
+    const slots = (tree.children ?? []).map((child) => (child.windowId ? state.windows[child.windowId]?.anchor ?? '?' : 'split'));
+    return { slots, sizes: tree.sizes ?? [] };
   });
 }
 
-/** Numeric tolerance for fractional geometry comparisons. Per the cross-platform
+/** Numeric tolerance for fractional size comparisons. Per the cross-platform
  *  rule, never compare a freshly-measured/derived float with zero tolerance. */
 const GEOMETRY_TOLERANCE = 0.001;
-
-/** Assert `actual` geometry is within GEOMETRY_TOLERANCE of `expected` on every axis. */
-function expectGeometryNear(
-  actual: { x: number; y: number; w: number; h: number } | undefined,
-  expected: { x: number; y: number; w: number; h: number },
-): void {
-  expect(actual, 'expected a geometry entry for this slot').toBeDefined();
-  if (!actual) return;
-  expect(Math.abs(actual.x - expected.x)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
-  expect(Math.abs(actual.y - expected.y)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
-  expect(Math.abs(actual.w - expected.w)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
-  expect(Math.abs(actual.h - expected.h)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
-}
-
-/** The two window geometries seeded by `twoWindowBlobSource()`, keyed by slot. A
- *  restored window that carries these values (rather than the centered default
- *  from `defaultWindowGeometry`) proves the saved blob geometry survived the
- *  first-open reconcile, not just that a window count matched. */
-const HARD_RELOAD_BLOB_GEOMETRY: Record<string, { x: number; y: number; w: number; h: number }> = {
-  'slot-1': { x: 0.1, y: 0.1, w: 0.4, h: 0.6 },
-  'slot-2': { x: 0.5, y: 0.1, w: 0.4, h: 0.6 },
-};
 
 /** Of the given session ids, which are present and still running in the session store. */
 async function runningSessionIds(page: Page, sessionIds: string[]): Promise<string[]> {
@@ -985,23 +966,26 @@ test.describe('Command Terminal', () => {
         await expect(sharedPage.getByTestId('command-bar-kebab-stop')).toBeVisible();
       });
 
-      test('maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the window', async () => {
+      test('the panel maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the panel', async () => {
         await sharedPage.keyboard.press('Control+Shift+P');
         const windowContent = sharedPage.getByTestId('command-terminal-window');
         await expect(windowContent).toBeVisible();
 
-        // The window-manager engine owns geometry now; maximize is a window-store
-        // toggle reflected by the button's accessible name (Maximize <-> Restore).
-        const maximizeButton = sharedPage.getByTestId('command-bar-maximize');
-        await expect(maximizeButton).toBeVisible();
-        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
+        // Maximize belongs to the PANEL, which holds every terminal; a terminal
+        // has no maximize of its own.
+        await expect(windowContent.getByRole('button', { name: /maximize/i })).toHaveCount(0);
+        const panel = sharedPage.getByTestId('command-terminal-panel');
+        const maximizeButton = sharedPage.getByTestId('command-terminal-panel-maximize');
+        await expect(maximizeButton).toHaveAccessibleName('Maximize panel');
+        await expect(panel).toHaveAttribute('data-maximized', 'false');
 
         await maximizeButton.click();
-        await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
+        await expect(panel).toHaveAttribute('data-maximized', 'true');
+        await expect(maximizeButton).toHaveAccessibleName('Restore panel');
 
         // Ctrl+Shift+M restores (terminal-safe combo).
         await sharedPage.keyboard.press('Control+Shift+M');
-        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
+        await expect(panel).toHaveAttribute('data-maximized', 'false');
 
         // Ctrl+Shift+W hides the layer; the transient session stays alive.
         await sharedPage.keyboard.press('Control+Shift+W');
@@ -1253,44 +1237,36 @@ test.describe('Command Terminal', () => {
   // since spawning a 2nd terminal calls spawnTransient again.
   // ---------------------------------------------------------------------------
   test.describe('Multiple terminals', () => {
-    test('the title-bar button toggles the layer open and closed; New terminal only shows while open', async () => {
-      // The title-bar terminal button is a plain open/close toggle now - it
-      // never spawns a terminal, so its own glyph always shows the shell prompt
-      // (data-plus=false). "New terminal" is a separate, adjacent button (with
-      // its own terminal-plus glyph) that only exists in the DOM while the
-      // layer is open.
+    test('the title-bar button only toggles the panel; New terminal lives in the panel\'s rail', async () => {
+      // The title-bar terminal button is a plain open/close toggle - it never
+      // spawns a terminal, so its own glyph always shows the shell prompt
+      // (data-plus=false), and the title bar holds no other terminal control.
+      // A new terminal starts from the New terminal button at the rail's foot.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
+        const titleBarActions = page.getByTestId('titlebar-actions');
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
-        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
-        await expect(page.getByTestId('quick-session-new-terminal-divider')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-new')).toHaveCount(0);
 
-        // Click opens the layer; "New terminal" appears alongside the toggle,
-        // using the terminal-plus glyph variant.
         await page.getByTestId('quick-session-button').click();
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
-        await expect(page.getByTestId('quick-session-new-terminal')).toBeVisible();
-        await expect(page.getByTestId('quick-session-new-terminal-icon')).toHaveAttribute('data-plus', 'true');
+        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toBeVisible();
+        await expect(titleBarActions.getByTestId('command-terminal-new')).toHaveCount(0);
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
-        // The divider mounts together with "New terminal" - never an orphan line.
-        await expect(page.getByTestId('quick-session-new-terminal-divider')).toBeVisible();
 
-        // Click again hides it (the discoverable close, even when maximized),
-        // and "New terminal" disappears with it.
+        // Click again hides the panel, the one-click close even when it is maximized.
         await page.getByTestId('quick-session-button').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
-        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
-        await expect(page.getByTestId('quick-session-new-terminal-divider')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-new')).toHaveCount(0);
       } finally {
         await browser.close();
       }
     });
 
-    test('the title-bar New terminal button spawns a second terminal', async () => {
-      // With the layer open, clicking the title-bar "New terminal" button calls
+    test('the rail\'s New terminal button spawns a second terminal', async () => {
+      // With the layer open, the rail's New terminal button calls
       // spawnAdditionalCommandTerminal, which opens a new window in the next
       // free slot and tiles them side by side.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
@@ -1304,8 +1280,8 @@ test.describe('Command Terminal', () => {
         // Wait for one window to be present
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
 
-        // Click the title-bar "New terminal" button to spawn a second terminal
-        await page.getByTestId('quick-session-new-terminal').click();
+        // Click the rail's New terminal button to spawn a second terminal
+        await page.getByTestId('command-terminal-new').click();
 
         // Second window should appear; total count goes 1 -> 2
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
@@ -1332,7 +1308,7 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
         await expect(page.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
 
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         // Assert the SET, not each index: window order is the engine's business,
@@ -1358,7 +1334,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
 
@@ -1397,7 +1373,7 @@ test.describe('Command Terminal', () => {
         // Open and spawn two terminals
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         // Click Stop on the FIRST window
@@ -1431,7 +1407,7 @@ test.describe('Command Terminal', () => {
         // The backdrop should also be gone
         await expect(page.getByTestId('command-window-backdrop')).not.toBeVisible({ timeout: 3000 });
         // "New terminal" is gone too (it only exists while the layer is open)
-        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-new')).toHaveCount(0);
       } finally {
         await browser.close();
       }
@@ -1446,7 +1422,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(2);
 
@@ -1543,7 +1519,7 @@ test.describe('Command Terminal', () => {
         // for the background project's slot-2 terminal has a window to wrongly close.
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         await expect
           .poll(async () => (await transientEntriesFor(page, BACKGROUND_FOREGROUND_PROJECT_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
@@ -1577,7 +1553,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         await page.evaluate((projectId) => {
@@ -1611,7 +1587,7 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
 
         await injectRunningTerminal(page, { id: 'phone-started-terminal', projectId: MULTI_PROJECT_ID, slot: 'slot-2' });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
 
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         expect(await commandWindowAnchors(page)).toEqual(['slot-1', 'slot-3']);
@@ -1629,7 +1605,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        const newTerminalButton = page.getByTestId('quick-session-new-terminal');
+        const newTerminalButton = page.getByTestId('command-terminal-new');
         await expect(newTerminalButton).toBeEnabled();
 
         // Three phone-started terminals on slots 2 to 4, none with a window.
@@ -1659,8 +1635,8 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('the title-bar New terminal button disables at the cap (MAX_COMMAND_TERMINALS = 4)', async () => {
-      // When 4 windows are open (the cap), the "New terminal" button disables.
+    test('New terminal disables at the cap (MAX_COMMAND_TERMINALS = 4) and says why', async () => {
+      // When 4 windows are open (the cap), the rail's New terminal button disables.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1668,81 +1644,23 @@ test.describe('Command Terminal', () => {
         // Open the first window
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await expect(page.getByTestId('quick-session-new-terminal')).toBeEnabled();
+        await expect(page.getByTestId('command-terminal-new')).toBeEnabled();
 
         // Spawn up to 4 windows total (3 more clicks)
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          await page.getByTestId('quick-session-new-terminal').click();
+          await page.getByTestId('command-terminal-new').click();
           await expect(page.getByTestId('command-terminal-window')).toHaveCount(iteration + 2, { timeout: 5000 });
         }
 
-        // At cap (4 windows) - the title-bar "New terminal" button is disabled.
+        // At cap (4 windows) - New terminal is disabled, and its tip says why.
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(4);
-        await expect(page.getByTestId('quick-session-new-terminal')).toBeDisabled({ timeout: 3000 });
+        await expect(page.getByTestId('command-terminal-new')).toBeDisabled({ timeout: 3000 });
+        await expect(page.getByTestId('command-terminal-new')).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
       } finally {
         await browser.close();
       }
     });
 
-    test('the New terminal icon stays uncolored while an active terminal lights up the toggle', async () => {
-      // tone="rest" is hardcoded on the "New terminal" button (TitleBar.tsx):
-      // it must never pick up the aggregate activity color/animation that the
-      // toggle button carries, even while a real terminal in this project is
-      // actively working. This guards against a future edit that accidentally
-      // wires this button's tone to `transientActivityTone` (a plausible
-      // copy-paste mistake since both buttons share the CommandTerminalIcon glyph).
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        // Open the layer (spawns the first transient terminal).
-        await page.getByTestId('quick-session-button').click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-
-        const entries = await transientEntriesFor(page, MULTI_PROJECT_ID);
-        expect(entries).toHaveLength(1);
-        const sessionId = entries[0].sessionId;
-
-        // Drive the spawned terminal's activity to 'thinking' via the mocked
-        // onActivity channel (the same channel App.tsx wires to updateActivity).
-        await page.evaluate(
-          ({ sessionId, projectId }) => {
-            const win = window as unknown as {
-              __mockFireActivity: (
-                sessionId: string,
-                state: string,
-                reason: string | null,
-                projectId: string,
-                taskId: string | null,
-              ) => void;
-            };
-            win.__mockFireActivity(sessionId, 'thinking', null, projectId, null);
-          },
-          { sessionId, projectId: MULTI_PROJECT_ID },
-        );
-
-        // The toggle button reflects the aggregate activity: color + data-activity
-        // flip to 'thinking' once the store hydrates.
-        const toggleIcon = page.getByTestId('quick-session-icon');
-        await expect(toggleIcon).toHaveAttribute('data-activity', 'thinking', { timeout: 3000 });
-        await expect(toggleIcon).toHaveClass(/text-active/);
-        // Tone and geometry must agree. CommandTerminalIcon maps tone -> mark itself, so without
-        // this pairing a 'thinking' tone could render the static mark (or vice versa) and every
-        // data-activity and data-mark assertion elsewhere would still pass.
-        await expect(toggleIcon).toHaveAttribute('data-mark', 'terminal-working');
-
-        // The "New terminal" icon must stay uncolored and report 'rest' regardless.
-        const newTerminalIcon = page.getByTestId('quick-session-new-terminal-icon');
-        await expect(newTerminalIcon).toHaveAttribute('data-activity', 'rest');
-        await expect(newTerminalIcon).toHaveAttribute('data-plus', 'true');
-        // showPlus wins over tone: the action mark, which never marches.
-        await expect(newTerminalIcon).toHaveAttribute('data-mark', 'terminal-new');
-        await expect(newTerminalIcon).not.toHaveClass(/text-active/);
-        await expect(newTerminalIcon).not.toHaveClass(/text-attention/);
-      } finally {
-        await browser.close();
-      }
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -1812,7 +1730,7 @@ test.describe('Command Terminal', () => {
       // Two terminals in Project A (2 windows, 2 tracked A sessions).
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await page.getByTestId('quick-session-new-terminal').click();
+      await page.getByTestId('command-terminal-new').click();
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       await expect
         .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
@@ -1856,7 +1774,7 @@ test.describe('Command Terminal', () => {
       // Two terminals in Project A; capture their session ids.
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await page.getByTestId('quick-session-new-terminal').click();
+      await page.getByTestId('command-terminal-new').click();
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       await expect
         .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
@@ -1951,21 +1869,16 @@ test.describe('Command Terminal', () => {
         expect(await spawnCountFor(page, HARD_RELOAD_PROJECT_ID)).toBe(0);
 
         // Regression guard: a count/spawn match alone does not prove the SAVED
-        // geometry blob was restored - a reconcile that pre-populated the empty
-        // store with default-geometry windows (before `useEnsureCommandWindow` got
-        // a chance to `applyWorkspace`) also reattaches both slots with 0 spawns,
-        // just at the wrong (centered default) rects. Wait for both slots to be
-        // present (store update can lag a tick behind the DOM count above), then
-        // assert each restored slot carries the persisted blob geometry.
+        // layout blob was restored - a reconcile that pre-populated the empty
+        // store with fresh windows (before `useEnsureCommandWindow` got a chance
+        // to `applyWorkspace`) also reattaches both slots with 0 spawns, just in
+        // a fresh layout: slot-1 first, an even split. The blob puts slot-2 first
+        // at 0.3, and the panel keeps a layout that is already its preset.
         await expect
-          .poll(async () => Object.keys(await commandWindowGeometryBySlot(page)).sort(), {
-            timeout: 5000,
-            intervals: [100, 200, 500],
-          })
-          .toEqual(['slot-1', 'slot-2']);
-        const geometryBySlot = await commandWindowGeometryBySlot(page);
-        expectGeometryNear(geometryBySlot['slot-1'], HARD_RELOAD_BLOB_GEOMETRY['slot-1']);
-        expectGeometryNear(geometryBySlot['slot-2'], HARD_RELOAD_BLOB_GEOMETRY['slot-2']);
+          .poll(async () => (await commandTileLayout(page))?.slots ?? [], { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual(['slot-2', 'slot-1']);
+        const restoredLayout = await commandTileLayout(page);
+        expect(Math.abs((restoredLayout?.sizes[0] ?? 0) - 0.3)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
       } finally {
         await browser.close();
       }
@@ -2098,30 +2011,308 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Window layout parity - the command terminal window has the same pop-out
-  // (untile back to floating) control as the task-detail window.
+  // Panel layout - the terminals are tiles of ONE panel (CommandTerminalPanel),
+  // laid out by the panel in a preset for their count (`arrangeTiles`): one
+  // fills the terminal area, two sit side by side, three are one tall beside two
+  // stacked, four are a two by two grid. A terminal never floats on its own.
   // ---------------------------------------------------------------------------
-  test.describe('Window layout parity', () => {
-    test('pop-out appears once a terminal is tiled and floats it back', async () => {
+  test.describe('Panel layout', () => {
+    /** Pixel tolerance for layout comparisons (sub-pixel rounding differs by platform). */
+    const PIXEL_TOLERANCE = 3;
+
+    interface Box { left: number; top: number; width: number; height: number }
+
+    /** Every terminal's frame box, keyed by slot, and the terminal area's box. */
+    async function layoutBoxes(page: Page): Promise<{ area: Box; panes: Record<string, Box> }> {
+      return page.evaluate(() => {
+        const toBox = (element: Element): { left: number; top: number; width: number; height: number } => {
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+        };
+        const panes: Record<string, { left: number; top: number; width: number; height: number }> = {};
+        for (const content of document.querySelectorAll('[data-testid="command-terminal-window"]')) {
+          const frame = content.closest('[data-testid^="window-frame-"]') ?? content;
+          panes[content.getAttribute('data-command-slot') ?? '?'] = toBox(frame);
+        }
+        return { area: toBox(document.querySelector('[data-testid="command-terminal-area"]')!), panes };
+      });
+    }
+
+    function expectNear(actual: number, expected: number, label: string): void {
+      expect(Math.abs(actual - expected), `${label}: ${actual} vs ${expected}`).toBeLessThanOrEqual(PIXEL_TOLERANCE);
+    }
+
+    test('terminals tile in the preset for their count, and re-tile when one stops', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
 
-        // A single floating terminal is not tiled, so it has no pop-out control.
-        await expect(page.getByTestId('command-bar-popout')).toHaveCount(0);
+        // One terminal fills the terminal area.
+        await expect.poll(async () => {
+          const { area, panes } = await layoutBoxes(page);
+          return Math.abs(panes['slot-1'].width - area.width) <= PIXEL_TOLERANCE
+            && Math.abs(panes['slot-1'].height - area.height) <= PIXEL_TOLERANCE;
+        }, { timeout: 3000 }).toBe(true);
 
-        // Spawning a second docks both into the first's footprint (tiled).
-        await page.getByTestId('quick-session-new-terminal').click();
+        // Two sit side by side, each the full height.
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect.poll(async () => (await layoutBoxes(page)).panes['slot-2']?.left ?? 0, { timeout: 3000 }).toBeGreaterThan(0);
+        let { area, panes } = await layoutBoxes(page);
+        expectNear(panes['slot-1'].left, area.left, 'slot-1 left');
+        expectNear(panes['slot-2'].left, area.left + area.width / 2, 'slot-2 left');
+        expectNear(panes['slot-1'].height, area.height, 'slot-1 height');
+        expectNear(panes['slot-2'].height, area.height, 'slot-2 height');
 
-        // Tiled terminals expose the pop-out (untile) control.
-        await expect(page.getByTestId('command-bar-popout').first()).toBeVisible({ timeout: 3000 });
+        // Three: one tall on the left, two stacked on the right.
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(3, { timeout: 5000 });
+        await expect.poll(async () => (await layoutBoxes(page)).panes['slot-3']?.top ?? 0, { timeout: 3000 }).toBeGreaterThan(area.top + area.height / 4);
+        ({ area, panes } = await layoutBoxes(page));
+        expectNear(panes['slot-1'].height, area.height, 'slot-1 tall');
+        expectNear(panes['slot-2'].top, area.top, 'slot-2 top');
+        expectNear(panes['slot-3'].top, area.top + area.height / 2, 'slot-3 below');
+        expectNear(panes['slot-3'].left, panes['slot-2'].left, 'slot-3 under slot-2');
 
-        // Pop one out: both terminals remain, the popped one is just floating now.
-        await page.getByTestId('command-bar-popout').first().click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
+        // Four: a two by two grid that reads 1 2 / 3 4.
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(4, { timeout: 5000 });
+        await expect.poll(async () => (await layoutBoxes(page)).panes['slot-1'].height, { timeout: 3000 }).toBeLessThan(area.height * 0.75);
+        ({ area, panes } = await layoutBoxes(page));
+        expectNear(panes['slot-1'].left, area.left, 'slot-1 left column');
+        expectNear(panes['slot-3'].left, area.left, 'slot-3 left column');
+        expectNear(panes['slot-2'].top, area.top, 'slot-2 top row');
+        expectNear(panes['slot-4'].left, panes['slot-2'].left, 'slot-4 right column');
+        expectNear(panes['slot-3'].top, area.top + area.height / 2, 'slot-3 bottom row');
+
+        // Stopping one re-tiles the other three into the three-terminal preset.
+        await page.locator('[data-command-slot="slot-2"]').getByTestId('command-bar-terminate-button').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(3, { timeout: 5000 });
+        await expect.poll(async () => {
+          const layout = await layoutBoxes(page);
+          return Object.values(layout.panes).filter((pane) => Math.abs(pane.height - layout.area.height) <= PIXEL_TOLERANCE).length;
+        }, { timeout: 3000 }).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a terminal has no window controls of its own, and its focus line shows only beside another', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        const firstTerminal = page.getByTestId('command-terminal-window');
+        await expect(firstTerminal).toHaveCount(1, { timeout: 5000 });
+
+        // The panel moves, resizes and maximizes; a terminal does none of these.
+        await expect(page.locator('[data-testid^="window-resize-"]')).toHaveCount(0);
+        await expect(firstTerminal.getByRole('button', { name: /pop out|maximize|restore/i })).toHaveCount(0);
+
+        // A lone terminal is plainly the one taking keys, so it draws no focus line.
+        const focusLines = page.locator('[data-testid^="window-frame-"] > [class*="bg-accent/70"]');
+        await expect(focusLines).toHaveCount(0);
+
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        await expect(focusLines).toHaveCount(2);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the panel moves by its header, and keeps and saves its place across a hide', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        const panel = page.getByTestId('command-terminal-panel');
+        const before = await panel.boundingBox();
+        const header = await page.getByTestId('command-terminal-panel-header').boundingBox();
+        expect(before && header).toBeTruthy();
+        if (!before || !header) return;
+        // Press on the header's empty middle, clear of its buttons.
+        const startX = header.x + header.width / 2;
+        const startY = header.y + header.height / 2;
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        await page.mouse.move(startX - 20, startY + 30, { steps: 6 });
+        await page.mouse.up();
+
+        await expect.poll(async () => (await panel.boundingBox())?.y ?? 0, { timeout: 3000 }).toBeGreaterThan(before.y + 20);
+        const moved = await panel.boundingBox();
+        await expect.poll(() => page.evaluate(async () => {
+          const config = await window.electronAPI.config.getGlobal();
+          return config.commandTerminalPanel !== null;
+        }), { timeout: 3000 }).toBe(true);
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        const reopened = await panel.boundingBox();
+        expectNear(reopened?.x ?? 0, moved?.x ?? 0, 'panel x after reopen');
+        expectNear(reopened?.y ?? 0, moved?.y ?? 0, 'panel y after reopen');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Earlier - the rail lists the project's ended conversations (main's
+  // `commandTerminalHistory:list`, seeded here through
+  // `window.__mockCommandTerminalHistory`) and resumes one: in place of a
+  // terminal nothing has reached yet, beside one that has been used.
+  // ---------------------------------------------------------------------------
+  test.describe('Earlier conversations', () => {
+    const EARLIER_PROJECT_ID = 'proj-earlier';
+
+    interface SeededEntry { agentSessionId: string; label: string | null; agentName: string; endedAt: string }
+
+    function earlierEntries(count: number): SeededEntry[] {
+      const now = Date.now();
+      return Array.from({ length: count }, (_, index) => ({
+        agentSessionId: `conversation-${index + 1}`,
+        label: index === 1 ? null : `Conversation ${index + 1}`,
+        agentName: 'claude',
+        endedAt: new Date(now - (index + 1) * 60 * 60 * 1000).toISOString(),
+      }));
+    }
+
+    /** One project, the default mock spawn (which records each start), and the given history. */
+    function earlierPreConfig(entries: SeededEntry[]): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${EARLIER_PROJECT_ID}',
+            name: 'Earlier Project',
+            path: '/mock/earlier',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, { id: 'lane-earlier-' + i, position: i, created_at: ts }));
+          });
+          return { currentProjectId: '${EARLIER_PROJECT_ID}' };
+        });
+        window.__mockCommandTerminalHistory = { '${EARLIER_PROJECT_ID}': ${JSON.stringify(entries)} };
+      `;
+    }
+
+    async function spawnCalls(page: Page): Promise<Array<{ slot?: string; resumeAgentSessionId?: string }>> {
+      return page.evaluate(() => (window as unknown as {
+        __mockSpawnTransientCalls?: Array<{ slot?: string; resumeAgentSessionId?: string }>;
+      }).__mockSpawnTransientCalls ?? []);
+    }
+
+    async function openWithOneTerminal(page: Page): Promise<string> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await expect.poll(async () => (await transientEntriesFor(page, EARLIER_PROJECT_ID)).length, { timeout: 5000 }).toBe(1);
+      return (await transientEntriesFor(page, EARLIER_PROJECT_ID))[0].sessionId;
+    }
+
+    test('shows the hint while nothing has ended', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig([]));
+      try {
+        await openWithOneTerminal(page);
+        await expect(page.getByTestId('command-terminal-earlier-empty')).toHaveText('Stop a terminal and you can resume it from here.');
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('lists conversations newest first, as many as fit, and never scrolls', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(40)));
+      try {
+        await openWithOneTerminal(page);
+        const rows = page.getByTestId('command-terminal-earlier-row');
+        await expect(rows.first()).toHaveAttribute('data-agent-session-id', 'conversation-1', { timeout: 5000 });
+        await expect(rows.first()).toContainText('Conversation 1');
+        // A conversation never named shows a fallback rather than a blank row.
+        await expect(rows.nth(1)).toContainText('Untitled conversation');
+
+        const visibleRows = await rows.count();
+        expect(visibleRows).toBeGreaterThan(2);
+        expect(visibleRows).toBeLessThan(40);
+        const fits = await page.getByTestId('command-terminal-earlier').evaluate((list) => {
+          const listBox = list.getBoundingClientRect();
+          const lastRow = list.lastElementChild?.getBoundingClientRect();
+          return list.scrollHeight <= list.clientHeight + 1 && !!lastRow && lastRow.bottom <= listBox.bottom + 1;
+        });
+        expect(fits).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a row resumes in place of the unused terminal', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        const freshSessionId = await openWithOneTerminal(page);
+        const firstRow = page.getByTestId('command-terminal-earlier-row').first();
+        await expect(firstRow).toHaveAccessibleDescription('Resume here, in place of the unused terminal', { timeout: 5000 });
+
+        await firstRow.click();
+        await expect.poll(async () => (await spawnCalls(page)).at(-1)?.resumeAgentSessionId, { timeout: 5000 }).toBe('conversation-1');
+        expect((await spawnCalls(page)).at(-1)?.slot).toBe('slot-1');
+        // The same window holds the resumed conversation; the fresh one is gone.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        await expect.poll(async () => (await transientEntriesFor(page, EARLIER_PROJECT_ID))[0]?.sessionId, { timeout: 5000 }).not.toBe(freshSessionId);
+        // A live terminal holds it now, so it leaves Earlier.
+        await expect(page.locator('[data-agent-session-id="conversation-1"]')).toHaveCount(0, { timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a row opens beside a terminal someone has used, never over it', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        const usedSessionId = await openWithOneTerminal(page);
+        // Main marks the terminal used and pushes it once, as it does on a keystroke.
+        await page.evaluate((sessionId) => {
+          const mockWindow = window as unknown as { __mockFireStatus: (id: string, session: Record<string, unknown>) => void };
+          void window.electronAPI.sessions.list().then((sessions) => {
+            const session = sessions.find((candidate) => candidate.id === sessionId);
+            if (session) mockWindow.__mockFireStatus(sessionId, { ...session, hasUserInput: true });
+          });
+        }, usedSessionId);
+        const firstRow = page.getByTestId('command-terminal-earlier-row').first();
+        await expect(firstRow).toHaveAccessibleDescription('Resume in a new terminal', { timeout: 5000 });
+
+        await firstRow.click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        const lastCall = (await spawnCalls(page)).at(-1);
+        expect(lastCall).toMatchObject({ slot: 'slot-2', resumeAgentSessionId: 'conversation-1' });
+        // The used terminal kept its session.
+        expect(await transientPairingFor(page, EARLIER_PROJECT_ID)).toMatchObject({ 'slot-1': usedSessionId });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('at the cap the rows are off and say why', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        for (let count = 2; count <= 4; count += 1) {
+          await page.getByTestId('command-terminal-new').click();
+          await expect(page.getByTestId('command-terminal-window')).toHaveCount(count, { timeout: 5000 });
+        }
+        const firstRow = page.getByTestId('command-terminal-earlier-row').first();
+        await expect(firstRow).toBeDisabled({ timeout: 3000 });
+        await expect(firstRow).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
       } finally {
         await browser.close();
       }
@@ -2146,7 +2337,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-new-terminal').click();
+        await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         const idsBySlot = await commandWindowIdBySlot(page);
@@ -2527,8 +2718,8 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Maximize focus restore - tests the effect that restores keyboard focus to
-  // the xterm terminal after a maximize/restore toggle (PR #33 bug fix).
+  // Maximize focus restore - keyboard focus stays in the terminal across the
+  // panel's maximize and restore (the PR #33 bug: focus left on the button).
   // Uses a per-test browser with a deterministic spawn so xterm actually mounts.
   // ---------------------------------------------------------------------------
   test.describe('Maximize focus restore', () => {
@@ -2612,20 +2803,14 @@ test.describe('Command Terminal', () => {
       ).toBeAttached({ timeout: 8000 });
     }
 
-    test('maximize then Ctrl+Shift+M restores focus to the xterm textarea', async () => {
-      // This test pins the behavior fixed in PR #33: toggling maximize left DOM
-      // focus on the maximize button, so the next keystroke hit the button instead
-      // of the terminal. The fix is the useEffect in CommandTerminalWindow that
-      // calls focus() whenever isMaximized changes (after initialization).
-      //
-      // Steps:
-      //   1. Open the overlay and mount xterm.
-      //   2. Click the maximize button (button takes DOM focus, leaving xterm unfocused).
-      //   3. Use Ctrl+Shift+M (panel.maximize keybinding) to restore.
-      //   4. Assert that .xterm-helper-textarea is focused.
+    test('the panel maximize button and Ctrl+Shift+M leave focus in the terminal', async () => {
+      // This pins the behavior fixed in PR #33: toggling maximize left DOM focus
+      // on the maximize button, so the next keystroke hit the button instead of
+      // the terminal. The panel's header refuses focus on a press (its mousedown
+      // is prevented), so a click on Maximize never takes it from the terminal.
       //
       // toBeFocused() has built-in retry via Playwright's actionability assertions,
-      // which absorbs the requestAnimationFrame and useEffect timing.
+      // which absorbs the requestAnimationFrame and effect timing.
       const { browser, page } = await launchWithState(
         basePreConfigForFocusTest() + deterministicSpawnForFocusTest
       );
@@ -2634,25 +2819,19 @@ test.describe('Command Terminal', () => {
 
         await openCommandBarWithMountedTerminal(page);
 
-        const maximizeButton = page.getByTestId('command-bar-maximize');
-        await expect(maximizeButton).toBeVisible();
-        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
-
-        // Click maximize - button takes DOM focus (this is the pre-fix broken state:
-        // without the effect the textarea would remain unfocused after this).
-        await maximizeButton.click();
-        await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
-
-        // Use Ctrl+Shift+M (panel.maximize keybinding) to restore. This exercises
-        // the keybinding path (not just another button click) so the next toggle
-        // does not land focus on the button at all.
-        await page.keyboard.press('Control+Shift+M');
-        await expect(maximizeButton).toHaveAccessibleName(/^Maximize/);
-
-        // The fix: the useEffect([isMaximized, focus]) must have called focus(),
-        // returning DOM focus to the xterm textarea.
-        // toBeFocused() retries internally, absorbing the effect tick.
         const xtermTextarea = page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first();
+        await xtermTextarea.focus();
+        await expect(xtermTextarea).toBeFocused();
+
+        const panel = page.getByTestId('command-terminal-panel');
+        const maximizeButton = page.getByTestId('command-terminal-panel-maximize');
+        await maximizeButton.click();
+        await expect(panel).toHaveAttribute('data-maximized', 'true');
+        await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
+
+        // The keybinding path restores, and the terminal keeps focus there too.
+        await page.keyboard.press('Control+Shift+M');
+        await expect(panel).toHaveAttribute('data-maximized', 'false');
         await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
       } finally {
         await browser.close();

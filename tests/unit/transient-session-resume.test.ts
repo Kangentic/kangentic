@@ -67,7 +67,7 @@ function makeAdapter(name: string, options: { resumable: boolean }) {
   };
 }
 
-function createContext(history: Record<string, { agent_name: string; label: string | null }>) {
+function createContext(history: Record<string, { agent_name: string; label: string | null }>, options: { alreadyOpen?: boolean } = {}) {
   return {
     currentProjectId: 'proj-1',
     projectRepo: {
@@ -87,6 +87,8 @@ function createContext(history: Record<string, { agent_name: string; label: stri
         const row = history[agentSessionId];
         return row ? { agent_session_id: agentSessionId, cwd: PROJECT_ROOT, ...row } : null;
       }),
+      claimResume: vi.fn(() => options.alreadyOpen !== true),
+      settleResume: vi.fn(),
     },
     sessionManager: {
       spawn: vi.fn(async () => ({ id: 'session-1', status: 'running' })),
@@ -132,6 +134,25 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     expect(fetchIfStaleMock).not.toHaveBeenCalled();
     expect(gitCheckoutMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({ slot: 'slot-2', branch: 'feature/drag' });
+    // The conversation is claimed before the spawn and handed to its terminal after.
+    expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-a');
+    expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
+  });
+
+  it('refuses a conversation another terminal holds with conversation-open and spawns nothing', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } }, { alreadyOpen: true });
+    await expect(spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }))
+      .rejects.toMatchObject({ code: 'conversation-open' });
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+    expect(context.commandTerminalHistory.settleResume).not.toHaveBeenCalled();
+  });
+
+  it('frees the claim when the resumed shell does not start', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+    context.sessionManager.spawn.mockResolvedValueOnce({ id: 'session-1', status: 'exited' });
+    await expect(spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }))
+      .rejects.toMatchObject({ code: 'spawn-failed' });
+    expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', null);
   });
 
   it('starts fresh on the project default when no resume is asked for', async () => {

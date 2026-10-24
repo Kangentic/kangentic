@@ -65,7 +65,7 @@ const TILE_SEAM_PX = 10;
  *  screen-edge ones stay grabbable. */
 const ALL_FOOTPRINT_EDGES: FootprintEdge[] = ['left', 'right', 'top', 'bottom'];
 
-function getPortalHost(hostId: string): HTMLElement {
+export function getPortalHost(hostId: string): HTMLElement {
   const existing = document.getElementById(hostId);
   // Stamped on BOTH paths, not just creation: the host is created once and reused
   // forever (StrictMode double-invoke, HMR remounts), so marking only the creation
@@ -90,6 +90,11 @@ interface WindowManagerLayerProps {
   layer: WindowManagerLayerOptions;
   /** The body-level portal host id (distinct per layer). */
   portalHostId: string;
+  /** An element the layer's HOST owns, to render the overlay into instead of the
+   *  body-level host: the Command Terminal panel's terminal area. That element
+   *  sits inside a host stamped `data-window-layer-root`, so light dismiss still
+   *  treats every frame as a window. */
+  portalHost?: HTMLElement;
   /** Stable `data-testid` for the overlay root (board: `window-overlay`). */
   overlayTestId: string;
   /** Full overlay className (positioning, z-index, `pointer-events-none`). */
@@ -106,18 +111,19 @@ interface WindowManagerLayerProps {
  *  Reads the layer's store from context. Mounted inside `WindowManagerProvider`. */
 function WindowManagerSurface({
   portalHostId,
+  portalHost: hostElement,
   overlayTestId,
   overlayClassName,
   bridges,
   backdrop,
-}: Pick<WindowManagerLayerProps, 'portalHostId' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
+}: Pick<WindowManagerLayerProps, 'portalHostId' | 'portalHost' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
   const overlayRef = useRef<HTMLDivElement>(null);
   // The portal host, resolved once per mount by a lazy initializer. State, not
   // a lazily filled ref: render reads it (for `createPortal`), which React's
   // compiler rules forbid for a ref.
-  const [portalHost] = useState(() => getPortalHost(portalHostId));
+  const [portalHost] = useState(() => hostElement ?? getPortalHost(portalHostId));
 
-  const { manager } = useWindowManager();
+  const { manager, layer } = useWindowManager();
   const layerStore = manager.store;
 
   // Publish this layer's mount state. Renderer-global state derived from windows
@@ -211,7 +217,7 @@ function WindowManagerSurface({
         ))}
         {/* Outer-edge resizers: one per footprint edge that borders empty board, so
             a docked group can be widened/heightened while staying docked. */}
-        {tileTree && containerSize.width > 0 && ALL_FOOTPRINT_EDGES.map((edge) => (
+        {tileTree && containerSize.width > 0 && !layer.hostArranged && ALL_FOOTPRINT_EDGES.map((edge) => (
           <FootprintResizer
             key={`footprint-${edge}`}
             edge={edge}
@@ -237,6 +243,7 @@ export function WindowManagerLayer(props: WindowManagerLayerProps) {
     <WindowManagerProvider manager={props.manager} layer={props.layer} snap={snap}>
       <WindowManagerSurface
         portalHostId={props.portalHostId}
+        portalHost={props.portalHost}
         overlayTestId={props.overlayTestId}
         overlayClassName={props.overlayClassName}
         bridges={props.bridges}

@@ -515,8 +515,24 @@ describe('scene registry', () => {
         }
       }
     }
-    // Vacuity guard: the task, dictation, window-dock, and command-terminal scenes are fitted.
-    expect(fitted).toBeGreaterThanOrEqual(4);
+    // Vacuity guard: the task, dictation, and window-dock scenes fit a window.
+    expect(fitted).toBeGreaterThanOrEqual(3);
+  });
+
+  it('fits the Command Terminal panel only to a session the recordings index carries', () => {
+    // The panel lays its terminals out itself, so a scene fits the PANEL to its lone terminal's
+    // recording (demo-dataset.ts, fitCommandTerminalPanel) rather than a window.
+    const recorded = new Set(Object.keys(loadDemoRecordings().sessions));
+    let fitted = 0;
+    for (const scene of scenes) {
+      const panel = (scene.config?.commandTerminalPanel ?? null) as { fitToRecording?: unknown } | null;
+      if (!panel || panel.fitToRecording === undefined) continue;
+      fitted += 1;
+      expect(typeof panel.fitToRecording, `${scene.name} names a fitToRecording that is not a session id`).toBe('string');
+      expect(recorded.has(String(panel.fitToRecording)), `${scene.name} fits the panel to ${String(panel.fitToRecording)}, which has no recording`).toBe(true);
+    }
+    // Vacuity guard: the command-terminal scene is fitted.
+    expect(fitted).toBeGreaterThanOrEqual(1);
   });
 
   it('overrides only real config keys', () => {
