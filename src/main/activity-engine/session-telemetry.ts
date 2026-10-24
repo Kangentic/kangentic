@@ -83,12 +83,18 @@ interface SessionTelemetryCallbacks {
   onAgentSessionId?(sessionId: string, agentReportedId: string): void;
   /**
    * The idle sweep asks for a session it timed out to be suspended, just
-   * before `onIdleTimeout`. The session manager suspends only the sessions
-   * with no task record here; a task's agent is paused by the idle-timeout
-   * listener, which records the pause first.
+   * before `onIdleTimeout`. The session manager suspends only a workflow's own
+   * agent here, which has no task record; a task's agent is paused by the
+   * idle-timeout listener, which records the pause first.
    */
   requestSuspend(sessionId: string): void;
   isSessionRunning(sessionId: string): boolean;
+  /**
+   * The idle sweep leaves this session alone: no suspend, no idle-timeout
+   * report. A Command Terminal is exempt, because a suspend ends it and its
+   * conversation with it. Optional: a missing answer means the sweep applies.
+   */
+  isIdleTimeoutExempt?(sessionId: string): boolean;
   /**
    * Returns the OS PID of the agent CLI for the session, used by the
    * bg-shell watcher to enumerate descendant processes. Returns
@@ -515,6 +521,9 @@ export class SessionTelemetry {
     this.activityEngine.forEachState((sessionId, state) => {
       if (state.activity !== 'idle') return;
       if (!this.callbacks.isSessionRunning(sessionId)) return;
+      // Skipped before either callback: an idle-timeout report alone would
+      // reach the renderer and mark the session suspended.
+      if (this.callbacks.isIdleTimeoutExempt?.(sessionId)) return;
       const idleStart = state.idleTimestamp;
       if (idleStart && (now - idleStart) > timeoutMs) {
         this.callbacks.requestSuspend(sessionId);

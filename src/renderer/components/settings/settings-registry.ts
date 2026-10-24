@@ -163,7 +163,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // you... when memory runs low / when idle"). The info tips stay true on every
   // platform: Windows, Linux and macOS each read their own memory signal.
   { id: 'agent.pauseIdleAgentsOnLowMemory', tabId: 'performance', label: 'When memory runs low', description: 'When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room.', scope: 'global', section: 'Pausing agents', keywords: ['memory', 'low', 'pause', 'suspend', 'idle', 'agents', 'ram', 'swap', 'commit', 'pressure', 'out of memory'] },
-  { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: 'When idle', description: 'Pause any agent that has waited on you this many minutes.', scope: 'global', section: 'Pausing agents', keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
+  { id: 'agent.idleTimeoutEnabled', tabId: 'performance', label: 'When idle', description: 'Pause any agent that has waited on you this many minutes, except one in a Command Terminal.', scope: 'global', section: 'Pausing agents', keywords: ['idle', 'timeout', 'pause', 'suspend', 'agents', 'minutes', 'inactive'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'performance', label: 'Minutes idle', description: 'How long an agent waits on you before the idle timer pauses it.', scope: 'global', section: 'Pausing agents', keywords: ['idle timeout', 'minutes', 'pause', 'suspend', 'timeout'] },
 
   // ── Behavior > Windows ──

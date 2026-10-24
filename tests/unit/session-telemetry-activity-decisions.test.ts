@@ -8,7 +8,8 @@
  *  - processStatusUpdate(): heartbeat recovery - tokens grew while idle for
  *    >1s means the agent silently resumed, so force thinking.
  *  - checkIdleTimeouts(): the per-minute sweep that auto-suspends a session
- *    idle past the configured timeout.
+ *    idle past the configured timeout, and skips one exempt from it (a
+ *    Command Terminal).
  *  - handlePtyIdle(), reached through the PTY tracker: silence while a
  *    background shell is tracked ends the turn but keeps the shell (task #859).
  *  - ingestEvents({ suppressesPtyTracker }): whether a turn-initiating event
@@ -35,6 +36,7 @@ function makeTelemetry(
   log: DecisionLog,
   notRunning: Set<string>,
   engineOverrides: Partial<NonNullable<SessionTelemetryOptions['activityEngineOptions']>> = {},
+  idleTimeoutExempt: Set<string> = new Set(),
 ): SessionTelemetry {
   const staleThinkingTimeoutMs = engineOverrides.staleThinkingTimeoutMs ?? 600_000;
   const options: SessionTelemetryOptions = {
@@ -70,6 +72,7 @@ function makeTelemetry(
         log.suspends.push(sessionId);
       },
       isSessionRunning: (sessionId) => !notRunning.has(sessionId),
+      isIdleTimeoutExempt: (sessionId) => idleTimeoutExempt.has(sessionId),
     },
     options,
   );
@@ -94,13 +97,15 @@ function usage(totalInputTokens: number, totalOutputTokens: number): SessionUsag
 describe('SessionTelemetry activity decisions', () => {
   let log: DecisionLog;
   let notRunning: Set<string>;
+  let idleTimeoutExempt: Set<string>;
   let telemetry: SessionTelemetry;
 
   beforeEach(() => {
     vi.useFakeTimers();
     log = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
     notRunning = new Set();
-    telemetry = makeTelemetry(log, notRunning);
+    idleTimeoutExempt = new Set();
+    telemetry = makeTelemetry(log, notRunning, {}, idleTimeoutExempt);
   });
 
   afterEach(() => {
@@ -707,6 +712,21 @@ describe('SessionTelemetry activity decisions', () => {
       telemetry.setIdleTimeout(1);
       vi.advanceTimersByTime(PAST_TWO_SWEEPS_MS);
       expect(log.suspends).not.toContain('s1');
+    });
+
+    // A Command Terminal: a suspend ends it and loses its conversation, so the
+    // sweep must not time it out at all. Not just the suspend: an idle-timeout
+    // report would reach the renderer and mark the live row suspended.
+    it('never times out an exempt session, while a task session idle beside it still times out', () => {
+      idleTimeoutExempt.add('terminal');
+      telemetry.initSession('terminal');
+      telemetry.initSession('task');
+      telemetry.setIdleTimeout(1);
+      vi.advanceTimersByTime(PAST_TWO_SWEEPS_MS);
+      expect(log.suspends).not.toContain('terminal');
+      expect(log.idleTimeouts).not.toContain('terminal');
+      expect(log.suspends).toContain('task');
+      expect(log.idleTimeouts).toContain('task');
     });
 
     it('setIdleTimeout(0) cancels the sweep so an enrolled idle session is never suspended', () => {

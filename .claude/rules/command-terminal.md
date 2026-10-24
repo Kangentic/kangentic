@@ -44,6 +44,12 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   still-exiting agent's SessionEnd hook has somewhere to write). It refuses a task's session. A
   PTY that exits on its own removes its row in the spawn flow's `onPtyExited`. A Command Terminal
   must never be left as a bare shell a paired phone can type into.
+- **No pause reaches a Command Terminal.** A suspend ends one (it has no record to resume), and
+  its conversation with it. The low-memory pause never picks one (`isPauseEligible`), and the When
+  idle sweep skips one before either of its callbacks (`isIdleTimeoutExempt`, answered with
+  `isCommandTerminalSession`): an idle-timeout report alone makes the renderer mark the live row
+  suspended. A workflow's own agent stays in the sweep. A new automatic pause or suspend path
+  skips Command Terminals too.
 - **The agent-absence sweep judges Command Terminals, and the SessionEnd hook fast-paths it.** Do
   not reintroduce a transient exclusion in `isAgentAbsenceCandidate`. The sweep judges a terminal
   only once its agent showed it started (its first SessionStart, or its first alt-screen entry) or
@@ -159,6 +165,13 @@ the rejected alternatives live in [docs/architecture/renderer/command-terminal.m
   settle), `session-spawn-flow.test.ts` (the PTY-exit removal),
   `transient-session-kill-by-slot.test.ts` (scrub before kill), and
   `command-terminal-namer.test.ts`.
+- **Test (no pause):** `tests/unit/session-telemetry-activity-decisions.test.ts` (the sweep times
+  out neither callback for an exempt session, and still does for a task beside it),
+  `session-manager-idle-suspend-wiring.test.ts` (a Command Terminal is exempt and never
+  suspended; a task's agent and a workflow's agent are not exempt), `session-idle-timeout.test.ts`
+  (a late report for a terminal is dropped unannounced), and `idle-agent-pause.test.ts` (the
+  low-memory pause). This rule's `paths:` do not cover the sweep files, so these tests are what
+  catches a change there.
 - **Test (UI):** `tests/ui/command-terminal.spec.ts`, `command-terminal-branch.spec.ts`, and
   `sidebar-command-terminals.spec.ts` cover the window chrome, the branch pill, and the sidebar
   indicator. `command-terminal.spec.ts` also covers a removal push closing its window and a

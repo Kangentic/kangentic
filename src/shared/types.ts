@@ -4084,7 +4084,7 @@ export interface AppConfig {
     permissionMode: PermissionMode;
     cliPaths: Record<string, string | null>; // keyed by agent name, null = auto-detect
     maxConcurrentSessions: number;
-    /** Pause an agent that has waited on the user `idleTimeoutMinutes`. Global-only. */
+    /** Pause an agent that has waited on the user `idleTimeoutMinutes`. Never a Command Terminal, which a pause would end. Global-only. */
     idleTimeoutEnabled: boolean;
     /** How long an agent waits on the user before the idle timer pauses it. Read only while `idleTimeoutEnabled`. */
     idleTimeoutMinutes: number;

@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Command Terminal
-description: Why the Command Terminal is a second window-manager layer with main-owned slots, why it ends when its agent exits, naming in main, phone starts, leftover reaping, per-project branch and geometry, the two title-bar buttons, and the sidebar indicator.
+description: Why the Command Terminal is a second window-manager layer with main-owned slots, why it ends when its agent exits, why no pause reaches it, naming in main, phone starts, leftover reaping, per-project branch and geometry, the two title-bar buttons, and the sidebar indicator.
 tags: [command-terminal, window-manager, slots, design]
 sources:
   - resource: src/renderer/components/command-bar/
@@ -119,8 +119,9 @@ only signal, so a SessionEnd with no SessionStart within 5 seconds ends the term
 sends its SessionStart 148 ms after its SessionEnd, and a `/resume` choice 116 ms after (Claude
 Code 2.1.294), well inside that settle. An open `/resume` picker sends neither, so browsing it
 costs nothing. An agent with no SessionEnd hook in either case still outlives its agent until the PTY
-exits. A suspend (the idle timeout, a project relocate) ends a terminal outright, since there is
-no record to resume.
+exits. A suspend ends a terminal outright, since there is no record to resume, so nothing
+suspends one automatically ([No pause reaches a terminal](#no-pause-reaches-a-terminal)). A
+project relocate kills its terminals.
 
 Nothing in the renderer used to close a window when main ended its session, since `App.tsx`
 ignores an intentional exit. `useCloseCommandWindowOnRemoval` (`CommandTerminalLayer.tsx`, mounted
@@ -129,6 +130,27 @@ map entry still points at the removed session, main ended it (the agent exited, 
 phone pressed Stop), so it clears the entry and closes that slot's window in the current project.
 A desktop Stop and a branch switch scrub the entry BEFORE they send the kill, so their own removal
 push finds nothing to close and the branch switch keeps its window.
+
+## No pause reaches a terminal
+
+A task's pause can be resumed: its record keeps the agent's session id, and Resume runs the CLI
+with it. A Command Terminal has no record, so a suspend ends it (`endCommandTerminalAfterPtyExit`),
+and its conversation goes with it. The terminal is therefore exempt from both automatic pauses.
+The low-memory pause never picks one (`isPauseEligible` in
+`src/main/diagnostics/idle-agent-pause.ts`). The When idle sweep skips one before it times
+anything out (`isIdleTimeoutExempt`, which `SessionManager` answers with
+`isCommandTerminalSession`). The skip comes before both of the sweep's callbacks, not just the
+suspend: an idle-timeout report alone reaches the renderer, which marks the session suspended. The
+sweep's other job, suspending a workflow's own agent, is unchanged. That agent is transient too,
+but its Workflows pane resumes it.
+
+The sweep used to suspend every transient session it timed out. On 2026-10-23 that ended two
+terminals about 30 minutes after their last reply, the When idle setting, one of them partway
+through an investigation that was waiting on the user. Both conversations had to be recovered by
+hand with `claude --resume <id>` from Claude's own transcript files.
+
+A suspend that reaches a terminal by some other path still ends it, as the backstop. A new
+automatic pause or suspend path must skip Command Terminals too.
 
 ## Naming runs in main
 

@@ -239,7 +239,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `external-scripts-parity.md` - unbundled bridge/plugin scripts register in `EXTERNAL_SCRIPTS` and are copied by both `build.js` and `dev.js`.
 - `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts`.
 - `activity-marks.md` - marks come from `@kangentic/branding` via `ActivityMark`; composited motion only; `IconSlot` for element-type swaps.
-- `command-terminal.md` - slot-keyed windows, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, and a terminal that ends when its agent exits.
+- `command-terminal.md` - slot-keyed windows, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, a terminal that ends when its agent exits, and no pause that reaches one.
 - `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks at KanbanBoard's `tasksPerLane`, never per-lane.
 - `keybindings-registry.md` - shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc keydown listeners.
 - `keyboard-drag-intent.md` - `IntentKeyboardSensor` is the only dnd-kit keyboard sensor, and it arms only on Tab-placed focus.
