@@ -190,6 +190,9 @@ function makeContext(): IpcContext {
       awaitExit: vi.fn(async () => {}),
       remove: vi.fn(),
       removeByTaskId: vi.fn(async () => {}),
+      // The folder-gone branch lists the registry's sessions to find the tasks
+      // whose windows to close.
+      listSessions: vi.fn(() => []),
     },
     currentProjectId: null,
     currentProjectPath: null,
