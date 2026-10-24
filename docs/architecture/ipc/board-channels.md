@@ -14,7 +14,7 @@ sources:
 |---------|---------|---------|
 | `project:list` | invoke | Fetch all projects (ordered by position) |
 | `project:create` | invoke | Create new project (inserted at position 0) |
-| `project:delete` | invoke | Delete project and clean up resources |
+| `project:delete` | invoke | Delete project, close its task windows, reap its tasks' leftover processes, and clean up resources |
 | `project:open` | invoke | Open project (init DB, recover sessions) |
 | `project:getCurrent` | invoke | Get currently loaded project |
 | `project:openByPath` | invoke | Open project by filesystem path |
@@ -78,7 +78,7 @@ sources:
 | `task:takeConversationExpired` | invoke | Returns and removes a project's queued `ConversationExpiredNotice`s, oldest first (`projectId`), leaving out any whose task was deleted or archived while it waited. Called on the push above and whenever a project becomes current, which is what delivers a startup notice the push could not. Each notice toasts on its own as one sentence with the task's title and date ("its previous one" when the date is unknown). Renderer calls `tasks.takeConversationExpired` |
 | `task:spawnProgress` | on | Event: spawn progress phase label during any board-driven spawn (move, create into a spawning column, backlog promote, MCP auto-spawn, restore from Done). A staleness note may trail the label, e.g. `Starting agent... (base 3 behind)` |
 | `task:getSpawnProgress` | invoke | Fetch the queryable in-flight spawn-progress map (taskId -> phase label) so `syncSessions` can reconcile after HMR / project switch |
-| `task:setDetailViewState` | invoke | Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. Does not bump `updated_at`. |
+| `task:setDetailViewState` | invoke | Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. Does not bump `updated_at`. Opens only an existing project database, so a save that arrives after a project delete is dropped instead of recreating the deleted project's database. |
 
 ## Attachments (5 channels)
 | Channel | Pattern | Purpose |

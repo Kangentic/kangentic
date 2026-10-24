@@ -9,6 +9,7 @@ import { getProjectDb } from '../db/database';
 import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { closeTaskWindows } from '../ipc/helpers/task-windows';
 import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
@@ -198,6 +199,9 @@ export function buildCommandContextForProject(
       void (async () => {
         await sessionExited;
         await spawnsSettled;
+        // Its pop-out windows and offscreen lane go once its sessions have,
+        // as `cleanupTaskSession` does for the UI delete.
+        closeTaskWindows(projectId, task.id);
         // An MCP delete is a terminal transition, so it kills what the task's
         // agents left running, exactly as the UI delete path does in
         // `cleanupTaskSession`. Every task, worktree or not: a project-folder

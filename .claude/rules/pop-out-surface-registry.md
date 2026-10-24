@@ -34,6 +34,17 @@ pop-outs, and do not conflate the two layers.
   handler, because destroying the window tears down its `<webview>` guests, which can trigger the
   lane hand-off and construct a NEW lane after `close` handlers have already returned. A fourth
   construction site needs a teardown of its own, in whichever of the two the same reasoning picks.
+- **A task-scoped window closes when its task's work ends.** Done, a To Do reset, a backlog demote,
+  a delete (single, bulk, MCP, `move_task_to_project`) and a project delete call
+  `closeTaskWindows` (`src/main/ipc/helpers/task-windows.ts`). It closes the task's windows through
+  `PopOutWindowManager.closeForTask`, which goes through `close()`, so a close from main looks
+  exactly like a user close: the bounds timer is dropped and `popOut:changed` carries the new set,
+  and the renderer's close effects below run unchanged. It also destroys the task's offscreen lane,
+  which a Done move's suspend would otherwise leave behind. Call it after the task's sessions have
+  ended and before the reap and the worktree removal. A Browser pop-out closing destroys its guest,
+  and the lane hand-off stands a lane up for a pane whose task still has a live agent. A mid-board
+  suspend (Pause, Stop, a column that starts no agent) closes nothing, because the user may still
+  be testing in those windows. A new terminal transition calls it too.
 - **Every `PopOutKind` has a shared metadata entry** in `POP_OUT_SURFACES`
   (`src/shared/pop-out.ts`): title, default bounds/min size, `needsWebview`, and the push
   `channels` fanned to that surface's open windows, plus optionally `resolveTitle` (a
@@ -99,8 +110,14 @@ pop-outs, and do not conflate the two layers.
 - **Test:** `tests/unit/pop-out.test.ts` round-trips `popOutInstanceKey` against
   `parsePopOutInstanceKey` for every task-scoped kind, so the key a close path reads back
   cannot drift from the one the open path wrote.
-- **Review:** `/code-review` flags a new `new BrowserWindow(` outside the manager, or a new
-  in-app surface added without its mutual-exclusivity guard.
+- **Test:** `tests/unit/pop-out-window-manager.test.ts` pins `closeForTask`: every task-scoped
+  window of that task in that project closes through `close()`, and nothing else does.
+  `tests/unit/task-windows.test.ts` pins the helper. `tests/unit/session-leftover-reap-wiring.test.ts`
+  and `tests/unit/mcp-project-context.test.ts` pin each call site's order (after the sessions,
+  before the reap) and that a parked task keeps its windows.
+- **Review:** `/code-review` flags a new `new BrowserWindow(` outside the manager, a new
+  in-app surface added without its mutual-exclusivity guard, or a new terminal transition that
+  does not call `closeTaskWindows`.
 
 ## Scope
 

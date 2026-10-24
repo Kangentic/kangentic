@@ -12,6 +12,7 @@ import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
+import { closeTaskWindows } from './task-windows';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
 
@@ -243,6 +244,10 @@ export async function cleanupTaskSession(
   // host may already have started holds the worktree until it exits, which
   // must come before the session directories and the worktree go.
   await context.sessionManager.removeByTaskId(task.id);
+
+  // Every session of the task is gone and its removal pushed, so a Browser
+  // pop-out closing now stands up no lane and remounts no in-app pane.
+  closeTaskWindows(resolvedProjectId, task.id);
 
   // A dev server the agent backgrounded outlives the PTY and holds the worktree
   // directory as its cwd, which is what makes the removal in

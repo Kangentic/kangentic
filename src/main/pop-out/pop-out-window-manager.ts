@@ -257,6 +257,34 @@ export class PopOutWindowManager {
     // win.on('closed') above removes the map entry and emits the change.
   }
 
+  /**
+   * Close every window of a task-scoped kind that belongs to this task: its
+   * Browser, its Changes panel and each of its single-file diffs. Called when
+   * the task's work ends (Done, a To Do reset, a delete), through `close()`, so
+   * each one looks exactly like a user close: the bounds timer is dropped and
+   * `popOut:changed` carries the new set, whose per-kind effects the renderer
+   * already applies. Returns how many windows it closed.
+   */
+  closeForTask(task: PopOutTaskParams): number {
+    // Snapshot first: close() can fire 'closed' synchronously, and that handler
+    // deletes from the map this would otherwise be iterating.
+    const belongingToTask = [...this.windows.values()].filter((tracked) =>
+      POP_OUT_SURFACES[tracked.kind]?.scope === 'task'
+      && isTaskParams(tracked.params)
+      && tracked.params.projectId === task.projectId
+      && tracked.params.taskId === task.taskId,
+    );
+    let closedCount = 0;
+    for (const tracked of belongingToTask) {
+      if (tracked.window.isDestroyed()) continue;
+      // The STORED params, so a changes-file window keeps its filePath segment
+      // and close() resolves the same key open() wrote.
+      this.close(tracked.kind, tracked.params);
+      closedCount += 1;
+    }
+    return closedCount;
+  }
+
   has<K extends PopOutKind>(kind: K, params: PopOutParams<K>): boolean {
     const tracked = this.windows.get(popOutInstanceKey(kind, params));
     return !!tracked && !tracked.window.isDestroyed();

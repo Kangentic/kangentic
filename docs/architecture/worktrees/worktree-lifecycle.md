@@ -409,6 +409,7 @@ Task moved to Done
     session preserved, worktree restored on resume) and proceeds without asking.
   → Session suspended (PTY killed, DB record preserved)
   → Status: suspended
+  → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows), after the session ends and before the removal below
   → Local worktree directory deleted; worktree_path cleared in DB
   → branch_name and session files preserved on disk for resume
   → Task archived
@@ -423,6 +424,7 @@ Task moved back from Done (into any non-todo, non-done column)
 
 Task moved to To Do
   → For a task that did its own work, the PR link (pr_url, pr_number, pr_state, pr_merge_readiness), pushed_branch and head_sha are cleared in the tick that commits the lane, and its merge-verdict re-polls are cancelled (forgetPRLinkOnTodoReset)
+  → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows) before the reap and the removal
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
   → DB references cleared once the directory is removed (worktree_path, branch_name, resolved_base_branch set to null; head_sha captured first when readable)
@@ -430,6 +432,7 @@ Task moved to To Do
   → Next activation creates a fresh worktree and branch
 
 Task deleted
+  → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows) before the reap and the removal
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
   → Agent adapters notified so they can drop per-directory state (see below)
 
@@ -478,12 +481,12 @@ left armed on it is spinning. On Windows a directory `fs.watch` whose target is 
 ### On Project Close/Delete
 
 - **`stripKangenticHooks()`** -- Removes all Kangentic hooks from `.claude/settings.local.json`. Backs up the file before modification, restores on error. Removes empty settings files and `.claude/` directories if they only contained our hooks.
-- **`cleanupProject()`** -- Kills all PTYs, detaches worktrees, strips hooks, removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
+- **`cleanupProject()`** -- Kills all PTYs, closes each task's pop-out windows and offscreen browser lane (`closeTaskWindows`, or `closeProjectTaskWindows` when the task list cannot be read), reaps their leftover processes (`reapTaskLeftovers`), detaches worktrees, strips hooks, removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
 - **`detachProjectFromWorkflows()`** runs first in `cleanupProject()`, before any PTY is killed and whether or not the folder still exists. It takes the project's tasks out of every workflow, drops links in other homes that name them, and releases the tasks on other boards of a workflow the project was home to. A running or paused workflow homed elsewhere that is left with no task is deleted, but only when every board could be read. `cleanupProject()` ends the project's workflow agents (`endWorkflowAgentsOfProject`) on both paths, before the project's database closes.
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** - Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
+- **`cleanupTaskResources()`** - Ends the sessions and closes the task's pop-out windows and offscreen browser lane (`closeTaskWindows`, inside `cleanupTaskSession`) before the reap. Kills PTY, deletes session DB records, removes session directory, removes worktree (after `prepareWorktreeForRemoval` waits out any creation holding the path, then serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
 
 ## Safety
 

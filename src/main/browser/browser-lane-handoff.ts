@@ -1,5 +1,5 @@
 import { browserPaneRegistry, type BrowserPaneEntry, type PaneUnregisterReason } from './browser-pane-registry';
-import { openLane, destroyLanesForTask, hasLaneForTask } from './browser-lane-manager';
+import { openLane, destroyLane, destroyLanesForTask, hasLaneForTask } from './browser-lane-manager';
 import { isShuttingDown } from '../shutdown-state';
 
 /**
@@ -111,6 +111,19 @@ function onPaneClosed(entry: BrowserPaneEntry, reason: PaneUnregisterReason, del
     url: entry.url,
   })
     .then((result) => {
+      // The liveness gate above, asked again once the lane is open: the agent
+      // can stop while the jar seed and the first load run, and a suspend (a
+      // Done move, or a Pause) never destroys its lanes. A Done move's
+      // `closeTaskWindows` ran before this lane was in the lane map, so this is
+      // the only place left to notice.
+      if (result.ok && dependencies?.hasLiveSession(entry.taskId) !== true) {
+        destroyLane(result.laneId);
+        console.log(
+          `[browser-pane] handoff task=${entry.taskId.slice(0, 8)} lane=${result.laneId} closed at once ` +
+            '(the agent ended while the lane opened)',
+        );
+        return;
+      }
       if (result.ok) {
         console.log(
           `[browser-pane] handoff task=${entry.taskId.slice(0, 8)} url=${entry.url} lane=${result.laneId} ` +
