@@ -217,6 +217,7 @@ describe('handleReadBoard', () => {
       showTicketNumbers: false,
       commandTerminals: [],
       commandTerminalsOffered: true,
+      earlierConversationsOffered: true,
     });
     const snapshot = response.payload as { columns: object[]; tasks: object[]; backlog: object[] };
     expect(snapshot.tasks[0]).not.toHaveProperty('detail_view_state');
@@ -802,7 +803,7 @@ describe('handleReadBoard', () => {
       ]);
     });
 
-    it('offers the verb only to a device that holds it', async () => {
+    it('offers the verb, and its Earlier actions, only to a device that holds it', async () => {
       const response = await handleReadBoard(
         fakeRequest({ projectId: 'proj-1', view: 'full' }),
         fakeSession(['read-board']),
@@ -810,7 +811,14 @@ describe('handleReadBoard', () => {
         new SubscriptionRegistry(),
         noSpawnProgressFeed,
       );
-      expect((response.payload as { commandTerminalsOffered: boolean }).commandTerminalsOffered).toBe(false);
+      const snapshot = response.payload as { commandTerminalsOffered: boolean; earlierConversationsOffered: boolean };
+      expect(snapshot.commandTerminalsOffered).toBe(false);
+      expect(snapshot.earlierConversationsOffered).toBe(false);
+    });
+
+    it.each(['full', 'sessions'] as const)("the '%s' view tells a device that holds the verb it may list and resume earlier conversations", async (view) => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+      expect((response.payload as { earlierConversationsOffered: boolean }).earlierConversationsOffered).toBe(true);
     });
 
     it('a Command Terminal change reaches the phone by session id, with no task id on the envelope', async () => {

@@ -60,6 +60,11 @@ export interface CapabilityRequestMessage {
  *   desktop, so nothing could be started.
  * - `command-terminal-start-failed`: a `command-terminal` start failed for any
  *   other reason. `error` carries the desktop's text for logs.
+ * - `conversation-gone`: a `command-terminal` resume named a conversation that
+ *   can no longer be resumed (its record or transcript is gone). Drop its row.
+ * - `conversation-open`: a `command-terminal` resume named a conversation a
+ *   live terminal already holds, or that another resume is starting. Nothing
+ *   was started.
  *
  * A peer must treat a code it does not know as a generic failure and show
  * `error` or a plain line of its own: a newer desktop may add codes.
@@ -72,7 +77,9 @@ export type CapabilityErrorCode =
   | 'command-terminal-limit'
   | 'not-command-terminal'
   | 'agent-unavailable'
-  | 'command-terminal-start-failed';
+  | 'command-terminal-start-failed'
+  | 'conversation-gone'
+  | 'conversation-open';
 
 export interface CapabilityResponseMessage {
   type: 'capability-response';

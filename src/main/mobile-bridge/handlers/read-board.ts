@@ -211,6 +211,9 @@ export async function handleReadBoard(
     // Terminals button at all: this desktop serves the verb (it is reading
     // this field) and the device holds it.
     commandTerminalsOffered: session.capabilities.has('command-terminal'),
+    // The same grant serves the verb's list-earlier and resume actions; this
+    // flag is how a phone learns the desktop knows them at all.
+    earlierConversationsOffered: session.capabilities.has('command-terminal'),
   };
 
   const listener = (event: BoardChangedEvent): void => {

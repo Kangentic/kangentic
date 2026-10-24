@@ -123,6 +123,27 @@ describe('parseCapabilityRequestPayload', () => {
     expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'stop' })).toThrow(/sessionId/);
   });
 
+  it('command-terminal: parses a list-earlier that names the project', () => {
+    expect(parseCapabilityRequestPayload('command-terminal', { action: 'list-earlier', projectId: 'p-1' }))
+      .toEqual({ action: 'list-earlier', projectId: 'p-1' });
+    expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'list-earlier' })).toThrow(/projectId/);
+  });
+
+  it('command-terminal: parses a resume that names the project and the conversation, and nothing else', () => {
+    expect(parseCapabilityRequestPayload('command-terminal', {
+      action: 'resume',
+      projectId: 'p-1',
+      agentSessionId: 'conv-1',
+      branch: 'feature/x',
+    })).toEqual({ action: 'resume', projectId: 'p-1', agentSessionId: 'conv-1' });
+  });
+
+  it('command-terminal: rejects a resume with no project or no conversation', () => {
+    expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'resume', agentSessionId: 'conv-1' })).toThrow(/projectId/);
+    expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'resume', projectId: 'p-1' })).toThrow(/agentSessionId/);
+    expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'resume', projectId: 'p-1', agentSessionId: '' })).toThrow(/agentSessionId/);
+  });
+
   it('command-terminal: rejects any other action, including a missing one', () => {
     expect(() => parseCapabilityRequestPayload('command-terminal', { action: 'run', projectId: 'p-1' })).toThrow(/action/);
     expect(() => parseCapabilityRequestPayload('command-terminal', { projectId: 'p-1' })).toThrow(/action/);

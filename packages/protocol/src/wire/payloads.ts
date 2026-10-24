@@ -398,6 +398,14 @@ export interface ReadBoardSnapshotResponsePayload {
    * Absent from an older desktop: treat that as false.
    */
   commandTerminalsOffered?: boolean;
+  /**
+   * True when this desktop serves the `command-terminal` verb's `list-earlier`
+   * and `resume` actions AND the device holds the verb (protocol 0.24.0). The
+   * phone offers its Earlier list on this flag. Absent from an older desktop:
+   * treat that as false and send neither action, which that desktop would
+   * refuse as malformed.
+   */
+  earlierConversationsOffered?: boolean;
 }
 
 /**
@@ -505,6 +513,9 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
   if (payload.commandTerminalsOffered !== undefined && typeof payload.commandTerminalsOffered !== 'boolean') {
     throw new Error('read-board response has a non-boolean "commandTerminalsOffered"');
   }
+  if (payload.earlierConversationsOffered !== undefined && typeof payload.earlierConversationsOffered !== 'boolean') {
+    throw new Error('read-board response has a non-boolean "earlierConversationsOffered"');
+  }
   return {
     projectId: payload.projectId,
     columns: payload.columns.map((column) => parseBoardColumnWire(column as JsonValue)),
@@ -522,6 +533,7 @@ export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResp
       ? { commandTerminals: payload.commandTerminals.map((terminal) => parseCommandTerminalWire(terminal as JsonValue)) }
       : {}),
     ...(payload.commandTerminalsOffered !== undefined ? { commandTerminalsOffered: payload.commandTerminalsOffered } : {}),
+    ...(payload.earlierConversationsOffered !== undefined ? { earlierConversationsOffered: payload.earlierConversationsOffered } : {}),
   };
 }
 
@@ -779,17 +791,27 @@ function parsePauseSessionRequestPayload(payload: JsonValue): PauseSessionReques
 // === command-terminal ===
 
 /**
- * Start or stop a Command Terminal (protocol 0.20.0). See `command-terminal` in
- * capabilities/verbs.ts for what one is.
+ * Start or stop a Command Terminal (protocol 0.20.0), or list and resume the
+ * conversations of ones that ended (protocol 0.24.0). See `command-terminal`
+ * in capabilities/verbs.ts for what one is.
  *
  * `start` names only the project. The desktop picks the slot, runs the
  * project's default agent with its default model and effort, and starts on the
  * project's default branch the same way its own New terminal does; there is no
  * branch, model or effort parameter, and the parser below drops any such key.
  * `stop` names the terminal's session and is refused for any other session.
+ *
+ * `list-earlier` reads the project's ended Command Terminal conversations that
+ * can still be resumed: the desktop panel's Earlier list. `resume` starts a
+ * terminal on one of them, named by the `agentSessionId` the list gave, the way
+ * `start` starts a fresh one. Send either only to a desktop whose snapshot
+ * carries `earlierConversationsOffered: true`: an older desktop does not know
+ * the action and refuses the request as malformed.
  */
 export type CommandTerminalRequestPayload =
   | { action: 'start'; projectId: string }
+  | { action: 'resume'; projectId: string; agentSessionId: string }
+  | { action: 'list-earlier'; projectId: string }
   | { action: 'stop'; sessionId: string };
 
 /**
@@ -801,12 +823,37 @@ export type CommandTerminalRequestPayload =
  *
  * Refusals carry a `code` on the capability response: `command-terminal-limit`,
  * `unknown-project`, `agent-unavailable` or `command-terminal-start-failed`.
+ *
+ * A `resume` is answered with this payload too, `name` being the conversation's
+ * own. It can also be refused with `conversation-gone` (drop the row: it can
+ * no longer be resumed) or `conversation-open` (a live terminal already holds
+ * that conversation, or another resume is starting it).
  */
 export interface CommandTerminalStartResponsePayload {
   ok: true;
   sessionId: string;
   slot: number;
   name: string;
+}
+
+/** One ended conversation in a `list-earlier` answer. */
+export interface CommandTerminalEarlierConversationWire {
+  /** What a `resume` names. */
+  agentSessionId: string;
+  /** The terminal's name when it ended, or null when it was never named. */
+  name: string | null;
+  /** UTC ISO 8601 time the conversation ended. */
+  endedAt: string;
+}
+
+/**
+ * A `list-earlier` answer: newest first, only conversations that can still be
+ * resumed, and none a live terminal holds. Refused with `unknown-project`.
+ */
+export interface CommandTerminalEarlierResponsePayload {
+  ok: true;
+  projectId: string;
+  conversations: CommandTerminalEarlierConversationWire[];
 }
 
 /**
@@ -818,13 +865,27 @@ export interface CommandTerminalStopResponsePayload {
   ok: true;
 }
 
-export type CommandTerminalResponsePayload = CommandTerminalStartResponsePayload | CommandTerminalStopResponsePayload;
+export type CommandTerminalResponsePayload =
+  | CommandTerminalStartResponsePayload
+  | CommandTerminalStopResponsePayload
+  | CommandTerminalEarlierResponsePayload;
 
 function parseCommandTerminalRequestPayload(payload: JsonValue): CommandTerminalRequestPayload {
   if (!isRecord(payload)) throw new Error('command-terminal payload must be an object');
   if (payload.action === 'start') {
     if (typeof payload.projectId !== 'string') throw new Error('command-terminal start payload missing "projectId"');
     return { action: 'start', projectId: payload.projectId };
+  }
+  if (payload.action === 'resume') {
+    if (typeof payload.projectId !== 'string') throw new Error('command-terminal resume payload missing "projectId"');
+    if (typeof payload.agentSessionId !== 'string' || payload.agentSessionId === '') {
+      throw new Error('command-terminal resume payload missing "agentSessionId"');
+    }
+    return { action: 'resume', projectId: payload.projectId, agentSessionId: payload.agentSessionId };
+  }
+  if (payload.action === 'list-earlier') {
+    if (typeof payload.projectId !== 'string') throw new Error('command-terminal list-earlier payload missing "projectId"');
+    return { action: 'list-earlier', projectId: payload.projectId };
   }
   if (payload.action === 'stop') {
     if (typeof payload.sessionId !== 'string') throw new Error('command-terminal stop payload missing "sessionId"');
@@ -843,6 +904,25 @@ export function parseCommandTerminalStartResponsePayload(payload: JsonValue): Co
   }
   if (typeof payload.name !== 'string') throw new Error('command-terminal start response missing "name"');
   return { ok: true, sessionId: payload.sessionId, slot: payload.slot, name: payload.name };
+}
+
+/**
+ * Phone-side guard: narrows a decoded `command-terminal` list-earlier answer.
+ * A malformed conversation is dropped on its own rather than failing the
+ * list: the rest can still be resumed.
+ */
+export function parseCommandTerminalEarlierResponsePayload(payload: JsonValue): CommandTerminalEarlierResponsePayload {
+  if (!isRecord(payload)) throw new Error('command-terminal list-earlier response must be an object');
+  if (payload.ok !== true) throw new Error('command-terminal list-earlier response missing "ok"');
+  if (typeof payload.projectId !== 'string') throw new Error('command-terminal list-earlier response missing "projectId"');
+  if (!Array.isArray(payload.conversations)) throw new Error('command-terminal list-earlier response missing "conversations"');
+  const conversations = payload.conversations.flatMap((entry): CommandTerminalEarlierConversationWire[] => {
+    if (!isRecord(entry) || typeof entry.agentSessionId !== 'string' || entry.agentSessionId === '') return [];
+    if (entry.name !== null && typeof entry.name !== 'string') return [];
+    if (typeof entry.endedAt !== 'string') return [];
+    return [{ agentSessionId: entry.agentSessionId, name: entry.name, endedAt: entry.endedAt }];
+  });
+  return { ok: true, projectId: payload.projectId, conversations };
 }
 
 /** Phone-side guard: narrows a decoded pause-session response before the phone acts on it. */

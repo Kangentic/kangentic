@@ -177,6 +177,11 @@ describe('wire message framing', () => {
     expect(decodeMessage(encodeMessage(message))).toEqual(message);
   });
 
+  it.each(['conversation-gone', 'conversation-open'] as const)('round-trips a command-terminal resume refused with %s', (code) => {
+    const message: BridgeMessage = { type: 'capability-response', requestId: 'r-2', ok: false, error: 'refused', code };
+    expect(decodeMessage(encodeMessage(message))).toEqual(message);
+  });
+
   it('round-trips an activity event with a discriminated permission payload', () => {
     const message: BridgeMessage = {
       type: 'event',
