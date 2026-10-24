@@ -114,12 +114,19 @@ interface QueueItem {
   data: string;
   paced: boolean;
   laneKey?: string;
+  /** `performance.now()` at arrival, kept only when a paced-write observer is set. */
+  queuedAt?: number;
 }
+
+/** Told each paced item as it is written, with how long it waited. The
+ *  scroll-latency probe's hook (dev builds only); nothing else passes one. */
+export type PacedWriteObserver = (data: string, queuedMs: number) => void;
 
 export function createWriteBatcher(
   write: (payload: string) => void,
   paceMs: number = MOUSE_REPORT_PACE_MS,
   maxPacedLaneDepth: number = MOUSE_WHEEL_LANE_MAX_DEPTH,
+  observePacedWrite?: PacedWriteObserver,
 ): WriteBatcher {
   const queue: QueueItem[] = [];
   let microtaskScheduled = false;
@@ -160,6 +167,7 @@ export function createWriteBatcher(
       }
       lastPacedWriteAt = Date.now();
       queue.shift();
+      if (observePacedWrite && head.queuedAt !== undefined) observePacedWrite(head.data, performance.now() - head.queuedAt);
       write(head.data);
     }
   };
@@ -214,7 +222,12 @@ export function createWriteBatcher(
         return;
       }
     }
-    queue.push({ data, paced: true, laneKey: lane?.laneKey });
+    queue.push({
+      data,
+      paced: true,
+      laneKey: lane?.laneKey,
+      ...(observePacedWrite ? { queuedAt: performance.now() } : {}),
+    });
     drain();
   };
 

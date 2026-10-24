@@ -16,7 +16,7 @@ import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setWalAutoCheckpoint } from '../../db/database';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { relaySlowSyncSpans } from '../../diagnostics/event-loop-lag';
+import { relaySlowSyncSpans, startEventLoopLagMonitor } from '../../diagnostics/event-loop-lag';
 import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import { loadWin32OrphanApi } from '../process-tag/win32-reader';
@@ -112,6 +112,10 @@ function initialize(message: PtyHostInitMessage): void {
   if (__KANGENTIC_DEV__) {
     relaySlowSyncSpans((label, elapsedMs) => post({ type: 'slow-span', label, ms: Math.round(elapsedMs) }));
     setTerminalTraceRelay((sessionId, event, detail, ts) => post({ type: 'trace', sessionId, event, detail, ts }));
+    // The host's own stall record (lag sampler, 1 ms delay histogram, GC), read
+    // through `devLagReport`. The spans above only name wrapped work; this
+    // catches a stall in anything else, the headless parse included.
+    startEventLoopLagMonitor();
   }
   post({ type: 'ready' });
 }

@@ -247,6 +247,45 @@ export function readSessionScrollRegion(sessionId: string): {
   return { top: null, bottom: null, rows: null };
 }
 
+/** The session whose mounted terminal holds `target`, for the scroll-latency
+ *  probe's wheel listener. Null outside every registered terminal. */
+export function sessionIdOfTerminalTarget(target: EventTarget | null): string | null {
+  if (!(target instanceof Node)) return null;
+  for (const entry of registered.values()) {
+    if (entry.sessionId && entry.terminal.element?.contains(target)) return entry.sessionId;
+  }
+  return null;
+}
+
+/** The on-screen box of one session's mounted terminal grid (`.xterm-screen`), in
+ *  viewport CSS pixels, for a devtools wheel driver. Null when none is mounted or
+ *  the mounted one has no size (parked, hidden). */
+export function readSessionTerminalRect(sessionId: string): { x: number; y: number; width: number; height: number } | null {
+  for (const entry of registered.values()) {
+    if (entry.sessionId !== sessionId) continue;
+    const screen = entry.terminal.element?.querySelector('.xterm-screen');
+    if (!screen) continue;
+    const rect = screen.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+  }
+  return null;
+}
+
+/** Give one session's mounted terminal keyboard focus, for the devtools
+ *  keystroke driver only (`/scroll-latency`). False when none is mounted. */
+export function focusSessionTerminalForDevtools(sessionId: string): boolean {
+  if (!__KANGENTIC_DEV__) return false;
+  for (const entry of registered.values()) {
+    if (entry.sessionId !== sessionId) continue;
+    // arrival-focus-ok: a dev-only driver acting for the person running the
+    // measurement, never an arriving terminal; production compiles it out.
+    entry.terminal.focus();
+    return true;
+  }
+  return false;
+}
+
 /** Measure every mounted terminal. Installed on `window.__kangenticTerminalGrids`
  *  and read by the inspection server's terminal-state route. */
 export function readTerminalGrids(): TerminalGridReport[] {

@@ -52,6 +52,53 @@ describe('BackpressureController', () => {
     expect(controller.isPaused('s')).toBe(false);
   });
 
+  describe('the pending buffer as a second reason to pause', () => {
+    const PENDING_HIGH = 5000;
+    const PENDING_LOW = 500;
+    const controllerFor = (pty: PauseResumeTarget) => new BackpressureController(() => pty, HIGH, LOW, PENDING_HIGH, PENDING_LOW);
+
+    it('pauses when the pending buffer piles up, with nothing in flight', () => {
+      const pty = fakePty();
+      const controller = controllerFor(pty);
+      controller.recordPending('s', 4000);
+      expect(controller.isPaused('s')).toBe(false);
+      controller.recordPending('s', 6000);
+      expect(pty.pauseSpy).toHaveBeenCalledTimes(1);
+      expect(controller.isPaused('s')).toBe(true);
+    });
+
+    it('does not resume on an acknowledgement while the pending buffer is still high', () => {
+      const pty = fakePty();
+      const controller = controllerFor(pty);
+      controller.recordPending('s', 6000);
+      controller.recordEmitted('s', 300);
+      controller.acknowledge('s', 300);
+      expect(pty.resumeSpy).not.toHaveBeenCalled();
+      expect(controller.isPaused('s')).toBe(true);
+    });
+
+    it('resumes only once the pending buffer and in-flight are both low', () => {
+      const pty = fakePty();
+      const controller = controllerFor(pty);
+      controller.recordPending('s', 6000);
+      controller.recordEmitted('s', 1100);
+      controller.recordPending('s', 400);
+      expect(pty.resumeSpy).not.toHaveBeenCalled();
+      controller.acknowledge('s', 1000);
+      expect(pty.resumeSpy).toHaveBeenCalledTimes(1);
+      expect(controller.isPaused('s')).toBe(false);
+    });
+
+    it('keeps no entry for a session whose pending buffer stays low', () => {
+      const pty = fakePty();
+      const controller = controllerFor(pty);
+      controller.recordPending('s', 100);
+      expect(controller.getInFlight('s')).toBe(0);
+      expect(controller.isPaused('s')).toBe(false);
+      expect(pty.pauseSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it('isolates accounting per session', () => {
     const ptyA = fakePty();
     const ptyB = fakePty();

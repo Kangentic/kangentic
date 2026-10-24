@@ -15,6 +15,7 @@ import { exec, execFile } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { isSamePath } from '../../../shared/paths';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { HostExecFailure, HostExecRequest, HostExecResult } from './protocol';
 
 /** What both `exec` and `execFile` hand their callback on a failed run. */
@@ -64,6 +65,17 @@ function pathFor(platform: NodeJS.Platform): path.PlatformPath {
  *  off, and macOS's default file system ignores case. */
 function commandName(file: string, platform: NodeJS.Platform): string {
   return pathFor(platform).basename(file).toLowerCase().replace(/\.exe$/, '');
+}
+
+/**
+ * The `timeSyncWork` label for a spawn here, naming the program it starts
+ * (`cli:spawn:git`, `exec:spawn:gh`). CreateProcess holds this thread, the one
+ * that flushes every terminal, so a report that says which program's start
+ * stalled it names its caller without anyone hunting for a timer.
+ */
+export function spawnSpanLabel(kind: 'cli' | 'exec', executable: string, platform: NodeJS.Platform = process.platform): string {
+  const program = commandName(executable, platform).replace(/\.(cmd|bat)$/, '');
+  return program ? `${kind}:spawn:${program}` : `${kind}:spawn`;
 }
 
 /** Real paths of the executables compared, kept once read: they do not move
@@ -192,9 +204,13 @@ export function runHostExec(request: HostExecRequest): Promise<HostExecResult> {
     };
     try {
       if (request.kind === 'exec') {
-        exec(request.command, { ...request.options, encoding: 'utf8' }, done);
+        timeSyncWork(spawnSpanLabel('exec', leadingExecutable(request.command)), () => {
+          exec(request.command, { ...request.options, encoding: 'utf8' }, done);
+        });
       } else {
-        execFile(request.file, request.args, { ...request.options, encoding: 'utf8' }, done);
+        timeSyncWork(spawnSpanLabel('exec', request.file), () => {
+          execFile(request.file, request.args, { ...request.options, encoding: 'utf8' }, done);
+        });
       }
     } catch (error) {
       // A synchronous throw (an invalid argument) is a failed run, as

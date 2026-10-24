@@ -79,6 +79,9 @@ export interface IncomingWriteQueueOptions {
   shouldHold?: () => boolean;
   /** Report `bytes` consumed (written or dropped) to main's flow control. */
   ack: (bytes: number) => void;
+  /** Told when xterm has parsed a written slice (not a dropped one). The
+   *  scroll-latency probe's hook (dev builds only). */
+  onSliceParsed?: (chars: number) => void;
   chunkSize?: number;
 }
 
@@ -128,6 +131,7 @@ export function createIncomingWriteQueue(
     // xterm processes its write buffer asynchronously, so the callback both
     // paces the loop (one slice per processed chunk) and yields between slices.
     term.write(chunk, () => {
+      options.onSliceParsed?.(chunk.length);
       options.ack(chunk.length);
       drain();
     });

@@ -18,7 +18,10 @@
  * reference.
  */
 
+import type { Profiler } from 'node:inspector';
 import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
+import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
 
@@ -275,9 +278,21 @@ export interface PtyHostRequestMap {
   /** Spawn a raw PTY (no session). `write`, `resizePty` and `kill` reach it
    *  by its ptyId like any other; its output arrives as `rawData`. */
   spawnRaw: { params: PtyHostRawSpawnParams; result: PtyHostRawSpawnResult };
+  /** Dev builds only (a production host refuses every `dev*` method):
+   *  open the round-trip probe's window (`pty-round-trip-probe.ts`). */
+  devArmRoundTripProbe: { params: { durationMs: number }; result: { armedAt: number; armedUntil: number } };
+  /** What the round-trip probe recorded in its last window. */
+  devReadRoundTripProbe: { params: Record<string, never>; result: HostRoundTripReading };
+  /** This thread's own event-loop lag report, every span label included. */
+  devLagReport: { params: Record<string, never>; result: EventLoopLagReport };
+  /** A CPU profile of this thread for `durationMs` (`thread-cpu-profile.ts`). */
+  devCpuProfile: { params: { durationMs: number }; result: Profiler.Profile };
 }
 
 export type PtyHostMethod = keyof PtyHostRequestMap;
+
+/** The requests only a dev build's host answers: every `dev*` method above. */
+export type PtyHostDevMethod = Extract<PtyHostMethod, `dev${string}`>;
 
 export interface PtyHostRequest<M extends PtyHostMethod = PtyHostMethod> {
   type: 'request';

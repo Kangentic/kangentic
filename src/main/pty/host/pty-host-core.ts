@@ -24,7 +24,9 @@ import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { AgentOutputTracker } from '../lifecycle/agent-output-tracker';
 import { SessionIdScanner } from '../lifecycle/session-id-manager';
-import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { getEventLoopLagReport, timeSyncWork } from '../../diagnostics/event-loop-lag';
+import { armRoundTripProbe, noteRoundTripStage, readRoundTripProbe } from '../../diagnostics/pty-round-trip-probe';
+import { captureThreadCpuProfile } from '../../diagnostics/thread-cpu-profile';
 import { isProcessAlive } from '../../shared/process-liveness';
 import type { ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 import { HostProcessTable } from './host-process-table';
@@ -273,8 +275,11 @@ export class PtyHostCore {
         this.consumeFirstOutput(sessionId, data);
         if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data, endOffset });
         if (this.focused.has(sessionId)) {
+          if (__KANGENTIC_DEV__) noteRoundTripStage(sessionId, 'flush', data);
           this.deps.emit({ type: 'data', sessionId, data });
+          const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
           this.backpressure.recordEmitted(sessionId, data.length);
+          if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
         }
       },
       onDrain: (sessionId, data, endOffset) => {
@@ -289,6 +294,13 @@ export class PtyHostCore {
       },
       onAltScreenExit: (sessionId) => {
         this.deps.emit({ type: 'altScreen', sessionId, inAltScreen: false });
+      },
+      // The flush above reaches a renderer only when focused, a phone only when tapped.
+      hasFlushConsumer: (sessionId) => this.focused.has(sessionId) || this.tapped.has(sessionId),
+      onPendingChange: (sessionId, chars) => {
+        const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
+        this.backpressure.recordPending(sessionId, chars);
+        if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
       },
     });
     this.transcriptWriter = new TranscriptWriter(
@@ -323,13 +335,15 @@ export class PtyHostCore {
     const spawnedAtMs = this.now();
     try {
       refuseOwnExecutable(params.file);
-      pty = this.spawnPty(params.file, params.args, {
+      // Labelled like the `cli:spawn:<program>` spans: the pseudo console and its console host
+      // start on this thread, which every terminal's output shares.
+      pty = timeSyncWork('pty:spawn', () => this.spawnPty(params.file, params.args, {
         name: 'xterm-256color',
         cols: params.cols,
         rows: params.rows,
         cwd: params.cwd,
         env: params.env,
-      });
+      }));
     } catch (error) {
       return { ok: false, error: toPtyHostError(error), previousScrollback };
     }
@@ -523,6 +537,18 @@ export class PtyHostCore {
         return this.awaitAgentExit((params as PtyHostRequestMap['awaitAgentExit']['params']).taskIds) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
         return this.spawnRaw(params as PtyHostRawSpawnParams) as PtyHostRequestMap[M]['result'] | Promise<PtyHostRequestMap[M]['result']>;
+      case 'devArmRoundTripProbe':
+        if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
+        return armRoundTripProbe((params as PtyHostRequestMap['devArmRoundTripProbe']['params']).durationMs) as PtyHostRequestMap[M]['result'];
+      case 'devReadRoundTripProbe':
+        if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
+        return readRoundTripProbe() as PtyHostRequestMap[M]['result'];
+      case 'devLagReport':
+        if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
+        return getEventLoopLagReport() as PtyHostRequestMap[M]['result'];
+      case 'devCpuProfile':
+        if (!__KANGENTIC_DEV__) throw new Error(`${method} is dev-only`);
+        return captureThreadCpuProfile((params as PtyHostRequestMap['devCpuProfile']['params']).durationMs) as Promise<PtyHostRequestMap[M]['result']>;
       default: {
         const unknownMethod: never = method;
         throw new Error(`unknown pty host method: ${String(unknownMethod)}`);
@@ -536,7 +562,12 @@ export class PtyHostCore {
     switch (command.type) {
       case 'write':
         if (this.withRawPty(command.ptyId, (rawPty) => rawPty.write(command.data))) return;
-        this.withLivePty(command.ptyId, (entry) => entry.pty.write(command.data));
+        this.withLivePty(command.ptyId, (entry) => {
+          if (__KANGENTIC_DEV__) noteRoundTripStage(entry.sessionId, 'write', command.data);
+          // In the alt screen, the answer to this input flushes on the next loop turn, not the 16 ms timer.
+          this.bufferManager.noteInput(entry.sessionId);
+          entry.pty.write(command.data);
+        });
         return;
       case 'resizePty': {
         if (this.withRawPty(command.ptyId, (rawPty) => rawPty.resize(command.cols, command.rows))) return;
@@ -1053,6 +1084,7 @@ export class PtyHostCore {
 
   private onPtyData(entry: PtyEntry, data: string): void {
     const sessionId = entry.sessionId;
+    if (__KANGENTIC_DEV__) noteRoundTripStage(sessionId, 'data', data);
     this.bufferManager.onData(sessionId, data);
 
     // A session main removed while its PTY was still exiting (a young

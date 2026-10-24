@@ -8,10 +8,13 @@ import {
 } from './lag-recorder';
 import { getTerminalRendererReport } from '../../renderer/utils/terminal-webgl';
 import {
+  focusSessionTerminalForDevtools,
+  readSessionTerminalRect,
   readTerminalGrids,
   readTerminalGridRows,
   readTerminalRendererTrace,
 } from '../../renderer/utils/terminal-grid-registry';
+import { armScrollLatencyProbe, readScrollLatencyProbe } from '../../renderer/utils/scroll-latency-probe';
 
 /**
  * Renderer-side bootstrap for the dev-only inspection bridge.
@@ -37,6 +40,12 @@ export function DevtoolsBootstrap(): null {
       __kangenticTerminalGrids?: () => unknown;
       __kangenticTerminalGridRows?: (sessionId: string) => unknown;
       __kangenticTerminalTrace?: () => unknown;
+      __kangenticScrollLatency?: {
+        arm: (durationMs: number) => unknown;
+        read: () => unknown;
+        terminalRect: (sessionId: string) => unknown;
+        focusTerminal: (sessionId: string) => boolean;
+      };
     };
     (window as DevtoolsWindow).__kangenticPreviewSnapshot = buildPreviewSnapshot;
     (window as DevtoolsWindow).__kangenticPreviewStoreState = readStoreState;
@@ -50,6 +59,14 @@ export function DevtoolsBootstrap(): null {
     // always-on payload.
     (window as DevtoolsWindow).__kangenticTerminalGridRows = readTerminalGridRows;
     (window as DevtoolsWindow).__kangenticTerminalTrace = readTerminalRendererTrace;
+    // The renderer half of the wheel-to-paint timer, armed and read by the
+    // inspection server's /scroll-latency route (see scroll-latency-probe.ts).
+    (window as DevtoolsWindow).__kangenticScrollLatency = {
+      arm: armScrollLatencyProbe,
+      read: readScrollLatencyProbe,
+      terminalRect: readSessionTerminalRect,
+      focusTerminal: focusSessionTerminalForDevtools,
+    };
 
     // Freeze flight recorder: record renderer event-loop stalls so the
     // inspection server's /event-loop-lag route can surface UI-freeze history.
@@ -88,6 +105,7 @@ export function DevtoolsBootstrap(): null {
       delete (window as DevtoolsWindow).__kangenticTerminalGrids;
       delete (window as DevtoolsWindow).__kangenticTerminalGridRows;
       delete (window as DevtoolsWindow).__kangenticTerminalTrace;
+      delete (window as DevtoolsWindow).__kangenticScrollLatency;
     };
   }, []);
 
