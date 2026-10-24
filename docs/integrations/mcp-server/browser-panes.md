@@ -66,7 +66,7 @@ Behavior worth knowing:
 
 ### kangentic_browser_close_pane
 
-`kangentic_browser_close_pane` discards panes exactly as the user's Close browser control does (the Browser pill only hides, keeping the guest alive for you). It closes the pane, never the task-detail window hosting it.
+`kangentic_browser_close_pane` discards panes exactly as the user's Close browser control does (the Browser pill only hides, keeping the guest alive for you). It closes the pane, never the task-detail window hosting it. A pane detached into its own OS window by `pop_out` is closed by closing that window.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -75,9 +75,11 @@ Behavior worth knowing:
 | `all` | boolean | No | Close every pane in scope instead of a single target. Use for "close all browsers". Takes precedence over `sessionId` / `taskId`, which are ignored when set. |
 | `includeOtherProjects` | boolean | No | Also close panes belonging to other projects. Widens `all` and an explicitly named target; it does not widen a bare no-argument call, which always means "my own pane". Default false. |
 
-With no arguments it resolves the caller's own pane through the same precedence chain the driving tools use. Unlike opening, it does **not** require the caller's project to be the one currently open: retention keeps a backgrounded project's panes alive, and those are exactly what a "close everything" request should reach.
+With no arguments it resolves the caller's own pane through the same precedence chain the driving tools use, and it also closes the caller's own detached window when one is open, even if no pane is registered in it. A detach that never mounted its pane used to leave exactly that: a window on screen and only the hand-off lane in the registry, so this call reported the lane closed and the window stayed open. `all` and a named target reach a detached window only through a pane registered in it. Unlike opening, it does **not** require the caller's project to be the one currently open: retention keeps a backgrounded project's panes alive, and those are exactly what a "close everything" request should reach.
 
-Scope is the caller's project by default, and the response always names the scope it applied (`this-project` / `all-projects`) plus `otherProjectPaneCount` for what it left alone, so a partial close is never reported as complete. `includeOtherProjects: true` is the explicit opt-in for a genuinely global close; it is off by default because another project may have an agent mid-verification in its pane. The response's `closed` and `skipped` arrays report what actually happened rather than what was attempted: a pane detached into its own pop-out window is the expected straggler, since it is mutually exclusive with the in-app mount and clearing the open flag does not unmount it.
+Closing a detached window on its own is a dock, because the in-app pane reclaims its slot while the task's open flag is set. So the tool clears the flag first (the same push that puts an in-app pane away) and only then closes the window.
+
+Scope is the caller's project by default, and the response always names the scope it applied (`this-project` / `all-projects`) plus `otherProjectPaneCount` for what it left alone, so a partial close is never reported as complete. `includeOtherProjects: true` is the explicit opt-in for a genuinely global close; it is off by default because another project may have an agent mid-verification in its pane. The response's `closed` and `skipped` arrays report what actually happened rather than what was attempted, and `closedWindows` lists the detached windows it closed as `{ taskId, projectId }`, apart from the panes, since a window can hold none.
 
 Cookie isolation is per task (`persist:kng-<projectId>-<taskId>`) so concurrent tasks' dev environments never share a `localhost` cookie jar, while the per-project identity jar (`persist:kng-<projectId>-identity`) shares non-localhost (IdP) logins across tasks. See [Embedded browser pane](../../architecture/embedded-browser/browser-pane.md#security-model).
 
@@ -245,6 +247,10 @@ Detach the **caller's own** task Browser pane into its own OS window, optionally
 
 Returns `{ moved, pane, sessionId, viewport?, note }`. **Use the returned `sessionId` from then on:** the window mounts a fresh `<webview>`, so the previous handle is dead and answers `surface-gone`. Like `open_pane`, it returns only once the new pane is registered and driveable, bounded at 20s (`detach-timeout` past that).
 
+**A detach that cannot finish closes its window.** Opening the window has already unmounted the in-app pane, so every failure after that point closes the window again, which docks the pane back into the task window. The error keeps its own kind (`detach-timeout`, `pane-destroyed`, `pane-not-rendering`, or the sizing failure), and its detail says the window was closed and names the surface the task has now: the pane back in the task window, or the offscreen surface the opener brought up when the pane did not come back. Use that handle from then on. When no surface came back at all, the detail says so and points at `open_pane`.
+
+The detached window resolves its task and project path from its own window params, never from the board, which holds only the open project's tasks. That is what lets a backgrounded project's pane pop out, and it is the fix for a window that once rendered "No active session for this task" with no page in it: its first board load started before its project arrived and published nothing.
+
 Called when a window is already open, it resizes that window rather than opening a second one, and reports `moved: false`.
 
 Two behaviors worth knowing:
@@ -252,7 +258,7 @@ Two behaviors worth knowing:
 - **It does not take the user's keyboard focus.** The window is shown inactive, per `.claude/rules/agent-driven-focus.md`: an agent action never moves focus.
 - **A size it applies is not saved as the user's.** Pop-out bounds persist per surface KIND rather than per task, so persisting an agent's testing viewport would overwrite the window size the user chose, for every task. A later resize by the user persists normally.
 
-Other refusals: `no-caller-task`, `no-pane-open` (open a pane first), `detach-failed`.
+Other refusals: `no-caller-task`, `no-pane-open` (open a pane first), `detach-failed`, and `pane-destroyed` when a detached window is already open but holds no page (call `dock` to close it and bring the pane back).
 
 ### kangentic_browser_dock
 

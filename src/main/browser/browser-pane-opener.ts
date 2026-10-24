@@ -71,6 +71,16 @@ export interface BrowserPaneOpenerHost {
   browserOverrides(projectPath: string): { enabled?: boolean; defaultUrl?: string } | null;
   /** Push to the app window. False when there is no live window to push to. */
   send(channel: string, ...args: unknown[]): boolean;
+  /** Whether the task's Browser pane is detached into its own OS window. */
+  hasDetachedWindow(projectId: string, taskId: string): boolean;
+  /**
+   * Close the task's detached Browser window. False when none was open.
+   *
+   * On its own this is a DOCK, not a close: the in-app pane reclaims its slot
+   * while the task's open flag is set. A caller that means "close" clears the
+   * flag first (`BROWSER_PANE_CLOSE_REQUEST`).
+   */
+  closeDetachedWindow(projectId: string, taskId: string): boolean;
 }
 
 let readHost: () => BrowserPaneOpenerHost | null = () => null;
@@ -154,9 +164,21 @@ export interface ClosedPaneSummary {
   url: string | null;
 }
 
+/** A detached Browser window this call closed. */
+export interface ClosedWindowSummary {
+  taskId: string;
+  projectId: string;
+}
+
 export interface ClosePaneData {
   /** Which panes this call actually put away. */
   closed: ClosedPaneSummary[];
+  /**
+   * Detached Browser windows this call closed. A window can hold no registered
+   * pane at all (a detach that never mounted one), so it is reported apart from
+   * `closed` rather than as a pane.
+   */
+  closedWindows: ClosedWindowSummary[];
   /** Panes it tried to close that were still registered when the wait ended. */
   skipped: (ClosedPaneSummary & { reason: string })[];
   /** The scope that was actually applied, so a partial close reads honestly. */
@@ -561,7 +583,9 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
 
 /**
  * Put Browser panes away, the way the user's Browser pill does. Closes the pane,
- * never the task-detail window that hosts it.
+ * never the task-detail window that hosts it. A pane detached into its own OS
+ * window is closed by closing that window, and a bare call also closes the
+ * caller's own detached window when no pane is registered in it.
  *
  * Scope is the caller's project by default, and the response always names the
  * scope it applied plus what it left alone, so "close all browsers" can never be
@@ -600,6 +624,17 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   const sweptEveryProject = Boolean(input.all && input.includeOtherProjects);
   const otherProjectPaneCount = sweptEveryProject ? 0 : scoped.otherProjectPaneCount;
 
+  const host = readHost();
+  // The caller's own detached window, for a bare call. It can be open with no
+  // pane registered in it: a detach that never mounted its pane left exactly
+  // that, and this call reported the hand-off lane closed while the window
+  // stayed on screen. It is still the caller's browser, so a bare call reaches
+  // it whether or not anything in it registered. `all` and a named target
+  // reach a detached window only through a pane registered in it.
+  const isBareCall = !input.all && !hasExplicitTarget;
+  const ownDetachedTaskId =
+    isBareCall && callerTaskId && host?.hasDetachedWindow(projectId, callerTaskId) ? callerTaskId : null;
+
   let targets: BrowserPaneStatus[];
   if (input.all) {
     targets = input.includeOtherProjects ? browserPaneRegistry.list() : scoped.panes;
@@ -615,13 +650,29 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
       callerSessionId,
       callerTaskId,
     });
-    if (!resolved.ok) return failure(resolved.kind, resolved.detail);
-    const pane = paneStatus(resolved.entry.sessionId);
-    targets = pane ? [pane] : [];
+    if (resolved.ok) {
+      const pane = paneStatus(resolved.entry.sessionId);
+      targets = pane ? [pane] : [];
+    } else if (ownDetachedTaskId) {
+      targets = [];
+    } else {
+      return failure(resolved.kind, resolved.detail);
+    }
   }
 
-  if (targets.length === 0) {
-    return { ok: true, data: { closed: [], skipped: [], scope, otherProjectPaneCount } };
+  // Every task among the targets whose pane lives in a detached window, plus
+  // the caller's own empty one. Closing the window is what unmounts such a
+  // pane: `PopOutBrowserRoot` never reads the open flag the push clears.
+  const windowTargets = new Map<string, ClosedWindowSummary>();
+  const addWindowTarget = (windowProjectId: string | null, taskId: string): void => {
+    if (!windowProjectId || !host?.hasDetachedWindow(windowProjectId, taskId)) return;
+    windowTargets.set(`${windowProjectId}\u0000${taskId}`, { projectId: windowProjectId, taskId });
+  };
+  for (const pane of targets) addWindowTarget(pane.projectId, pane.taskId);
+  if (ownDetachedTaskId) addWindowTarget(projectId, ownDetachedTaskId);
+
+  if (targets.length === 0 && windowTargets.size === 0) {
+    return { ok: true, data: { closed: [], closedWindows: [], skipped: [], scope, otherProjectPaneCount } };
   }
 
   const summarize = (pane: BrowserPaneStatus): ClosedPaneSummary => ({
@@ -643,11 +694,10 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   const paneTargets = targets.filter((pane) => pane.kind !== 'lane');
   const closedLanes = laneTargets.filter((lane) => destroyLane(lane.sessionId)).map(summarize);
 
-  if (paneTargets.length === 0) {
-    return { ok: true, data: { closed: closedLanes, skipped: [], scope, otherProjectPaneCount } };
+  if (paneTargets.length === 0 && windowTargets.size === 0) {
+    return { ok: true, data: { closed: closedLanes, closedWindows: [], skipped: [], scope, otherProjectPaneCount } };
   }
 
-  const host = readHost();
   if (!host) {
     return failure('app-not-ready', 'The Kangentic window is not available.');
   }
@@ -658,11 +708,21 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
   // before the push call even returns.
   browserPaneRegistry.markDeliberateClose(paneTargets.map((pane) => pane.sessionId));
 
-  // Push the task ids: pane open state is keyed by task, not session.
-  const taskIds = [...new Set(paneTargets.map((pane) => pane.taskId))];
+  // Push the task ids: pane open state is keyed by task, not session. A
+  // detached window's task is included even with no pane in it, and the push
+  // goes BEFORE any window closes: closing a detached window is a dock, so with
+  // the flag still set the in-app pane would mount again and this close would
+  // put the browser back instead of away.
+  const taskIds = [...new Set([
+    ...paneTargets.map((pane) => pane.taskId),
+    ...[...windowTargets.values()].map((detachedWindow) => detachedWindow.taskId),
+  ])];
   if (!host.send(IPC.BROWSER_PANE_CLOSE_REQUEST, projectId, taskIds)) {
     return failure('app-not-ready', 'The Kangentic window is not available.');
   }
+  const closedWindows = [...windowTargets.values()].filter((detachedWindow) =>
+    host.closeDetachedWindow(detachedWindow.projectId, detachedWindow.taskId),
+  );
 
   const stillRegistered = new Set(
     await browserPaneRegistry.waitForPanesGone(
@@ -671,15 +731,9 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
     ),
   );
 
-  // Report what actually happened rather than what was attempted.
-  //
-  // The known straggler is a pane detached into its own pop-out window:
-  // `PopOutBrowserRoot` mounts `BrowserPane` from its own window params and
-  // never reads `browserOpenTasks`, so clearing the flag cannot unmount it (and
-  // broadcasting the push to pop-out renderers would not help either - only
-  // closing that OS window would, which is out of scope). Main cannot tell that
-  // apart from a renderer that simply did not act, so the reason states the
-  // fact and names the known cause without asserting it.
+  // Report what actually happened rather than what was attempted. Main cannot
+  // tell a pane that stayed from a renderer that simply did not act, so the
+  // reason states the fact without asserting a cause.
   const closed = [
     ...closedLanes,
     ...paneTargets.filter((pane) => !stillRegistered.has(pane.sessionId)).map(summarize),
@@ -688,8 +742,8 @@ export async function closePanes(input: ClosePaneInput): Promise<DriverResult<Cl
     .filter((pane) => stillRegistered.has(pane.sessionId))
     .map((pane) => ({
       ...summarize(pane),
-      reason: 'Still registered after the close request, so it was not closed. A pane detached into its own pop-out window is not closed by this tool.',
+      reason: 'Still registered after the close request, so it was not closed.',
     }));
 
-  return { ok: true, data: { closed, skipped, scope, otherProjectPaneCount } };
+  return { ok: true, data: { closed, closedWindows, skipped, scope, otherProjectPaneCount } };
 }

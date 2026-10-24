@@ -1,8 +1,9 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
+import { usePopOutTaskRow } from '../use-pop-out-task-row';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { useTaskChanges } from '../../components/dialogs/task-detail/completed/useTaskReport';
 import { completedChangesEntityId } from '../../components/dialogs/task-detail/completed/CompletedChangesTab';
@@ -31,10 +32,12 @@ function PanelFallback() {
  * board-store's loadBoard() is ambient-project-scoped (ipc TASK_LIST has no
  * projectId argument), so this relies on the main process's ambient current
  * project matching params.projectId - true at open time (a "changes" pop-out is
- * only opened from the currently-open project's board). If the user switches
- * projects in the main window before this pop-out's own bootstrap/HMR resync
- * resolves, the task lookup below simply misses and shows "No changes on this
- * branch" rather than any incorrect cross-project data.
+ * only opened from the currently-open project's board). The surface bootstrap
+ * loads the board after the current project, through `loadAmbientBoard`, which
+ * says why. If the user switches projects in the main window
+ * before this pop-out's own bootstrap/HMR resync resolves, the task lookup below
+ * simply misses and shows "No changes on this branch" rather than any incorrect
+ * cross-project data.
  *
  * A task the loaded board does not hold is a completed one (the board keeps
  * only live tasks in `tasks`), opened from its Changes tab: it reads the task's
@@ -46,8 +49,8 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));
 
   // Not on the board: the row itself says whether it is a completed task. The
-  // board's own `hydrated` flag cannot decide it, since a load that began
-  // before the window's project arrived publishes nothing.
+  // board cannot decide it, since it holds only the live tasks of the project
+  // the main window had open when this window booted.
   if (!task) return <UnboardedTaskRoot params={params} />;
 
   if (!projectPath) {
@@ -87,38 +90,21 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
 }
 
 /**
- * The task row by params, from the task's own project (the monitor's detail
- * read, archived tasks included). An archived row is what the board store does
- * not hold, and the panel needs it for its History section and for naming a
- * file window.
- */
-function useTaskRow(projectId: string, taskId: string): { task: Task | null; loading: boolean } {
-  const [state, setState] = useState<{ key: string; task: Task | null } | null>(null);
-  const key = `${projectId}\u0000${taskId}`;
-  useEffect(() => {
-    let cancelled = false;
-    window.electronAPI.monitor.getTaskDetail(projectId, taskId)
-      .then((bundle) => { if (!cancelled) setState({ key, task: bundle?.task ?? null }); })
-      .catch((error: unknown) => {
-        console.warn('[pop-out changes] task read failed:', error);
-        if (!cancelled) setState({ key, task: null });
-      });
-    return () => { cancelled = true; };
-  }, [key, projectId, taskId]);
-  const current = state?.key === key ? state : null;
-  return { task: current?.task ?? null, loading: current === null };
-}
-
-/**
- * A task the loaded board does not hold. An archived row reads its commits from
- * git; a live one is waiting for the board (or the main window switched
- * projects), and keeps the old answer, since this path shows a completed
- * task's commits only.
+ * A task the loaded board does not hold. Its row is read by params, archived
+ * tasks included: an archived row is what the board store does not hold, and
+ * the panel needs it for its History section and for naming a file window. An
+ * archived row reads its commits from git. A live one waits for the board, and
+ * once the board has answered without it (the main window switched projects)
+ * keeps the old answer, since this path shows a completed task's commits only.
  */
 function UnboardedTaskRoot({ params }: { params: PopOutTaskParams }) {
-  const { task, loading } = useTaskRow(params.projectId, params.taskId);
+  const boardHydrated = useBoardStore((state) => state.hydrated);
+  const { task, loading } = usePopOutTaskRow(params.projectId, params.taskId);
   if (loading) return <PanelFallback />;
   if (task?.archived_at) return <CompletedChangesRoot params={params} task={task} />;
+  // A live row usually lands before the board does. Wait for the board's answer
+  // rather than say the branch has no changes for a frame and then show them.
+  if (!boardHydrated) return <PanelFallback />;
   return (
     <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="popout-changes-none">
       No changes on this branch

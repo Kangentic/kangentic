@@ -18,6 +18,7 @@ import { setBrowserPaneOpenerHost, offscreenSurfaceUrl } from '../../browser/bro
 import { installLaneHandoff } from '../../browser/browser-lane-handoff';
 import { destroyLane, laneTaskIds, setLaneChangeListener } from '../../browser/browser-lane-manager';
 import { broadcast } from '../../pop-out/window-broadcast';
+import { popOutWindowManager } from '../../pop-out/pop-out-window-manager';
 import { enumerateProjectPartitions } from '../../browser/browser-partition-cleanup';
 import { syncJarFromIdentity } from '../../browser/jar-seeder';
 import { releaseViewportOverride } from '../../browser/viewport-override';
@@ -81,6 +82,12 @@ export function registerBrowserHandlers(context: IpcContext): void {
     send: (channel, ...args) => {
       if (context.mainWindow.isDestroyed()) return false;
       context.mainWindow.webContents.send(channel, ...args);
+      return true;
+    },
+    hasDetachedWindow: (projectId, taskId) => popOutWindowManager.has('browser', { projectId, taskId }),
+    closeDetachedWindow: (projectId, taskId) => {
+      if (!popOutWindowManager.has('browser', { projectId, taskId })) return false;
+      popOutWindowManager.close('browser', { projectId, taskId });
       return true;
     },
   }));
