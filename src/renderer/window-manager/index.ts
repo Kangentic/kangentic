@@ -3,7 +3,7 @@
  * this folder import from here, not from internal modules.
  */
 
-export { WindowLayer, WindowManagerLayer } from './components/WindowLayer';
+export { WindowLayer, WindowManagerLayer, getPortalHost } from './components/WindowLayer';
 export { WindowContent } from './components/WindowContent';
 export { boardWindowManager, commandWindowManager, knowledgeGraphWindowManager, monitorWindowManager, useWindowStore } from './store/window-store';
 export type { WindowManager } from './store/window-store';
@@ -13,3 +13,5 @@ export { createWorkspaceSaver } from './persistence/workspace-saver';
 export type { WorkspaceSaver } from './persistence/workspace-saver';
 export { clearSnapPreviewDom } from './hmr';
 export type { ManagedWindow, WindowState, WindowContentKind, FractionalRect, TileNode, SnapEdge } from './store/types';
+export { isWindowDormant } from './store/types';
+export { isHostArranged, windowIdsInReadingOrder } from './tiling/host-arrangement';

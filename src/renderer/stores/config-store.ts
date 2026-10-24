@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppConfig, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import type { AppConfig, CommandTerminalPanelGeometry, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
 import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
@@ -83,6 +83,9 @@ interface ConfigStore {
   saveCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
   /** Synchronous sibling of saveCommandTerminalWorkspace for the quit/unload flush. */
   flushCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
+  /** Persist where the Command Terminal panel sits (global, written whole). Applied
+   *  to the store first, so the panel reads back what it just wrote. */
+  saveCommandTerminalPanel: (geometry: CommandTerminalPanelGeometry) => void;
   /** Persist the GLOBAL Agent Monitor detail layout. Same shape as the command-terminal
    *  pair; written by whichever host currently has the monitor's layer mounted (the
    *  in-app overlay or the pop-out - never both, they are mutually exclusive), which is
@@ -221,6 +224,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     // at least as fresh as a later disk read, so preserve them across a refetch.
     const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
     const commandTerminalWorkspace = get().globalConfig.commandTerminalWorkspace ?? null;
+    const commandTerminalPanel = get().globalConfig.commandTerminalPanel ?? null;
     // `monitorWorkspace` is deliberately NOT preserved here, unlike its two siblings.
     // It is the only layout blob with a writer in ANOTHER renderer: the monitor's
     // pop-out saves it, and the main window then has to READ that write back. Treating
@@ -229,8 +233,8 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     // fresh disk read is exactly what the reader wants, and the writer's optimistic
     // apply keeps its own copy current in the meantime.
     return {
-      config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace },
-      globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace },
+      config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
+      globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
     };
   };
 
@@ -406,6 +410,14 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
 
     saveCommandTerminalWorkspace: (workspace) => {
       window.electronAPI.config.set({ commandTerminalWorkspace: applyCommandWorkspaceOptimistic(workspace) });
+    },
+
+    saveCommandTerminalPanel: (geometry) => {
+      set((state) => ({
+        config: { ...state.config, commandTerminalPanel: geometry },
+        globalConfig: { ...state.globalConfig, commandTerminalPanel: geometry },
+      }));
+      window.electronAPI.config.set({ commandTerminalPanel: geometry });
     },
 
     flushCommandTerminalWorkspace: (workspace) => {

@@ -429,20 +429,15 @@ const COMMAND_TERMINAL_TOGGLE = '[data-testid="quick-session-button"]';
 const COMMAND_TERMINAL_WINDOW = '[data-testid="command-terminal-window"]';
 const COMMAND_TERMINAL_SECOND = '[data-command-slot="slot-2"]';
 const COMMAND_TERMINAL_SECOND_MODEL = `${COMMAND_TERMINAL_SECOND} [data-testid^="context-bar-model-"]`;
+/** The panel header's Maximize, which holds every terminal (a terminal has none of its own). */
+const COMMAND_TERMINAL_PANEL_MAXIMIZE = '[data-testid="command-terminal-panel-maximize"]';
 
 /**
- * The GLOBAL Command Terminal layout blob (`AppConfig.commandTerminalWorkspace`), one floating
- * window. The layer restores this on its first open and re-pairs the slot to the live session.
- * `fitted` sizes the window to the contoso terminal session's recording, for the same reason as
- * the task window (FITTED_FLOATING_GEOMETRY). The tiled scene takes the plain rect instead: New
- * terminal docks a second window beside this one and grows the pair to the dock's 750px pane
- * minimum, so its panes are that width whatever the first window's, and a fitted first window
- * would only move the footprint the tiled recordings were measured in.
+ * The GLOBAL Command Terminal layout blob (`AppConfig.commandTerminalWorkspace`): one terminal,
+ * which the panel lays out over its whole terminal area. The layer restores this on its first
+ * open and re-pairs the slot to the live session.
  */
-function commandTerminalWorkspace(fitted: boolean) {
-  const placement = fitted
-    ? { geometry: FITTED_FLOATING_GEOMETRY, fitToRecording: SESSION_CONTOSO_TERMINAL }
-    : { geometry: MIDDLEWARE_FLOATING_GEOMETRY };
+function commandTerminalWorkspace() {
   return {
     version: 1,
     windows: [
@@ -450,7 +445,7 @@ function commandTerminalWorkspace(fitted: boolean) {
         taskId: COMMAND_TERMINAL_SLOT,
         kind: 'command-terminal' as const,
         title: commandTerminalTitle(COMMAND_TERMINAL_SLOT),
-        ...placement,
+        geometry: { x: 0, y: 0, w: 1, h: 1 },
         restoreGeometry: null,
         state: 'floating' as const,
       },
@@ -459,6 +454,24 @@ function commandTerminalWorkspace(fitted: boolean) {
     tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
     focusedTaskId: COMMAND_TERMINAL_SLOT,
   };
+}
+
+/**
+ * Where the Command Terminal panel sits (`AppConfig.commandTerminalPanel`). `fitted` names the
+ * contoso terminal session, so the seed (demo-dataset.ts, fitCommandTerminalPanel) widens the panel
+ * until its one terminal is exactly as wide as that recording, for the same reason as the task
+ * window (FITTED_FLOATING_GEOMETRY); the rect's width is only the fallback. It is that window's
+ * rect made taller by the panel's own 40px header and a little more, so the terminal under it
+ * keeps the recording's 37 rows with the same row and a half of margin at 125 percent. The tiled
+ * scene takes the panel maximized instead: its two terminals split the area beside the rail, the
+ * widest panes the frame can give the tiled recordings.
+ */
+const FITTED_COMMAND_PANEL_GEOMETRY = { x: FITTED_FLOATING_GEOMETRY.x, y: 0.1, w: FITTED_FLOATING_GEOMETRY.w, h: 0.8 };
+
+function commandTerminalPanel(fitted: boolean) {
+  return fitted
+    ? { ...FITTED_COMMAND_PANEL_GEOMETRY, maximized: false, fitToRecording: SESSION_CONTOSO_TERMINAL }
+    : { ...MIDDLEWARE_FLOATING_GEOMETRY, maximized: true };
 }
 
 /** The Changes panel open on one scope with the middleware session's routes.ts selected. */
@@ -1739,14 +1752,14 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'One Command Terminal window over the blurred board, on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the window\'s rect is the global layout blob (commandTerminalWorkspace), restored on that open and fitted to the session\'s recording like the task window.',
-    alt: 'A Command Terminal window open over the blurred board, running Claude Code in the project root, which has just summarized the repository and listed its npm scripts; the header carries the branch pill and the window controls.',
-    config: { commandTerminalWorkspace: commandTerminalWorkspace(true) },
+    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail\'s Earlier list shows its empty hint, which is what the desktop shows a project in that state.',
+    alt: 'The Command Terminal panel open over the blurred board, a rail with New terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
     ready: COMMAND_TERMINAL_WINDOW,
     // A person opening one: the pointer rests on the title bar's toggle, whose tip names the
-    // Command Terminal with its shortcut, and clicks it. The open window is the pose, so the
-    // poster, a still and the rest are that window, as they were when the click was a boot step.
-    // Then the window is maximized, and the cut restores it and hides the layer behind the veil
+    // Command Terminal with its shortcut, and clicks it. The open panel is the pose, so the
+    // poster, a still and the rest are that panel, as they were when the click was a boot step.
+    // Then the panel is maximized, and the cut restores it and hides the layer behind the veil
     // (its session keeps running, as on the desktop), so the frame fades in on the board and the
     // next cycle opens it again. Its session finished its recording, so the terminal holds;
     // restarting it would take a working stretch the scene has no opening frame for.
@@ -1755,33 +1768,33 @@ export const SCENES: Record<string, SceneDefinition> = {
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
       { hover: `${COMMAND_TERMINAL_WINDOW} .xterm`, ms: 600 },
       { pose: true },
-      { click: '[data-testid="command-bar-maximize"]', ms: 2600 },
+      { click: COMMAND_TERMINAL_PANEL_MAXIMIZE, ms: 2600 },
       { cut: true },
-      { click: '[data-testid="command-bar-maximize"]' },
+      { click: COMMAND_TERMINAL_PANEL_MAXIMIZE },
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: gone(COMMAND_TERMINAL_WINDOW) },
     ],
   },
   'command-terminal-tiled': {
     name: 'command-terminal-tiled',
     reach: 'boot',
-    description: 'Two Command Terminals tiled in one footprint, opened the way a person opens them: the toggle reattaches the contoso terminal session, then New terminal docks a second beside it and boots the project default agent from the boot recorded at the tiled width. The first window switches to its own tiled recording as it narrows (the seed\'s layoutFor), so both are at native type. The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
-    alt: 'Two Command Terminal windows tiled side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
-    config: { commandTerminalWorkspace: commandTerminalWorkspace(false) },
+    description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then the rail\'s New terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
+    alt: 'The Command Terminal panel with two terminals side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(false) },
     // The second window's model pill, which the context bar shows only once the session's first
     // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
     // first output, as main's status-line push would): a still shot before that would show the
     // "Starting agent" spinner in the bar rather than the pills.
     ready: COMMAND_TERMINAL_SECOND_MODEL,
-    // The toggle opens the first window and New terminal docks a second beside it, each after the
-    // pointer rests on it long enough for its tip. The pair is the pose. Then the pointer looks
-    // at the second window's model pill, and the cut stops that terminal (Stop ends it for good,
-    // so the next New terminal takes slot-2 again) and hides the layer behind the veil, so the
-    // frame fades in on the board and the next cycle opens both again.
+    // The toggle opens the panel and the rail's New terminal starts a second terminal beside the
+    // first, each after the pointer rests on it long enough for its tip. The pair is the pose. Then
+    // the pointer looks at the second terminal's model pill, and the cut stops that terminal (Stop
+    // ends it for good, so the next New terminal takes slot-2 again) and hides the layer behind the
+    // veil, so the frame fades in on the board and the next cycle opens both again.
     choreography: [
       { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
-      { hover: '[data-testid="quick-session-new-terminal"]', ms: 1800 },
-      { click: '[data-testid="quick-session-new-terminal"]', waitFor: COMMAND_TERMINAL_SECOND_MODEL },
+      { hover: '[data-testid="command-terminal-new"]', ms: 1800 },
+      { click: '[data-testid="command-terminal-new"]', waitFor: COMMAND_TERMINAL_SECOND_MODEL },
       { hover: `${COMMAND_TERMINAL_SECOND} .xterm`, ms: 600 },
       { pose: true },
       { hover: COMMAND_TERMINAL_SECOND_MODEL, ms: 2400 },

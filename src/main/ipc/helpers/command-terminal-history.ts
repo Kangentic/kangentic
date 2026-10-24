@@ -60,6 +60,13 @@ interface HeldConversation {
 
 export class CommandTerminalHistory {
   private readonly heldBySession = new Map<string, HeldConversation>();
+  /**
+   * Conversations a resume is starting, by agent session id, with the terminal
+   * that took each once it spawned (null while the start runs). A resumed
+   * terminal reports its agent's id a second or two after it spawns, so until
+   * then this is the only record that the conversation is open.
+   */
+  private readonly resumesInFlight = new Map<string, string | null>();
   private started = false;
   private disposed = false;
 
@@ -83,6 +90,46 @@ export class CommandTerminalHistory {
       this.deps.sessionManager.off('session-removed', this.onSessionRemoved);
     }
     this.heldBySession.clear();
+    this.resumesInFlight.clear();
+  }
+
+  /**
+   * Claim a conversation for a resume. False when a live terminal holds it, or
+   * another resume is starting it: two agents on one conversation would write
+   * over each other's transcript. The project's Earlier list drops it at once.
+   */
+  claimResume(projectId: string, agentSessionId: string): boolean {
+    if (this.resumesInFlight.has(agentSessionId)) return false;
+    for (const held of this.heldBySession.values()) {
+      if (held.agentSessionId === agentSessionId) return false;
+    }
+    const liveSessionHoldsIt = this.deps.sessionManager.listSessions()
+      .some((session) => session.agentSessionId === agentSessionId && session.status !== 'exited');
+    if (liveSessionHoldsIt) return false;
+    this.resumesInFlight.set(agentSessionId, null);
+    this.deps.notifyChanged(projectId);
+    return true;
+  }
+
+  /**
+   * A claimed resume's start is over. Its terminal keeps the claim until the
+   * agent reports the conversation's id or the terminal ends; a start that made
+   * no terminal (null) frees it at once, and its row comes back to Earlier.
+   */
+  settleResume(projectId: string, agentSessionId: string, sessionId: string | null): void {
+    if (!this.resumesInFlight.has(agentSessionId)) return;
+    const alreadyReported = sessionId !== null
+      && (this.heldBySession.has(sessionId) || this.deps.sessionManager.getSession(sessionId)?.agentSessionId === agentSessionId);
+    if (sessionId === null || alreadyReported || this.disposed) this.resumesInFlight.delete(agentSessionId);
+    else this.resumesInFlight.set(agentSessionId, sessionId);
+    if (sessionId === null && !this.disposed) this.deps.notifyChanged(projectId);
+  }
+
+  /** Drop the claims the given terminal held. */
+  private releaseResumesOf(sessionId: string): void {
+    for (const [agentSessionId, holder] of this.resumesInFlight) {
+      if (holder === sessionId) this.resumesInFlight.delete(agentSessionId);
+    }
   }
 
   /**
@@ -93,7 +140,7 @@ export class CommandTerminalHistory {
   async list(projectId: string): Promise<CommandTerminalHistoryEntry[]> {
     const repository = this.deps.getRepository(projectId);
     if (!repository) return [];
-    const liveConversationIds = new Set<string>();
+    const liveConversationIds = new Set<string>(this.resumesInFlight.keys());
     for (const session of this.deps.sessionManager.listSessions()) {
       if (session.projectId === projectId && session.agentSessionId && session.status !== 'exited') {
         liveConversationIds.add(session.agentSessionId);
@@ -140,6 +187,8 @@ export class CommandTerminalHistory {
     if (this.disposed) return;
     const session = this.deps.sessionManager.getSession(sessionId);
     if (!session || !isCommandTerminalSession(session)) return;
+    // The terminal now reports what it holds, which `heldBySession` records.
+    this.releaseResumesOf(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (held?.agentSessionId === agentSessionId) return;
     const repository = this.deps.getRepository(projectId);
@@ -185,6 +234,7 @@ export class CommandTerminalHistory {
   };
 
   private readonly onSessionRemoved: SessionListener = (sessionId) => {
+    this.releaseResumesOf(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (!held) return;
     this.heldBySession.delete(sessionId);

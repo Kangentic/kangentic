@@ -44,8 +44,9 @@ const START_REFUSAL_CODES: Record<CommandTerminalStartErrorCode, CapabilityError
   'command-terminal-limit': COMMAND_TERMINAL_LIMIT_ERROR_CODE,
   'slot-taken': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
   'spawn-failed': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
-  // A phone start never asks to resume yet, so this is the generic failure.
+  // A phone start never asks to resume yet, so these are the generic failure.
   'conversation-gone': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
+  'conversation-open': COMMAND_TERMINAL_START_FAILED_ERROR_CODE,
 };
 
 /**

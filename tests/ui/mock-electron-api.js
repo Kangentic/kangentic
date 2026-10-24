@@ -402,6 +402,7 @@
     hotkeyOverrides: {},
     workspaceByProject: {},
     commandTerminalWorkspace: null,
+    commandTerminalPanel: null,
     monitorWorkspace: null,
     // Mirrors DEFAULT_CONFIG.monitor. Required on AppConfig, and this file is .js
     // so tsc cannot catch its absence; without it a UI test has no way to seed a
@@ -2857,8 +2858,16 @@
         return null;
       },
       spawnTransient: async function (input) {
+        // Call log for assertions: window.__mockSpawnTransientCalls.
+        if (typeof window !== 'undefined') {
+          window.__mockSpawnTransientCalls = window.__mockSpawnTransientCalls || [];
+          window.__mockSpawnTransientCalls.push(Object.assign({}, input));
+        }
         var id = crypto.randomUUID();
         var branch = input.branch || 'main';
+        // Main resumes the conversation on its own agent, and a resumed terminal
+        // holds that conversation (and counts as used) from its first frame.
+        var resumeId = input.resumeAgentSessionId || null;
         // Mirrors main's allocation (startCommandTerminal): a requested slot is
         // honored, and a start that names none takes the project's lowest free one.
         var slot = input.slot || null;
@@ -2890,8 +2899,12 @@
           commandTerminalBranch: branch,
           commandTerminalLabel: null,
           isolatedSwimlaneId: null,
-          agentSessionId: null,
+          agentSessionId: resumeId,
         };
+        if (resumeId) {
+          session.resuming = true;
+          session.hasUserInput = true;
+        }
         sessions.push(session);
         return { session: session, slot: slot, branch: branch };
       },
@@ -3420,6 +3433,9 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
         }
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
+          config.commandTerminalPanel = partial.commandTerminalPanel;
+        }
         // monitorWorkspace is the same kind of blob, for the Agent Monitor's detail layer.
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;
@@ -3444,6 +3460,9 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
           config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
+        }
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalPanel')) {
+          config.commandTerminalPanel = partial.commandTerminalPanel;
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'monitorWorkspace')) {
           config.monitorWorkspace = partial.monitorWorkspace;

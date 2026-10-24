@@ -17,7 +17,6 @@ import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
 import { isWorktreePath } from '../../../shared/git-utils';
 import { BrandMark } from '../BrandMark';
 import { Tooltip } from '../Tooltip';
-import { tipLabel } from '../../utils/tooltip';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -26,20 +25,12 @@ interface TitleBarProps {
   onQuickSession?: () => void;
   onOpenSearch?: () => void;
   commandBarOpen?: boolean;
-  /** Spawns another Command Terminal (up to the cap). Only called while the
-   *  layer is open; the button that triggers it renders only then. */
-  onSpawnAdditionalTerminal?: () => void;
-  /** Whether another Command Terminal can be opened (below the cap). Disables
-   *  the "New terminal" button without unmounting it. */
-  canSpawnMoreTerminals?: boolean;
 }
 
 export function TitleBar({
   onQuickSession,
   onOpenSearch,
   commandBarOpen,
-  onSpawnAdditionalTerminal,
-  canSpawnMoreTerminals,
 }: TitleBarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
@@ -192,47 +183,9 @@ export function TitleBar({
       </div>
 
       <div className="flex items-center gap-1" data-testid="titlebar-actions" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-        {/* "New terminal" + the Command Terminal toggle are the LEFT-MOST icons
-            in this row on purpose: this row is right-anchored (the flex-1
-            spacer eats the space to its left), so an element's on-screen
-            position is fixed by whatever comes AFTER it, not before it. Keeping
-            this pair first means the conditional "New terminal" button
-            mounting/unmounting as the layer opens/closes never shifts Quick
-            Find / stats / settings / the window controls - only this
-            pair's own position moves. "New terminal" sits to the LEFT of the
-            toggle (reads outward from the toggle as the layer gains a spawn
-            affordance) and reuses the same terminal glyph with the center `+`
-            variant, rather than a bare plus icon, so it still reads as "add a
-            Command Terminal" and not a generic add action. */}
-        {currentProject && commandBarOpen && onSpawnAdditionalTerminal && (
-          <>
-            <Tooltip
-              label={tipLabel({
-                disabled: !canSpawnMoreTerminals,
-                disabledReason: 'Command Terminal limit reached',
-                tip: 'New Command Terminal',
-              })}
-            >
-              <button
-                onClick={onSpawnAdditionalTerminal}
-                disabled={!canSpawnMoreTerminals}
-                className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-not-allowed"
-                aria-label="New Command Terminal"
-                data-testid="quick-session-new-terminal"
-              >
-                {/* Uncolored/unanimated on purpose: the activity glyph communicates
-                    "an existing terminal needs you", which doesn't apply to a fresh
-                    terminal that doesn't exist yet. Only the toggle button carries
-                    the aggregate activity tone. */}
-                <CommandTerminalIcon tone="rest" showPlus testId="quick-session-new-terminal-icon" />
-              </button>
-            </Tooltip>
-            {/* Separates the transient "New terminal" action from the permanent
-                icon cluster to its right (mounts/unmounts together with the
-                button above, so it never leaves an orphan divider). */}
-            <div className="w-px h-4 bg-edge mx-1" data-testid="quick-session-new-terminal-divider" />
-          </>
-        )}
+        {/* The Command Terminal toggle is the LEFT-MOST icon in this row. It
+            only opens and hides the panel; a new terminal starts from the
+            panel's own rail. */}
         {currentProject && onQuickSession && (
           <Tooltip
             label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}

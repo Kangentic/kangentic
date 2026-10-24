@@ -960,8 +960,8 @@ test('Escape in a Command Terminal still posts when a header control holds focus
   // The test above focuses the terminal's own textarea. For that focus, `terminalKeepsKey` in
   // isEscapeTheAppOwns skips the frame loop, so the Command Terminal frame skip never runs there.
   // A control in the window's chrome sends the key through the frame loop, which must pass over
-  // this frame as it does an inert one. The maximize button opens no menu or dialog, and unlike
-  // the tiled-only pop-out button it renders in every window state.
+  // this frame as it does an inert one. The kebab button opens nothing until it is pressed, and it
+  // is a protected header control, so it renders at every window width.
   const readMessages = await hostFrame(page, 'command-terminal');
   const frame = page.frameLocator('#demo');
   const commandWindow = frame.locator('[data-testid="command-terminal-window"]');
@@ -977,7 +977,7 @@ test('Escape in a Command Terminal still posts when a header control holds focus
   await expect
     .poll(() => textarea.evaluate((element) => document.activeElement === element), { timeout: READY_TIMEOUT_MS })
     .toBe(true);
-  await focusAcrossFrame(commandWindow.locator('[data-testid="command-bar-maximize"]'));
+  await focusAcrossFrame(commandWindow.locator('button[aria-label="Actions"]'));
   await page.keyboard.press('Escape');
   await expect.poll(async () => hasEscape(await readMessages())).toBe(true);
   await expect(commandWindow, 'the app keeps the window open, as the desktop does').toBeVisible();
@@ -4097,9 +4097,9 @@ test('a new Command Terminal boots the project default agent from the recorded b
   // The toggle reattaches the project's existing Command Terminal (its own recording); "New
   // terminal" is what spawns another, and that one boots the project's default agent.
   await page.locator('[data-testid="quick-session-button"]').click();
-  await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toBeVisible();
+  await expect(page.locator('[data-testid="command-terminal-new"]')).toBeVisible();
   const streamed = firstStreamedSession(page, 20_000);
-  await page.locator('[data-testid="quick-session-new-terminal"]').click();
+  await page.locator('[data-testid="command-terminal-new"]').click();
   await expect.poll(async () => page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const sessions = await api.sessions.list();
@@ -4272,7 +4272,7 @@ test('a Command Terminal that tiles beside a new one repaints from the boot reco
   // single-window width.
   await page.locator('[data-testid="sidebar-project-list"]').getByText('spring-pet', { exact: false }).first().click();
   await page.locator('[data-testid="quick-session-button"]').click();
-  await expect(page.locator('[data-testid="quick-session-new-terminal"]')).toBeVisible();
+  await expect(page.locator('[data-testid="command-terminal-new"]')).toBeVisible();
   const transientIds = () => page.evaluate(async () => {
     const api = (window as unknown as DemoElectronWindow).electronAPI;
     const sessions = await api.sessions.list();
@@ -4295,7 +4295,7 @@ test('a Command Terminal that tiles beside a new one repaints from the boot reco
       resolve(true);
     });
   }), { sessionId: firstId, timeout: 15_000 });
-  await page.locator('[data-testid="quick-session-new-terminal"]').click();
+  await page.locator('[data-testid="command-terminal-new"]').click();
   await expect.poll(transientIds, { timeout: 10_000 }).toHaveLength(2);
   expect(await repainted).toBe(true);
   expect(getUnexpectedErrors()).toEqual([]);

@@ -61,6 +61,15 @@ export interface WindowManagerLayerOptions {
    * nothing.
    */
   revealTaskDetail?: (taskId: string, projectId?: string) => void;
+  /**
+   * The layer's HOST lays its windows out, not the user: the Command Terminal
+   * panel tiles its terminals to fill its own area (`arrangeTiles`), and moves
+   * and resizes as a whole. Its windows therefore draw no resize handles and no
+   * footprint resizers, sit square and flat inside the host, and show the focus
+   * line only while another window is beside them. Omitted by every layer whose
+   * windows float.
+   */
+  hostArranged?: boolean;
 }
 
 /** What a layer's `renderTaskDetail` receives. Mirrors WindowContent's props. */

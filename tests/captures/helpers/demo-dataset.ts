@@ -1868,6 +1868,34 @@ export function buildDemoPreConfig(options: {
         });
         return marked ? Object.assign({}, blob, { windows: windows }) : blob;
       }
+      // The Command Terminal panel's 1px border on each side and its rail: what sits beside a lone
+      // terminal's window frame inside the panel (CommandTerminalPanel, CommandTerminalRail).
+      var COMMAND_PANEL_BORDER_PX = 2;
+      var COMMAND_RAIL_WIDTH_PX = 248;
+      // The Command Terminal panel a scene marks with fitToRecording, sized so its one terminal is
+      // exactly as wide as that session's recording, the way fitLayoutBlob sizes a floating window.
+      // The panel lays its terminal out itself, so the width goes on the panel: the rail, the
+      // panel's border, the window frame's border and the scrollbar gutter, then the columns. The
+      // panel is copied, not edited, for the same reason as a layout blob.
+      function fitCommandTerminalPanel(panel, measure) {
+        if (!panel || typeof panel.fitToRecording !== 'string') return panel;
+        var fitted = Object.assign({}, panel);
+        var sessionId = fitted.fitToRecording;
+        delete fitted.fitToRecording;
+        var indexed = recordings && recordings.sessions ? recordings.sessions[sessionId] : null;
+        if (!indexed) {
+          console.error('[demo] the Command Terminal panel asks to fit the recording of "' + sessionId + '", which the recordings index does not carry');
+          return fitted;
+        }
+        var cell = measure();
+        if (!cell) return fitted;
+        var frameWidth = Math.max(document.documentElement.clientWidth || 0, FIT_REFERENCE_FRAME_WIDTH);
+        var chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + cell.gutter;
+        var width = Math.min(1, (chrome + (indexed.cols + 0.5) * cell.width) / frameWidth);
+        fitted.x = (1 - width) / 2;
+        fitted.w = width;
+        return fitted;
+      }
       var windowsFitted = false;
       function fitMarkedWindows() {
         if (windowsFitted || !mockState) return;
@@ -1888,9 +1916,11 @@ export function buildDemoPreConfig(options: {
           });
           config.workspaceByProject = workspaces;
         }
-        // The Command Terminal's global blob is read later, when the toggle opens the layer; it is
-        // fitted here all the same, since this is the one config every later read returns.
+        // The Command Terminal's global blob and panel are read later, when the toggle opens the
+        // layer; they are fitted here all the same, since this is the one config every later read
+        // returns.
         if (config.commandTerminalWorkspace) config.commandTerminalWorkspace = fitLayoutBlob(config.commandTerminalWorkspace, measure);
+        if (config.commandTerminalPanel) config.commandTerminalPanel = fitCommandTerminalPanel(config.commandTerminalPanel, measure);
       }
       ['get', 'getGlobal'].forEach(function (method) {
         var original = window.electronAPI.config[method];

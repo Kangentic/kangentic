@@ -56,7 +56,6 @@ export function WindowContent({
           <CommandTerminalWindow
             managedWindow={managedWindow}
             isMaximized={isMaximized}
-            titleBarPointerDown={titleBarPointerDown}
           />
         </Suspense>
       </PanelErrorBoundary>

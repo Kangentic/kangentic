@@ -1,30 +1,43 @@
 /**
- * The command-terminal window layer: a second, independent window-manager layer
- * (separate from the board task-detail layer) that hosts the Command Terminal as
- * a movable / resizable / maximizable / snappable window, top-layered over a
- * slight backdrop blur.
+ * The command-terminal layer: one PANEL over a slight backdrop blur, holding a
+ * rail (Earlier conversations and New terminal) and up to four terminals. The
+ * terminals are windows of a second, independent window-manager layer
+ * (separate from the board task-detail layer) that renders into the panel's
+ * terminal area and lets the panel arrange them (`hostArranged`): one fills
+ * the area, two sit side by side, three and four tile in fixed presets that
+ * resize by their seams. The panel itself moves, resizes and maximizes.
  *
- * GEOMETRY is GLOBAL: one blob (`AppConfig.commandTerminalWorkspace`) holds the
- * size / position / tiling shared across all projects. POPULATION is PER-PROJECT:
- * which slots get windows is derived from the current project's live transient
- * sessions on open (see `reconcileCommandTerminalWindows`), because the session
- * store is keyed per `(projectId, slot)`. Without that split the window count
- * carried over from one project would spawn that many fresh PTYs in the next.
+ * GEOMETRY is GLOBAL: the panel's place (`AppConfig.commandTerminalPanel`) and
+ * the terminals' seams (`AppConfig.commandTerminalWorkspace`) are shared across
+ * all projects. POPULATION is PER-PROJECT: which slots get windows is derived
+ * from the current project's live transient sessions on open (see
+ * `reconcileCommandTerminalWindows`), because the session store is keyed per
+ * `(projectId, slot)`. Without that split the window count carried over from
+ * one project would spawn that many fresh PTYs in the next.
  *
  * Mounted by `AppLayout` only while open (Ctrl+Shift+P). The command window-store
  * instance is a module singleton that survives the mount/unmount, so hiding the
  * layer keeps the layout in memory and the PTY alive; reopening reattaches.
- * Hiding (Ctrl+Shift+P toggle, the panel-close combo, or a backdrop click) keeps
- * everything alive; the window's Stop control kills the PTY.
+ * Hiding (Ctrl+Shift+P toggle, the panel's X, the panel-close combo, or a
+ * backdrop click) keeps everything alive; a terminal's Stop kills its PTY.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useShallow } from 'zustand/react/shallow';
 import {
   WindowManagerLayer,
   commandWindowManager,
   createWorkspaceSaver,
+  getPortalHost,
+  isHostArranged,
+  isWindowDormant,
+  windowIdsInReadingOrder,
 } from '../../window-manager';
-import type { WindowManagerLayerOptions } from '../../window-manager';
+import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-manager';
+import { CommandTerminalPanel } from './CommandTerminalPanel';
+import { CommandTerminalRail } from './CommandTerminalRail';
+import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -34,7 +47,7 @@ import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
 import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { resolveProjectRoot } from '../../../shared/git-utils';
-import { selectLiveCommandTerminalSlots } from '../../stores/session-store/transient-session-slice';
+import { selectLiveCommandTerminalSlots, transientKey } from '../../stores/session-store/transient-session-slice';
 
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
@@ -44,10 +57,21 @@ const COMMAND_SLOT_ID = 'slot-1';
  *  saver (which keys by project) always persists. */
 const COMMAND_WORKSPACE_KEY = 'command-terminal';
 
-/** Command terminals can resize down to the same comfortable floor as board
- *  windows; carried as a per-layer option so it is a one-line change later. */
+/** The body-level host the panel portals into. */
+const COMMAND_LAYER_ROOT_ID = 'command-terminal-layer-root';
+
+/** The panel's rail and header, which the terminals' area excludes. */
+const COMMAND_RAIL_WIDTH_PX = 248;
+const COMMAND_PANEL_HEADER_HEIGHT_PX = 40;
+
+/**
+ * The panel arranges its terminals (`hostArranged`). The pane floor is what
+ * four terminals keep beside the rail at the 900 x 600 window floor: two
+ * columns of about 325px each, two rows of about 240px. Seams stop there.
+ */
 const COMMAND_LAYER_OPTIONS: WindowManagerLayerOptions = {
-  minSize: { width: 750, height: 500 },
+  minSize: { width: 320, height: 200 },
+  hostArranged: true,
 };
 
 /**
@@ -85,7 +109,9 @@ function nextFreeSlot(usedSlots: Set<string>): string | null {
 export function closeCommandTerminalWindowInSlot(slot: string): void {
   const store = commandWindowManager.store;
   const managedWindow = Object.values(store.getState().windows).find((candidate) => candidate.anchor === slot);
-  if (managedWindow) store.getState().closeWindow(managedWindow.id);
+  if (!managedWindow) return;
+  store.getState().closeWindow(managedWindow.id);
+  arrangeCommandTerminals();
 }
 
 /**
@@ -121,30 +147,31 @@ export function useCloseCommandWindowOnRemoval(): void {
   }, []);
 }
 
-/** Open a Command Terminal in a specific slot and SPLIT it into the existing
- *  window's footprint (side by side, keeping the size / position the user set),
- *  rather than tiling everything full-screen. Operates on the module-singleton
- *  store, so callers work whether or not the layer is currently mounted.
- *
- *  Placement is dock-into-last: reconciliation-opened windows cannot recover
- *  their old rect from the global blob (the saver persists continuously, so once
- *  a slot's window is trimmed in one project its geometry is gone), so appending
- *  left-to-right is the pragmatic answer, matching multi-terminal spawn.
+/**
+ * Lay the terminals out in the panel's preset for their count
+ * (`tiling/host-arrangement.ts`), keeping the order they read in on screen and
+ * placing any new window last. A no-op when the layout already is the preset,
+ * so a seam the user dragged holds until a terminal starts or stops.
+ */
+function arrangeCommandTerminals(): void {
+  const store = commandWindowManager.store;
+  const state = store.getState();
+  if (isHostArranged(state.windows, state.tileTree, state.tileTreeRect)) return;
+  const liveIds = Object.values(state.windows)
+    .filter((managedWindow) => !isWindowDormant(managedWindow))
+    .map((managedWindow) => managedWindow.id);
+  const placedIds = windowIdsInReadingOrder(state.tileTree).filter((id) => liveIds.includes(id));
+  state.arrangeTiles([...placedIds, ...liveIds.filter((id) => !placedIds.includes(id))]);
+}
+
+/** Open a Command Terminal in a specific slot and lay the panel out again with
+ *  it last. Operates on the module-singleton store, so callers work whether or
+ *  not the layer is currently mounted.
  *
  *  Every Command Terminal window opens FLAT, whether spawned by the user or by a
  *  project-switch reconcile, so there is no per-caller animation choice to make. */
 function openCommandTerminalWindowInSlot(slot: string): void {
-  const store = commandWindowManager.store;
-  const existingWindows = Object.values(store.getState().windows);
-
-  // Dock the new window to the RIGHT of the most-recently-opened existing window,
-  // so terminals append left-to-right. `dockIntoWindow` confines the pair to the
-  // target's current footprint (a floating/snapped target keeps its rect; an
-  // existing tiled group keeps its footprint and just gains a pane), which is the
-  // "split within the same size" behavior, not a full-screen columns blow-out.
-  const dockTarget = existingWindows[existingWindows.length - 1] ?? null;
-
-  const newWindowId = store.getState().openWindow({
+  commandWindowManager.store.getState().openWindow({
     kind: 'command-terminal',
     anchor: slot,
     sessionId: null,
@@ -157,35 +184,78 @@ function openCommandTerminalWindowInSlot(slot: string): void {
     // corrected, leaving a terminal that overflows and looks frozen.
     skipEnterAnimation: true,
   });
-
-  if (dockTarget) {
-    // A maximized target would expand the pair to full-screen; restore it first so
-    // the split stays inside its windowed footprint.
-    if (dockTarget.state === 'maximized') store.getState().restoreWindow(dockTarget.id);
-    store.getState().dockIntoWindow(newWindowId, dockTarget.id, 'right');
-
-    // Keep each tiled pane at least the min size: grow the confined group's
-    // footprint so the panes don't squish below the floor (the same engine rule the
-    // dock / seam / footprint resizers honour). The command overlay spans the full
-    // window, so window.innerWidth/Height is its pixel size for the conversion.
-    store.getState().enforceMinPaneSize(
-      COMMAND_LAYER_OPTIONS.minSize.width,
-      COMMAND_LAYER_OPTIONS.minSize.height,
-      window.innerWidth || 1,
-      window.innerHeight || 1,
-    );
-  }
+  arrangeCommandTerminals();
 }
 
 /** Open another Command Terminal in the next free slot (up to the cap). Operates
- *  on the module-singleton store, so the title-bar button can call it whether or
- *  not the layer is currently mounted. Returns false if already at the cap. */
+ *  on the module-singleton store, so it works whether or not the layer is
+ *  currently mounted. Returns false if already at the cap. */
 export function spawnAdditionalCommandTerminal(): boolean {
   const slot = nextFreeSlot(occupiedCommandTerminalSlots());
   if (!slot) return false;
 
   openCommandTerminalWindowInSlot(slot);
   return true;
+}
+
+/** The slot an Earlier row would resume into in place: the focused terminal,
+ *  or the only one. Null when there are several and none is focused. */
+function inPlaceCandidateSlot(state: { windows: Record<string, ManagedWindow>; focusedWindowId: string | null }): string | null {
+  const live = Object.values(state.windows).filter((managedWindow) => !isWindowDormant(managedWindow));
+  const focused = live.find((managedWindow) => managedWindow.id === state.focusedWindowId);
+  if (focused) return focused.anchor;
+  return live.length === 1 ? live[0].anchor : null;
+}
+
+/** Whether nothing has reached the slot's terminal yet: no keystroke, paste or
+ *  submit (`Session.hasUserInput`). A slot still spawning has had nothing. */
+function isSlotUnused(
+  state: { transientSessions: Record<string, { sessionId: string }>; sessions: Session[] },
+  projectId: string,
+  slot: string,
+): boolean {
+  const entry = state.transientSessions[transientKey(projectId, slot)];
+  if (!entry) return true;
+  const session = state.sessions.find((candidate) => candidate.id === entry.sessionId);
+  return session?.hasUserInput !== true;
+}
+
+/** Whether an Earlier row would resume in place of an unused terminal. */
+function useResumesInPlace(projectId: string | null): boolean {
+  const candidateSlot = commandWindowManager.store(inPlaceCandidateSlot);
+  return useSessionStore((state) =>
+    projectId !== null && candidateSlot !== null && isSlotUnused(state, projectId, candidateSlot));
+}
+
+/**
+ * Resume an earlier conversation from the Earlier list. It takes the place of
+ * the focused (or only) terminal while nothing has reached that terminal, and
+ * otherwise opens beside the others: a used terminal is never replaced. The
+ * slot's window takes the request (`requestCommandTerminalResume`), whether it
+ * is live or still mounting.
+ */
+function resumeCommandTerminalConversation(agentSessionId: string): void {
+  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  if (!projectId) return;
+  const sessionState = useSessionStore.getState();
+  const candidateSlot = inPlaceCandidateSlot(commandWindowManager.store.getState());
+  if (candidateSlot && isSlotUnused(sessionState, projectId, candidateSlot)) {
+    sessionState.requestCommandTerminalResume(projectId, candidateSlot, agentSessionId);
+    return;
+  }
+  resumeCommandTerminalBeside(agentSessionId);
+}
+
+/** Resume an earlier conversation in a new terminal, in the next free slot.
+ *  Nothing happens at the cap, where the Earlier list is off. A window reaches
+ *  this through the layer context. */
+function resumeCommandTerminalBeside(agentSessionId: string): void {
+  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  if (!projectId) return;
+  const slot = nextFreeSlot(occupiedCommandTerminalSlots());
+  if (!slot) return;
+  useSessionStore.getState().requestCommandTerminalResume(projectId, slot, agentSessionId);
+  openCommandTerminalWindowInSlot(slot);
 }
 
 /** Reconcile the singleton window POPULATION to the current project's live
@@ -227,6 +297,7 @@ export function reconcileCommandTerminalWindows(options?: { skipWhenEmpty?: bool
 
   for (const windowId of plan.closeWindowIds) store.getState().closeWindow(windowId);
   for (const slot of plan.openSlots) openCommandTerminalWindowInSlot(slot);
+  arrangeCommandTerminals();
 }
 
 /** Ensure the command layer has its windows once mounted. Runs once per mount.
@@ -257,17 +328,37 @@ function useEnsureCommandWindow(): void {
     // effect finishes and React re-renders the reconciled population.
     reconcileCommandTerminalWindows();
 
-    if (Object.keys(store.getState().windows).length === 0) {
-      store.getState().openWindow({
-        kind: 'command-terminal',
-        anchor: COMMAND_SLOT_ID,
-        sessionId: null,
-        title: commandTerminalTitle(COMMAND_SLOT_ID),
-        // Flat, for the same fit-correctness reason as the spawn path above.
-        skipEnterAnimation: true,
-      });
-    }
+    if (Object.keys(store.getState().windows).length === 0) openCommandTerminalWindowInSlot(COMMAND_SLOT_ID);
+    // A layout saved before the panel (floating or snapped windows) is tiled
+    // into the panel's preset here.
+    arrangeCommandTerminals();
   }, []);
+}
+
+/** Keep the terminals in the panel's preset while the layer is on screen: a
+ *  Stop, or a window whose spawn failed, closes its window from inside the
+ *  layer, and the rest re-tile for the new count. A resume asked of a slot
+ *  whose window closed before taking it is dropped with the window. */
+function useArrangeOnPopulationChange(): void {
+  useEffect(() => commandWindowManager.store.subscribe((state) => {
+    arrangeCommandTerminals();
+    const projectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!projectId) return;
+    const windowSlots = new Set(Object.values(state.windows).map((managedWindow) => managedWindow.anchor));
+    useSessionStore.getState().dropCommandTerminalResumesExcept(projectId, windowSlots);
+  }), []);
+}
+
+/** Every slot is taken: the Command Terminal windows (the store is a module
+ *  singleton that outlives the layer's mount) plus the project's live
+ *  terminals, which include any a phone started with the layer closed. Both
+ *  reads compare shallowly, so this re-renders only when a slot changes. */
+function useCommandTerminalAtCap(projectId: string | null): boolean {
+  const windowSlots = commandWindowManager.store(useShallow((state) =>
+    Object.values(state.windows).map((managedWindow) => managedWindow.anchor)));
+  const liveSlots = useSessionStore(useShallow((state) =>
+    [...selectLiveCommandTerminalSlots(state.sessions, projectId)]));
+  return new Set([...windowSlots, ...liveSlots]).size >= MAX_COMMAND_TERMINALS;
 }
 
 /** Persist the GLOBAL command-terminal layout: debounced save on every change,
@@ -355,6 +446,7 @@ function useTrackHeadBranch(): void {
  *  bind the panel-close combo to hide. Mounted inside the layer's portal. */
 function CommandBridges({ onHide }: { onHide: () => void }): null {
   useEnsureCommandWindow();
+  useArrangeOnPopulationChange();
   useCommandWorkspacePersistence();
   useHideLayerWhenEmpty(onHide);
   useTrackHeadBranch();
@@ -389,20 +481,67 @@ function CommandBackdrop({ onHide }: { onHide: () => void }) {
   );
 }
 
+/** The smallest panel that still gives every terminal the pane floor: the rail
+ *  beside one or two columns, under the panel header, plus the 1px border. */
+function panelMinSize(terminalCount: number): { width: number; height: number } {
+  const columns = terminalCount >= 2 ? 2 : 1;
+  const rows = terminalCount >= 3 ? 2 : 1;
+  return {
+    width: COMMAND_RAIL_WIDTH_PX + columns * COMMAND_LAYER_OPTIONS.minSize.width + 2,
+    height: COMMAND_PANEL_HEADER_HEIGHT_PX + rows * COMMAND_LAYER_OPTIONS.minSize.height + 2,
+  };
+}
+
 export function CommandTerminalLayer({ onHide }: { onHide: () => void }) {
+  // The panel's own host is the body-level layer root, stamped
+  // `data-window-layer-root`, so light dismiss treats the whole panel as a window.
+  const [layerRoot] = useState(() => getPortalHost(COMMAND_LAYER_ROOT_ID));
+  // The window engine renders INTO the panel's terminal area, once it exists.
+  const [terminalArea, setTerminalArea] = useState<HTMLElement | null>(null);
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
+  const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
+  const atCap = useCommandTerminalAtCap(projectId);
+  const resumesInPlace = useResumesInPlace(projectId);
+  const handleNewTerminal = useCallback(() => { spawnAdditionalCommandTerminal(); }, []);
+  const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
+    resumeCommandTerminalConversation(entry.agentSessionId);
+  }, []);
+
   return (
-    <CommandTerminalLayerProvider hideLayer={onHide}>
-      <WindowManagerLayer
-        manager={commandWindowManager}
-        layer={COMMAND_LAYER_OPTIONS}
-        portalHostId="command-terminal-layer-root"
-        overlayTestId="command-window-overlay"
+    <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
+      {createPortal(
         // Above board windows (z-40), below true modal dialogs / popovers (z-50)
         // that this layer itself spawns (BranchPicker, ConfirmDialog).
-        overlayClassName="fixed left-0 right-0 top-10 bottom-9 z-[45] pointer-events-none"
-        bridges={<CommandBridges onHide={onHide} />}
-        backdrop={<CommandBackdrop onHide={onHide} />}
-      />
+        <div className="fixed left-0 right-0 top-10 bottom-9 z-[45] pointer-events-none" data-testid="command-terminal-layer">
+          <CommandBackdrop onHide={onHide} />
+          <CommandTerminalPanel
+            onHide={onHide}
+            minSize={panelMinSize(terminalCount)}
+            onTerminalAreaReady={setTerminalArea}
+            rail={(
+              <CommandTerminalRail
+                projectId={projectId}
+                atCap={atCap}
+                resumesInPlace={resumesInPlace}
+                onNewTerminal={handleNewTerminal}
+                onResume={handleResume}
+              />
+            )}
+          />
+        </div>,
+        layerRoot,
+      )}
+      {terminalArea && (
+        <WindowManagerLayer
+          manager={commandWindowManager}
+          layer={COMMAND_LAYER_OPTIONS}
+          portalHostId={COMMAND_LAYER_ROOT_ID}
+          portalHost={terminalArea}
+          overlayTestId="command-window-overlay"
+          overlayClassName="absolute inset-0 pointer-events-none"
+          bridges={<CommandBridges onHide={onHide} />}
+        />
+      )}
     </CommandTerminalLayerProvider>
   );
 }

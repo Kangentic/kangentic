@@ -15,7 +15,7 @@ import { timeSyncWork } from '../diagnostics/event-loop-lag';
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
  *  covers true `Record<string, ...>` dictionaries (where merge would leak deleted
  *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`,
- *  `monitorWorkspace`) the renderer always writes in full.
+ *  `commandTerminalPanel`, `monitorWorkspace`) the renderer always writes in full.
  *
  *  What the layout blobs actually need this for is their OBJECT-shaped fields, not
  *  their arrays: `deepMerge` already assigns an array wholesale (it recurses only
@@ -34,6 +34,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'hotkeyOverrides',
   'workspaceByProject',
   'commandTerminalWorkspace',
+  'commandTerminalPanel',
   'monitorWorkspace',
   'popOutBounds',
   'terminal.colors',

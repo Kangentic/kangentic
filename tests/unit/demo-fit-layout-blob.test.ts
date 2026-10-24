@@ -206,3 +206,60 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
     expect(result).not.toBe(original);
   });
 });
+
+interface Panel { x: number; y: number; w: number; h: number; maximized: boolean; fitToRecording?: string }
+type FitCommandTerminalPanel = (panel: Panel | null, measure: Measure) => Panel | null;
+
+const COMMAND_PANEL_BORDER_PX = extractConstant(script, 'COMMAND_PANEL_BORDER_PX');
+const COMMAND_RAIL_WIDTH_PX = extractConstant(script, 'COMMAND_RAIL_WIDTH_PX');
+const fitCommandTerminalPanelSource = extractFunction(script, 'fitCommandTerminalPanel');
+
+function liftPanelFit(recordings: RecordingsIndex, clientWidth: number): FitCommandTerminalPanel {
+  const built = [
+    `var FIT_REFERENCE_FRAME_WIDTH = ${FIT_REFERENCE_FRAME_WIDTH};`,
+    `var WINDOW_FRAME_BORDER_PX = ${WINDOW_FRAME_BORDER_PX};`,
+    `var COMMAND_PANEL_BORDER_PX = ${COMMAND_PANEL_BORDER_PX};`,
+    `var COMMAND_RAIL_WIDTH_PX = ${COMMAND_RAIL_WIDTH_PX};`,
+    fitCommandTerminalPanelSource,
+    'return fitCommandTerminalPanel;',
+  ].join('\n');
+  const documentStub = { documentElement: { clientWidth } };
+  return new Function('recordings', 'document', built)(recordings, documentStub) as FitCommandTerminalPanel;
+}
+
+describe('fitCommandTerminalPanel', () => {
+  it('widens the panel by its rail and borders so its one terminal fits the recording, and strips the marker', () => {
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
+    const fit = liftPanelFit(recordings, 1024);
+    const panel: Panel = { x: 0.1, y: 0.14, w: 0.5, h: 0.72, maximized: false, fitToRecording: 'sess-1' };
+    const result = fit(panel, () => ({ width: 8, gutter: 15 }));
+    const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
+    const chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + 15;
+    const expectedWidth = (chrome + (120 + 0.5) * 8) / frameWidth;
+    expect(result).not.toHaveProperty('fitToRecording');
+    expect(result?.w).toBeCloseTo(expectedWidth, 10);
+    expect(result?.x).toBeCloseTo((1 - expectedWidth) / 2, 10);
+    expect(result).toMatchObject({ y: 0.14, h: 0.72, maximized: false });
+    // The registry's own object is never edited.
+    expect(panel.fitToRecording).toBe('sess-1');
+  });
+
+  it('passes an unmarked panel through as the same object, and null as null', () => {
+    const fit = liftPanelFit(NO_RECORDINGS, 1600);
+    const panel: Panel = { x: 0, y: 0, w: 1, h: 1, maximized: true };
+    expect(fit(panel, neverMeasured)).toBe(panel);
+    expect(fit(null, neverMeasured)).toBeNull();
+  });
+
+  it('names a session the recordings index does not carry, and leaves the rect alone', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const fit = liftPanelFit(NO_RECORDINGS, 1600);
+      const result = fit({ x: 0.1, y: 0.1, w: 0.5, h: 0.5, maximized: false, fitToRecording: 'ghost-session' }, neverMeasured);
+      expect(errorSpy.mock.calls[0]?.[0]).toContain('ghost-session');
+      expect(result).toEqual({ x: 0.1, y: 0.1, w: 0.5, h: 0.5, maximized: false });
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});

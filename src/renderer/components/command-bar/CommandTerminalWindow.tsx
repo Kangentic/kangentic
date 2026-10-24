@@ -1,12 +1,10 @@
 /**
- * A single Command Terminal hosted inside a window-manager frame. Extracted from
- * the old fixed-modal `CommandBarOverlay`: the window-manager engine now owns the
- * frame (drag, 8-handle resize, maximize, Win11 snap, geometry persistence), so
- * this component only renders the CONTENT - a draggable header (title + Stop +
- * branch picker + command/changes pills + kebab + maximize + a hide-X), the xterm
- * body, an optional Changes panel, and the ContextBar footer. The X HIDES the
- * layer (keeps the PTY alive, like Ctrl+Shift+P / the panel-close combo / a
- * backdrop click); only Stop destroys the session.
+ * A single Command Terminal hosted inside a window-manager frame, one tile of
+ * the Command Terminal panel (`CommandTerminalPanel`). The panel tiles its
+ * terminals and owns moving, resizing and maximizing, so this component only
+ * renders the CONTENT - a header (Stop + title + branch picker + command/changes
+ * pills + kebab), the xterm body, an optional Changes panel, and the ContextBar
+ * footer. Hiding the panel keeps the PTY alive; only Stop destroys the session.
  *
  * Lifecycle: an ephemeral transient session is spawned on mount (or reattached if
  * one is already alive for the project), scoped to the active project. Stop kills
@@ -19,7 +17,7 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight } from 'lucide-react';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, SquareChevronRight } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import { BranchPicker } from '../dialogs/BranchPicker';
@@ -30,7 +28,6 @@ import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
 import { resolveTerminalBackground } from '../../hooks/useTerminal';
-import { useKeybinding } from '../../hooks/useKeybinding';
 import { ContextBar } from '../terminal/ContextBar';
 import { CommandTerminalPane, type TerminalGridGetter } from './CommandTerminalPane';
 import { useSessionStore } from '../../stores/session-store';
@@ -133,11 +130,9 @@ interface CommandTerminalWindowProps {
   managedWindow: ManagedWindow;
   /** True while the frame is maximized (driven by the window store). */
   isMaximized: boolean;
-  /** Pointer-down on the header drag handle; starts the window drag. */
-  titleBarPointerDown: (event: React.PointerEvent) => void;
 }
 
-export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPointerDown }: CommandTerminalWindowProps) {
+export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTerminalWindowProps) {
   const windowId = managedWindow.id;
   // The window's durable anchor IS its Command Terminal slot id (`slot-1`,
   // `slot-2`, ...). It pairs the persistent window to its ephemeral PTY across
@@ -148,13 +143,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // never leak across Command Terminal windows.
   const commandTerminalEntityId = commandTerminalChangesEntityId(slot);
   const layerStore = useLayerStore();
-  const toggleMaximizeWindow = layerStore((state) => state.toggleMaximizeWindow);
   const closeWindow = layerStore((state) => state.closeWindow);
-  // Window-layout parity with the task-detail window: pop-out (untile back to
-  // floating) for a pane that is currently part of a tile group.
-  const untileWindow = layerStore((state) => state.untileWindow);
-  const isTiled = layerStore((state) => state.windows[windowId]?.leafId != null);
-  const { hideLayer } = useCommandTerminalLayer();
+  const { hideLayer, resumeBeside } = useCommandTerminalLayer();
 
   // What this window attaches to at mount, decided ONCE, before the first
   // paint, so the mount effect below only performs side effects and the two
@@ -168,6 +158,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // a second PTY and strands the first). `null`: spawn.
   const [mountAttach] = useState<MountAttach>(() => resolveMountAttach(slot));
   const [sessionId, setSessionId] = useState<string | null>(mountAttach?.sessionId ?? null);
+  // The same id, for async completions and the store subscription below, which
+  // must see a respawn's null at once rather than after the next render.
+  const liveSessionIdRef = useRef<string | null>(mountAttach?.sessionId ?? null);
+  // `takePendingResume`, for completions that run before it is declared.
+  const takePendingResumeRef = useRef<() => void>(() => undefined);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // Stop is async (kill IPC, then close). Without a pending state the button looks
   // inert for the duration, which is exactly how a DROPPED click presented, so the
@@ -306,9 +301,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       return;
     }
 
-    state.spawnTransientSession(slot)
+    // An Earlier row that opened this window asked it to resume a conversation.
+    const resumeAgentSessionId = state.takeCommandTerminalResume(currentProjectId, slot) ?? undefined;
+    state.spawnTransientSession(slot, undefined, undefined, resumeAgentSessionId)
       .then((result) => {
+        liveSessionIdRef.current = result.session.id;
         setSessionId(result.session.id);
+        // A row clicked while this terminal was still starting.
+        takePendingResumeRef.current();
         if (result.checkoutError) {
           useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
         }
@@ -317,7 +317,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         // Main's refusals (the cap, a taken slot, a shell that did not start)
         // are sentences written for the user; drop Electron's IPC decoration.
         useToastStore.getState().addToast({
-          title: "Couldn't start Command Terminal",
+          title: resumeAgentSessionId ? "Couldn't resume conversation" : "Couldn't start Command Terminal",
           message: asSentence(describeIpcError(error, String(error))),
           variant: 'error',
         });
@@ -380,6 +380,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     // sessionId flips to null below, and the awaited spawn IPC is not
     // guaranteed to happen after that unmount commits.
     const grid = gridGetterRef.current?.() ?? undefined;
+    // Before the first await, as in resumeInPlace: a resume asked for mid-switch
+    // waits for the new terminal.
+    liveSessionIdRef.current = null;
     try {
       // Act on the outcome here too, not just in handleTerminate: this path scrubs the
       // slot and immediately spawns a replacement on it, so a kill that failed may leave
@@ -398,7 +401,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       setSessionId(null);
       setReadyLatch(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
+      liveSessionIdRef.current = result.session.id;
       setSessionId(result.session.id);
+      takePendingResumeRef.current();
       if (result.checkoutError) {
         useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
       }
@@ -410,6 +415,67 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       });
     }
   }, [defaultBranch, slot]);
+
+  // Resume an earlier conversation IN PLACE of this terminal, which the panel's
+  // Earlier list asks for only while nothing has reached the terminal yet
+  // (`Session.hasUserInput`). The same kill-then-respawn-same-slot shape as a
+  // branch switch, so the window, its slot and its grid stay.
+  const resumeInPlace = useCallback(async (agentSessionId: string) => {
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!currentProjectId) return;
+    const grid = gridGetterRef.current?.() ?? undefined;
+    // Before the first await: a second request arriving mid-respawn waits for
+    // the new terminal rather than starting a second respawn of this slot.
+    liveSessionIdRef.current = null;
+    try {
+      const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      if (killOutcome === 'failed') {
+        useToastStore.getState().addToast({
+          title: "Couldn't stop the old terminal",
+          message: 'Its process may still be running.',
+          variant: 'warning',
+        });
+      }
+      setSessionId(null);
+      setReadyLatch(false);
+      const result = await useSessionStore.getState().spawnTransientSession(slot, undefined, grid, agentSessionId);
+      liveSessionIdRef.current = result.session.id;
+      setSessionId(result.session.id);
+      // A second row clicked while this one resumed opens beside it.
+      takePendingResumeRef.current();
+    } catch (error) {
+      useToastStore.getState().addToast({
+        title: "Couldn't resume conversation",
+        message: asSentence(describeIpcError(error, String(error))),
+        variant: 'error',
+      });
+      // The fresh terminal is already gone, so the window goes with it.
+      closeWindow(windowId);
+    }
+  }, [slot, closeWindow, windowId]);
+
+  // Take a resume the Earlier list asked of this slot, once the slot has a live
+  // terminal. The list judged that terminal unused when it asked; if something
+  // reached it since (or it is itself a resumed one), the conversation opens
+  // beside it instead, because a used terminal is never replaced.
+  const takePendingResume = useCallback(() => {
+    const liveSessionId = liveSessionIdRef.current;
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!liveSessionId || !currentProjectId) return;
+    const state = useSessionStore.getState();
+    if (!state.pendingCommandTerminalResumes[transientKey(currentProjectId, slot)]) return;
+    const agentSessionId = state.takeCommandTerminalResume(currentProjectId, slot);
+    if (!agentSessionId) return;
+    const used = state.sessions.find((session) => session.id === liveSessionId)?.hasUserInput === true;
+    if (used) resumeBeside(agentSessionId);
+    else void resumeInPlace(agentSessionId);
+  }, [slot, resumeInPlace, resumeBeside]);
+  useEffect(() => {
+    takePendingResumeRef.current = takePendingResume;
+  }, [takePendingResume]);
+  useEffect(() => useSessionStore.subscribe((state, previous) => {
+    if (state.pendingCommandTerminalResumes !== previous.pendingCommandTerminalResumes) takePendingResume();
+  }), [takePendingResume]);
 
   // Stop = destroy THIS terminal's PTY and close its window. The layer's count
   // bridge hides the whole layer when the last window closes. Hiding the layer
@@ -475,17 +541,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     window.electronAPI.shell.exec(resolved, cwd);
   }, [projectPath, branch]);
 
-  const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
-
-  // Pop out: evict this terminal from its tile group back to a floating window
-  // (the partner stays / collapses to its half). Mirrors the task-detail pop-out.
-  const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
-
-  // Maximize hotkey (mirrors the task-detail window). Capture phase so it beats
-  // the embedded xterm's control-char handling. Layer hide (panel.close) is bound
-  // once by the layer's bridge, so it is not re-bound here.
-  useKeybinding('panel.maximize', () => handleToggleMaximized(), { capture: true });
-
   return (
     <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window" data-command-slot={slot}>
       {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
@@ -515,13 +570,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         </div>
 
         {/* Title - the overflow calc reserves only a ~50ch floor (not the full
-            width), so pills reclaim the space above it; this is also the drag
-            handle (double-click toggles maximize). */}
-        <div
-          className="flex-1 min-w-[64px] truncate cursor-grab active:cursor-grabbing"
-          onPointerDown={titleBarPointerDown}
-          onDoubleClick={handleToggleMaximized}
-        >
+            width), so pills reclaim the space above it. The panel moves as a
+            whole by its own header, so a terminal's title drags nothing. */}
+        <div className="flex-1 min-w-[64px] truncate">
           {/* Inline span so its scrollWidth measures the TEXT width (not the
               flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
               of that width for the title and lets the pills reclaim the rest. */}
@@ -594,10 +645,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           })}
         </div>
 
-        {/* Trailing window controls (always protected, so they never get clipped):
-            kebab, pop-out (when tiled), maximize. There is no per-window hide/X -
-            Stop destroys this terminal; the backdrop / Ctrl+Shift+W / Ctrl+Shift+P
-            hide the whole layer. */}
+        {/* Trailing controls (always protected, so they never get clipped): the
+            kebab. There is no per-window hide/X - Stop destroys this terminal; the
+            panel's X, the backdrop, Ctrl+Shift+W and Ctrl+Shift+P hide the whole
+            layer. */}
         <div ref={trailingRef} className="flex items-center gap-3 flex-shrink-0">
           <div ref={kebabWrapRef} className="flex-shrink-0">
             <KebabMenu>
@@ -669,34 +720,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             anchorRef={kebabWrapRef}
           />
 
-          {/* Divider + window controls: pop-out (tiled only) + maximize. Mirrors
-              TaskDetailHeader's divider placement (right after the kebab, before
-              the window-frame cluster). */}
-          <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-
-          {isTiled && (
-            <Tooltip label="Pop out terminal">
-              <button
-                onClick={handleUndock}
-                className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-                aria-label="Pop out terminal"
-                data-testid="command-bar-popout"
-              >
-                <PictureInPicture2 size={16} />
-              </button>
-            </Tooltip>
-          )}
-
-          <Tooltip label={isMaximized ? 'Restore terminal' : 'Maximize terminal'} keys="panel.maximize">
-            <button
-              onClick={handleToggleMaximized}
-              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-              aria-label={isMaximized ? 'Restore terminal' : 'Maximize terminal'}
-              data-testid="command-bar-maximize"
-            >
-              {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-          </Tooltip>
         </div>
 
         {/* Commands palette: rendered once at the header root. Commands is kebab-only

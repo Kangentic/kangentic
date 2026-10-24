@@ -205,4 +205,66 @@ describe('CommandTerminalHistory', () => {
     expect(repository.get(`ended-${COMMAND_TERMINAL_HISTORY_LIMIT + 4}`)).not.toBeNull();
     expect(repository.listUsed()).toHaveLength(COMMAND_TERMINAL_HISTORY_LIMIT);
   });
+
+  /** One used conversation, ended: what Earlier lists and a resume claims. */
+  function endedConversation(fixture: ReturnType<typeof setup>, agentSessionId: string): void {
+    fixture.sessions.add('pty-old', { hasUserInput: true });
+    fixture.sessions.reportAgentId('pty-old', agentSessionId);
+    fixture.sessions.remove('pty-old');
+  }
+
+  it('holds a resumed conversation from the claim until its terminal reports it, and refuses a second claim', async () => {
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    const { sessions, history, notifyChanged } = fixture;
+    notifyChanged.mockClear();
+
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+    // Earlier drops the row at once, and nothing can start it twice.
+    expect(notifyChanged).toHaveBeenCalledWith(PROJECT_ID);
+    expect(await history.list(PROJECT_ID)).toEqual([]);
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(false);
+
+    // Spawned, but the agent has not reported its id yet: still claimed.
+    sessions.add('pty-new', { hasUserInput: true });
+    history.settleResume(PROJECT_ID, 'conversation-a', 'pty-new');
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(false);
+
+    // Reported: the live terminal now holds it, and ending that terminal frees it.
+    sessions.reportAgentId('pty-new', 'conversation-a');
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(false);
+    sessions.remove('pty-new');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a' }]);
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+  });
+
+  it('frees a claim whose start made no terminal, and lists the row again', async () => {
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    const { history, notifyChanged } = fixture;
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+    notifyChanged.mockClear();
+
+    history.settleResume(PROJECT_ID, 'conversation-a', null);
+    expect(notifyChanged).toHaveBeenCalledWith(PROJECT_ID);
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a' }]);
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+  });
+
+  it('frees a claim when its terminal ends before the agent reports an id', () => {
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    const { sessions, history } = fixture;
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+    sessions.add('pty-new', { hasUserInput: true });
+    history.settleResume(PROJECT_ID, 'conversation-a', 'pty-new');
+    sessions.remove('pty-new');
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+  });
+
+  it('refuses a claim on a conversation a live session already reports', () => {
+    const { sessions, history } = setup();
+    sessions.add('pty-1', { agentSessionId: 'conversation-a' });
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(false);
+  });
 });

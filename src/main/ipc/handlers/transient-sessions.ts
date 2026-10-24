@@ -55,14 +55,16 @@ const UNATTENDED_GIT_BUDGET_MS = 6_000;
  * only ever reaches the renderer's toast. `spawn-failed` (the shell did not
  * start) reaches a phone only as the generic start failure. `conversation-gone`
  * refuses a resume of a conversation with no record, or whose agent cannot
- * resume it.
+ * resume it; `conversation-open` one that a live terminal already holds, or
+ * that another resume is starting.
  */
 export type CommandTerminalStartErrorCode =
   | 'unknown-project'
   | 'command-terminal-limit'
   | 'slot-taken'
   | 'spawn-failed'
-  | 'conversation-gone';
+  | 'conversation-gone'
+  | 'conversation-open';
 
 export class CommandTerminalStartError extends Error {
   readonly code: CommandTerminalStartErrorCode;
@@ -221,6 +223,10 @@ export async function startCommandTerminal(
   if (!project) throw new CommandTerminalStartError('unknown-project', 'Cannot spawn transient session: project not found');
 
   const reservation = reserveCommandTerminalSlot(context, input.projectId, input.slot);
+  // The conversation this start claimed for a resume, and the terminal that
+  // took it; settled in the `finally`, whichever way the start ends.
+  let claimedConversation: string | null = null;
+  let resumedSessionId: string | null = null;
   try {
     const projectRoot = resolveProjectRoot(project.path);
     const config = context.configManager.getEffectiveConfig(projectRoot);
@@ -230,6 +236,12 @@ export async function startCommandTerminal(
     const resume = input.resumeAgentSessionId
       ? resolveResumedConversation(context, input.projectId, input.resumeAgentSessionId)
       : null;
+    if (resume) {
+      if (!context.commandTerminalHistory?.claimResume(input.projectId, resume.agentSessionId)) {
+        throw new CommandTerminalStartError('conversation-open', 'That conversation is already open in another terminal.');
+      }
+      claimedConversation = resume.agentSessionId;
+    }
     const agentName = resume?.agentName ?? (project.default_agent || DEFAULT_AGENT);
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
@@ -359,6 +371,7 @@ export async function startCommandTerminal(
       );
     }
 
+    resumedSessionId = session.id;
     // A resumed terminal keeps the name it had. Seeded before any prompt, so
     // the namer (first write wins) leaves it alone.
     if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
@@ -372,6 +385,7 @@ export async function startCommandTerminal(
     // The spawned row now holds the slot itself (it is in the registry), and a
     // failed start must free it.
     reservation.release();
+    if (claimedConversation) context.commandTerminalHistory?.settleResume(input.projectId, claimedConversation, resumedSessionId);
   }
 }
 

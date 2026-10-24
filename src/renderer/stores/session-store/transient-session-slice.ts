@@ -179,7 +179,22 @@ export interface TransientSessionSlice {
     slot: string,
     branch?: string,
     grid?: { cols: number; rows: number },
+    resumeAgentSessionId?: string,
   ) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
+  /**
+   * Earlier conversations a slot is to resume, keyed by `transientKey()`, each
+   * with a nonce so asking twice for the same one still reaches the window. Set
+   * by the panel's Earlier list (`requestCommandTerminalResume`) and taken by the
+   * slot's window: a window still mounting spawns into it, and a live but unused
+   * one ends its fresh terminal and respawns into it in place.
+   */
+  pendingCommandTerminalResumes: Record<string, { agentSessionId: string; nonce: number }>;
+  requestCommandTerminalResume: (projectId: string, slot: string, agentSessionId: string) => void;
+  /** Take (and clear) the slot's pending resume, or null when there is none. */
+  takeCommandTerminalResume: (projectId: string, slot: string) => string | null;
+  /** Drop the project's pending resumes for slots with no window, so a request
+   *  a closed window never took cannot resume in the next terminal there. */
+  dropCommandTerminalResumesExcept: (projectId: string, windowSlots: ReadonlySet<string>) => void;
   /** Pair an ALREADY-RUNNING transient PTY to `(projectId, slot)` without spawning.
    *
    *  The window mount effect's last resort before it spawns: main's session row
@@ -252,7 +267,7 @@ export function createTransientSessionSlice(preserved: {
 
     transientSessions: preserved?.transientSessions ?? {},
 
-    spawnTransientSession: async (slot, branch?, grid?) => {
+    spawnTransientSession: async (slot, branch?, grid?, resumeAgentSessionId?) => {
       const currentProject = useProjectStore.getState().currentProject;
       if (!currentProject) throw new Error('No project is currently open');
       const result = await window.electronAPI.sessions.spawnTransient({
@@ -264,6 +279,7 @@ export function createTransientSessionSlice(preserved: {
         branch,
         cols: grid?.cols,
         rows: grid?.rows,
+        ...(resumeAgentSessionId ? { resumeAgentSessionId } : {}),
       });
       // Insert the session synchronously so anything that filters
       // state.sessions for `projectId === current && status === 'running'`
@@ -284,6 +300,45 @@ export function createTransientSessionSlice(preserved: {
         },
       }));
       return result;
+    },
+
+    pendingCommandTerminalResumes: {},
+
+    requestCommandTerminalResume: (projectId, slot, agentSessionId) => {
+      set((state) => ({
+        pendingCommandTerminalResumes: {
+          ...state.pendingCommandTerminalResumes,
+          [transientKey(projectId, slot)]: {
+            agentSessionId,
+            nonce: (state.pendingCommandTerminalResumes[transientKey(projectId, slot)]?.nonce ?? 0) + 1,
+          },
+        },
+      }));
+    },
+
+    takeCommandTerminalResume: (projectId, slot) => {
+      const key = transientKey(projectId, slot);
+      const pending = get().pendingCommandTerminalResumes[key];
+      if (!pending) return null;
+      set((state) => {
+        const pendingCommandTerminalResumes = { ...state.pendingCommandTerminalResumes };
+        delete pendingCommandTerminalResumes[key];
+        return { pendingCommandTerminalResumes };
+      });
+      return pending.agentSessionId;
+    },
+
+    dropCommandTerminalResumesExcept: (projectId, windowSlots) => {
+      const pending = get().pendingCommandTerminalResumes;
+      const projectPrefix = transientKey(projectId, '');
+      const orphanedKeys = Object.keys(pending).filter((key) =>
+        key.startsWith(projectPrefix) && !windowSlots.has(key.slice(projectPrefix.length)));
+      if (orphanedKeys.length === 0) return;
+      set((state) => {
+        const pendingCommandTerminalResumes = { ...state.pendingCommandTerminalResumes };
+        for (const key of orphanedKeys) delete pendingCommandTerminalResumes[key];
+        return { pendingCommandTerminalResumes };
+      });
     },
 
     adoptTransientSession: (projectId, slot, session) => {

@@ -782,12 +782,12 @@ test('Command Terminal: in a short window the command palette caps itself to the
     }, commandNames);
 
     const commandWindow = await openTransientCommandTerminal(page, sessionId);
-    // Maximized, so the window's header stays at the top of the page when the page
-    // shrinks. A floating window moves when the page gets shorter (its kebab shifted
-    // by about 90px), which changes the room under the kebab after it was sized.
-    const maximizeButton = commandWindow.getByTestId('command-bar-maximize');
-    await maximizeButton.click();
-    await expect(maximizeButton).toHaveAccessibleName(/^Restore/);
+    // The panel maximized, so the terminal's header stays at the top of the page when
+    // the page shrinks. A panel at its own place moves when the page gets shorter (its
+    // kebab shifted by about 90px), which changes the room under the kebab after it
+    // was sized.
+    await page.getByTestId('command-terminal-panel-maximize').click();
+    await expect(page.getByTestId('command-terminal-panel')).toHaveAttribute('data-maximized', 'true');
     const kebabButton = commandWindow.locator('button[aria-label="Actions"]');
     // The palette anchors to the wrapper around the kebab button, not the button.
     const kebabAnchor = commandWindow.locator('div:has(> div > button[aria-label="Actions"])');
