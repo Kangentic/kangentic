@@ -106,6 +106,8 @@ Each file also remembers where you had scrolled it. Open a file for the first ti
 
 The whole panel can also detach into its own OS window - click the pop-out icon in its header - not just a single file's diff. Unlike the properties above, this is not preserved through a close: while the window is open the header pill still reads **Hide changes**, but closing the window leaves the panel closed instead of restoring it inline; click **Show changes** again to reopen it.
 
+A task's detached windows close on their own when the task's work ends. Moving it to Done, resetting it to To Do, sending it back to the backlog, unarchiving it into To Do, deleting it, or deleting its project closes its Changes window, its file diff windows and its Browser window. Pausing a task, or moving it to a column that does not start an agent, leaves them open.
+
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits. When the commit git recorded as the branch's starting point is newer, the panel diffs from that instead. That keeps a branch cut before the base branch's history was rewritten from showing the rewritten history as its own changes. The same fork point measures the lines and files a task changed.
 
 When the dialog is open, it claims the terminal session and the bottom panel drops that task's tab. Any other running session keeps its tab and its live terminal; the panel only collapses once nothing is left in it. Closing the dialog returns the tab, still selected.

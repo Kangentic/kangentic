@@ -22,6 +22,7 @@ import {
   scheduleDoneWorktreeRemovalRetry,
   spawnAgent,
 } from '../helpers';
+import { closeTaskWindows } from '../helpers/task-windows';
 import { showDesktopNotification } from './system';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
@@ -882,6 +883,11 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
           }
         }
+        // The task's pop-out windows and offscreen lane go with it. Here, after
+        // the suspend, and not beside the archive above: a Browser pop-out
+        // closing destroys its guest, and while the session still runs the lane
+        // hand-off would stand a lane up for an agent about to be suspended.
+        closeTaskWindows(resolvedProjectId, task.id);
         // Kill everything the task's agents left running, across every session
         // the task ever ran (a Code Review entry or a Pause suspended earlier
         // ones), before anything tries to delete the worktree. A backgrounded

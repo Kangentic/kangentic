@@ -420,6 +420,117 @@ describe('PopOutWindowManager.windowFor()', () => {
 });
 
 /**
+ * `closeForTask()` - closes a task's windows when its work ends (Done, a To Do
+ * reset, a delete). Must close every task-scoped kind for exactly that task in
+ * exactly that project, through `close()`, so each close looks like a user's:
+ * the open-set push carries the survivors and a pending bounds save is dropped.
+ */
+describe('PopOutWindowManager.closeForTask()', () => {
+  let manager: PopOutWindowManager;
+  let onOpenSetChanged: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockResolvePopOutBounds.mockReturnValue(null);
+    mockIsErrorReportingActive.mockReturnValue(false);
+    manager = new PopOutWindowManager();
+    onOpenSetChanged = vi.fn();
+    manager.configure({
+      devServerUrl: null,
+      viteName: 'main_window',
+      preloadPath: '/mock/preload.js',
+      onOpenSetChanged,
+      getConfigManager: vi.fn(),
+    } as unknown as Parameters<typeof manager.configure>[0]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const taskA = { projectId: 'project-1', taskId: 'task-1' };
+
+  function openMixedWindows() {
+    const taskAWindows = [
+      manager.open('browser', taskA),
+      manager.open('changes', taskA),
+      manager.open('changes-file', makeChangesFileParams({ filePath: 'src/first.tsx' })),
+      manager.open('changes-file', makeChangesFileParams({ filePath: 'src/second.tsx' })),
+    ];
+    const survivors = [
+      manager.open('browser', { projectId: 'project-1', taskId: 'task-2' }),
+      manager.open('stats', {}),
+      // Same task id under another project: a different task, never closed.
+      manager.open('browser', { projectId: 'project-2', taskId: 'task-1' }),
+    ];
+    return { taskAWindows, survivors };
+  }
+
+  function closeSpyOf(win: unknown): ReturnType<typeof vi.spyOn> {
+    return vi.spyOn(win as { close: () => void }, 'close');
+  }
+
+  it('closes every task-scoped window of the task through close(), and nothing else', () => {
+    const { taskAWindows, survivors } = openMixedWindows();
+    const taskASpies = taskAWindows.map(closeSpyOf);
+    const survivorSpies = survivors.map(closeSpyOf);
+    const survivorKeys = [
+      'browser:project-1:task-2',
+      'stats',
+      'browser:project-2:task-1',
+    ];
+
+    expect(manager.closeForTask(taskA)).toBe(4);
+
+    for (const spy of taskASpies) expect(spy).toHaveBeenCalledTimes(1);
+    for (const spy of survivorSpies) expect(spy).not.toHaveBeenCalled();
+    expect(manager.listOpenKeys().sort()).toEqual([...survivorKeys].sort());
+    // The renderer's popOut:changed comes from this callback: its last call is
+    // the set the main window sees after the close.
+    const lastOpenSet = onOpenSetChanged.mock.calls.at(-1)?.[0] as string[];
+    expect([...lastOpenSet].sort()).toEqual([...survivorKeys].sort());
+  });
+
+  it('skips a window that is already destroyed, and counts only the windows it closed', () => {
+    const { taskAWindows, survivors } = openMixedWindows();
+    const taskASpies = taskAWindows.map(closeSpyOf);
+    const survivorSpies = survivors.map(closeSpyOf);
+    // Destroyed but still tracked: Electron has torn the window down and the
+    // manager's 'closed' handler has not run yet. The mock's own destroy() would
+    // emit 'closed' and untrack the window, which never reaches the skip.
+    const destroyedIndex = 1;
+    vi.spyOn(taskAWindows[destroyedIndex] as unknown as { isDestroyed: () => boolean }, 'isDestroyed').mockReturnValue(true);
+
+    expect(manager.closeForTask(taskA)).toBe(taskAWindows.length - 1);
+
+    taskASpies.forEach((spy, index) => {
+      expect(spy).toHaveBeenCalledTimes(index === destroyedIndex ? 0 : 1);
+    });
+    for (const spy of survivorSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('drops a pending bounds save, as a user close does', () => {
+    const browserWindow = asMockWindow(manager.open('browser', taskA));
+    browserWindow.emit('resize');
+
+    manager.closeForTask(taskA);
+    vi.advanceTimersByTime(600); // past BOUNDS_SAVE_DEBOUNCE_MS (500ms)
+
+    expect(mockSavePopOutBounds).not.toHaveBeenCalled();
+  });
+
+  it('returns 0 and closes nothing for a task with no windows', () => {
+    const { taskAWindows, survivors } = openMixedWindows();
+    const survivorSpies = survivors.map(closeSpyOf);
+
+    expect(manager.closeForTask({ projectId: 'project-1', taskId: 'task-9' })).toBe(0);
+    for (const spy of survivorSpies) expect(spy).not.toHaveBeenCalled();
+    expect(manager.listOpenKeys()).toHaveLength(taskAWindows.length + survivors.length);
+  });
+});
+
+/**
  * `suppressBoundsSave()` - keeps an AGENT-driven resize (viewport emulation
  * on a detached Browser pane) out of the user's saved pop-out bounds, which
  * are keyed by KIND, not by instance: an agent size would overwrite the size

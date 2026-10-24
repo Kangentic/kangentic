@@ -165,8 +165,13 @@ The rest of the offscreen surface's behaviour is unchanged. It shares the task's
 inherits whatever the user is already signed into. One whose first URL does not load within the
 load deadline returns `lane-load-failed` and is destroyed rather than left half-open, so a dev
 server that is still starting reads as a retryable failure instead of a hang. It is destroyed when
-the session that opened it ends, when it goes idle, when the app's main window closes, and on app
-quit, so forgetting about one leaks nothing. An `open_pane` that races one of those teardowns
+the session that opened it ends, when its task's work ends (a move to Done, a reset to To Do, a
+backlog demote, an unarchive into To Do, a delete, a move to another project, or a project delete),
+when it goes idle, when the app's main window closes, and on app quit, so forgetting about
+one leaks nothing. The task's-work-ends case is there because a Done move suspends the session
+rather than ending it, and only an ending session destroys its lanes. A hand-off lane whose agent
+ends while the lane is still opening is destroyed as soon as it opens, because neither of those
+cleanups can see a lane that has not opened yet. An `open_pane` that races one of those teardowns
 returns `lane-swept` rather than a handle: retry once, since a sweep from a closed window is over by
 then but a quitting app keeps refusing.
 

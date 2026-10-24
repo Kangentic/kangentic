@@ -306,7 +306,8 @@ src/main/
   browser/guest-drive-queue.ts              per-guest FIFO so concurrent agents cannot interleave
   browser/browser-lane-manager.ts           the OFFSCREEN form of a task's one surface (decision 39)
   browser/browser-lane-handoff.ts           keeps a driven pane alive offscreen when its window
-                                            closes, and reclaims it when the pane returns
+                                            closes, reclaims it when the pane returns, and destroys one
+                                            whose agent ended while it was still opening
   browser/viewport-override.ts              the three viewport mechanisms + measure-and-report (decision 38)
   browser/viewport-override-store.ts        which surface is under which override (importable anywhere)
   browser/browser-pane-detach.ts            pop the caller's pane into its own window, and dock it back

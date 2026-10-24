@@ -24,11 +24,13 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
 }));
 
 const openLane = vi.fn(async () => ({ ok: true as const, laneId: 'lane_handoff1', webContents: {} }));
+const destroyLane = vi.fn((_laneId: string) => true);
 const destroyLanesForTask = vi.fn(() => 0);
 let handoffLaneExists = false;
 
 vi.mock('../../src/main/browser/browser-lane-manager', () => ({
   openLane: (...args: unknown[]) => openLane(...(args as [])),
+  destroyLane: (laneId: string) => destroyLane(laneId),
   destroyLanesForTask: (...args: unknown[]) => destroyLanesForTask(...(args as [])),
   hasLaneForTask: () => handoffLaneExists,
 }));
@@ -63,6 +65,7 @@ let liveTasks = new Set<string>(['task-1']);
 
 beforeEach(() => {
   openLane.mockClear();
+  destroyLane.mockClear();
   destroyLanesForTask.mockClear();
   handoffLaneExists = false;
   shuttingDown = false;
@@ -132,6 +135,31 @@ describe('pane hand-off', () => {
     const laneArgs = openLane.mock.calls[0][0] as Record<string, unknown>;
     expect(laneArgs).toMatchObject({ taskId: 'task-1', projectId: 'project-2' });
     expect(laneArgs).not.toHaveProperty('cwd');
+  });
+
+  it('keeps the lane when its agent is still live once the lane has opened', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    closePane(pane());
+    await vi.waitFor(() => expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('agent keeps its browser')));
+    expect(destroyLane).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+  });
+
+  it('destroys a lane that finished opening after its agent ended', async () => {
+    // A Done move suspends the session while the lane is still seeding its
+    // jar or loading its first page. The task's terminal close found no lane
+    // in the map then, and a suspended session never destroys its lanes, so
+    // the hand-off is the only place left to notice.
+    openLane.mockImplementationOnce(async () => {
+      liveTasks.delete('task-1');
+      return { ok: true as const, laneId: 'lane_late1', webContents: {} };
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    closePane(pane());
+
+    await vi.waitFor(() => expect(destroyLane).toHaveBeenCalledWith('lane_late1'));
+    logSpy.mockRestore();
   });
 
   it('does nothing when the task has no live session', async () => {

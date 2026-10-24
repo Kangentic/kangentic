@@ -23,6 +23,13 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   reapTaskLeftovers: vi.fn(() => Promise.resolve()),
 }));
 
+// The MCP delete closes the task's pop-outs and offscreen lane once its
+// sessions are gone. The pop-out manager and the lane manager import Electron,
+// which this file does not mock, so the helper is stubbed at its module.
+vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
+  closeTaskWindows: vi.fn(),
+}));
+
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(() => Promise.resolve()),
 }));
@@ -108,6 +115,7 @@ import {
   buildColumnStrategyChanges,
 } from '../../src/main/ipc/handlers/strategy-propagation';
 import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
+import { closeTaskWindows } from '../../src/main/ipc/helpers/task-windows';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { Project, Swimlane } from '../../src/shared/types';
@@ -982,9 +990,14 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     vi.clearAllMocks();
   });
 
-  it('waits for the killed session to exit before reaping leftovers or entering the worktree lock', async () => {
+  it('waits for the killed session to exit before closing its windows, reaping leftovers or entering the worktree lock', async () => {
     const timeline: string[] = [];
     const exitDeferred = createDeferred();
+    // Closed only once no session is left: a Browser pop-out closing while the
+    // agent still ran would be handed off to an offscreen lane.
+    vi.mocked(closeTaskWindows).mockImplementationOnce(() => {
+      timeline.push('closeTaskWindows');
+    });
 
     const withLockMock = vi.fn(async (fn: () => Promise<void>) => {
       timeline.push('withLock:enter');
@@ -1050,6 +1063,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     await Promise.resolve();
     await Promise.resolve();
     expect(timeline).toEqual(['kill:session-1', 'awaitExit:session-1', 'remove:session-1']);
+    expect(closeTaskWindows).not.toHaveBeenCalled();
     expect(reapTaskLeftovers).not.toHaveBeenCalled();
     expect(withLockMock).not.toHaveBeenCalled();
 
@@ -1058,10 +1072,12 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
       expect(timeline).toContain('withLock:exit');
     });
 
+    expect(closeTaskWindows).toHaveBeenCalledWith(DEFAULT_ID, 'task-1');
     expect(timeline).toEqual([
       'kill:session-1',
       'awaitExit:session-1',
       'remove:session-1',
+      'closeTaskWindows',
       'reapTaskLeftovers',
       'withLock:enter',
       'removeWorktree',
@@ -1102,6 +1118,9 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
 
     vi.mocked(reapTaskLeftovers).mockImplementationOnce(async () => {
       timeline.push('reapTaskLeftovers');
+    });
+    vi.mocked(closeTaskWindows).mockImplementationOnce(() => {
+      timeline.push('closeTaskWindows');
     });
 
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
@@ -1144,6 +1163,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
     // several awaited steps, which a short drain would not carry it through.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(timeline).toEqual(['removeByTaskId:task-1']);
+    expect(closeTaskWindows).not.toHaveBeenCalled();
     expect(reapTaskLeftovers).not.toHaveBeenCalled();
     expect(withLockMock).not.toHaveBeenCalled();
     expect(removeWorktreeMock).not.toHaveBeenCalled();
@@ -1155,6 +1175,7 @@ describe('buildCommandContextForProject - onTaskDeleted worktree teardown orderi
 
     expect(timeline).toEqual([
       'removeByTaskId:task-1',
+      'closeTaskWindows',
       'reapTaskLeftovers',
       'withLock:enter',
       'removeWorktree',

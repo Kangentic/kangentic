@@ -20,6 +20,7 @@ import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
+import { closeProjectTaskWindows, closeTaskWindows } from '../helpers/task-windows';
 import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
 import { searchProjectEntries } from '../helpers/project-entry-search';
@@ -97,6 +98,24 @@ export function syncProjectMcpConfig(context: IpcContext, projectId: string, pro
 }
 
 /**
+ * End a project's task sessions from the session registry, then close the
+ * task windows its open pop-outs name. For a delete with no task list to go
+ * by: its folder is gone, or reading its tasks failed. The sessions go first:
+ * a Browser pop-out that closes while its agent runs is handed off to an
+ * offscreen lane. Nothing is reaped here, since no task's directories are
+ * known.
+ */
+async function closeUnlistedTaskWindows(context: IpcContext, projectId: string): Promise<void> {
+  const taskIds = new Set<string>();
+  for (const session of context.sessionManager.listSessions()) {
+    // A transient session (a Command Terminal, a workflow's own agent) is no task's.
+    if (session.projectId === projectId && !session.transient && session.taskId) taskIds.add(session.taskId);
+  }
+  await Promise.all([...taskIds].map((taskId) => context.sessionManager.removeByTaskId(taskId)));
+  closeProjectTaskWindows(projectId);
+}
+
+/**
  * Detach Kangentic from a project: kill PTY sessions, cleanly remove git
  * worktrees (branches with user code are preserved), strip our injected
  * activity hooks from `.claude/settings.local.json`, remove `.kangentic/`,
@@ -136,6 +155,9 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
     // An agent started before the folder went still runs.
     await endWorkflowAgentsOfProject(context, projectId);
+    // Its tasks' agents too, and then their pop-outs, which would otherwise
+    // outlive the project.
+    await closeUnlistedTaskWindows(context, projectId);
     // The retrieval worker and the pty host each hold their own connection,
     // and Windows will not unlink a file another process has open.
     await retrievalClient.closeProject(projectId);
@@ -159,11 +181,13 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // 1. Kill all active PTY sessions belonging to this project's tasks
   let allTasks: Task[] = [];
   let archivedTasks: Task[] = [];
+  let tasksRead = false;
   try {
     const db = getProjectDb(projectId);
     const taskRepo = new TaskRepository(db);
     allTasks = taskRepo.list();
     archivedTasks = taskRepo.listArchived();
+    tasksRead = true;
   } catch (err) {
     console.error('[PROJECT_DELETE] Failed to read tasks:', err);
   }
@@ -191,6 +215,14 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // `session_id` names yet: cancelled and waited for, as every terminal
   // transition does before its reap, so no PTY starts in a worktree about to go.
   await Promise.all(allTasks.map((task) => context.sessionManager.removeByTaskId(task.id)));
+  // Every task's pop-out windows and offscreen lane, now that no session is
+  // left to hand a lane to. A closed Changes window makes the renderer save its
+  // task's view on a debounce that lands after step 5 removed the database;
+  // TASK_SET_DETAIL_VIEW_STATE opens only an existing one, so it cannot
+  // recreate it.
+  for (const task of [...allTasks, ...archivedTasks]) closeTaskWindows(projectId, task.id);
+  // A failed read listed no task, so the registry and the open pop-outs name them.
+  if (!tasksRead) await closeUnlistedTaskWindows(context, projectId);
   // Its workflows' own agents run in the project root, which goes below.
   await endWorkflowAgentsOfProject(context, projectId);
 

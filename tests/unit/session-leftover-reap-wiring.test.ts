@@ -23,6 +23,15 @@
  *      The user chose to keep a parked task's dev server running.
  *   4. `PROJECT_DELETE` reaps after its sessions' exits and before removing
  *      worktrees (static line-order scan; the handler's mock graph is large).
+ *
+ * The same terminal transitions close the task's windows (`closeTaskWindows`,
+ * src/main/ipc/helpers/task-windows.ts: its pop-outs and its offscreen lane),
+ * and the same negatives leave them open. The close sits after the sessions
+ * have ended, so a Browser pop-out's closing guest is never handed off to a
+ * lane for a live agent, and before the reap. Its own behavior is pinned in
+ * task-windows.test.ts; this file pins where it is called. `cleanupProject`'s
+ * window closing, on its missing-folder, tasks-read and read-failed paths, is
+ * driven at runtime in project-delete-task-windows.test.ts.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -158,6 +167,15 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   scheduleDoneWorktreeRemovalRetry: (...args: unknown[]) => mockScheduleDoneWorktreeRemovalRetry(...args),
 }));
 
+// Both task-move.ts and task-cleanup.ts import the window close from its own
+// module, so one mock observes it in Section 1 and Section 2 alike.
+const mockCloseTaskWindows = vi.fn((..._closeArguments: unknown[]): void => {
+  callOrder.push('closeWindows');
+});
+vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
+  closeTaskWindows: (...args: unknown[]) => mockCloseTaskWindows(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Imports under test (after all mocks)
 // ---------------------------------------------------------------------------
@@ -287,8 +305,46 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 
     await cleanupTaskSession(context, task, tasks, null, null);
 
-    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'reap']);
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap']);
     expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
+  });
+
+  it("closes the task's windows against its own project, after its sessions are gone and before the reap", async () => {
+    const sessionManager = makeSessionManager();
+    const context = {
+      sessionManager,
+      // Ambient project differs: the close must use the one the caller passed.
+      currentProjectId: 'proj-ambient',
+      currentProjectPath: null,
+      ...reapSettings(),
+    } as unknown as IpcContext;
+    const task = { id: 'task-1w', session_id: 'pty-live-1w', worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskSession(context, task, tasks, 'proj-explicit', null);
+
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap']);
+    expect(mockCloseTaskWindows).toHaveBeenCalledTimes(1);
+    expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-explicit', 'task-1w');
+  });
+
+  it("closes the task's windows against the ambient project when the caller passes none", async () => {
+    const sessionManager = makeSessionManager();
+    const context = {
+      sessionManager,
+      // No explicit project below: the close falls back to this one.
+      currentProjectId: 'proj-ambient',
+      currentProjectPath: null,
+      ...reapSettings(),
+    } as unknown as IpcContext;
+    const task = { id: 'task-1a', session_id: 'pty-live-1a', worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskSession(context, task, tasks, null, null);
+
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap']);
+    expect(mockCloseTaskWindows).toHaveBeenCalledTimes(1);
+    expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-ambient', 'task-1a');
   });
 
   it('still reaps when the task has no live session: an earlier session may have left a dev server', async () => {
@@ -306,7 +362,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskSession(context, task, tasks, null, null);
 
     expect(sessionManager.kill).not.toHaveBeenCalled();
-    expect(callOrder).toEqual(['removeByTaskId', 'reap']);
+    expect(callOrder).toEqual(['removeByTaskId', 'closeWindows', 'reap']);
     // The project and the worktree go with the id: only processes working
     // inside them are reaped.
     expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true, onLateEntries: expect.any(Function) });
@@ -361,7 +417,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
-    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'reap', 'prepare', 'withLock', 'removeWorktree']);
+    expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap', 'prepare', 'withLock', 'removeWorktree']);
   });
 });
 
@@ -430,8 +486,8 @@ function makeSwimlaneRepo(lanes: Swimlane[]) {
   return { getById: vi.fn((id: string) => laneMap.get(id) ?? null) };
 }
 
-describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', () => {
-  it('reaps the task after suspending its session and before deleting the worktree', async () => {
+describe('handleTaskMove Done branch: suspend -> close windows -> reap -> deleteTaskWorktree', () => {
+  it('closes the windows and reaps the task after suspending its session and before deleting the worktree', async () => {
     const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
     const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
     const task = makeTask({
@@ -450,11 +506,14 @@ describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', ()
       'renderer',
     );
 
-    expect(callOrder).toEqual(['suspend', 'reap', 'deleteWorktree']);
+    // The close follows the suspend: a Browser pop-out closing while the
+    // session still ran would be handed off to a lane.
+    expect(callOrder).toEqual(['suspend', 'closeWindows', 'reap', 'deleteWorktree']);
+    expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-test', 'task-done-1');
     expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-1', worktree_path: '/mock/project/.kangentic/worktrees/task-done-1' })]);
   });
 
-  it('reaps on Done even when the session ended before the move (a Code Review entry suspended it)', async () => {
+  it('closes the windows and reaps on Done even when the session ended before the move (a Code Review entry suspended it)', async () => {
     const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
     const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
     const task = makeTask({
@@ -473,8 +532,36 @@ describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', ()
       'renderer',
     );
 
-    expect(callOrder).toEqual(['reap', 'deleteWorktree']);
+    expect(callOrder).toEqual(['closeWindows', 'reap', 'deleteWorktree']);
+    expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-test', 'task-done-2');
     expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-2', worktree_path: '/mock/project/.kangentic/worktrees/task-done-2' })]);
+  });
+
+  it('closes the windows against the explicit project the caller passed, not the ambient one', async () => {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({
+      id: 'task-done-explicit',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-done-explicit',
+    });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, doneLane]);
+    // The ambient project is 'proj-test'. A renderer move stamps the project the
+    // drop happened in, which the user may have left by the time the move runs.
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'renderer',
+      'proj-explicit',
+    );
+
+    expect(mockCloseTaskWindows).toHaveBeenCalledTimes(1);
+    expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-explicit', 'task-done-explicit');
+    expect(mockCloseTaskWindows).not.toHaveBeenCalledWith('proj-test', 'task-done-explicit');
   });
 
   it('schedules the delayed removal retry when the worktree removal failed, right after it and for that task', async () => {
@@ -501,7 +588,7 @@ describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', ()
       'renderer',
     );
 
-    expect(callOrder).toEqual(['reap', 'deleteWorktree', 'scheduleRetry']);
+    expect(callOrder).toEqual(['closeWindows', 'reap', 'deleteWorktree', 'scheduleRetry']);
     expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledTimes(1);
     expect(mockScheduleDoneWorktreeRemovalRetry).toHaveBeenCalledWith(context, '/mock/project', 'task-done-3');
   });
@@ -532,7 +619,7 @@ describe('handleTaskMove Done branch: suspend -> reap -> deleteTaskWorktree', ()
 });
 
 describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
-  it('suspends the session but does NOT reap - the task is parked, and its dev server keeps running', async () => {
+  it('suspends the session but does NOT reap or close its windows - the task is parked, and its dev server keeps running', async () => {
     const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: null });
     const parkedLane = makeSwimlane(PARKED_LANE_ID, { role: null, auto_spawn: false });
     const task = makeTask({
@@ -557,6 +644,27 @@ describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
     // branch would turn this red.
     expect(mockReapTaskLeftovers).not.toHaveBeenCalled();
     expect(mockDeleteTaskWorktree).not.toHaveBeenCalled();
+    // A parked task keeps its pop-outs: the user may still be testing in them.
+    expect(mockCloseTaskWindows).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleTaskMove: a reorder within Done closes nothing', () => {
+  it('leaves the windows alone when the task stays in its column', async () => {
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({ id: 'task-done-reorder', swimlane_id: DONE_LANE_ID, archived_at: '2025-01-02T00:00:00.000Z' });
+    const taskRepo = makeTaskRepo(task);
+    const swimlaneRepo = makeSwimlaneRepo([doneLane]);
+    const context = makeTaskMoveContext(taskRepo, swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: DONE_LANE_ID, targetPosition: 1 },
+      'renderer',
+    );
+
+    expect(taskRepo.move).toHaveBeenCalled();
+    expect(mockCloseTaskWindows).not.toHaveBeenCalled();
   });
 });
 
@@ -646,6 +754,20 @@ describe('PROJECT_DELETE reaps every task, archived ones included', () => {
     // processes working inside it are killed.
     const reapRegion = body.slice(exitsAwaited, worktreeRemoval);
     expect(reapRegion).toContain('await reapTaskLeftovers(context, projectPath, [...allTasks, ...archivedTasks])');
+  });
+
+  it("closes every task's windows once no session is left, and before the reap", () => {
+    const projectsSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/projects.ts'), 'utf8');
+    const bodyStart = projectsSource.indexOf('export async function cleanupProject(');
+    expect(bodyStart).toBeGreaterThan(-1);
+    const body = projectsSource.slice(bodyStart);
+    const spawnsCancelled = body.indexOf('await Promise.all(allTasks.map((task) => context.sessionManager.removeByTaskId(task.id)))');
+    const windowsClosed = body.indexOf('closeTaskWindows(projectId, task.id)');
+    const reap = body.indexOf('await reapTaskLeftovers(');
+    expect(spawnsCancelled).toBeGreaterThan(-1);
+    // After the sessions: a Browser pop-out closing never hands off to a lane.
+    expect(windowsClosed).toBeGreaterThan(spawnsCancelled);
+    expect(reap).toBeGreaterThan(windowsClosed);
   });
 
   // A new worktree's setup script runs after the per-project git queue, and a

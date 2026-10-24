@@ -9,6 +9,10 @@ sources:
   - resource: src/main/ipc/handlers/git-diff.ts
   - resource: src/shared/pop-out.ts
     title: PopOutKind and the pop-out window params
+  - resource: src/main/pop-out/pop-out-window-manager.ts
+    title: Pop-out window lifecycle
+  - resource: src/main/ipc/helpers/task-windows.ts
+    title: Closing a task's windows when its work ends
 ---
 # App IPC channels
 
@@ -121,7 +125,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `window:isFocused` | invoke | Check if the sending window has focus (for the renderer's spawn-stall/plan-complete notification gating; the idle/crash desktop notifier resolves focus synchronously in main instead - see `src/main/notifications/desktop-notifier.ts`) |
 
 ## Pop-out Windows (6 channels)
-Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor, the Knowledge Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float).
+Detach a registered UI surface (usage stats, git changes, a single changed file's diff, the task Browser pane, the Agent Monitor, the Knowledge Graph) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`. Most kinds are singletons per instance key; `changes-file` is additive (one window per file, opened by double-clicking a Changes file row) with a main-side `maxInstances` cap and a cascade offset for each additional window of the kind. It opens maximized until the user resizes, moves, or maximizes one (that preference then persists per kind, like every pop-out; un-maximizing restores the default float). A task's windows (`changes`, `changes-file`, `browser`) also close when the task's work ends: a move to Done, a reset to To Do, a backlog demote, an unarchive into To Do, a delete (single, bulk, MCP, or a move to another project) and a project delete. Main closes them with `PopOutWindowManager.closeForTask`, through the same `close()` a user close runs, so `popOut:changed` and its close effects are identical. It runs after the task's sessions have ended, so a closing Browser window is never handed off to an offscreen lane, and before the process reap and the worktree removal. The same call destroys the task's offscreen lane (`closeTaskWindows` in `src/main/ipc/helpers/task-windows.ts`). A parked task keeps its windows: Pause, Stop and a column that starts no agent close nothing.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open; resolves `false` when the kind's `maxInstances` cap refused the open (currently only `changes-file`) |
