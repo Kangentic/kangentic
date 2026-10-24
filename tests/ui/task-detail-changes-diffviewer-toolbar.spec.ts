@@ -504,20 +504,26 @@ test.describe('DiffViewer toolbar: rendering toggles, and the surface header exp
 
     // Unwrapped: the long line is one row, so each pane renders only a handful.
     await expect.poll(async () => (await renderedRows()).modified).toBeLessThan(10);
-    expect((await renderedRows()).original).toBeLessThan(10);
+    const unwrapped = await renderedRows();
+    expect(unwrapped.original).toBeLessThan(10);
 
     await toggleWrap('true');
 
     // Wrapped: a 2000-character line reflows into many rows at any plausible width.
-    await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(15);
-    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+    // Measured against the unwrapped count rather than a fixed number: Monaco renders
+    // only the rows that fit its viewport, so how many a pane shows is capped by the
+    // pane's height, which differs between machines. A pane that did wrap still shows
+    // several more rows than the same pane unwrapped, whatever its height.
+    const WRAP_ROW_GAIN = 8;
+    await expect.poll(async () => (await renderedRows()).modified).toBeGreaterThan(unwrapped.modified + WRAP_ROW_GAIN);
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(unwrapped.original + WRAP_ROW_GAIN);
 
     // Survives a side-by-side -> inline -> side-by-side round trip, which is the exact
     // sequence that strands override2 on the original editor.
     await page.locator('[data-testid="diff-view-inline"]').click();
     await page.locator('[data-testid="diff-view-split"]').click();
     await expect(sideBySide).toBeVisible();
-    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(15);
+    await expect.poll(async () => (await renderedRows()).original).toBeGreaterThan(unwrapped.original + WRAP_ROW_GAIN);
 
     // Turning wrap back off restores single-row rendering.
     await toggleWrap('false');
