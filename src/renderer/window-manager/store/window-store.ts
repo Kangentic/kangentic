@@ -26,6 +26,7 @@ import {
   insertWindowIntoTree,
   removeWindowFromTree,
   setSeamRatio,
+  swapWindowsInTree,
   treeContainsWindow,
   wrapTreeWithRoot,
 } from '../tiling/tree-ops';
@@ -314,6 +315,9 @@ export interface WindowStoreState {
   arrangeTiles: (windowIds: readonly string[]) => void;
   /** Expand one window over the others (and focus it), or show the tiles again (null). */
   setExpandedWindow: (id: string | null) => void;
+  /** Swap two tiled windows' places (the Command Terminal panel's drag and its
+   *  "Swap with"). The tiles keep their sizes; each window takes the other's. */
+  swapWindows: (firstId: string, secondId: string) => void;
   toggleMaximizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
   /** Snapshot the current layout into the persisted, anchor-anchored form. */
@@ -1006,6 +1010,25 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       if (id !== null && !get().windows[id]) return;
       set((current) => (current.expandedWindowId === id ? current : { expandedWindowId: id }));
       if (id !== null) get().focusWindow(id);
+    },
+
+    swapWindows: (firstId, secondId) => {
+      set((current) => {
+        const first = current.windows[firstId];
+        const second = current.windows[secondId];
+        if (!current.tileTree || !first || !second || first.leafId === null || second.leafId === null) return current;
+        const tileTree = swapWindowsInTree(current.tileTree, firstId, secondId);
+        if (tileTree === current.tileTree) return current;
+        // Each window now sits in the other's leaf, so it carries that leaf's id.
+        return {
+          tileTree,
+          windows: {
+            ...current.windows,
+            [firstId]: { ...first, leafId: second.leafId },
+            [secondId]: { ...second, leafId: first.leafId },
+          },
+        };
+      });
     },
 
     toggleMaximizeWindow: (id) => {
