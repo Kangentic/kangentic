@@ -16,7 +16,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeftRight, CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
@@ -88,23 +88,6 @@ function resolveMountAttach(slot: string): MountAttach {
   return null;
 }
 
-/** "Swap with <name>": the keyboard's way to do what dragging a header does. */
-function SwapWithItem({ slot, onSelect }: { slot: string; onSelect: () => void }) {
-  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
-  const label = useSessionStore((state) => {
-    const sessionId = projectId ? state.transientSessions[transientKey(projectId, slot)]?.sessionId : undefined;
-    return sessionId ? state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null : null;
-  });
-  return (
-    <KebabMenuItem
-      icon={<ArrowLeftRight size={14} />}
-      label={`Swap with ${commandTerminalDisplayName(label, slot)}`}
-      onClick={onSelect}
-      data-testid="command-bar-kebab-swap"
-    />
-  );
-}
-
 interface CommandTerminalWindowProps {
   managedWindow: ManagedWindow;
   /** True while the frame is maximized (driven by the window store). */
@@ -126,21 +109,26 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const setExpandedWindow = layerStore((state) => state.setExpandedWindow);
   const canExpand = layerStore((state) => Object.keys(state.windows).length > 1);
   const isExpanded = layerStore((state) => state.expandedWindowId === windowId);
+  const layoutExpanded = layerStore((state) => state.expandedWindowId !== null);
   const handleToggleExpanded = useCallback(
     () => setExpandedWindow(isExpanded ? null : windowId),
     [setExpandedWindow, isExpanded, windowId],
   );
-  // The other terminals in the order they tile, for "Swap with" and the drag.
-  // None while one is expanded: only one tile is on screen then.
+  // The other terminals in the order they tile, for the swap drag. None while
+  // one is expanded: only one tile is on screen then.
   const swapTargetIds = layerStore(useShallow((state) =>
     (state.expandedWindowId === null ? windowIdsInReadingOrder(state.tileTree).filter((id) => id !== windowId) : [])));
-  const swapTargetSlots = layerStore(useShallow((state) => swapTargetIds.map((id) => state.windows[id]?.anchor ?? '')));
   const swapWindows = layerStore((state) => state.swapWindows);
   // A press on the header's empty space starts a swap drag; its controls keep their clicks.
   const handleHeaderPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (swapTargetIds.length === 0) return;
     if ((event.target as HTMLElement).closest('button, a, input, [role="button"], [role="menu"], [role="menuitem"]')) return;
-    startCommandTerminalSwapDrag(event, { windowId, windowIds: [windowId, ...swapTargetIds], swap: swapWindows });
+    startCommandTerminalSwapDrag(event, {
+      windowId,
+      windowIds: [windowId, ...swapTargetIds],
+      swap: swapWindows,
+      terminalBackground: resolveTerminalBackground(useConfigStore.getState().config.terminal.colors),
+    });
   }, [swapTargetIds, windowId, swapWindows]);
   const { hideLayer, resumeBeside } = useCommandTerminalLayer();
 
@@ -683,18 +671,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                       ))}
                     </>
                   )}
-                  {swapTargetIds.length > 0 && (
-                    <>
-                      <KebabMenuDivider />
-                      {swapTargetIds.map((targetId, index) => (
-                        <SwapWithItem
-                          key={targetId}
-                          slot={swapTargetSlots[index]}
-                          onSelect={() => { close(); swapWindows(windowId, targetId); }}
-                        />
-                      ))}
-                    </>
-                  )}
                   <KebabMenuDivider />
                   <KebabMenuItem
                     icon={<CircleStop size={14} />}
@@ -780,6 +756,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               key={sessionId}
               sessionId={sessionId}
               isMaximized={isMaximized}
+              layoutExpanded={layoutExpanded}
               ready={terminalReady}
               launchLabel={COMMAND_TERMINAL_LAUNCH_LABEL}
               gridGetterRef={gridGetterRef}

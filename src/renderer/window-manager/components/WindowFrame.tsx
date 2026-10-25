@@ -48,8 +48,10 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   const showFocusLine = layerStore((state) =>
     !hostArranged || (state.expandedWindowId === null && Object.keys(state.windows).length > 1));
   // A host-arranged layer can expand one window over the rest: it fills the
-  // overlay, and the others stay mounted at their own rects, hidden, so none of
-  // their terminals refits until the grid comes back.
+  // overlay, and the others stay mounted behind it, hidden, at the SAME rect.
+  // Their terminals take the size while nobody can see them, so switching which
+  // one is expanded resizes nothing and shows no terminal repainting at a new
+  // size (the Command Terminal's Running rows).
   const expandedWindowId = layerStore((state) => (hostArranged ? state.expandedWindowId : null));
   const isExpanded = expandedWindowId === managedWindow.id;
   const isBehindExpanded = expandedWindowId !== null && !isExpanded;
@@ -113,7 +115,7 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   // A tiled window's rect comes from the tile tree (resolved by WindowLayer), not
   // its own geometry. Falls back to geometry if the resolved rect is missing.
   const pixelRect =
-    isExpanded
+    isExpanded || isBehindExpanded
       ? fractionalToPixels(MAXIMIZED_GEOMETRY, containerSize)
       : isTiled && tiledRect
         ? tiledRect

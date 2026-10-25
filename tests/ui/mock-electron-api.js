@@ -5289,6 +5289,9 @@
       close: function () { windowControlCalls.push('close'); },
       flashFrame: noop,
       isFocused: function () { return Promise.resolve(true); },
+      // No compositor to read in a browser: a swap drag floats its stand-in
+      // card instead. Tests can hand back a picture via window.__mockCaptureRegion.
+      captureRegion: function () { return Promise.resolve(window.__mockCaptureRegion || null); },
     },
 
     popOut: {

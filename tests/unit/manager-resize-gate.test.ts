@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   beginManagerResize,
+  deferUntilManagerResizeEnds,
   endManagerResize,
   isManagerResizeInProgress,
 } from '../../src/renderer/window-manager/terminal/manager-resize-gate';
@@ -57,5 +58,23 @@ describe('manager-resize-gate', () => {
     expect(isManagerResizeInProgress()).toBe(true);
     endManagerResize();
     expect(isManagerResizeInProgress()).toBe(false);
+  });
+
+  it('runs a deferred call once, when the LAST open gesture ends', () => {
+    // A live container resize (the Command Terminal panel's edge) asks for a
+    // terminal resize on every frame; the gate holds one and sends it at the end.
+    let runs = 0;
+    beginManagerResize();
+    beginManagerResize();
+    deferUntilManagerResizeEnds(() => { runs += 1; });
+    deferUntilManagerResizeEnds(() => { runs += 1; });
+    endManagerResize();
+    expect(runs).toBe(0);
+    endManagerResize();
+    expect(runs).toBe(1);
+    // Spent: a later gesture's end does not run it again.
+    beginManagerResize();
+    endManagerResize();
+    expect(runs).toBe(1);
   });
 });

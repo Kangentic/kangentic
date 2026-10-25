@@ -22,13 +22,24 @@
  *
  * The microtask flag coalesces multiple size changes in one commit (e.g. several
  * windows reprojecting on an overlay resize) into a single dispatch.
+ *
+ * While a manager resize gesture is open, the dispatch waits for its end: a
+ * gesture that resizes the frames' container live (the Command Terminal
+ * panel's edges) re-renders every frame on every pointer frame, and fitting
+ * each time would send the agent one SIGWINCH per frame.
  */
+
+import { deferUntilManagerResizeEnds, isManagerResizeInProgress } from './manager-resize-gate';
 
 // hmr-safe: a transient per-tick flag; a reset on HMR only drops a pending
 // dispatch, which the next size change reschedules.
 let dispatchScheduled = false;
 
 export function scheduleWindowTerminalResize(): void {
+  if (isManagerResizeInProgress()) {
+    deferUntilManagerResizeEnds(scheduleWindowTerminalResize);
+    return;
+  }
   if (dispatchScheduled) return;
   dispatchScheduled = true;
   queueMicrotask(() => {

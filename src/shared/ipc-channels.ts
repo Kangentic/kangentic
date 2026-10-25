@@ -266,6 +266,7 @@ export const IPC = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_FLASH_FRAME: 'window:flashFrame',
   WINDOW_IS_FOCUSED: 'window:isFocused',
+  WINDOW_CAPTURE_REGION: 'window:captureRegion',
 
   // Pop-out windows: detach a registered UI surface (stats, changes, browser) into its
   // own OS-level BrowserWindow. See src/shared/pop-out.ts for the surface registry.

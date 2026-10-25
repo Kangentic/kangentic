@@ -2162,6 +2162,41 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    test('the panel sits on whole pixels, so no terminal border is cut by its clip', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        // Fractions of the area that land between pixels, as a dragged panel's do.
+        await page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores: { config: { getState: () => { saveCommandTerminalPanel: (geometry: { x: number; y: number; w: number; h: number; maximized: boolean }) => void } } };
+          }).__zustandStores;
+          stores.config.getState().saveCommandTerminalPanel({ x: 0.0371, y: 0.0517, w: 0.8913, h: 0.8677, maximized: false });
+        });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+
+        await expect.poll(() => page.evaluate(() => {
+          const panel = document.querySelector<HTMLElement>('[data-testid="command-terminal-panel"]');
+          const area = document.querySelector('[data-testid="command-window-overlay"]')?.getBoundingClientRect();
+          const frames = [...document.querySelectorAll('[data-testid^="window-frame-"]')]
+            .filter((frame) => frame.querySelector('[data-command-slot]'))
+            .map((frame) => frame.getBoundingClientRect());
+          if (!panel || !area || frames.length !== 2) return 'not laid out';
+          const whole = [panel.style.left, panel.style.top, panel.style.width, panel.style.height]
+            .every((value) => Number.isInteger(parseFloat(value)));
+          if (!whole) return `panel off whole pixels: ${panel.style.cssText}`;
+          // Every frame's edge, its focus border included, inside the area the panel clips to.
+          const overhang = Math.max(...frames.map((frame) => Math.max(frame.bottom - area.bottom, frame.right - area.right)));
+          return overhang <= 0.01 ? 'fits' : `frame overhangs the area by ${overhang}px`;
+        }), { timeout: 3000 }).toBe('fits');
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('the panel moves by its header, and keeps and saves its place across a hide', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
@@ -2200,12 +2235,129 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('an edge drag resizes the panel and its terminal live, and the PTY resizes once, on release', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        // The terminal settles first: its mount fit, then a refit once its footer
+        // mounts, each reaching the PTY after a debounce. Only the drag's count.
+        let previousCount = -1;
+        await expect.poll(async () => {
+          const count = await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+          const settled = count > 0 && count === previousCount;
+          previousCount = count;
+          return settled;
+        }, { intervals: [500], timeout: 10000 }).toBe(true);
+        await page.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+
+        const panel = page.getByTestId('command-terminal-panel');
+        const areaBefore = (await layoutBoxes(page)).area;
+        const before = await panel.boundingBox();
+        const edge = await page.getByTestId('command-terminal-panel-resize-e').boundingBox();
+        expect(before && edge).toBeTruthy();
+        if (!before || !edge) return;
+        const startX = edge.x + edge.width / 2;
+        const startY = edge.y + edge.height / 2;
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        await page.mouse.move(startX - 120, startY, { steps: 6 });
+
+        // Mid-drag the panel and the terminal in it already have the new width,
+        // with no outline drawn, and no resize has reached the PTY.
+        await expect.poll(async () => (await panel.boundingBox())?.width ?? 0, { timeout: 3000 }).toBeLessThan(before.width - 100);
+        await expect.poll(async () => {
+          const { area, panes } = await layoutBoxes(page);
+          return Math.abs(panes['slot-1'].width - area.width) <= PIXEL_TOLERANCE && area.width < areaBefore.width - 100;
+        }, { timeout: 3000 }).toBe(true);
+        await expect(page.getByTestId('command-terminal-panel-resize-preview')).toHaveCount(0);
+        await page.mouse.move(startX - 200, startY, { steps: 6 });
+        expect(await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length)).toBe(0);
+
+        await page.mouse.up();
+        await expect.poll(() => page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length), { timeout: 3000 }).toBe(1);
+        expectNear((await panel.boundingBox())?.width ?? 0, before.width - 200, 'panel width after release');
+        await expect.poll(() => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel !== null), { timeout: 3000 }).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
   });
+
+  /** Each slot's session id, with its agent marked on screen and its terminal initialized. */
+  async function markTerminalsReady(page: Page, slots: readonly string[]): Promise<Record<string, string>> {
+    const sessions: Record<string, string> = {};
+    for (const slot of slots) {
+      const sessionId = await page.locator(`[data-command-slot="${slot}"]`)
+        .getByTestId('command-bar-terminal-pane').getAttribute('data-session-id');
+      if (!sessionId) throw new Error(`no session in ${slot}`);
+      sessions[slot] = sessionId;
+    }
+    await page.evaluate((ids) => {
+      const store = (window as unknown as {
+        __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+      }).__zustandStores.session.getState();
+      for (const id of ids) store.markFirstOutput(id);
+    }, Object.values(sessions));
+    await expect(page.locator('[data-testid="command-terminal-window"] [data-testid="launch-overlay"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="command-terminal-window"] .xterm-helper-textarea')).toHaveCount(slots.length, { timeout: 8000 });
+    return sessions;
+  }
+
+  /** Wait until no terminal resize has reached a PTY for a beat, then forget the ones that did. */
+  async function settleResizes(page: Page): Promise<void> {
+    let previousCount = -1;
+    await expect.poll(async () => {
+      const count = await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+      const settled = count === previousCount;
+      previousCount = count;
+      return settled;
+    }, { intervals: [400], timeout: 8000 }).toBe(true);
+    await page.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+  }
+
+  const veilOf = (page: Page, slot: string) => page.locator(`[data-command-slot="${slot}"]`).getByTestId('command-terminal-resize-veil');
+
+  /** Record every veil raise from now on: a final read cannot see one that went up and came down. */
+  const watchVeils = (page: Page) => page.evaluate(() => {
+    const holder = window as unknown as { __veilRaises: Array<{ slot: string | null; at: number }>; __veilLifts: Array<{ slot: string | null; at: number }> };
+    holder.__veilRaises = [];
+    holder.__veilLifts = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        const veil = record.target as HTMLElement;
+        const slot = veil.closest('[data-command-slot]')?.getAttribute('data-command-slot') ?? null;
+        (veil.hasAttribute('data-veiled') ? holder.__veilRaises : holder.__veilLifts).push({ slot, at: performance.now() });
+      }
+    });
+    for (const veil of document.querySelectorAll('[data-testid="command-terminal-resize-veil"]')) {
+      observer.observe(veil, { attributes: true, attributeFilter: ['data-veiled'] });
+    }
+  });
+  const veilRaises = (page: Page) => page.evaluate(() =>
+    (window as unknown as { __veilRaises: Array<{ slot: string | null }> }).__veilRaises.map((entry) => entry.slot));
+
+  /** Frames, not a timer: long enough for any refit or PTY resize a gesture could send. */
+  const settleFrames = (page: Page, frames: number) => page.evaluate((count) => new Promise<void>((resolve) => {
+    let left = count;
+    const step = () => { left -= 1; if (left <= 0) resolve(); else requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }), frames);
+
+  /** The grids a session's PTY was resized to, in order. */
+  const resizesOf = (page: Page, sessionId: string) => page.evaluate((id) => {
+    const calls = (window as unknown as {
+      electronAPI: { sessions: { __resizeCalls: Array<{ sessionId: string; cols: number; rows: number }> } };
+    }).electronAPI.sessions.__resizeCalls;
+    return calls.filter((call) => call.sessionId === id).map((call) => ({ cols: call.cols, rows: call.rows }));
+  }, sessionId);
 
   // ---------------------------------------------------------------------------
   // Expand - a terminal's Expand fills the panel with it; the others keep
-  // running behind it, unresized, and list in the rail's Running section, each
-  // with its own Stop. Restore brings the grid back.
+  // running behind it at the same size, hidden, and list in the rail's Running
+  // section, each with its own Stop. Restore brings the grid back.
   // ---------------------------------------------------------------------------
   test.describe('Expand', () => {
     async function openTerminals(page: Page, count: number): Promise<void> {
@@ -2290,13 +2442,93 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    /** Two terminals, both agents on screen and initialized, and each one's session id. */
+    async function openTwoReady(page: Page): Promise<{ first: string; second: string }> {
+      await openTerminals(page, 2);
+      const sessions = await markTerminalsReady(page, ['slot-1', 'slot-2']);
+      return { first: sessions['slot-1'], second: sessions['slot-2'] };
+    }
+
+    test('switching which terminal is expanded resizes nothing and veils nothing', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        // The one behind is the panel's size too, so there is nothing left to change.
+        const expandedBox = await frameOf(page, 'slot-1').boundingBox();
+        const behindBox = await frameOf(page, 'slot-2').boundingBox();
+        expect(Math.abs((behindBox?.width ?? 0) - (expandedBox?.width ?? 0))).toBeLessThanOrEqual(3);
+        await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+        await settleResizes(page);
+        await watchVeils(page);
+
+        await page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-2"]')
+          .getByTestId('command-terminal-running-expand').click();
+        await expect(frameOf(page, 'slot-2')).toHaveAttribute('data-expanded', 'true');
+        await settleFrames(page, 20);
+        expect(await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length)).toBe(0);
+        expect(await veilRaises(page)).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Expand and Restore veil the terminals that jump size until their output goes quiet', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        const { first } = await openTwoReady(page);
+        await watchVeils(page);
+
+        // Expand: up in the click's own layout pass, held through the agent's
+        // output, down a quiet beat after the last of it. The output is timed
+        // from the raise itself, as an agent's repaint is timed from the resize.
+        await page.evaluate((sessionId) => {
+          const fire = (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData;
+          const veil = document.querySelector('[data-command-slot="slot-1"] [data-testid="command-terminal-resize-veil"]');
+          if (!veil) throw new Error('no veil');
+          const observer = new MutationObserver(() => {
+            if (!veil.hasAttribute('data-veiled')) return;
+            observer.disconnect();
+            // Output every 10 ms from 100 to 400 ms: never quiet for the 40 ms beat until it stops.
+            for (let at = 100; at <= 400; at += 10) setTimeout(() => fire(sessionId, 'x'), at);
+          });
+          observer.observe(veil, { attributes: true, attributeFilter: ['data-veiled'] });
+        }, first);
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        await expect(veilOf(page, 'slot-1')).toBeVisible();
+        await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+        const held = await page.evaluate(() => {
+          const holder = window as unknown as { __veilRaises: Array<{ slot: string; at: number }>; __veilLifts: Array<{ slot: string; at: number }> };
+          const raise = holder.__veilRaises.find((entry) => entry.slot === 'slot-1');
+          const lift = holder.__veilLifts.find((entry) => entry.slot === 'slot-1');
+          return raise && lift ? lift.at - raise.at : null;
+        });
+        // Held well past the 190 ms floor while the output kept coming (with no
+        // output it lifts near 200 ms), and never far past the 500 ms cap. The
+        // exact rule is the unit test's; this pins that the output reaches it.
+        expect(held).not.toBeNull();
+        expect(held ?? 0).toBeGreaterThanOrEqual(300);
+        expect(held ?? 0).toBeLessThanOrEqual(650);
+
+        // Restore: every terminal goes back into its tile, so each is covered.
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0);
+        await expect(veilOf(page, 'slot-1')).toBeVisible();
+        await expect(veilOf(page, 'slot-2')).toBeVisible();
+        await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+        await expect(veilOf(page, 'slot-2')).toBeHidden({ timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------
-  // Swap - drag a terminal by its header onto another's tile, as a board card
-  // is dragged: the real terminal floats, a ghost marks where it lands, and the
-  // terminal there previews in its old tile. The kebab's "Swap with" does the
-  // same from the keyboard.
+  // Swap - drag a terminal by its header onto another's tile: a picture of it
+  // follows the pointer, and the real terminals preview the swap, each in the
+  // other's tile, until the release makes it.
   // ---------------------------------------------------------------------------
   test.describe('Swap', () => {
     async function openThree(page: Page): Promise<void> {
@@ -2338,47 +2570,141 @@ test.describe('Command Terminal', () => {
       return start;
     }
 
-    test('dragging a header onto another tile previews the swap, and the release swaps them', async () => {
+    test('dragging a header onto another tile previews the swap with the real terminals, and the release swaps them', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openThree(page);
+        const sessions = await markTerminalsReady(page, ['slot-1', 'slot-2', 'slot-3']);
+        await settleResizes(page);
+        await watchVeils(page);
         // Three tile as 1 tall on the left, 2 above 3 on the right.
         expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
         const tallBox = await frameOf(page, 'slot-1').boundingBox();
         const sourceBox = await frameOf(page, 'slot-3').boundingBox();
         if (!tallBox || !sourceBox) throw new Error('no frames');
+        // What main's capture of the pressed terminal hands back: any picture will do.
+        await page.evaluate(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 4;
+          canvas.height = 4;
+          (window as unknown as { __mockCaptureRegion: string }).__mockCaptureRegion = canvas.toDataURL('image/jpeg');
+        });
 
         await pressOnHeader(page, 'slot-3');
         await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
 
-        // Mid-drag: the real terminal floats tilted, a ghost marks the tall tile,
-        // and terminal 1 previews in terminal 3's old tile.
-        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', /matrix/);
-        const ghost = page.getByTestId('command-terminal-swap-ghost');
-        await expect(ghost).toBeVisible();
-        await expect(ghost).toContainText('Command Terminal 3');
-        const ghostBox = await ghost.boundingBox();
-        expect(Math.abs((ghostBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        // Mid-drag: the picture of terminal 3 follows the pointer at the
+        // smallest tile's size (its own), upright; terminal 3 itself sits live
+        // in the tall tile and terminal 1 in terminal 3's old one.
+        const float = page.getByTestId('command-terminal-swap-float');
+        await expect(float.getByTestId('command-terminal-swap-picture')).toBeVisible();
+        await expect(float).toHaveCSS('transform', /^matrix\(1, 0, 0, 1, /);
+        const floatBox = await float.boundingBox();
+        if (!floatBox) throw new Error('no float');
+        expect(Math.abs(floatBox.width - sourceBox.width)).toBeLessThanOrEqual(3);
+        expect(Math.abs(floatBox.height - sourceBox.height)).toBeLessThanOrEqual(3);
+        await expect(page.getByTestId('command-terminal-swap-ghost')).toHaveCount(0);
+        // The landing tile is marked: the accent ring, over the tall tile.
+        const landing = page.getByTestId('command-terminal-swap-landing');
+        await expect(landing).toBeVisible();
+        const landingBox = await landing.boundingBox();
+        expect(Math.abs((landingBox?.y ?? 0) - tallBox.y)).toBeLessThanOrEqual(3);
+        expect(Math.abs((landingBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        await expect(landing).toHaveCSS('pointer-events', 'none');
+        // An empty terminal: the terminals' own background, opaque, so the live
+        // terminal refitting under it does not show twice beside the picture.
+        const backgrounds = await page.evaluate(() => {
+          const mark = document.querySelector('[data-testid="command-terminal-swap-landing"]');
+          const pane = document.querySelector('[data-command-slot="slot-2"] [data-testid="command-bar-terminal-pane"]');
+          return {
+            mark: mark ? getComputedStyle(mark).backgroundColor : '',
+            terminal: pane?.parentElement ? getComputedStyle(pane.parentElement).backgroundColor : '',
+          };
+        });
+        expect(backgrounds.mark).toBe(backgrounds.terminal);
+        expect(backgrounds.mark).toMatch(/^rgb\(/);
+        const draggedBox = await frameOf(page, 'slot-3').boundingBox();
+        expect(Math.abs((draggedBox?.y ?? 0) - tallBox.y)).toBeLessThanOrEqual(3);
+        expect(Math.abs((draggedBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('opacity', '1');
         const previewBox = await frameOf(page, 'slot-1').boundingBox();
         expect(Math.abs((previewBox?.y ?? 0) - sourceBox.y)).toBeLessThanOrEqual(3);
         expect(Math.abs((previewBox?.height ?? 0) - sourceBox.height)).toBeLessThanOrEqual(3);
+        // Both previewing terminals are refit to the tiles they now show in, so
+        // the preview is the result (terminal 3 taller than terminal 1 now), and
+        // each is veiled while it repaints.
+        await expect.poll(async () => {
+          const dragged = (await resizesOf(page, sessions['slot-3'])).at(-1);
+          const displaced = (await resizesOf(page, sessions['slot-1'])).at(-1);
+          return dragged && displaced ? dragged.rows > displaced.rows : false;
+        }, { timeout: 3000 }).toBe(true);
+        await expect.poll(async () => (await veilRaises(page)).sort(), { timeout: 3000 }).toEqual(['slot-1', 'slot-3']);
         // Nothing is committed until the release.
         expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
 
+        await settleResizes(page);
         await page.mouse.up();
+        // The picture goes at the release, with no settle: the live terminals
+        // are already where the preview put them.
+        expect(await page.evaluate(() => document.querySelectorAll('[data-testid="command-terminal-swap-float"]').length)).toBe(0);
         await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
-        await expect(ghost).toHaveCount(0);
+        await expect(landing).toHaveCount(0);
         // Each terminal took the other's size, and the drag left no style behind.
         const landedBox = await frameOf(page, 'slot-3').boundingBox();
         expect(Math.abs((landedBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
-        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', 'none');
-        await expect(frameOf(page, 'slot-3')).toHaveCSS('opacity', '1');
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('pointer-events', 'auto');
+        // The preview had already sized them, so the drop resizes nothing.
+        await settleFrames(page, 20);
+        expect(await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length)).toBe(0);
       } finally {
         await browser.close();
       }
     });
 
-    test('Escape mid-drag puts everything back and swaps nothing', async () => {
+    test('a taller terminal floats at the smallest tile\'s size, cut from its top at its own scale', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openThree(page);
+        const tallBox = await frameOf(page, 'slot-1').boundingBox();
+        const smallBox = await frameOf(page, 'slot-3').boundingBox();
+        if (!tallBox || !smallBox) throw new Error('no frames');
+        await page.evaluate(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 4;
+          canvas.height = 4;
+          (window as unknown as { __mockCaptureRegion: string }).__mockCaptureRegion = canvas.toDataURL('image/jpeg');
+        });
+        const target = { x: smallBox.x + smallBox.width / 2, y: smallBox.y + smallBox.height / 2 };
+        await pressOnHeader(page, 'slot-1');
+        await page.mouse.move(target.x, target.y, { steps: 8 });
+
+        const float = page.getByTestId('command-terminal-swap-float');
+        const picture = float.getByTestId('command-terminal-swap-picture');
+        await expect(picture).toBeVisible();
+        const floatBox = await float.boundingBox();
+        const pictureBox = await picture.boundingBox();
+        if (!floatBox || !pictureBox) throw new Error('no float');
+        // The float is the small tile's size, not the tall terminal's.
+        expect(Math.abs(floatBox.height - smallBox.height)).toBeLessThanOrEqual(3);
+        expect(Math.abs(floatBox.width - smallBox.width)).toBeLessThanOrEqual(3);
+        // The picture keeps the tall terminal's size, shown from its top.
+        expect(Math.abs(pictureBox.height - tallBox.height)).toBeLessThanOrEqual(3);
+        expect(Math.abs(pictureBox.y - floatBox.y)).toBeLessThanOrEqual(3);
+        // The grab point stays on the float.
+        expect(target.x).toBeGreaterThan(floatBox.x);
+        expect(target.x).toBeLessThan(floatBox.x + floatBox.width);
+        expect(target.y).toBeGreaterThan(floatBox.y);
+        expect(target.y).toBeLessThan(floatBox.y + floatBox.height);
+
+        await page.mouse.up();
+        await expect(float).toHaveCount(0);
+        await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('without a picture the float shows the terminal\'s title, never an empty box', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openThree(page);
@@ -2386,15 +2712,45 @@ test.describe('Command Terminal', () => {
         if (!tallBox) throw new Error('no frame');
         await pressOnHeader(page, 'slot-3');
         await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
-        await expect(page.getByTestId('command-terminal-swap-ghost')).toBeVisible();
+        const float = page.getByTestId('command-terminal-swap-float');
+        await expect(float).toContainText('Command Terminal 3');
+        await expect(float.getByTestId('command-terminal-swap-picture')).toHaveCount(0);
+        // The capture answered (with nothing), so the real terminals still preview.
+        await expect.poll(async () => Math.abs(((await frameOf(page, 'slot-3').boundingBox())?.height ?? 0) - tallBox.height), { timeout: 3000 }).toBeLessThanOrEqual(3);
+        await page.mouse.up();
+        await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
+      } finally {
+        await browser.close();
+      }
+    });
 
+    test('Escape mid-drag puts everything back, refit, and swaps nothing', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openThree(page);
+        const sessions = await markTerminalsReady(page, ['slot-1', 'slot-2', 'slot-3']);
+        await settleResizes(page);
+        const tallBox = await frameOf(page, 'slot-1').boundingBox();
+        if (!tallBox) throw new Error('no frame');
+        await pressOnHeader(page, 'slot-3');
+        await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
+        await expect(page.getByTestId('command-terminal-swap-float')).toBeVisible();
+        await expect.poll(async () => (await resizesOf(page, sessions['slot-3'])).length, { timeout: 3000 }).toBeGreaterThan(0);
+        const previewedRows = (await resizesOf(page, sessions['slot-3'])).at(-1)?.rows ?? 0;
+        await settleResizes(page);
+
+        await expect(page.getByTestId('command-terminal-swap-landing')).toBeVisible();
         await page.keyboard.press('Escape');
-        await expect(page.getByTestId('command-terminal-swap-ghost')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-swap-landing')).toHaveCount(0);
+        // Put back, the dragged terminal refits to its own, shorter tile.
+        await expect.poll(async () => (await resizesOf(page, sessions['slot-3'])).at(-1)?.rows ?? previewedRows, { timeout: 3000 })
+          .toBeLessThan(previewedRows);
+        await expect(page.getByTestId('command-terminal-swap-float')).toHaveCount(0);
         await page.mouse.up();
         expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
         const restoredBox = await frameOf(page, 'slot-1').boundingBox();
         expect(Math.abs((restoredBox?.height ?? 0) - tallBox.height)).toBeLessThanOrEqual(3);
-        await expect(frameOf(page, 'slot-3')).toHaveCSS('transform', 'none');
+        await expect(frameOf(page, 'slot-3')).toHaveCSS('pointer-events', 'auto');
         // The panel is still open: the Escape cancelled the drag, not the layer.
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(3);
       } finally {
@@ -2402,15 +2758,13 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('"Swap with" in a terminal\'s menu swaps it without a drag', async () => {
+    test('a terminal\'s menu offers no swap: the header drag is the one way', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openThree(page);
         await page.locator('[data-command-slot="slot-3"]').locator('[aria-label="Actions"]').click();
-        const swapItems = page.getByTestId('command-bar-kebab-swap');
-        await expect(swapItems).toHaveCount(2);
-        await swapItems.filter({ hasText: 'Swap with Command Terminal 1' }).click();
-        await expect.poll(() => readingOrder(page), { timeout: 3000 }).toEqual(['slot-3', 'slot-2', 'slot-1']);
+        await expect(page.getByTestId('command-bar-kebab-stop')).toBeVisible();
+        await expect(page.getByText(/^Swap with/)).toHaveCount(0);
       } finally {
         await browser.close();
       }

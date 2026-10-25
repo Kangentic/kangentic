@@ -124,6 +124,16 @@ export function showDesktopNotification(context: IpcContext, input: Notification
   notification.show();
 }
 
+interface CaptureRect { x: number; y: number; width: number; height: number }
+
+/** A rect the renderer sent: four finite numbers, with a size to capture. */
+function isCaptureRect(value: unknown): value is CaptureRect {
+  if (typeof value !== 'object' || value === null) return false;
+  const rect = value as Record<string, unknown>;
+  return [rect.x, rect.y, rect.width, rect.height].every((part) => typeof part === 'number' && Number.isFinite(part))
+    && (rect.width as number) > 0 && (rect.height as number) > 0;
+}
+
 export function registerSystemHandlers(context: IpcContext): void {
   // === App ===
   ipcMain.handle(IPC.APP_GET_VERSION, () => app.getVersion());
@@ -696,6 +706,25 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.on(IPC.WINDOW_CLOSE, (event) => resolveSenderWindow(event).close());
   ipcMain.on(IPC.WINDOW_FLASH_FRAME, (event, flash: boolean) => resolveSenderWindow(event).flashFrame(flash));
   ipcMain.handle(IPC.WINDOW_IS_FOCUSED, (event) => resolveSenderWindow(event).isFocused());
+  // The SENDER's own pixels, so a terminal dragged in the Command Terminal's
+  // own window pictures that window and not the main one. The renderer measures
+  // in CSS pixels; capturePage takes the page's DIPs, so the zoom factor scales it.
+  ipcMain.handle(IPC.WINDOW_CAPTURE_REGION, async (event, rect: unknown): Promise<string | null> => {
+    if (!isCaptureRect(rect)) return null;
+    const zoom = event.sender.getZoomFactor();
+    try {
+      const image = await event.sender.capturePage({
+        x: Math.round(rect.x * zoom),
+        y: Math.round(rect.y * zoom),
+        width: Math.round(rect.width * zoom),
+        height: Math.round(rect.height * zoom),
+      });
+      if (image.isEmpty()) return null;
+      return `data:image/jpeg;base64,${image.toJPEG(90).toString('base64')}`;
+    } catch {
+      return null;
+    }
+  });
 
   // === Notifications ===
   ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => showDesktopNotification(context, input));
