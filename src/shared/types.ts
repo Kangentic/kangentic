@@ -1082,8 +1082,10 @@ export interface ColumnAutomation {
   final_line: string | null;
   /**
    * The most times this row may run on one task, counted across every visit
-   * to the column since the task last left Done (a review loop's round-trip
-   * limit). Null means no limit.
+   * to the column since a person last moved the task to another column, or it
+   * last left Done (`AutomationRunRepository.countRuns`). The board's own moves
+   * (an agent's, an automation's, a workflow's) keep the count, which is what
+   * holds a review loop to its round-trip limit. Null means no limit.
    */
   max_runs: number | null;
   created_at: string;

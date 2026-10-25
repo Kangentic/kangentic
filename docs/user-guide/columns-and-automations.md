@@ -88,8 +88,14 @@ it is checked:
 Either way, a no means the row did not run, and it is checked again next time. A row holds one kind.
 A new Condition starts on Agent evaluation, or on Text match at a turn end when no Automation agent
 is set up. **Frequency** caps how many times a row runs on one task, across every visit, which is
-what keeps a review loop from bouncing a task forever. Taking a task back out of Done starts the
-count over, so a reopened task runs through the board's automations again. Both start off.
+what keeps a review loop from bouncing a task forever. The count starts over each time you move the
+task to another column, by a drag, from your phone, or by restoring it from the Completed list, so
+a task you send back for another pass runs the board's automations again. A move the board makes
+keeps the count: a Move to column row, a workflow step, or an agent's own move. That includes a
+move you ask an agent to make in chat, since the agent makes it. Taking a task out of Done starts
+the count over whoever moves it. On task enter and On task exit rows count the same way, so a move
+you make into or out of their column always runs them, and their Frequency limits only the moves
+the board makes. Both start off.
 
 **Reading a row.** Every row has the same two lines. The second says what the row does, and to
 what: the verb and the type's one required value, such as `Sends "Review the changes"`, `Moves the
@@ -100,8 +106,8 @@ in the editor's card order: a robot for an Agent evaluation or a magnifier over 
 match, a repeat icon with the run limit for a Frequency, a clock on a Send message row that waits
 for the current turn, and a speech bubble on a Move to column row that carries a Message. Hover a
 mark to read its card and value ("Condition: only if the review is clean.", "Condition: only if the
-last line reads "Verdict: Ready".", "Frequency: at most 3 times for each task."); a Message or a
-Condition reads in full there. A webhook's body and headers and a notification's body are not
+last line reads "Verdict: Ready".", "Frequency: at most 3 times until you move the task."); a
+Message or a Condition reads in full there. A webhook's body and headers and a notification's body are not
 marked: open the row for those. The rows under **Copy existing** in the Add automation picker carry
 the same marks.
 

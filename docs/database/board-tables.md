@@ -270,9 +270,9 @@ Text match: a pattern the agent's last line must match, checked in code with no 
 stores `final_line` only on a `turn_end` row and, when it is set, stores `condition` as NULL, so a
 writer that slips past the editor, the file reader and the MCP refusals still cannot leave a row
 with two checks or a Text match on a trigger with no final message. `max_runs` is its Frequency,
-the most times it may run on one task across every visit since the task last left Done; NULL means
-no limit. All three are nullable so a build from before them still inserts into a database that has
-them.
+the most times it may run on one task across every visit since a person last moved the task to
+another column, or it last left Done; NULL means no limit. All three are nullable so a build from
+before them still inserts into a database that has them.
 
 `position` is assigned PER TRIGGER, so each group numbers from 0 independently and the three can
 never interleave.
@@ -334,10 +334,13 @@ calls were recorded has none.
 **What counts as a run.** A row "has run" (for a turn-end row's once-per-visit rule and for
 Frequency) when it has a row here with status `running`, `succeeded`, `failed` or `interrupted`. A
 `skipped` row, including a Condition that answered no or a Text match that missed, is not a run, so
-the next trigger checks it again. Frequency counts only the runs since the task last left Done: its newest `task_moves` row
-whose `from_swimlane_id` is a `done` column and whose origin is not `rollback`. A reopened task
-starts its limits over. The project-open prune keeps every counted run of an automation that has a
-Frequency limit, on a task that is not archived, so pruning can never reset a limit.
+the next trigger checks it again. Frequency counts only the runs since the newer of two `task_moves`
+rows: the newest whose origin is `renderer` or `mobile` (a person) and whose `from_swimlane_id`
+differs from its `to_swimlane_id`, and the newest whose `from_swimlane_id` is a `done` column and
+whose origin is not `rollback`. A task a person sends back, or a reopened task, starts its limits
+over. Moves by `agent`, `automation`, `auto-move` and `workflow` keep them. The project-open prune
+keeps every counted run of an automation that has a Frequency limit, on a task that is not
+archived, so pruning can never reset a limit.
 
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.

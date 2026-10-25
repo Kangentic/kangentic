@@ -2331,7 +2331,7 @@
             // the same thing to a consumer: the row draws its Frequency mark (Repeat
             // with a count) for any `max_runs` that is not null, so an undefined one
             // would show a Repeat with no count and the tooltip "Frequency: at most
-            // undefined times for each task." The Condition marks read a blank
+            // undefined times until you move the task." The Condition marks read a blank
             // condition or text match as none either way.
             condition: finalLine === null && typeof row.condition === 'string' && row.condition.trim() !== '' ? row.condition.trim() : null,
             final_line: finalLine,

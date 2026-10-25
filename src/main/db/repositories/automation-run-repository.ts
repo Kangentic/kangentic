@@ -9,6 +9,7 @@ import type {
   ColumnAutomation,
 } from '../../../shared/types';
 import { isAutomationTrigger } from '../../../shared/automation-manifest';
+import { MOVED_BY_A_PERSON } from '../../../shared/task-move-origin';
 
 /**
  * The durable half of "did my automation run".
@@ -27,9 +28,10 @@ import { isAutomationTrigger } from '../../../shared/automation-manifest';
  *
  * It is also what the turn-end run rule counts: a row has "run this visit" when
  * a run that was not a skip exists for it after the task entered the column,
- * and its Frequency counts those runs across every visit since the task last
- * left Done. A skipped run (a Condition that answered no, an agent that was
- * not running) is never counted, so it is checked again at the next turn end.
+ * and its Frequency counts those runs across every visit since a person last
+ * moved the task, or it last left Done. A skipped run (a Condition that
+ * answered no, an agent that was not running) is never counted, so it is
+ * checked again at the next turn end.
  */
 
 interface AutomationRunRow {
@@ -123,6 +125,19 @@ export const AUTOMATION_RUN_RETENTION = 200;
 
 /** A run that started, whatever its outcome. Skips never count as having run. */
 const EXECUTED_STATUSES_SQL = "status IN ('running', 'succeeded', 'failed', 'interrupted')";
+
+/**
+ * The origins of a person's move (`MOVED_BY_A_PERSON`). One of those, to
+ * another column, starts a row's Frequency over (`countRuns`). The board's own
+ * movers never do, so a review loop keeps its round-trip limit and an agent
+ * cannot reset its own with `kangentic_move_task`. A restore from the
+ * Completed list is a person's too, but it always leaves Done, which starts
+ * the count over by itself.
+ */
+const PERSON_MOVE_ORIGINS_SQL = Object.entries(MOVED_BY_A_PERSON)
+  .filter(([, byPerson]) => byPerson)
+  .map(([origin]) => `'${origin}'`)
+  .join(', ');
 
 export class AutomationRunRepository {
   constructor(private db: Database.Database) {}
@@ -269,12 +284,23 @@ export class AutomationRunRepository {
 
   /**
    * How many times this automation has run on this task, across every visit
-   * since the task last left Done. A task taken back out of Done (a drag, or a
-   * restore from the Completed list) goes through the board again as if for the
-   * first time, so its earlier runs no longer spend the limit. A rollback is not
-   * a return: it undoes a move into Done that failed, and the task never finished.
-   * A Done column's own exit rows run after the move out of Done is written, so
-   * every return starts their count at zero and their Frequency never stops them.
+   * since the newer of two moves: the last a person made to another column
+   * (`MOVED_BY_A_PERSON`), and the last out of Done, by anyone. A person who
+   * sends a card back for another pass means it to go through those columns
+   * again, so its earlier runs no longer spend the limit. A task taken back out
+   * of Done goes through the board again as if for the first time. A rollback
+   * out of Done is not a return: it undoes a move into Done that failed, and
+   * the task never finished. When that failed move was a person's drag, its
+   * own row already started the count over. A row born into a column (no
+   * `from`) and a reorder inside one are not moves.
+   *
+   * The move is written before the groups it fires run, so a person's move
+   * starts the count of the column it leaves (exit rows) and the column it
+   * enters (enter rows) at zero. On those triggers Frequency limits only the
+   * moves the board makes itself.
+   *
+   * One aggregate over the moves of either kind, never a two-argument `MAX()`.
+   * SQLite's returns NULL when either side is NULL, which would count every run.
    */
   countRuns(automationId: string, taskId: string): number {
     const row = this.db
@@ -283,8 +309,11 @@ export class AutomationRunRepository {
         WHERE automation_id = ? AND task_id = ? AND ${EXECUTED_STATUSES_SQL}
           AND started_at >= COALESCE((
             SELECT MAX(moves.at) FROM task_moves moves
-            JOIN swimlanes lane ON lane.id = moves.from_swimlane_id
-            WHERE moves.task_id = ? AND lane.role = 'done' AND moves.origin != 'rollback'
+            WHERE moves.task_id = ?
+              AND (
+                (moves.origin != 'rollback' AND moves.from_swimlane_id IN (SELECT id FROM swimlanes WHERE role = 'done'))
+                OR (moves.origin IN (${PERSON_MOVE_ORIGINS_SQL}) AND moves.from_swimlane_id != moves.to_swimlane_id)
+              )
           ), '')
       `)
       .get(automationId, taskId, taskId) as { runs: number } | undefined;

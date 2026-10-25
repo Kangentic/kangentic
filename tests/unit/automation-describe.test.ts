@@ -92,7 +92,7 @@ describe('the marks beside a row name', () => {
     expect(marks.map((mark) => mark.kind)).toEqual(['condition', 'frequency', 'message']);
     expect(marks.map((mark) => mark.label)).toEqual([
       'Condition: only if the review is clean.',
-      'Frequency: at most 3 times for each task.',
+      'Frequency: at most 3 times until you move the task.',
       'Message: {{agentReply}}',
     ]);
     expect(marks[1].count).toBe(3);
@@ -207,7 +207,7 @@ describe('the marks in words, for the MCP list', () => {
       condition: 'The review is clean',
       final_line: null,
       max_runs: 3,
-    })).toBe('with a message; only if the review is clean; at most 3 times for each task');
+    })).toBe('with a message; only if the review is clean; at most 3 times until you move the task');
   });
 
   it('words a Text match as a guard, after the action\'s own options', () => {
@@ -218,7 +218,7 @@ describe('the marks in words, for the MCP list', () => {
       condition: null,
       final_line: 'Verdict: Ready',
       max_runs: 1,
-    })).toBe('with a message; only if the last line reads "Verdict: Ready"; at most once for each task');
+    })).toBe('with a message; only if the last line reads "Verdict: Ready"; at most once until you move the task');
   });
 
   it('says a Send message waits only where Delivery applies', () => {
