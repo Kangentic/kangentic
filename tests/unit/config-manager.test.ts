@@ -491,12 +491,11 @@ describe('Config Manager -- terminal.* project-override migration', () => {
   });
 
   it('strips a legacy terminal.backspaceSendsCtrlH override in isolation, keeping its sibling terminal.* key', async () => {
-    // backspaceSendsCtrlH joined the other 5 legacy keys (shell/fontFamily/
-    // fontSize/scrollbackLines/cursorStyle) as global-only in this same
-    // change (it was merged in from an upstream PR as project-scoped and
-    // rescoped during conflict resolution). Isolate it from its siblings so
-    // this test only goes red if backspaceSendsCtrlH specifically falls out
-    // of the migration's droppedKeys list, not if some other key does.
+    // backspaceSendsCtrlH was once project-scoped, then global-only, and the
+    // setting was later removed. An old project override can still carry it.
+    // Isolate it from its siblings so this test only goes red if
+    // backspaceSendsCtrlH specifically falls out of the migration's
+    // droppedKeys list, not if some other key does.
     const projectDir = path.join(tmpDir, 'proj-e');
     writeProjectOverrides(projectDir, {
       terminal: { backspaceSendsCtrlH: false, colors: { background: '#333' } },
@@ -683,6 +682,47 @@ describe('Config Manager -- terminal.scrollbackLines global migration', () => {
 
     expect(config.terminal).not.toHaveProperty('scrollbackLines');
     expect(config.terminal.cursorStyle).toBe('block');
+  });
+});
+
+describe('Config Manager - terminal.backspaceSendsCtrlH removal', () => {
+  // The setting only re-mapped plain Backspace to the byte Ctrl+Backspace
+  // already sends, so it was removed. load() strips the key a file written
+  // before the removal still carries.
+
+  it('strips backspaceSendsCtrlH from the loaded config and rewrites the file, keeping sibling terminal.* keys', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { backspaceSendsCtrlH: true, cursorStyle: 'bar' },
+    }));
+
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.terminal).not.toHaveProperty('backspaceSendsCtrlH');
+    expect(config.terminal.cursorStyle).toBe('bar');
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.terminal).not.toHaveProperty('backspaceSendsCtrlH');
+    expect(raw.terminal.cursorStyle).toBe('bar');
+  });
+
+  it('does not rewrite the file on a second load of the already-clean file', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { backspaceSendsCtrlH: false, cursorStyle: 'underline' },
+    }));
+
+    const cm = await createConfigManager();
+    cm.load();
+    // Backdate so a spurious second write is unmissable against a same-millisecond mtime.
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(configPath, backdated, backdated);
+    const before = fs.statSync(configPath).mtimeMs;
+    const config = cm.load();
+    const after = fs.statSync(configPath).mtimeMs;
+
+    expect(after).toBe(before);
+    expect(config.terminal).not.toHaveProperty('backspaceSendsCtrlH');
+    expect(config.terminal.cursorStyle).toBe('underline');
   });
 });
 

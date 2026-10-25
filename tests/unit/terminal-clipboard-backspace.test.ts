@@ -3,16 +3,17 @@ import type { Terminal } from '@xterm/xterm';
 import { enableTerminalClipboard } from '../../src/renderer/utils/terminal-clipboard';
 
 /**
- * Unit coverage for the "Backspace sends Ctrl+H" terminal setting: plain
- * Backspace remaps from xterm's default DEL (0x7f) to Ctrl+H (0x08) when
- * enabled, matching native Windows conhost so Claude Code's TUI deletes the
- * previous word instead of one character. Ctrl/Alt/Meta+Backspace are left
- * untouched (they already produce the desired byte sequences today).
+ * The terminal's custom key handler leaves Backspace alone in every modifier
+ * combination, so xterm's own encoding reaches the PTY: DEL (0x7f) for plain
+ * Backspace and Ctrl+H (0x08) for Ctrl+Backspace, which Claude Code's TUI reads
+ * as delete-previous-word. A handler that wrote its own byte here would re-map
+ * one of those keys. tests/ui/terminal-backspace-bytes.spec.ts pins the bytes
+ * xterm then sends.
  */
 
 type KeyEventHandler = (event: KeyboardEvent) => boolean;
 
-function captureKeyHandler(getBackspaceSendsCtrlH?: () => boolean): {
+function captureKeyHandler(): {
   handler: KeyEventHandler;
   onWrite: ReturnType<typeof vi.fn>;
 } {
@@ -33,16 +34,7 @@ function captureKeyHandler(getBackspaceSendsCtrlH?: () => boolean): {
 
   const onWrite = vi.fn();
 
-  enableTerminalClipboard(
-    terminal,
-    el,
-    onWrite,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    getBackspaceSendsCtrlH,
-  );
+  enableTerminalClipboard(terminal, el, onWrite);
   if (!handler) throw new Error('key handler was not registered');
   return { handler, onWrite };
 }
@@ -59,56 +51,16 @@ function backspaceKeydown(overrides: Partial<KeyboardEvent> = {}): KeyboardEvent
   } as unknown as KeyboardEvent;
 }
 
-describe('terminal Backspace-sends-Ctrl+H setting', () => {
-  it('sends Ctrl+H (0x08) and suppresses the default key when the setting is enabled', () => {
-    const { handler, onWrite } = captureKeyHandler(() => true);
+describe('terminal Backspace passthrough', () => {
+  it.each([
+    ['plain Backspace', {}],
+    ['Ctrl+Backspace', { ctrlKey: true }],
+    ['Alt+Backspace', { altKey: true }],
+    ['Meta+Backspace', { metaKey: true }],
+  ])('leaves %s to xterm and writes nothing itself', (_name, modifiers) => {
+    const { handler, onWrite } = captureKeyHandler();
 
-    const handled = handler(backspaceKeydown());
-
-    expect(handled).toBe(false);
-    expect(onWrite).toHaveBeenCalledWith('\x08');
-  });
-
-  it('leaves Backspace to xterm default (DEL) when the setting is disabled', () => {
-    const { handler, onWrite } = captureKeyHandler(() => false);
-
-    const handled = handler(backspaceKeydown());
-
-    expect(handled).toBe(true);
-    expect(onWrite).not.toHaveBeenCalled();
-  });
-
-  it('leaves Backspace to xterm default when no getter is supplied (backward-compatible default off)', () => {
-    const { handler, onWrite } = captureKeyHandler(undefined);
-
-    const handled = handler(backspaceKeydown());
-
-    expect(handled).toBe(true);
-    expect(onWrite).not.toHaveBeenCalled();
-  });
-
-  it('does not remap Ctrl+Backspace even when the setting is enabled (already sends 0x08 natively)', () => {
-    const { handler, onWrite } = captureKeyHandler(() => true);
-
-    const handled = handler(backspaceKeydown({ ctrlKey: true }));
-
-    expect(handled).toBe(true);
-    expect(onWrite).not.toHaveBeenCalled();
-  });
-
-  it('does not remap Alt+Backspace even when the setting is enabled (already sends ESC 0x7f)', () => {
-    const { handler, onWrite } = captureKeyHandler(() => true);
-
-    const handled = handler(backspaceKeydown({ altKey: true }));
-
-    expect(handled).toBe(true);
-    expect(onWrite).not.toHaveBeenCalled();
-  });
-
-  it('does not remap Meta+Backspace even when the setting is enabled', () => {
-    const { handler, onWrite } = captureKeyHandler(() => true);
-
-    const handled = handler(backspaceKeydown({ metaKey: true }));
+    const handled = handler(backspaceKeydown(modifiers));
 
     expect(handled).toBe(true);
     expect(onWrite).not.toHaveBeenCalled();

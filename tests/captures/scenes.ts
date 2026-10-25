@@ -340,7 +340,6 @@ const MCP_SCENE_TERMINAL = {
   panelCollapsed: false,
   cursorStyle: 'block',
   colors: {},
-  backspaceSendsCtrlH: false,
 };
 
 /**

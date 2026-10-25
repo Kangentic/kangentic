@@ -6,7 +6,7 @@ import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../../utils/terminal-font-size';
 import { useConfigStore } from '../../../stores/config-store';
 import { Select, INPUT_CLASS, useScopedUpdate } from '../shared';
-import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings-card';
+import { SettingsCard, CardRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { ColorPickerPopover, PRESET_COLORS } from '../../backlog/manage-labels/ColorPickerPopover';
 import { Pill } from '../../Pill';
@@ -203,7 +203,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
         icon={<SquareTerminal size={16} />}
         label="Terminal"
         description="The shell, font, cursor and colors every terminal uses."
-        searchIds={['terminal.shell', 'terminal.fontSize', 'terminal.fontFamily', 'terminal.cursorStyle', 'terminal.backspaceSendsCtrlH', 'terminal.colors']}
+        searchIds={['terminal.shell', 'terminal.fontSize', 'terminal.fontFamily', 'terminal.cursorStyle', 'terminal.colors']}
       >
         <CardRow {...settingProps('terminal.shell')}>
           <Select
@@ -241,11 +241,6 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
           value={globalConfig.terminal.cursorStyle}
           onChange={(value) => updateGlobal({ terminal: { cursorStyle: value } })}
           testId="terminal-cursor-style-choice"
-        />
-        <CardToggleRow
-          {...settingProps('terminal.backspaceSendsCtrlH')}
-          checked={globalConfig.terminal.backspaceSendsCtrlH}
-          onChange={(value) => updateGlobal({ terminal: { backspaceSendsCtrlH: value } })}
         />
         <CardRow
           {...settingProps('terminal.colors')}

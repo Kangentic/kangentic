@@ -89,8 +89,8 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
   if (source.themeLight !== undefined) result.themeLight = source.themeLight;
   if (source.themeDark !== undefined) result.themeDark = source.themeDark;
 
-  // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle,
-  // backspaceSendsCtrlH) used to be project-overridable but is now global-only
+  // terminal.* (shell, fontSize, fontFamily, scrollbackLines, cursorStyle) used
+  // to be project-overridable but is now global-only
   // (see the doc comments on AppConfig['terminal'] in shared/types.ts) - shell
   // in particular was never reliably per-project at the PTY-spawn level
   // (SessionManager caches a single configuredShell keyed to whichever project
@@ -232,12 +232,18 @@ export class ConfigManager {
       this.save(this.config);
     }
 
-    // One-time migration: drop a stale global terminal.scrollbackLines. The
-    // setting was removed; the live xterm scrollback cap is now a fixed
-    // internal constant (TERMINAL_SCROLLBACK_LINES in useTerminal.ts).
+    // One-time migration: drop stale global terminal.* keys whose settings were
+    // removed. scrollbackLines became a fixed internal constant
+    // (TERMINAL_SCROLLBACK_LINES in useTerminal.ts). backspaceSendsCtrlH only
+    // re-mapped plain Backspace to the byte Ctrl+Backspace already sends. A
+    // terminal setting removed later goes in this list and in
+    // loadProjectOverrides()'s droppedKeys, which strips it from project files.
     const parsedTerminal = parsed?.terminal as Record<string, unknown> | undefined;
-    if (parsedTerminal && typeof parsedTerminal === 'object' && 'scrollbackLines' in parsedTerminal) {
-      delete (this.config.terminal as unknown as Record<string, unknown>).scrollbackLines;
+    const removedTerminalKeys = ['scrollbackLines', 'backspaceSendsCtrlH'] as const;
+    if (parsedTerminal && typeof parsedTerminal === 'object'
+      && removedTerminalKeys.some((key) => key in parsedTerminal)) {
+      const loadedTerminal = this.config.terminal as unknown as Record<string, unknown>;
+      for (const key of removedTerminalKeys) delete loadedTerminal[key];
       this.save(this.config);
     }
 
@@ -372,7 +378,9 @@ export class ConfigManager {
     // One-time migration: terminal.{shell,fontFamily,fontSize,scrollbackLines,
     // cursorStyle,backspaceSendsCtrlH} moved from project-overridable to
     // global-only (see the doc comments on AppConfig['terminal'] in
-    // shared/types.ts). Any value a project already had is dropped rather
+    // shared/types.ts); scrollbackLines and backspaceSendsCtrlH were later
+    // removed outright, and load() strips those two from the global file
+    // through its removedTerminalKeys. Any value a project already had is dropped rather
     // than promoted to global - a user with several projects holding
     // different values would otherwise have one arbitrarily "win" depending
     // on load order. Global terminal settings simply start from

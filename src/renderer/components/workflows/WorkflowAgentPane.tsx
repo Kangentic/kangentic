@@ -577,7 +577,6 @@ function WorkflowAgentTerminal({ sessionId, shell, agentName }: { sessionId: str
     colors: config.terminal.colors,
     shellName: shell || undefined,
     pasteImageCapability,
-    backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     mayTakeArrivalFocus: mayFocusOnArrival,
   });
 

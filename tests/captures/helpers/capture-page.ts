@@ -121,7 +121,6 @@ export async function launchCapturePage(options: CaptureOptions): Promise<Captur
       panelHeight: 280,
       cursorStyle: 'block',
       colors: {},
-      backspaceSendsCtrlH: false,
     },
     terminalPanelVisible: !options.hideTerminal,
   };
