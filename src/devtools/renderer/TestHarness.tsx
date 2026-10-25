@@ -11,12 +11,13 @@
  * forwards the project id and persists through IPC), so a seeded task is
  * identical to a hand-created one - labels, priority, and real attachments.
  *
- * Today it has one button (Create Task). It is shaped as a vertical stack so
- * future harness affordances slot in below.
+ * It is shaped as a vertical stack so future harness affordances slot in
+ * below. Its header leads with a beaker icon, and the collapse button folds the
+ * panel down to that icon in place, out of the way of what you are testing.
  */
 
-import { useRef, useState } from 'react';
-import { Plus, FolderPlus, FileDiff, MessagesSquare, ChartColumn, Brain, GripVertical, MemoryStick } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, FolderPlus, FileDiff, MessagesSquare, ChartColumn, Brain, ChevronsLeft, FlaskConical, MemoryStick } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
@@ -29,6 +30,29 @@ import { asSentence, describeIpcError } from '../../renderer/lib/ipc-error';
 /** The app title bar's height (`top-10`). It is an OS drag region, so the panel
  *  must never be draggable into it - see handleDragPointerMove. */
 const TITLE_BAR_HEIGHT_PX = 40;
+
+/** How far a press on the header or the collapsed icon travels before it is a drag, not a click. */
+const HANDLE_DRAG_THRESHOLD_PX = 4;
+
+/** Whether the panel is collapsed to its icon. Kept through a reload; a new
+ *  preview starts with fresh browser storage, so it starts open. */
+const COLLAPSED_STORAGE_KEY = 'kangentic.devTestHarness.collapsed';
+
+function readCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch {
+    // Storage blocked: the panel still collapses, only not across a reload.
+  }
+}
 
 /** Turns written per click of "Seed Large Conversation": large enough to
  *  stress the Conversation viewer's virtualization/scrolling/search on a
@@ -161,45 +185,102 @@ export function TestHarness() {
 
   // Draggable so the panel can be moved off whatever it is covering. Position
   // is session-only BY DESIGN (never persisted): every launch starts at the
-  // same fixed spot on the left edge. Dragging is header-handle-only so the
-  // buttons stay plainly clickable; pointer capture keeps the drag alive when
-  // the cursor outruns the handle, and the position clamps to the viewport so
-  // the panel cannot be lost offscreen - INCLUDING under the title bar, which is
-  // an OS drag region that would otherwise strand the panel permanently.
+  // same fixed spot on the left edge. Dragging is by the header row (or the
+  // collapsed icon) only, so the buttons stay plainly clickable, and the
+  // position clamps to the viewport so the panel cannot be lost offscreen -
+  // INCLUDING under the title bar, which is an OS drag region that would
+  // otherwise strand the panel permanently.
   const panelRef = useRef<HTMLDivElement>(null);
-  const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
   const [draggedPosition, setDraggedPosition] = useState<{ x: number; y: number } | null>(null);
 
-  const handleDragPointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    const rect = panel.getBoundingClientRect();
-    dragOffsetRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  };
-
-  const handleDragPointerMove = (event: React.PointerEvent<HTMLElement>) => {
-    const dragOffset = dragOffsetRef.current;
-    const panel = panelRef.current;
-    if (!dragOffset || !panel) return;
-    const x = Math.min(Math.max(event.clientX - dragOffset.dx, 0), Math.max(window.innerWidth - panel.offsetWidth, 0));
+  /** Where a drag that puts the panel's corner at (x, y) leaves it: inside the window. */
+  const clampedPosition = (x: number, y: number, panel: HTMLElement): { x: number; y: number } => ({
+    x: Math.min(Math.max(x, 0), Math.max(window.innerWidth - panel.offsetWidth, 0)),
     // Floor at the title bar, not 0. The app's title bar is an OS drag region
     // (`-webkit-app-region: drag`), so a panel dragged up into it becomes
     // un-draggable: its own handle's pointerdown is consumed by the window move
     // instead, and the panel is stranded there for good with no way back.
-    const y = Math.min(
-      Math.max(event.clientY - dragOffset.dy, TITLE_BAR_HEIGHT_PX),
+    y: Math.min(
+      Math.max(y, TITLE_BAR_HEIGHT_PX),
       Math.max(window.innerHeight - panel.offsetHeight, TITLE_BAR_HEIGHT_PX),
-    );
-    setDraggedPosition({ x, y });
+    ),
+  });
+
+  // Collapsing folds the panel down to its header's beaker icon, and the icon
+  // must not move either way. So the panel's top-left is pinned before the
+  // switch: until a first drag it is placed by `top-1/2 -translate-y-1/2`,
+  // which would re-center a panel whose height just changed.
+  const [collapsed, setCollapsed] = useState(readCollapsed);
+  const expandedHeightRef = useRef<number | null>(null);
+  const suppressHandleClickRef = useRef(false);
+  const stopHandleDragRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopHandleDragRef.current?.(), []);
+
+  const setCollapsedInPlace = (next: boolean) => {
+    const panel = panelRef.current;
+    if (panel) {
+      const rect = panel.getBoundingClientRect();
+      let top = rect.top;
+      if (next) {
+        expandedHeightRef.current = panel.offsetHeight;
+      } else if (expandedHeightRef.current !== null) {
+        // Opening near the bottom edge would run the buttons off screen.
+        top = Math.min(top, Math.max(window.innerHeight - expandedHeightRef.current, TITLE_BAR_HEIGHT_PX));
+      }
+      setDraggedPosition({ x: rect.left, y: top });
+    }
+    setCollapsed(next);
+    writeCollapsed(next);
   };
 
-  const handleDragPointerEnd = (event: React.PointerEvent<HTMLElement>) => {
-    dragOffsetRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
+  // The handle (the open panel's whole header row, or the collapsed icon) both
+  // moves and toggles: a press that travels past the threshold drags the panel,
+  // and one that does not collapses or opens it. The gesture is followed on the
+  // window: pointer capture never took on a button here (measured: no
+  // gotpointercapture), so a fast move left the handle behind.
+  const handleHandlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    const panel = panelRef.current;
+    if (event.button !== 0 || !panel) return;
+    stopHandleDragRef.current?.();
+    const rect = panel.getBoundingClientRect();
+    const pointerId = event.pointerId;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const offsetX = startX - rect.left;
+    const offsetY = startY - rect.top;
+    let moved = false;
+    suppressHandleClickRef.current = false;
+    const onMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < HANDLE_DRAG_THRESHOLD_PX) return;
+      moved = true;
+      setDraggedPosition(clampedPosition(moveEvent.clientX - offsetX, moveEvent.clientY - offsetY, panel));
+    };
+    const onEnd = (endEvent: PointerEvent) => {
+      if (endEvent.pointerId !== pointerId) return;
+      // The click that follows a drag's release is the drag's, not a toggle.
+      suppressHandleClickRef.current = moved;
+      stop();
+    };
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onEnd);
+      window.removeEventListener('pointercancel', onEnd);
+      stopHandleDragRef.current = null;
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onEnd);
+    window.addEventListener('pointercancel', onEnd);
+    stopHandleDragRef.current = stop;
+    event.preventDefault();
+  };
+
+  const handleHandleClick = () => {
+    if (suppressHandleClickRef.current) {
+      suppressHandleClickRef.current = false;
+      return;
     }
+    setCollapsedInPlace(!collapsed);
   };
 
   const handleCreateTask = async () => {
@@ -456,94 +537,119 @@ export function TestHarness() {
         ...(draggedPosition ? { left: draggedPosition.x, top: draggedPosition.y } : {}),
       } as React.CSSProperties}
       data-testid="dev-test-harness"
+      data-collapsed={collapsed ? 'true' : 'false'}
     >
-      <span
-        onPointerDown={handleDragPointerDown}
-        onPointerMove={handleDragPointerMove}
-        onPointerUp={handleDragPointerEnd}
-        onPointerCancel={handleDragPointerEnd}
-        className="flex items-center gap-1 px-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none cursor-grab active:cursor-grabbing touch-none"
-        title="Drag to move (position resets on relaunch)"
-        data-testid="dev-test-harness-drag-handle"
-      >
-        <GripVertical size={12} aria-hidden />
-        Test Harness
-      </span>
-      <button
-        type="button"
-        onClick={handleCreateTask}
-        disabled={creating}
-        className="flex items-center gap-1.5 rounded-md bg-accent-emphasis px-3.5 py-2 text-[13px] font-medium text-accent-on hover:bg-accent disabled:opacity-50 transition-colors"
-        data-testid="dev-create-task"
-      >
-        <Plus size={16} />
-        {creating ? 'Creating...' : 'Create Task'}
-      </button>
-      <button
-        type="button"
-        onClick={handleCreateProject}
-        disabled={creatingProject}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-create-project"
-      >
-        <FolderPlus size={16} />
-        {creatingProject ? 'Creating...' : 'Create Project'}
-      </button>
-      <button
-        type="button"
-        onClick={handleSeedChanges}
-        disabled={seeding}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-changes"
-        title="Seed the active project repo with working + staged + committed changes to test the Changes tab"
-      >
-        <FileDiff size={16} />
-        {seeding ? 'Seeding...' : 'Seed File Changes'}
-      </button>
-      <button
-        type="button"
-        onClick={handleSeedLargeConversation}
-        disabled={seedingConversation}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-large-conversation"
-        title={`Seed ${LARGE_CONVERSATION_SEED_TURNS} synthetic transcript turns (append on re-click) and open it in the Conversation viewer`}
-      >
-        <MessagesSquare size={16} />
-        {seedingConversation ? 'Seeding...' : 'Seed Large Conversation'}
-      </button>
-      <button
-        type="button"
-        onClick={handleSeedUsageData}
-        disabled={seedingUsage}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-usage-data"
-        title={`Seed ${USAGE_DATA_SEED_DAYS} days of realistic multi-agent usage into the usage dashboard's ledgers (re-click appends another batch and the open dashboard animates to it)`}
-      >
-        <ChartColumn size={16} />
-        {seedingUsage ? 'Seeding...' : 'Seed Usage Data'}
-      </button>
-      <button
-        type="button"
-        onClick={handleToggleLowMemory}
-        aria-pressed={simulatingLowMemory}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface transition-colors aria-pressed:border-warning aria-pressed:text-warning"
-        data-testid="dev-simulate-low-memory"
-        title="Read every host memory sample as low memory, so the low-memory pause pauses one agent that has waited on you 5+ minutes per minute"
-      >
-        <MemoryStick size={16} />
-        {simulatingLowMemory ? 'Stop Low Memory' : 'Simulate Low Memory'}
-      </button>
-      <button
-        type="button"
-        onClick={handleSeedKnowledgeGraph}
-        disabled={seedingKnowledgeGraph}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
-        data-testid="dev-seed-knowledge-graph"
-        title={`Mirror this project's real index (conversations, vectors, tasks) into the preview, or seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} synthetic conversations when this machine has none. The newest chunks are left for the embedding drain.`}
-      >
-        <Brain size={16} />
-        {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
-      </button>
+      {collapsed ? (
+        <button
+          type="button"
+          onPointerDown={handleHandlePointerDown}
+          onClick={handleHandleClick}
+          className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-hover text-fg-muted hover:text-fg transition-colors select-none cursor-grab active:cursor-grabbing touch-none"
+          aria-label="Open the test harness"
+          title="Open the test harness. Drag to move it."
+          data-testid="dev-test-harness-expand"
+        >
+          <FlaskConical size={18} aria-hidden />
+        </button>
+      ) : (
+        // The whole row is the handle: a click collapses the panel to its
+        // icon, a drag moves it.
+        <button
+          type="button"
+          onPointerDown={handleHandlePointerDown}
+          onClick={handleHandleClick}
+          className="group flex items-center gap-2 rounded-md bg-surface-hover pr-2 text-left text-[11px] font-semibold uppercase tracking-wider text-fg-muted hover:text-fg transition-colors select-none cursor-grab active:cursor-grabbing touch-none"
+          aria-label="Collapse the test harness"
+          title="Collapse to the icon. Drag to move (position resets on relaunch)."
+          data-testid="dev-test-harness-collapse"
+        >
+          {/* The same 36px square the collapsed icon is, so collapsing leaves the beaker where it was. */}
+          <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center">
+            <FlaskConical size={18} aria-hidden />
+          </span>
+          <span className="flex-1">Test Harness</span>
+          <ChevronsLeft size={14} aria-hidden />
+        </button>
+      )}
+      {!collapsed && (
+        <>
+          <button
+            type="button"
+            onClick={handleCreateTask}
+            disabled={creating}
+            className="flex items-center gap-1.5 rounded-md bg-accent-emphasis px-3.5 py-2 text-[13px] font-medium text-accent-on hover:bg-accent disabled:opacity-50 transition-colors"
+            data-testid="dev-create-task"
+          >
+            <Plus size={16} />
+            {creating ? 'Creating...' : 'Create Task'}
+          </button>
+          <button
+            type="button"
+            onClick={handleCreateProject}
+            disabled={creatingProject}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+            data-testid="dev-create-project"
+          >
+            <FolderPlus size={16} />
+            {creatingProject ? 'Creating...' : 'Create Project'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSeedChanges}
+            disabled={seeding}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+            data-testid="dev-seed-changes"
+            title="Seed the active project repo with working + staged + committed changes to test the Changes tab"
+          >
+            <FileDiff size={16} />
+            {seeding ? 'Seeding...' : 'Seed File Changes'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSeedLargeConversation}
+            disabled={seedingConversation}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+            data-testid="dev-seed-large-conversation"
+            title={`Seed ${LARGE_CONVERSATION_SEED_TURNS} synthetic transcript turns (append on re-click) and open it in the Conversation viewer`}
+          >
+            <MessagesSquare size={16} />
+            {seedingConversation ? 'Seeding...' : 'Seed Large Conversation'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSeedUsageData}
+            disabled={seedingUsage}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+            data-testid="dev-seed-usage-data"
+            title={`Seed ${USAGE_DATA_SEED_DAYS} days of realistic multi-agent usage into the usage dashboard's ledgers (re-click appends another batch and the open dashboard animates to it)`}
+          >
+            <ChartColumn size={16} />
+            {seedingUsage ? 'Seeding...' : 'Seed Usage Data'}
+          </button>
+          <button
+            type="button"
+            onClick={handleToggleLowMemory}
+            aria-pressed={simulatingLowMemory}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface transition-colors aria-pressed:border-warning aria-pressed:text-warning"
+            data-testid="dev-simulate-low-memory"
+            title="Read every host memory sample as low memory, so the low-memory pause pauses one agent that has waited on you 5+ minutes per minute"
+          >
+            <MemoryStick size={16} />
+            {simulatingLowMemory ? 'Stop Low Memory' : 'Simulate Low Memory'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSeedKnowledgeGraph}
+            disabled={seedingKnowledgeGraph}
+            className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+            data-testid="dev-seed-knowledge-graph"
+            title={`Mirror this project's real index (conversations, vectors, tasks) into the preview, or seed ${KNOWLEDGE_GRAPH_SEED_DOCUMENTS} synthetic conversations when this machine has none. The newest chunks are left for the embedding drain.`}
+          >
+            <Brain size={16} />
+            {seedingKnowledgeGraph ? 'Seeding...' : 'Seed Knowledge Graph'}
+          </button>
+        </>
+      )}
     </div>
   );
 }
