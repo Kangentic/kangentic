@@ -48,6 +48,7 @@ import {
   runSettingsOf,
   safeLanes,
   setTaskRouteByIds,
+  stallReader,
   unlinkTasks,
   workflowTasks,
 } from './workflow-service';
@@ -89,6 +90,7 @@ function projectNameOf(context: IpcContext, projectId: string): string {
   return context.projectRepo.getById(projectId)?.name ?? 'Another project';
 }
 
+
 export function readWorkflowDetail(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowDetail {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   const projectNames: Record<string, string> = { [homeProjectId]: projectNameOf(context, homeProjectId) };
@@ -117,6 +119,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
         canvasX: planned.canvas_x,
         canvasY: planned.canvas_y,
         unnamedBlockerCount: 0,
+        stallReason: null,
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
@@ -139,6 +142,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
     if (linkEndState(context, blocker, workflowId, present, unreadProjectIds) !== 'held') continue;
     unnamedBlockers.set(link.blocked_task_id, (unnamedBlockers.get(link.blocked_task_id) ?? 0) + 1);
   }
+  const stallOf = stallReader(workflow);
   const tasks = created.map(({ projectId, task }): WorkflowViewTask => {
     noteProject(projectId);
     const lanes = safeLanes(projectId);
@@ -156,6 +160,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       canvasX: task.canvas_x,
       canvasY: task.canvas_y,
       unnamedBlockerCount: unnamedBlockers.get(task.id) ?? 0,
+      stallReason: place === 'done' ? null : stallOf(projectId, task.id),
     };
   });
   // A link with an end the detail does not have has nothing to draw: it is
@@ -203,6 +208,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       blockedCount: 0,
       boardTasks: {},
       agent: workflowAgentSummary(context, workflow.id),
+      stalledTasks: [],
     };
   }
   const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflow.id);
@@ -220,6 +226,8 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
   let queuedCount = 0;
   let blockedCount = 0;
   const boardTasks: Record<string, WorkflowBoardTask> = {};
+  const stallOf = stallReader(workflow);
+  const stalledTasks: WorkflowSummary['stalledTasks'] = [];
   for (const { projectId, task } of created) {
     const place = places.get(task.id)!;
     let waitingFor: string[] = [];
@@ -243,7 +251,11 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       if (waitingFor.length > 0) blockedCount += 1;
       else queuedCount += 1;
     }
-    if (place !== 'done') boardTasks[task.id] = { waitingFor, humanGateTargetId, hasLinks: linked.has(task.id) };
+    if (place !== 'done') {
+      const stallReason = stallOf(projectId, task.id);
+      if (stallReason !== null) stalledTasks.push({ taskId: task.id, displayId: task.display_id, reason: stallReason });
+      boardTasks[task.id] = { waitingFor, humanGateTargetId, hasLinks: linked.has(task.id), stallReason };
+    }
   }
   return {
     workflow,
@@ -254,6 +266,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     blockedCount,
     boardTasks,
     agent: workflowAgentSummary(context, workflow.id),
+    stalledTasks,
   };
 }
 

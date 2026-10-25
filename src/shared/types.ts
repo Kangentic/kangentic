@@ -3445,6 +3445,8 @@ export interface NotificationConfig {
     onPlanComplete: boolean;
     /** Every task in a workflow reached Done. */
     onWorkflowComplete: boolean;
+    /** A running workflow stalled on a task: its recovery ran out, or a pause stopped it. */
+    onWorkflowStalled: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
   };
@@ -3454,6 +3456,8 @@ export interface NotificationConfig {
     onPlanComplete: boolean;
     /** Every task in a workflow reached Done. */
     onWorkflowComplete: boolean;
+    /** A running workflow stalled on a task: its recovery ran out, or a pause stopped it. */
+    onWorkflowStalled: boolean;
     /** A task spawn has been preparing (worktree/git) longer than the stall threshold. */
     onSpawnStalled: boolean;
     durationSeconds: number;
@@ -4862,6 +4866,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       onAgentCrash: true,
       onPlanComplete: true,
       onWorkflowComplete: true,
+      onWorkflowStalled: true,
       onSpawnStalled: true,
     },
     toasts: {
@@ -4869,6 +4874,7 @@ export const DEFAULT_CONFIG: AppConfig = {
       onAgentCrash: true,
       onPlanComplete: true,
       onWorkflowComplete: true,
+      onWorkflowStalled: true,
       onSpawnStalled: true,
       durationSeconds: 4,
       maxCount: 5,
@@ -5758,6 +5764,11 @@ export interface WorkflowViewTask {
    * joins tasks the detail has. 0 before Start.
    */
   unnamedBlockerCount: number;
+  /**
+   * Why its running workflow stalled on it (its recovery ran out, a pause
+   * stopped it, or it cannot start), while that holds; null otherwise.
+   */
+  stallReason: string | null;
 }
 
 /** "blocked waits for blocker", by `WorkflowViewTask.key`. */
@@ -5824,6 +5835,15 @@ export interface WorkflowSummary {
   boardTasks: Record<string, WorkflowBoardTask>;
   /** The workflow's own agent as its picker row names it; null when it has no session. */
   agent: WorkflowAgentSummary | null;
+  /** The tasks a running workflow is stalled on, and why, for the header. Empty otherwise. */
+  stalledTasks: WorkflowStalledTask[];
+}
+
+/** A task a running workflow is stalled on. */
+export interface WorkflowStalledTask {
+  taskId: string;
+  displayId: number;
+  reason: string;
 }
 
 /** A workflow's own agent, for the picker's note ("Agent idle, last message 10:44"). */
@@ -5857,6 +5877,8 @@ export interface WorkflowBoardTask {
   humanGateTargetId: string | null;
   /** It has a link, either way: the strip's links button and hover show them only then. */
   hasLinks: boolean;
+  /** Why its running workflow stalled on it, while that holds; null otherwise. */
+  stallReason: string | null;
 }
 
 /**
@@ -5912,6 +5934,17 @@ export interface WorkflowCompletedEvent {
   taskCount: number;
   /** The workflow's home project. */
   projectId: string;
+}
+
+/** Pushed when a running workflow stalls on one of its tasks, for the Workflow Stalled toast. */
+export interface WorkflowStalledEvent {
+  workflowId: string;
+  /** The task's own project, which may not be the workflow's home. */
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
+  /** Why it stalled, as the notice and the task's mark say it. */
+  reason: string;
 }
 
 /**
@@ -7491,6 +7524,8 @@ export interface ElectronAPI {
     onChangedInOtherWindow: (callback: (projectId?: string) => void) => () => void;
     /** Every task in a workflow reached Done (`WorkflowCompletedEvent`). */
     onWorkflowCompleted: (callback: (event: WorkflowCompletedEvent) => void) => () => void;
+    /** A running workflow stalled on a task (`WorkflowStalledEvent`). */
+    onWorkflowStalled: (callback: (event: WorkflowStalledEvent) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

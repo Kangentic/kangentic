@@ -374,6 +374,7 @@
         onAgentCrash: true,
         onPlanComplete: true,
         onWorkflowComplete: true,
+        onWorkflowStalled: true,
         onSpawnStalled: true,
       },
       toasts: {
@@ -381,6 +382,7 @@
         onAgentCrash: true,
         onPlanComplete: true,
         onWorkflowComplete: true,
+        onWorkflowStalled: true,
         onSpawnStalled: true,
         durationSeconds: 4,
         maxCount: 5,
@@ -1871,6 +1873,22 @@
           var listeners = window.__mockWorkflowCompletedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onWorkflowStalled: function (callback) {
+        // Tests can fire this via window.__mockFireWorkflowStalled({ workflowId, projectId, taskId, taskTitle, reason }).
+        if (!window.__mockWorkflowStalledListeners) window.__mockWorkflowStalledListeners = [];
+        window.__mockWorkflowStalledListeners.push(callback);
+        if (!window.__mockFireWorkflowStalled) {
+          window.__mockFireWorkflowStalled = function (stalled) {
+            var listeners = (window.__mockWorkflowStalledListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](stalled); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockWorkflowStalledListeners || [];
+          var listenerIndex = listeners.indexOf(callback);
+          if (listenerIndex >= 0) listeners.splice(listenerIndex, 1);
         };
       },
       onMovedByMobile: function (callback) {
@@ -5590,6 +5608,7 @@
                 title: planned.title, displayId: null, place: 'planned', swimlaneId: null,
                 steps: stepsOf(planned, 'planned', taskProjectId), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
                 unnamedBlockerCount: 0,
+                stallReason: null,
               };
             }),
             links: draft.links.map(function (link) { return { blockerKey: link.blocker, blockedKey: link.blocked }; }),
@@ -5616,6 +5635,7 @@
               unnamedBlockerCount: links.filter(function (link) {
                 return link.workflow_id === workflow.id && link.blocked_task_id === task.id && keys.indexOf(link.blocker_task_id) === -1 && blockerHeld(link);
               }).length,
+              stallReason: place === 'done' ? null : stallOf(workflow, task.id),
             };
           }),
           links: links.filter(function (link) {
@@ -5640,14 +5660,28 @@
         };
       }
 
+      // Why a running workflow is stalled on a task. Main reads it from the run
+      // log; a test seeds it as window.__mockWorkflowStalls = { [taskId]: reason }.
+      function stallOf(workflow, taskId) {
+        if (workflow.state !== 'running') return null;
+        var stalls = window.__mockWorkflowStalls || {};
+        return typeof stalls[taskId] === 'string' ? stalls[taskId] : null;
+      }
+
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id) };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [] };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
         var boardTasks = {};
+        var stalledTasks = [];
+        function noteStall(task) {
+          var reason = stallOf(workflow, task.id);
+          if (reason !== null) stalledTasks.push({ taskId: task.id, displayId: task.display_id, reason: reason });
+          return reason;
+        }
         function hasLinks(taskId) {
           return links.some(function (link) {
             return link.workflow_id === workflow.id && (link.blocker_task_id === taskId || link.blocked_task_id === taskId);
@@ -5658,7 +5692,7 @@
           if (place === 'done') { counts.done += 1; return; }
           if (place === 'working') {
             counts.working += 1;
-            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task, boardOf(entry, task)), hasLinks: hasLinks(task.id) };
+            boardTasks[task.id] = { waitingFor: [], humanGateTargetId: humanGateExit(workflow, task, boardOf(entry, task)), hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
             return;
           }
           var waitingFor = links.filter(function (link) {
@@ -5671,12 +5705,13 @@
             return blocker ? '#' + blocker.display_id : 'a task';
           });
           counts[waitingFor.length > 0 ? 'blocked' : 'queued'] += 1;
-          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id) };
+          boardTasks[task.id] = { waitingFor: waitingFor, humanGateTargetId: null, hasLinks: hasLinks(task.id), stallReason: noteStall(task) };
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
           inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked, boardTasks: boardTasks,
           agent: agentSummary(workflow.id),
+          stalledTasks: stalledTasks,
         };
       }
 

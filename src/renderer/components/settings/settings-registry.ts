@@ -175,6 +175,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'notifications.onAgentCrash', tabId: 'notifications', label: 'Agent crash', description: 'When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
   { id: 'notifications.onPlanComplete', tabId: 'notifications', label: 'Plan complete', description: 'When a plan finishes and the task auto-moves', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onWorkflowComplete', tabId: 'notifications', label: 'Workflow complete', description: 'When every task in a workflow reaches Done', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'workflow', 'linked tasks'] },
+  { id: 'notifications.onWorkflowStalled', tabId: 'notifications', label: 'Workflow stalled', description: 'When a running workflow cannot move a task on by itself', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'workflow', 'stuck', 'recovery', 'linked tasks'] },
   { id: 'notifications.onSpawnStalled', tabId: 'notifications', label: 'Spawn stalled', description: 'When a task spawn waits too long on the git queue while preparing', scope: 'global', section: 'Events', keywords: ['desktop', 'toast', 'alert', 'queue', 'fetching', 'worktree', 'preparing'] },
 
   // ── Notifications > Delivery ──

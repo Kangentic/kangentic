@@ -47,6 +47,7 @@ import { PushRegistrationStore } from './push/push-registration-store';
 import { collectConnectedDeviceIds, PushNotifier } from './push/push-notifier';
 import { SpawnStallWatcher } from './push/spawn-stall-watcher';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
+import { isRunningWorkflowStepTask } from '../workflows/workflow-home';
 import type { IpcContext } from '../ipc/ipc-context';
 
 export interface MobileBridgeConfig {
@@ -354,6 +355,11 @@ export class MobileBridgeService extends EventEmitter {
         if (!identity) return null;
         return loadRoster(identity).devices.find((device) => device.deviceId === deviceId)?.staticPublicKey ?? null;
       },
+      isWorkflowStepSession: (sessionId) => {
+        const projectId = context.sessionManager.getSessionProjectId(sessionId);
+        const taskId = context.sessionManager.getSessionTaskId(sessionId);
+        return projectId !== undefined && taskId !== undefined && isRunningWorkflowStepTask(projectId, taskId);
+      },
     });
     this.pushNotifier.start();
     this.spawnStallWatcher = new SpawnStallWatcher({
@@ -418,6 +424,21 @@ export class MobileBridgeService extends EventEmitter {
   /** Push a workflow's completion to the paired phones. The notifier sends nothing while the bridge is off. */
   notifyWorkflowComplete(input: { projectId: string; workflowId: string; title: string; taskCount: number }): void {
     this.pushNotifier?.notifyWorkflowComplete(input);
+  }
+
+  /** Push a running workflow task that needs the user (a wait on them, a stall) to the paired phones. */
+  notifyWorkflowTask(input: { projectId: string; taskId: string; detail: string }): void {
+    if (!this.pushNotifier || !this.ipcContext) return;
+    let taskTitle = '';
+    let swimlaneId: string | undefined;
+    try {
+      const task = getProjectRepos(this.ipcContext, input.projectId).tasks.getById(input.taskId);
+      taskTitle = task?.title ?? '';
+      swimlaneId = task?.swimlane_id;
+    } catch {
+      // Best-effort: an unknown title still yields a useful notification.
+    }
+    this.pushNotifier?.notifyWorkflowTask({ ...input, taskTitle, ...(swimlaneId !== undefined ? { swimlaneId } : {}) });
   }
 
   /**

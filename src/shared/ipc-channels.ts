@@ -70,6 +70,10 @@ export const IPC = {
   // Every task in a workflow reached Done: the Workflow Complete toast and
   // desktop notification (`WorkflowCompletedEvent`).
   WORKFLOW_COMPLETED: 'workflow:completed',
+  // A running workflow stalled on a task: its recovery ran out, or a pause
+  // stopped it. The Workflow Stalled toast (`WorkflowStalledEvent`); main
+  // raises the desktop notification itself.
+  WORKFLOW_STALLED: 'workflow:stalled',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
   // Non-blocking spawn anomaly: the agent still started, but from a base that
   // could not be freshened (network/credential fetch failure).

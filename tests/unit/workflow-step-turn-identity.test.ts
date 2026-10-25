@@ -24,6 +24,12 @@
  * moved elsewhere. The mocked move puts the task in its target column, as the
  * real one does.
  * The check's input also carries the PR's merge readiness.
+ *
+ * The step returns its verdict, which recovery acts on (workflow-recovery.ts):
+ * a not-done turn gets a second ask of why it stopped (still running, can carry
+ * on, or waiting on the user), a turn with no reply is a stall with no second
+ * ask, a check that cannot run is recorded with no judged answer, and a move
+ * that fails is reported rather than thrown, so recovery can retry it.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -33,6 +39,7 @@ const hoisted = vi.hoisted(() => ({
   checkAutomationConditions: vi.fn(),
   handleTaskMove: vi.fn(),
   recordWorkflowStep: vi.fn(),
+  hasWorkflowStepDetailSince: vi.fn(() => false),
   task: {} as Record<string, unknown>,
   /** The state the workflow row reads, which a test moves to pause it. */
   workflowState: 'running',
@@ -68,7 +75,8 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
       getById: (id: string) => COLUMNS.find((column) => column.id === id) ?? null,
       list: () => COLUMNS,
     },
-    automationRuns: { recordWorkflowStep: hoisted.recordWorkflowStep },
+    automationRuns: { recordWorkflowStep: hoisted.recordWorkflowStep, hasWorkflowStepDetailSince: hoisted.hasWorkflowStepDetailSince },
+    taskMoves: { visitStartedAt: () => '2026-10-25T06:00:00.000Z' },
   })),
 }));
 vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({ conditionCheckDeps: vi.fn(() => ({})) }));
@@ -153,8 +161,8 @@ describe('the workflow step and the turn it judged', () => {
   }
 
   it('moves the task on when the turn it judged is still the latest (the control)', async () => {
-    // Nothing overtook the turn, so the step reports no newer turn.
-    await expect(runStep()).resolves.toBeUndefined();
+    // Nothing overtook the turn, so the step reports its verdict, not a newer turn.
+    await expect(runStep()).resolves.toEqual({ verdict: 'done', reason: 'The work is done.', workSerial: TURN_WORK_SERIAL });
 
     expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
     expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: true }));
@@ -302,7 +310,7 @@ describe('the workflow step and the turn it judged', () => {
       hoisted.checkAutomationConditions.mockImplementation(answeredBy('call-step-3'));
       hoisted.handleTaskMove.mockRejectedValueOnce(new Error('Column is full.'));
 
-      await expect(runStep()).rejects.toThrow('Column is full.');
+      await expect(runStep()).resolves.toMatchObject({ verdict: 'move-failed' });
 
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ backgroundCallId: 'call-step-3' }));
@@ -421,10 +429,15 @@ describe('the workflow step and the turn it judged', () => {
       });
     });
 
-    it('records the failure and rethrows when the move is refused', async () => {
+    it('records the failure and reports it as a failed move when the move is refused', async () => {
       hoisted.handleTaskMove.mockRejectedValueOnce(new Error('Column is full.'));
 
-      await expect(runStep()).rejects.toThrow('Column is full.');
+      // Reported, not thrown: recovery moves it again on its schedule.
+      await expect(runStep()).resolves.toEqual({
+        verdict: 'move-failed',
+        reason: 'the move to Code Review failed: Column is full.',
+        workSerial: TURN_WORK_SERIAL,
+      });
 
       // One row, and it names the failure. Red before the fix: the row was
       // written ahead of the move and said "Moving on to Code Review", so a
@@ -439,12 +452,171 @@ describe('the workflow step and the turn it judged', () => {
     it('records a refusal that is not an Error by its text', async () => {
       hoisted.handleTaskMove.mockRejectedValueOnce('The board is read-only.');
 
-      await expect(runStep()).rejects.toBe('The board is read-only.');
+      await expect(runStep()).resolves.toMatchObject({ verdict: 'move-failed' });
 
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
         detail: 'Step done, but the move to Code Review failed: The board is read-only.',
       }));
+    });
+  });
+
+  // Not done gets a second ask of why the agent stopped, so recovery can tell a
+  // question it must not nudge, and work still running, from a stall it nudges.
+  describe('the verdict on a turn that did not finish its step', () => {
+    /** The first ask says not done; the second answers `needsUser` and `running`. */
+    function answers(needsUser: boolean, running: boolean): void {
+      hoisted.checkAutomationConditions
+        .mockImplementationOnce(async () => ({
+          ok: true,
+          answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'The gate has not been run.' }]]),
+          agentName: 'Mock agent',
+          callId: 'call-first',
+        }))
+        .mockImplementationOnce(async () => ({
+          ok: true,
+          answers: new Map([
+            ['workflow-step-needs-user', { met: needsUser, reason: needsUser ? 'It asks which option the user wants.' : 'It asks the user for nothing.' }],
+            ['workflow-step-running', { met: running, reason: running ? 'The gate is still running in the background.' : 'Nothing is running.' }],
+          ]),
+          agentName: 'Mock agent',
+          callId: 'call-second',
+        }));
+    }
+
+    function runWithReply(reply: string | null): ReturnType<typeof runWorkflowStep> {
+      return runWorkflowStep(context, {
+        payload: PAYLOAD,
+        columnId: 'lane-executing',
+        signal: new AbortController().signal,
+        readAgentReply: async () => reply,
+      });
+    }
+
+    it('says stopped when the agent needs nothing from the user and nothing is running (the incident)', async () => {
+      answers(false, false);
+
+      const result = await runWithReply("I couldn't finish: a service stopped answering. To finish: commit the working tree and run the gate.");
+
+      expect(result).toEqual({ verdict: 'stopped', reason: 'The gate has not been run.', workSerial: TURN_WORK_SERIAL });
+      // One call for the step, one for why it stopped, carrying both questions.
+      expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(2);
+      const secondRows = (hoisted.checkAutomationConditions.mock.calls[1][1] as { rows: Array<{ automationId: string }> }).rows;
+      expect(secondRows.map((row) => row.automationId)).toEqual(['workflow-step-needs-user', 'workflow-step-running']);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: false,
+        detail: 'Not done yet: The gate has not been run.',
+        backgroundCallId: 'call-first',
+      }));
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('says working when work the agent started is still running', async () => {
+      answers(false, true);
+
+      await expect(runWithReply('The gate is running in the background; I will report when it finishes.'))
+        .resolves.toMatchObject({ verdict: 'working', reason: 'The gate is still running in the background.' });
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: false,
+        detail: 'Not done yet, still working: The gate is still running in the background.',
+      }));
+    });
+
+    it('says waiting on the user only when the check shows a need the user alone can meet', async () => {
+      answers(true, false);
+
+      await expect(runWithReply('Which of the two layouts do you want?'))
+        .resolves.toMatchObject({ verdict: 'waiting', reason: 'It asks which option the user wants.' });
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: false,
+        detail: 'Waiting on you: It asks which option the user wants.',
+      }));
+    });
+
+    it('lets a need of the user outrank running work: a question is never left to wait out a gate', async () => {
+      answers(true, true);
+
+      await expect(runWithReply('The gate is running. Meanwhile: should the export include archived tasks?'))
+        .resolves.toMatchObject({ verdict: 'waiting' });
+    });
+
+    it('calls a turn with no reply a stall, with no second ask', async () => {
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: true,
+        answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'The agent ended its turn without a message.' }]]),
+        agentName: 'Mock agent',
+        callId: 'call-first',
+      }));
+
+      await expect(runWithReply(null)).resolves.toMatchObject({ verdict: 'stopped' });
+      expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports a failed second ask as a check that failed, with the step recorded as not done', async () => {
+      hoisted.checkAutomationConditions
+        .mockImplementationOnce(async () => ({
+          ok: true,
+          answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'Not finished.' }]]),
+          agentName: 'Mock agent',
+          callId: 'call-first',
+        }))
+        .mockImplementationOnce(async () => ({ ok: false, reason: 'The Automation agent could not check the condition: overloaded', cause: 'failed', callId: 'call-second' }));
+
+      await expect(runWithReply('Still going.')).resolves.toMatchObject({ verdict: 'check-failed' });
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: false }));
+    });
+  });
+
+  describe('a step check that could not run', () => {
+    it('is recorded with no judged answer and reported as failed, so recovery tries again', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(async () => ({
+        ok: false,
+        reason: 'The Automation agent could not check the condition: 529 overloaded',
+        cause: 'failed',
+        callId: 'call-failed',
+      }));
+
+      await expect(runStep()).resolves.toMatchObject({ verdict: 'check-failed' });
+
+      // Red before: `if (!outcome.ok) return;` wrote nothing at all.
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: null,
+        unjudgedStatus: 'failed',
+        detail: 'The step check could not run: The Automation agent could not check the condition: 529 overloaded',
+        backgroundCallId: 'call-failed',
+      }));
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('is a human gate, said once a visit, when no Automation agent is set up', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(async () => ({
+        ok: false,
+        reason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+        cause: 'unavailable',
+      }));
+
+      await expect(runStep()).resolves.toMatchObject({ verdict: 'human-gate', firstThisVisit: true });
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: null, unjudgedStatus: 'skipped' }));
+
+      // Already said this visit: no second row, and no second notice.
+      hoisted.recordWorkflowStep.mockClear();
+      hoisted.hasWorkflowStepDetailSince.mockReturnValue(true);
+      await expect(runStep()).resolves.toMatchObject({ verdict: 'human-gate', firstThisVisit: false });
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+      hoisted.hasWorkflowStepDetailSince.mockReturnValue(false);
+    });
+
+    it('writes nothing when the check was stopped because the task moved on', async () => {
+      hoisted.checkAutomationConditions.mockImplementation(async () => ({
+        ok: false,
+        reason: 'The condition check was stopped because the task moved on.',
+        cause: 'stopped',
+      }));
+
+      await expect(runStep()).resolves.toBeUndefined();
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
     });
   });
 });

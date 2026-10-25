@@ -159,6 +159,13 @@ import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import { forgetWorkflowRecovery, resetWorkflowRecoveryForTests, setRecoveryEntry } from '../../src/main/workflows/workflow-recovery-state';
+
+// Recovery state is module-level: an entry a failed test left behind, with its
+// hour-long timer, must not reach the next test.
+afterEach(() => {
+  resetWorkflowRecoveryForTests();
+});
 
 // ---------------------------------------------------------------------------
 // Shared fixture factory
@@ -432,6 +439,63 @@ describe('idle-timeout listener - DB side-effect when projectId is present', () 
       (call) => call[0] === IPC.SESSION_IDLE_TIMEOUT,
     );
     expect(idleTimeoutSends).toHaveLength(1);
+  });
+
+  // A running workflow task under recovery waits on a timer, not on the user:
+  // a pause would stop the nudge that moves it on (workflow-recovery.ts). Once
+  // its recovery ends, it is an agent waiting on the user again.
+  it('leaves a workflow task under recovery alone, and pauses it once recovery ends', async () => {
+    const recoveryTimer = setTimeout(() => undefined, 60 * 60_000);
+    setRecoveryEntry({
+      projectId: 'proj-1', taskId: 'task-idle', workflowId: 'workflow-1', columnId: 'lane-doing', sessionId: 'sess-idle',
+      attemptIndex: 0, countedNudges: 0, countedSinceNotice: 0, noticeSent: false, startedAt: Date.now(),
+      workingWait: false, holdUntil: null, verdict: null, pendingNudge: null, lastTurnFromNudge: false, timer: recoveryTimer, inFlight: false,
+    });
+    try {
+      fireIdleTimeout();
+      // Intentional fixed wait - we cannot poll for non-occurrence.
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+      expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+      expect(context.terminalSubmitScheduler.cancel).not.toHaveBeenCalled();
+    } finally {
+      forgetWorkflowRecovery('task-idle');
+    }
+
+    // Recovery ran out: the next sweep tick pauses it as it would any idle agent.
+    fireIdleTimeout();
+    await drainUntil(() => context.sessionManager.suspend.mock.calls.length > 0);
+    expect(vi.mocked(markRecordSuspended)).toHaveBeenCalledWith(expect.anything(), 'record-idle', 'auto');
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('sess-idle');
+  });
+
+  it('does not pause a task whose recovery started while the pause waited on the task lock', async () => {
+    let releaseLock: () => void = () => {};
+    let lockHeld = false;
+    const lockHolder = withTaskLock('task-idle', () => new Promise<void>((resolve) => {
+      lockHeld = true;
+      releaseLock = resolve;
+    }));
+    const recoveryTimer = setTimeout(() => undefined, 60 * 60_000);
+    try {
+      await drainUntil(() => lockHeld);
+      fireIdleTimeout();
+      // Recovery arms while the pause is queued behind the lock.
+      setRecoveryEntry({
+        projectId: 'proj-1', taskId: 'task-idle', workflowId: 'workflow-1', columnId: 'lane-doing', sessionId: 'sess-idle',
+        attemptIndex: 0, countedNudges: 0, countedSinceNotice: 0, noticeSent: false, startedAt: Date.now(),
+        workingWait: false, holdUntil: null, verdict: null, pendingNudge: null, lastTurnFromNudge: false, timer: recoveryTimer, inFlight: false,
+      });
+    } finally {
+      releaseLock();
+    }
+    await lockHolder;
+    // Intentional fixed wait - we cannot poll for non-occurrence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    forgetWorkflowRecovery('task-idle');
+
+    expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
   });
 
   it('accepts a later fire once the first pause settled without pausing', async () => {

@@ -29,9 +29,16 @@ export interface AutomationAgentDeps {
  *  naming runs `summarize`. */
 export type AutomationAgentJob = 'check' | 'naming';
 
+/**
+ * Why a job cannot run: `'unavailable'` is a setup gap a person fixes in
+ * Settings (no agent, no model, an agent that cannot do the job, a CLI not
+ * found), `'failed'` a setup step that threw and may work on a later try.
+ */
+export type AutomationAgentGapCause = 'unavailable' | 'failed';
+
 export type ResolvedAutomationAgent =
   | { ok: true; adapter: AgentAdapter; agentName: string; cliPath: string; model: string | null; effort: string | null }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; cause: AutomationAgentGapCause };
 
 const DETECTION_TTL_MS = 5 * 60_000;
 /** A discovery that threw (a probe timeout) is retried this soon, so one
@@ -82,7 +89,7 @@ export async function resolveAutomationAgent(deps: AutomationAgentDeps, job: Aut
     return await resolveAutomationAgentOrThrow(deps, job);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, reason: REASONS[job].setupFailed(detail) };
+    return { ok: false, reason: REASONS[job].setupFailed(detail), cause: 'failed' };
   }
 }
 
@@ -98,18 +105,18 @@ async function resolveAutomationAgentOrThrow(deps: AutomationAgentDeps, job: Aut
     answerCapabilities: adapter.answerCapabilities,
   }));
   const gap = answerSetupGap({ agents: candidates, configured: choice.agent, configuredModel: choice.model });
-  if (gap) return { ok: false, reason: gap === 'agent' ? reasons.agent : reasons.model };
+  if (gap) return { ok: false, reason: gap === 'agent' ? reasons.agent : reasons.model, cause: 'unavailable' };
   const agentName = resolveAnswerAgent({ agents: candidates, configured: choice.agent })?.name ?? '';
   const adapter = registered.find((entry) => entry.name === agentName)?.adapter;
   const canRun = job === 'check' ? typeof adapter?.answerFromContext === 'function' : typeof adapter?.summarize === 'function';
-  if (!adapter || !canRun) return { ok: false, reason: reasons.unsupported(agentName) };
+  if (!adapter || !canRun) return { ok: false, reason: reasons.unsupported(agentName), cause: 'unavailable' };
 
   const override = config.agent.cliPaths[agentName] ?? null;
   const cacheKey = `${agentName}\n${override ?? ''}`;
   let cached = cliCache.get(cacheKey);
   if (!cached || Date.now() - cached.at > cached.ttlMs) {
     const info = await adapter.detect(override);
-    if (!info.found || !info.path) return { ok: false, reason: reasons.notFound(adapter.displayName) };
+    if (!info.found || !info.path) return { ok: false, reason: reasons.notFound(adapter.displayName), cause: 'unavailable' };
     let effortLevels: string[] = [];
     let discoveryFailed = false;
     if (adapter.answerCapabilities?.effort && adapter.discoverCapabilities) {

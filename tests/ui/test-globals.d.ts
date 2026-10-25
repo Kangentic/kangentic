@@ -94,6 +94,10 @@ declare global {
     __mockFireAutomationRunFailed?: (failure: import('../../src/shared/types').AutomationRunFailure) => void;
     /** Pushes `workflow:completed` (every task of a workflow reached Done) to every `tasks.onWorkflowCompleted` subscriber. Installed once the subscription exists. */
     __mockFireWorkflowCompleted?: (completed: import('../../src/shared/types').WorkflowCompletedEvent) => void;
+    /** Why a running workflow is stalled on a task, by task id: the mock's stand-in for main's run-log read (`listStalledTasks`). */
+    __mockWorkflowStalls?: Record<string, string>;
+    /** Pushes `workflow:stalled` (a running workflow stalled on a task) to every `tasks.onWorkflowStalled` subscriber. Installed once the subscription exists. */
+    __mockFireWorkflowStalled?: (stalled: import('../../src/shared/types').WorkflowStalledEvent) => void;
     /** Pushes `session:idleTimeout` (a session auto-suspended after N idle minutes) to every `sessions.onIdleTimeout` subscriber. Installed once the subscription exists. `projectId` may be omitted by main for a session with no project. */
     __mockFireIdleTimeout?: (sessionId: string, taskId: string, minutes: number, projectId?: string) => void;
 

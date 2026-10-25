@@ -15,7 +15,17 @@ import { waitForTurnCompletion, type TurnCompletionResult } from '../../transiti
 import { frequencyLimitReason } from '../automation-runner';
 import { hasCondition, needsAgentReply } from '../row-guards';
 import { automationRegistry } from '../automation-registry';
-import { runWorkflowStep, workflowStepApplies } from '../../workflows/workflow-step';
+import { runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from '../../workflows/workflow-step';
+import {
+  afterWorkflowStep,
+  armWorkflowRecoveryOnIdle,
+  noteRecoveryAttemptDropped,
+  noteRecoveryTurnEnded,
+  noteRecoveryTurnFailed,
+  resumeWorkflowRecovery,
+  runRecoveryAttempt,
+  setRecoveryAttemptRunner,
+} from '../../workflows/workflow-recovery';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
 import { deliverMessageToSession } from './deliver-message';
@@ -123,12 +133,23 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  * - **The turn that answers an expired conversation's recap runs nothing.**
  *   The recap asks the agent to summarize and wait (`recap-turns.ts`), so its
  *   reply is a report for the user, not the column's work.
+ * - **A workflow step that does not move the task on is recovered**
+ *   (`workflow-recovery.ts`). Its verdict arms the recovery, and so does a
+ *   resume whose reply was already judged (a restart) and a commit to idle
+ *   with nothing armed (a turn that ended with no Stop). Each attempt runs
+ *   here as a pass of its own (`recovery`), so it never overlaps a turn end's.
  */
 
 interface PassRequest {
   payload: TurnEndedPayload;
   /** A resume's catch-up: the workflow step alone, on the reply no check judged. */
   catchUp: boolean;
+  /**
+   * A workflow recovery attempt (`runRecoveryAttempt`): the step judged again
+   * on the session's current turn, then a nudge or a notice. Ranks like a
+   * catch-up: a turn end replaces it, and it never replaces a turn end.
+   */
+  recovery?: boolean;
   /**
    * The session's user-work count when the turn ended (`userWorkMark`). A pass
    * that newer work abandons keeps it, so a later reclaim can tell whether the
@@ -163,6 +184,8 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // A pass for an older turn that resumes before this one is scheduled
     // must find the count moved too.
     noteTurnEnded(payload.sessionId);
+    // A recovery nudge waiting on this turn ran, so it counts.
+    noteRecoveryTurnEnded(payload.sessionId);
     const marks = {
       userWorkMarkAtTurnEnd: userWorkMark(payload.sessionId),
       turnEndMarkAtTurnEnd: turnEndMark(payload.sessionId),
@@ -186,6 +209,13 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     // activity-state-ok: granular, only a commit to idle ends work; a
     // permission prompt is the same work waiting on the user.
     if (activity === 'idle' && hasAbandonedTurn(sessionId)) scheduleReclaim(context, sessionId);
+    // A running workflow task idle with nothing armed gets a recovery, so a
+    // turn that ended with no Stop of its own is not left parked. Off the
+    // engine's commit stack, as the passes are.
+    // activity-state-ok: granular, only a commit to idle ends work.
+    if (activity === 'idle') {
+      setImmediate(() => armWorkflowRecoveryOnIdle(context, sessionId));
+    }
   });
   context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
     // A prompt the agent received, not PTY output standing in for one: after
@@ -203,7 +233,18 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       || event.type === EventType.TurnFailed
     ) {
       noteUserWork(sessionId);
+      // A recovery nudge whose turn failed or was cut short did nothing.
+      noteRecoveryTurnFailed(context, sessionId);
     }
+  });
+  setRecoveryAttemptRunner((projectId, taskId, sessionId) => {
+    void schedulePass(context, {
+      payload: { sessionId, taskId, projectId, agentSessionId: null, isolatedSwimlaneId: null, turnStartedAt: null, workSerial: 0, transcriptAnchor: null },
+      catchUp: false,
+      recovery: true,
+      userWorkMarkAtTurnEnd: userWorkMark(sessionId),
+      turnEndMarkAtTurnEnd: turnEndMark(sessionId),
+    });
   });
   context.sessionManager.on('session-removed', (sessionId: string) => {
     forgetRecapSession(sessionId);
@@ -364,9 +405,19 @@ function reclaimSerial(
 async function schedulePass(context: IpcContext, request: PassRequest): Promise<void> {
   const existing = passes.get(request.payload.taskId);
   if (existing) {
-    // A turn end outranks a pending catch-up: it judges a newer turn, and a
-    // catch-up behind one would find that turn's reply already judged.
-    if (!request.catchUp || existing.pending === null) existing.pending = request;
+    // A turn end outranks a pending catch-up or recovery: it judges a newer
+    // turn, and either behind one would find that turn's reply already judged.
+    const background = request.catchUp || request.recovery === true;
+    if (!background || existing.pending === null) {
+      // A recovery attempt a turn end replaced is armed again, in case that
+      // turn end arms nothing of its own.
+      if (existing.pending?.recovery && !request.recovery) noteRecoveryAttemptDropped(request.payload.taskId);
+      existing.pending = request;
+    } else if (request.recovery && !existing.pending?.recovery) {
+      // An attempt already queued runs this one's attempt, so only a recovery
+      // a turn end or catch-up kept from queuing is armed again.
+      noteRecoveryAttemptDropped(request.payload.taskId);
+    }
     return;
   }
   const state: TaskPassState = { pending: null };
@@ -376,7 +427,8 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
     while (next) {
       state.pending = null;
       try {
-        await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next));
+        if (next.recovery) await runRecovery(context, next.payload);
+        else await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next));
       } catch (error) {
         console.error(`[turn-end] Pass failed for task ${next.payload.taskId.slice(0, 8)}:`, error);
       }
@@ -555,6 +607,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
     } else if (stepApplies && !controller.signal.aborted && !rowsOutcome.messagedAgent) {
       const step = await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: readReply });
       if (step === 'newer-turn') abandonForNewerWork(context, request, column.id);
+      else if (step) handOnStepVerdict(context, payload, task, column.id, step);
     }
   } finally {
     releaseGroup();
@@ -607,12 +660,43 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     // checks replaced.
     const visitStartedAt = subject.repos.taskMoves.visitStartedAt(task.id, column.id);
     if (visitStartedAt && reply.ts < Date.parse(visitStartedAt)) return;
-    if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) return;
+    if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) {
+      // Judged before the session went away, and parked since: a restart
+      // would otherwise leave it parked for good. Recovery picks up from the
+      // run log and judges it again within one step of its schedule.
+      if (task.workflow_id) {
+        resumeWorkflowRecovery(context, { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: task.workflow_id });
+      }
+      return;
+    }
 
-    await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: async () => reply.text });
+    const step = await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: async () => reply.text });
+    if (step && step !== 'newer-turn') handOnStepVerdict(context, payload, task, column.id, step);
   } finally {
     releaseGroup();
   }
+}
+
+/** A recovery attempt, as a pass of its own: a move made meanwhile stops it. */
+async function runRecovery(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
+  const controller = new AbortController();
+  const releaseGroup = trackTurnEndGroup(payload.taskId, controller);
+  try {
+    await runRecoveryAttempt(context, payload.taskId, controller.signal);
+  } finally {
+    releaseGroup();
+  }
+}
+
+/** Hand a step's verdict to recovery, which arms, notifies or stops. */
+function handOnStepVerdict(context: IpcContext, payload: TurnEndedPayload, task: Task, columnId: string, step: WorkflowStepResult): void {
+  if (!task.workflow_id) return;
+  afterWorkflowStep(
+    context,
+    { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId, workflowId: task.workflow_id },
+    step,
+    payload.turnStartedAt,
+  );
 }
 
 /** The column's pending turn-end rows: one Condition check, a re-check, then the rows. */

@@ -20,7 +20,9 @@
  * Two triggers, each with its OWN cooldown bucket:
  *
  * - `requiresUserInteraction(state)` true (idle or permission) with
- *   `desktop.onAgentIdle` enabled.
+ *   `desktop.onAgentIdle` enabled. A running workflow task's idle is left to
+ *   its step check, which calls `notifyWorkflowTask` when the agent waits on
+ *   the user or the task stalls.
  * - A non-zero, non-intentional exit with `desktop.onAgentCrash` enabled.
  *
  * They shared one bucket keyed by the bare sessionId until 2026-09-21, ported
@@ -55,7 +57,24 @@ export interface DesktopNotifierOptions {
    * which can be another project than the task's.
    */
   resolveWorkflowTitle: (projectId: string, taskId: string) => string | undefined;
+  /**
+   * Is the task in a running workflow, in a column between To Do and Done?
+   * Its step check says itself when the agent waits on the user or the task
+   * stalls (`notifyWorkflowTask`), so its plain idle raises nothing here.
+   */
+  isWorkflowStepTask?: (projectId: string, taskId: string) => boolean;
   showNotification: (input: NotificationInput) => void;
+}
+
+/** A running workflow task the user should hear about (`workflow-recovery.ts`). */
+export interface WorkflowTaskNotice {
+  projectId: string;
+  taskId: string;
+  /** The session waiting, for a wait on the user: it shares that session's idle cooldown. */
+  sessionId?: string;
+  /** `stalled`: recovery ran out or a pause stopped it. `waiting`: the agent waits on the user. */
+  kind: 'stalled' | 'waiting';
+  reason: string;
 }
 
 /**
@@ -114,6 +133,12 @@ export class DesktopNotifier {
     // shows it waiting; it raises no notification of its own.
     if (session.workflowId) return;
     if (!this.shouldNotify(`idle:${sessionId}`, session.projectId)) return;
+    // A running workflow task's idle is its step check's to report: a wait on
+    // the user at once, a stall only once recovery runs out. A permission
+    // prompt still notifies here. Asked after the cheap gates, since it reads
+    // the task's board on every idle.
+    // activity-state-ok: granular, only the idle half is the step check's.
+    if (state === 'idle' && !session.transient && this.options.isWorkflowStepTask?.(session.projectId, session.taskId)) return;
 
     // A Command Terminal has no task, so no workflow to name.
     const place = session.transient
@@ -169,6 +194,32 @@ export class DesktopNotifier {
     const label = taskTitle ?? sessionId.slice(0, 8);
 
     this.notify(`crash:${sessionId}`, `Session crashed: ${label}`, this.taskPlace(session.projectId, session.taskId), session.projectId, session.taskId);
+  }
+
+  /**
+   * A running workflow task's own notice, raised by its recovery
+   * (`workflow-recovery.ts`): the task's title over where it runs and why.
+   *
+   * - A stall is behind `desktop.onWorkflowStalled` and skips the focus gate.
+   *   It goes out once a stall, and a window left in front with the project
+   *   open would otherwise swallow the only one, its latch already written.
+   * - A wait on the user stands in for the idle notice it replaced, so it
+   *   shares that one's switch, focus gate and per-session cooldown.
+   */
+  notifyWorkflowTask(notice: WorkflowTaskNotice): void {
+    if (this.disposed) return;
+    const config = this.options.getNotificationConfig();
+    const title = this.options.resolveTaskTitle(notice.projectId, notice.taskId) ?? 'A task';
+    const place = this.taskPlace(notice.projectId, notice.taskId);
+    if (notice.kind === 'stalled') {
+      if (!config.desktop.onWorkflowStalled) return;
+      this.notify(`stalled:${notice.taskId}`, title, `${place}. Stalled: ${notice.reason}`, notice.projectId, notice.taskId);
+      return;
+    }
+    if (!config.desktop.onAgentIdle) return;
+    const cooldownKey = `idle:${notice.sessionId ?? notice.taskId}`;
+    if (!this.shouldNotify(cooldownKey, notice.projectId)) return;
+    this.notify(cooldownKey, title, `${place}. Waiting on you: ${notice.reason}`, notice.projectId, notice.taskId);
   }
 
   private projectName(projectId: string): string {

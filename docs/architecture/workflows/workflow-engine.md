@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Workflow engine
-description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks, the move lock, and project-delete cleanup."
+description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the hung-turn check, the move lock, and project-delete cleanup."
 tags: [workflows, engine, scheduling]
 sources:
   - resource: src/main/workflows/
@@ -26,8 +26,12 @@ src/main/workflows/
   workflow-board-announce.ts # the quiet board reload after a workflow writes a board's tasks or links
   workflow-project-probe.ts  # what an unopened project holds that the engine reads, on a throwaway connection with no migrations
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
-  workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it)
-  workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?")
+  workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it), and its verdict
+  workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?"),
+                             #   and the second ask of why a step that is not done stopped
+  workflow-recovery.ts       # a task whose step did not finish: re-judge, nudge, or one notice, on a schedule that ends
+  workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
+  workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
   workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
   workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
@@ -162,7 +166,73 @@ src/main/workflows/
   Do order, up to `SessionManager.getFreeAgentSlots()`.
 - **A step** finishes at a turn end the Automation agent judges done (after the column's own
   turn-end rows), at plan approval, or when the task's own agent moves it. The answer is recorded in
-  `automation_runs` as a `workflow_step` row.
+  `automation_runs` as a `workflow_step` row. A step that is not done gets a second ask of why it
+  stopped, so `runWorkflowStep` returns one verdict: `done`, `move-failed`, `waiting` (a decision,
+  information or access only the user can give), `working` (work it started is still running),
+  `stopped` (neither, or the check is unsure), `check-failed`, or `human-gate` (no Automation
+  agent). The workflow stops a task only on `waiting`: a reply the check is unsure of is nudged,
+  since a wrong nudge costs one paid turn and a wrong stop holds the workflow until someone looks.
+  A check that could not run is recorded too, with `condition_met` NULL, so it never counts as
+  having judged the reply. A failed move is reported, not thrown.
+- **Recovery** (`workflow-recovery.ts`) acts on a verdict that does not move the task. It holds the
+  rule that a running workflow either moves on or tells the user why it cannot.
+  - The schedule is 5, 15, 30 and 60 minutes. Each attempt runs as a pass of the turn-end runner's
+    own (`recovery`), judges the session's current turn (reusing a verdict it already has for that
+    turn), and then moves, nudges, or notifies.
+  - A nudge is one line typed into the terminal, only while nobody is there: no draft, no focused
+    terminal, nothing on its way, the agent idle on the judged turn. It tells the agent to go ahead
+    with the step's own work (commit, run the gate) without asking first, and to stop only for
+    what the user alone can give (`nudgeMessage`). On the board measured, every message a person
+    typed into a stopped workflow task said to keep going.
+  - `working` gets one 60-minute wait first. On the board measured, 300 turn ends were woken by
+    the agent's own background work, none more than 30 minutes later.
+  - Only a nudge whose turn ran counts toward the 4. A check that failed, or a nudged turn that
+    failed, spends nothing, and after the schedule an outage is re-judged hourly for up to a day.
+  - The stall notice goes out once a recovery, on desktop (`DesktopNotifier.notifyWorkflowTask`,
+    past the focus gate), on the phone as `input-required`, and as the `workflow:stalled` toast.
+    Its `workflow_stalled` row is the latch and the card's mark, so a restart keeps both.
+  - After a stall, a turn recovery did not start (the user typed, a column message) that stops
+    again starts a new recovery (`workflow_recovery_start`), with its own nudges, its own notice
+    and its own 24 hours. A nudge's own turn carries its recovery on (`lastTurnFromNudge`; after
+    a restart, a turn is the user's only when no nudge ran since the stall).
+  - In an outage the task stays under recovery after the notice, so the idle sweep does not pause
+    it for up to the day the hourly re-checks run. That keeps its agent alive overnight (about
+    1.15 GB of commit on Windows), so the service coming back can move it on; the low-memory
+    pause still applies.
+  - A wait on the user is noticed at once and ends the recovery. A running workflow task's plain
+    idle raises neither the desktop idle notice nor the phone's `turn-complete`.
+  - It is armed by a turn end's verdict, by a resume whose reply was already judged (a restart; the
+    engine's own boot pass runs before any session resumes, so it cannot see who is idle), by a
+    commit to idle with nothing armed (a turn that failed with no Stop), and by sending a nudge.
+  - It is stopped by a move (`supersedeTurnEndWork`), the workflow's Pause, removing the task or
+    deleting the workflow, and a low-memory pause (which sends the notice). The idle sweep leaves a
+    task under recovery alone (`isUnderWorkflowRecovery`).
+  - A start that keeps failing for 30 minutes sends the same stall notice through
+    `announceWorkflowStall`, and its retries go on.
+- **A hung turn** (`workflow-hang-check.ts`) ends no turn, so recovery never sees it. Once a minute,
+  main looks at each running workflow task whose agent shows working on a turn still in progress
+  (a tool, a subagent or the turn itself; never a turn a background shell holds, and never a
+  permission prompt or a question). When the agent's history and its subagents' have had no write
+  for the adapter's `hungTurn.quietLimitMs`, it writes the CLI's own interrupt, once, and records a
+  `workflow_interrupt` row. It tells the activity engine the way a user's Ctrl+C does
+  (`signalUserInterrupt`), since an interrupt between tool calls fires no hook and the turn would
+  stay shown working. It starts the task's recovery over (`startWorkflowRecoveryOver`), so the
+  idle that follows gets the schedule's first step even when the visit's recovery was spent.
+  An interrupt that lands writes to the history (Claude records `[Request interrupted by user]`).
+  When nothing has been written two minutes later, whatever the engine shows, the stall notice
+  goes out and recovery starts over again past it, for an agent that comes back later. It holds
+  while text is typed into the prompt or a message is on its way, and never writes to a session
+  its task has moved off. Only Claude declares `hungTurn` so far.
+  - What to count on is the notice, about 22 minutes after the last write. If the pty host itself
+    stopped, the interrupt goes through that host and cannot land.
+  - A user who raised Claude Code's foreground command cap past 20 minutes can have a long
+    command interrupted.
+  - Measured on 437 turns of the board's workflow tasks: no healthy turn went more than 10.0
+    minutes without a write, Claude Code's own cap on a foreground command. Three turns froze
+    within ten seconds of each other and sat 114 minutes, shown working, until a restart. Claude
+    declares 20 minutes and Esc.
+  - It reads the history from main. The activity engine runs in the pty host, and during that
+    freeze none of the engine's own watchdogs fired, which looks like the host itself stopping.
 - **The lock** (`workflowMoveRefusal`) is asked by `handleTaskMove` before it aborts anything and
   again inside its Phase 1 lock, and by `kangentic_move_task` before it fires. The caller's task
   comes from the MCP request's caller segment (`CommandContext.callerTaskId`).

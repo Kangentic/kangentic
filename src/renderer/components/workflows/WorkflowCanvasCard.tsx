@@ -125,6 +125,7 @@ export const WorkflowCanvasCard = React.memo(function WorkflowCanvasCard({ viewT
       steps={viewTask.steps}
       ends={ends}
       place={viewTask.place}
+      stallReason={viewTask.stallReason}
     />
   );
 

@@ -2,6 +2,7 @@ import { ipcMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
+import { isUnderWorkflowRecovery } from '../../workflows/workflow-recovery-state';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../../db/repositories/session-own-record';
 import { retrievalClient } from '../../retrieval/retrieval-client';
@@ -584,6 +585,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       return;
     }
 
+    // A running workflow task under recovery waits on a timer, not on the
+    // user: a pause would stop the nudge that moves it on, and kill any work
+    // it left running. Once recovery runs out the sweep applies as before.
+    if (isUnderWorkflowRecovery(taskId)) return;
+
     // A task's agent is paused the way the Pause button pauses it, recorded
     // as Kangentic's own (`'auto'`), which holds it paused until the user
     // resumes it. The record is written before the PTY goes down: the sweep
@@ -599,7 +605,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       // low-memory pause: the next sweep tries again once the prompt is empty.
       stillEligible: (liveSession) => liveSession.id === sessionId
         && requiresUserInteraction(context.sessionManager.getActivityCache()[sessionId])
-        && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === '',
+        && (context.sessionManager.getPendingDraft(sessionId) ?? '').trim() === ''
+        && !isUnderWorkflowRecovery(taskId),
       onAccepted: () => {
         context.terminalSubmitScheduler.cancel(taskId);
         // A pasted message is not the scheduler's, so it is stopped on its

@@ -43,7 +43,8 @@ import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-ove
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-runner';
 import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
-import { workflowOfTask } from '../workflows/workflow-home';
+import { startWorkflowHangCheck } from '../workflows/workflow-hang-check';
+import { isRunningWorkflowStepTask, workflowOfTask } from '../workflows/workflow-home';
 import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
@@ -219,6 +220,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
         return undefined;
       }
     },
+    isWorkflowStepTask: (projectId, taskId) => isRunningWorkflowStepTask(projectId, taskId),
     showNotification: (input) => showDesktopNotification(requireContext(), input),
   });
 
@@ -355,6 +357,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerTaskRuntimeOverrideHandlers(context);
   registerSessionHandlers(context);
   registerTurnEndAutomations(context);
+  startWorkflowHangCheck(context);
   registerWorkflowEngine(context);
   registerWorkflowHandlers(context);
   registerLeftoverProcessHandlers(context);

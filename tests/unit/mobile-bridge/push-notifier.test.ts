@@ -274,6 +274,30 @@ describe('PushNotifier', () => {
     expect(sealedCategories()).toEqual(['turn-complete']);
   });
 
+  // A running workflow task's idle is its step check's to report
+  // (workflow-recovery.ts), so "Agent went idle" would ping at every nudged turn.
+  it('a running workflow task\'s settled idle sends no turn-complete; its step check says when it needs the user', async () => {
+    buildNotifier({ isWorkflowStepSession: () => true });
+    await settleTurn();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('a running workflow task that needs the user is sent as input-required, with why, keyed to the task rather than a session', async () => {
+    buildNotifier({ isWorkflowStepSession: () => true });
+
+    notifier.notifyWorkflowTask({ ...TASK_CONTEXT, detail: 'Workflow stalled: the step check could not run.' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sealedCategories()).toEqual(['input-required']);
+    const plaintext = sealSpy.mock.calls[0][2] as { taskId: string; sessionId: string; detail: string };
+    expect(plaintext).toMatchObject({ taskId: TASK_CONTEXT.taskId, sessionId: '', detail: 'Workflow stalled: the step check could not run.' });
+
+    // Cooled down per task: a second one inside the window is held back.
+    notifier.notifyWorkflowTask({ ...TASK_CONTEXT, detail: 'Workflow stalled: again.' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sealedCategories()).toEqual(['input-required']);
+  });
+
   /**
    * The flood this window exists for. Every exchange in a conversation
    * ends in idle, so before the debounce a three-reply back-and-forth

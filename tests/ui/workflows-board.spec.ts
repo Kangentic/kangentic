@@ -65,6 +65,8 @@ interface Options {
    * deleted: a deleted workflow's Done tasks keep theirs, and this one was moved back.
    */
   orphanTask?: boolean;
+  /** Why the running workflow is stalled on a task, by task id: main reads it from the run log. */
+  stalls?: Record<string, string>;
   viewport?: { width: number; height: number };
 }
 
@@ -92,6 +94,7 @@ function seedScript(options: Options): string {
   return `
     window.__mockWorkflows = ${JSON.stringify(options.homeElsewhere ? [decoy, workflow] : [workflow])};
     window.__mockWorkflowLinks = ${JSON.stringify(links)};
+    window.__mockWorkflowStalls = ${JSON.stringify(options.stalls ?? {})};
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
       var gates = ${JSON.stringify(options.gateLanes ?? [])};
@@ -1256,6 +1259,68 @@ test.describe('Workflow tasks on the board', () => {
       // Finished: the summaries the board loads leave it out, so the Workflows segment counts none.
       await expect.poll(() => page.evaluate(() => window.electronAPI.workflows.list('workflows-board-proj').then((summaries) => summaries.length))).toBe(0);
       await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // A running workflow that stalled on a task (its recovery ran out, a pause
+  // stopped it, or it cannot start) says so on the card's strip, where new
+  // information goes, and in the Workflows view's header, with why on hover.
+  test('marks the task a running workflow stalled on, on its card and in the Workflows header', async () => {
+    const reason = 'the step check could not run.';
+    const { browser, page } = await launch({ stalls: { t414: reason } });
+    try {
+      const mark = boardCard(page, 't414').locator('[data-testid="workflow-card-stalled"]');
+      await expect(mark).toBeVisible();
+      await expect(mark).toHaveAccessibleName('Stalled');
+      await expect(mark).toHaveAccessibleDescription(`Stalled: ${reason}`);
+      // Only the task it stalled on.
+      await expect(boardCard(page, 't413').locator('[data-testid="workflow-card-stalled"]')).toHaveCount(0);
+
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-open-workflow').click();
+      await expect(byTestId(page, 'workflows-view')).toBeVisible();
+      const header = byTestId(page, 'workflow-stalled');
+      await expect(header).toBeVisible();
+      await expect(header).toHaveAccessibleName('Stalled on #414');
+      await expect(header).toHaveAccessibleDescription(`#414: ${reason}`);
+      // The canvas card carries the same mark.
+      await expect(page.locator('[data-workflow-task-key="t414"] [data-testid="workflow-card-stalled"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Two stalled tasks: the header's line counts them instead of naming one, and
+  // its description lists each task with its own reason. #413 and #414 are both
+  // in progress; a task in Done is never stalled, so #411 or #412 would not count.
+  test('counts the tasks a running workflow stalled on in the Workflows header, and lists each with why', async () => {
+    const reasonFirst = 'the step check could not run.';
+    const reasonSecond = 'its recovery ran out.';
+    const { browser, page } = await launch({ stalls: { t413: reasonFirst, t414: reasonSecond } });
+    try {
+      await openMenu(page, 't414');
+      await byTestId(page, 'context-open-workflow').click();
+      await expect(byTestId(page, 'workflows-view')).toBeVisible();
+      const header = byTestId(page, 'workflow-stalled');
+      await expect(header).toBeVisible();
+      await expect(header).toHaveAccessibleName('Stalled on 2 tasks');
+      // Each stalled task and why, in task order, joined by a space.
+      await expect(header).toHaveAccessibleDescription(`#413: ${reasonFirst} #414: ${reasonSecond}`);
+      // Both canvas cards carry the mark.
+      await expect(page.locator('[data-workflow-task-key="t413"] [data-testid="workflow-card-stalled"]')).toBeVisible();
+      await expect(page.locator('[data-workflow-task-key="t414"] [data-testid="workflow-card-stalled"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows no stall while the workflow is paused, which its state already says', async () => {
+    const { browser, page } = await launch({ state: 'paused', stalls: { t414: 'the step check could not run.' } });
+    try {
+      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-strip"]')).toBeVisible();
+      await expect(boardCard(page, 't414').locator('[data-testid="workflow-card-stalled"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

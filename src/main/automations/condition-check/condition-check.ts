@@ -4,6 +4,7 @@ import {
   resetAutomationAgentCacheForTests,
   resolveAutomationAgent,
   type AutomationAgentDeps,
+  type AutomationAgentGapCause,
   type ResolvedAutomationAgent,
 } from '../automation-agent';
 import { buildConditionPrompt, parseConditionReply, type ConditionAnswer, type ConditionPromptInput } from './condition-prompt';
@@ -36,7 +37,15 @@ import { buildConditionPrompt, parseConditionReply, type ConditionAnswer, type C
  */
 export type ConditionCheckOutcome =
   | { ok: true; answers: Map<string, ConditionAnswer>; agentName: string; callId: string | null }
-  | { ok: false; reason: string; callId?: string | null };
+  | { ok: false; reason: string; cause: ConditionCheckGapCause; callId?: string | null };
+
+/**
+ * Why a check did not answer, typed so a caller never matches its sentence:
+ * `'unavailable'` is a setup gap a person fixes in Settings, `'failed'` a call
+ * that threw, timed out or could not be set up, which a later try may pass,
+ * and `'stopped'` a caller that stopped waiting (its task moved on).
+ */
+export type ConditionCheckGapCause = AutomationAgentGapCause | 'stopped';
 
 /** The dependencies a check needs, so the module tests without Electron. */
 export interface ConditionCheckDeps extends AutomationAgentDeps {
@@ -163,18 +172,24 @@ export async function checkAutomationConditions(
       stop.abort();
     }, Math.max(0, limits.timeoutMs))
     : null;
-  const stoppedReason = (): string => (timedOut
-    ? 'The Automation agent did not answer in time, so the condition was not checked.'
-    : 'The condition check was stopped because the task moved on.');
+  // A time limit that ran out is the agent's failure, a caller that moved on is not.
+  const stopped = (callId?: string | null): Extract<ConditionCheckOutcome, { ok: false }> => ({
+    ok: false,
+    reason: timedOut
+      ? 'The Automation agent did not answer in time, so the condition was not checked.'
+      : 'The condition check was stopped because the task moved on.',
+    cause: timedOut ? 'failed' : 'stopped',
+    ...(callId === undefined || callId === null ? {} : { callId }),
+  });
 
   try {
     // Inside the bound too: finding the agent can probe its CLI, and a probe
     // that hangs must not hold the move's task lock past the limit.
     const settledAgent = await untilAborted(resolveCheckAgent(deps), stop.signal);
-    if (!settledAgent) return { ok: false, reason: stoppedReason() };
+    if (!settledAgent) return stopped();
     const resolved = settledAgent.value;
     if (!resolved.ok) return resolved;
-    if (stop.signal.aborted) return { ok: false, reason: stoppedReason() };
+    if (stop.signal.aborted) return stopped();
 
     /** One call on the agent, inside the caller's bound, with a slot of its own. */
     const ask = async (prompt: string): Promise<AskResult> => {
@@ -215,11 +230,9 @@ export async function checkAutomationConditions(
     };
 
     const first = await ask(buildConditionPrompt(input));
-    if (first.kind === 'stopped') {
-      return first.callId === null ? { ok: false, reason: stoppedReason() } : { ok: false, reason: stoppedReason(), callId: first.callId };
-    }
+    if (first.kind === 'stopped') return stopped(first.callId);
     if (first.kind === 'failed') {
-      return { ok: false, reason: `The Automation agent could not check the condition: ${first.detail}`, callId: first.callId };
+      return { ok: false, reason: `The Automation agent could not check the condition: ${first.detail}`, cause: 'failed', callId: first.callId };
     }
     const { answers, unanswered } = answersFrom(first.reply, input.rows, first.callId);
     if (unanswered.length === 0) return { ok: true, answers, agentName: resolved.agentName, callId: first.callId };
