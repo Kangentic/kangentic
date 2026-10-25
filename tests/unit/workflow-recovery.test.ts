@@ -753,6 +753,20 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()).toHaveLength(0);
   });
 
+  // A turn that never ends keeps the session busy at every attempt. Recovery
+  // looks again each step, but only until its day is up.
+  it('stops looking at a session that stays busy past the 24-hour limit', async () => {
+    await endTurn(41, STALLED_REPLY);
+    startTurn(42);
+
+    await wait(23 * 60 * MINUTE);
+    expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+    await wait(2 * 60 * MINUTE);
+    expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+    expect(nudges()).toHaveLength(0);
+  });
+
   it('cancels recovery when the task moves on by any other hand', async () => {
     await endTurn(41, STALLED_REPLY);
 
@@ -1093,6 +1107,215 @@ describe('a running workflow task whose turn ends without its step done', () => 
       await wait(RECOVERY_DELAYS_MS[0]);
       expect(nudges()).toHaveLength(1);
       expect(typed).toEqual(['\x1b']);
+    });
+  });
+
+  describe('a reply that cannot be read', () => {
+    // A read that failed is not a turn with no reply: judging it as one would
+    // call a question a stall and nudge over it. The idle-only arming leaves no
+    // verdict in hand, so the first attempt has to read the reply itself.
+    it('is not judged, nudged or counted, and the next attempt reads it again', async () => {
+      currentReply = STALLED_REPLY;
+      replyAt = Date.now();
+      hoisted.retrievalCall.mockRejectedValueOnce(new Error('the transcript worker is restarting'));
+      sessionManager.emit('activity', SESSION_ID, 'idle');
+      await settle();
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(hoisted.check).not.toHaveBeenCalled();
+      expect(nudges()).toHaveLength(0);
+      expect(stallNotices()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      // It spent the schedule's step, so the retry comes at the second one.
+      await wait(RECOVERY_DELAYS_MS[1] - 1_000);
+      expect(nudges()).toHaveLength(0);
+      await wait(1_000);
+      expect(hoisted.check).toHaveBeenCalled();
+      expect(nudges()).toHaveLength(1);
+      expect(recoveryRows()[0].detail).toContain('Recovery 2 of 4');
+    });
+  });
+
+  describe('a nudge that cannot be delivered', () => {
+    it('is logged as failed, retried on the schedule, and does not spend one of the four nudges', async () => {
+      await endTurn(41, STALLED_REPLY);
+      hoisted.deliverMessageToSession.mockRejectedValueOnce(new Error('the terminal was closed'));
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(recoveryRows()).toEqual([
+        expect.objectContaining({ status: 'failed', detail: 'Recovery 1 of 4: the nudge was not delivered: the terminal was closed' }),
+      ]);
+      expect(stallNotices()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      // The retry comes at the second step, and the agent takes it.
+      await wait(RECOVERY_DELAYS_MS[1] - 1_000);
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(1);
+      await wait(1_000);
+      expect(hoisted.deliverMessageToSession).toHaveBeenCalledTimes(2);
+
+      // Three more nudges ran their turns and the schedule is out, with only
+      // three of the four spent: the notice goes out and the hourly look goes on.
+      for (let attempt = 1; attempt < RECOVERY_DELAYS_MS.length; attempt += 1) {
+        startTurn(42 + attempt);
+        await endTurn(42 + attempt, STALLED_REPLY);
+        if (attempt < RECOVERY_DELAYS_MS.length - 1) await wait(RECOVERY_DELAYS_MS[attempt + 1]);
+      }
+      expect(recoveryRows().filter((run) => run.status === 'succeeded')).toHaveLength(3);
+      expect(stallNotices()).toHaveLength(1);
+      const stall = runs.listForTask(taskId).find((run) => (run.type as string) === 'workflow_stalled');
+      expect(stall?.attempts).toBe(3);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+    });
+  });
+
+  describe('a step with no Automation agent to judge it', () => {
+    it('tells the user once a visit that they move the card, nudges nothing, and leaves no recovery', async () => {
+      hoisted.check.mockImplementation(async () => ({
+        ok: false,
+        reason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+        cause: 'unavailable',
+        callId: null,
+      }));
+      await endTurn(41, STALLED_REPLY);
+
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({
+        kind: 'waiting',
+        reason: 'no Automation agent can judge this step, so drag the card on when it is done.',
+      }));
+      expect(notifyPhone).toHaveBeenCalledWith(expect.objectContaining({
+        detail: 'Waiting on you: no Automation agent can judge this step, so drag the card on when it is done.',
+      }));
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+
+      // Another turn end in the same visit says nothing more.
+      startTurn(42);
+      await endTurn(42, STALLED_REPLY);
+      await wait(3 * 60 * MINUTE);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(nudges()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+    });
+  });
+
+  describe('a step that was done but whose move failed', () => {
+    it('is judged again on the schedule, moves the task, and nudges nothing', async () => {
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      hoisted.handleTaskMove.mockRejectedValueOnce(new Error('the worktree is locked'));
+      await endTurn(41, FINISHED_REPLY);
+
+      expect(hoisted.task.swimlane_id).toBe(workingLane.id);
+      expect(errorLog).toHaveBeenCalled();
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(hoisted.task.swimlane_id).toBe(nextLane.id);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      expect(nudges()).toHaveLength(0);
+      expect(notifyDesktop).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('a restart while the agent waits on the user', () => {
+    it('does not arm a recovery for the question that was already told', async () => {
+      await endTurn(41, QUESTION_REPLY);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      const checksAtTheQuestion = hoisted.check.mock.calls.length;
+
+      resetWorkflowRecoveryForTests();
+      replyAt = Date.now() - MINUTE;
+      await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial });
+      await settle();
+
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      await wait(3 * 60 * MINUTE);
+      expect(nudges()).toHaveLength(0);
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(hoisted.check).toHaveBeenCalledTimes(checksAtTheQuestion);
+    });
+  });
+
+  describe('an attempt that finds the agent not ready to be nudged', () => {
+    it('leaves a busy agent alone, judges nothing, and nudges once it is idle again', async () => {
+      await endTurn(41, STALLED_REPLY);
+      const checksAtTheStop = hoisted.check.mock.calls.length;
+
+      // The agent is working on something when the attempt comes due.
+      activity = 'thinking';
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(nudges()).toHaveLength(0);
+      expect(hoisted.check.mock.calls.length).toBe(checksAtTheStop);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      activity = 'idle';
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(nudges()).toHaveLength(1);
+      expect(recoveryRows()[0].detail).toContain('Recovery 1 of 4');
+    });
+
+    it('stops quietly when the session is no longer running, such as a pause or an exit', async () => {
+      await endTurn(41, STALLED_REPLY);
+      sessionManager.getSession = () => ({
+        id: SESSION_ID, taskId, projectId: PROJECT_ID, status: 'exited', transient: false, workflowId: null, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null,
+      });
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      await wait(3 * 60 * MINUTE);
+      expect(nudges()).toHaveLength(0);
+      expect(notifyDesktop).not.toHaveBeenCalled();
+    });
+
+    it('looks again a minute on when a newer turn began after the verdict, rather than typing over it', async () => {
+      await endTurn(41, STALLED_REPLY);
+      sessionManager.isLatestTurn = () => false;
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(nudges()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      sessionManager.isLatestTurn = (sessionId: string, serial: number) => sessionId === SESSION_ID && serial === workSerial;
+      await wait(HOLD_RECHECK_MS + 1_000);
+      expect(nudges()).toHaveLength(1);
+    });
+  });
+
+  describe('an attempt that judges a turn with no turn end', () => {
+    it('tells the user when the agent\'s last message asks them something, and nudges nothing', async () => {
+      currentReply = QUESTION_REPLY;
+      replyAt = Date.now();
+      sessionManager.emit('activity', SESSION_ID, 'idle');
+      await settle();
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+      expect(notifyDesktop).not.toHaveBeenCalled();
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(notifyDesktop).toHaveBeenCalledTimes(1);
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: 'It asks the user to choose a layout.' }));
+      expect(nudges()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+    });
+  });
+
+  describe('a recovery that runs for a day', () => {
+    it('stops looking after 24 hours of an outage, having told the user once', async () => {
+      serviceDown = true;
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(23 * 60 * MINUTE);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+      expect(stallNotices()).toHaveLength(1);
+
+      await wait(2 * 60 * MINUTE);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      const checksAtTheEnd = hoisted.check.mock.calls.length;
+      await wait(3 * 60 * MINUTE);
+      expect(hoisted.check.mock.calls.length).toBe(checksAtTheEnd);
+      expect(stallNotices()).toHaveLength(1);
+      expect(nudges()).toHaveLength(0);
     });
   });
 });

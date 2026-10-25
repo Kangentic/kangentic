@@ -467,7 +467,13 @@ async function attempt(context: IpcContext, entry: RecoveryEntry, signal: AbortS
     return;
   }
   if (activity !== 'idle') {
-    // Working on something; its own turn end arms what comes next.
+    // Working on something; its own turn end arms what comes next. A turn that
+    // never ends does not keep recovery alive past its limit: the hang check
+    // handles that turn, and the user was told when the schedule ran out.
+    if (isSpent(entry)) {
+      forgetWorkflowRecovery(entry.taskId);
+      return;
+    }
     arm(entry, nextDelay(entry));
     return;
   }

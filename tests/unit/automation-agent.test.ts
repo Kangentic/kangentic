@@ -120,3 +120,83 @@ describe('resolveAutomationAgent detection cache', () => {
     expect(detect).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * Why a job cannot run is typed, so a caller never matches a sentence. A setup
+ * gap a person fixes in Settings is `'unavailable'` (a workflow step with it is
+ * a human gate: the person moves the card). A setup step that threw is
+ * `'failed'` (a later try may pass, so recovery tries again). Mixing them up
+ * turns a human gate into a step that is retried for a day, or an outage into a
+ * gate nobody is told about.
+ */
+describe('resolveAutomationAgent cause', () => {
+  interface FixtureOptions {
+    agent?: string | null;
+    model?: string | null;
+    adapter?: Partial<AgentAdapter>;
+  }
+
+  function createDeps(options: FixtureOptions = {}): AutomationAgentDeps {
+    const adapter = {
+      name: 'fake-agent',
+      displayName: 'Fake Agent',
+      answerCapabilities: { streaming: false, search: false, model: true, effort: false },
+      detect: async () => ({ found: true, path: '/mock/fake-agent' }),
+      answerFromContext: async () => 'C1: yes',
+      ...options.adapter,
+    } as unknown as AgentAdapter;
+    return {
+      loadConfig: () => ({
+        automation: { agent: options.agent === undefined ? 'fake-agent' : options.agent, model: options.model === undefined ? 'fake-model' : options.model, effort: null },
+        agent: { cliPaths: {} },
+      }) as unknown as AppConfig,
+      listAgents: async () => [{ name: 'fake-agent', adapter }],
+    };
+  }
+
+  beforeEach(() => {
+    resetAutomationAgentCacheForTests();
+  });
+
+  it('is unavailable when no agent was chosen', async () => {
+    await expect(resolveAutomationAgent(createDeps({ agent: null }), 'check')).resolves.toEqual({
+      ok: false,
+      reason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+      cause: 'unavailable',
+    });
+  });
+
+  it('is unavailable when the agent takes a model and none was chosen', async () => {
+    await expect(resolveAutomationAgent(createDeps({ model: null }), 'check')).resolves.toEqual({
+      ok: false,
+      reason: 'Choose a model for the Automation agent in Settings > Workflows to check this condition.',
+      cause: 'unavailable',
+    });
+  });
+
+  it('is unavailable when the chosen agent cannot do the job (it answers checks but cannot name tasks)', async () => {
+    await expect(resolveAutomationAgent(createDeps(), 'naming')).resolves.toEqual({
+      ok: false,
+      reason: expect.stringContaining('cannot name tasks'),
+      cause: 'unavailable',
+    });
+  });
+
+  it('is unavailable when the agent\'s CLI is not found', async () => {
+    const deps = createDeps({ adapter: { detect: async () => ({ found: false, path: null }) } as Partial<AgentAdapter> });
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toEqual({
+      ok: false,
+      reason: 'Fake Agent CLI not found, so the condition could not be checked.',
+      cause: 'unavailable',
+    });
+  });
+
+  it('is failed when a setup step throws, since a later try may pass', async () => {
+    const deps = createDeps({ adapter: { detect: async () => { throw new Error('spawn EBUSY'); } } });
+    await expect(resolveAutomationAgent(deps, 'check')).resolves.toEqual({
+      ok: false,
+      reason: 'The Automation agent could not be set up, so the condition was not checked: spawn EBUSY',
+      cause: 'failed',
+    });
+  });
+});
