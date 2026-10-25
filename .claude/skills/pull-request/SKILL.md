@@ -50,8 +50,9 @@ the filesystem), and it auto-fixes findings, adds tests, and commits that pass i
 `fix(review):` / `refactor(review):` / `test(review):` commit on the branch is expected, not a
 mistake. So is an EMPTY `chore(review): record refuted findings and decisions` commit: its body is the
 review ledger the next review pass reads back, and it lands empty when every fix went into a file
-that was already dirty. Leave it alone: do not squash it, reword it, or fold it into your own message - its
-separate authorship is the point.
+that was already dirty. A rebase merge does not carry it to `main`, and that is expected. Leave it
+alone: do not squash it, reword it, or fold it into your own message - its separate authorship is
+the point.
 
 **And if the tree is dirty with changes you did not write**, that now means one of exactly two
 things, because a finished review pass leaves the tree clean:

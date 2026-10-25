@@ -213,9 +213,14 @@ positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`:
    `git rev-list --count origin/<sourceBranch>..HEAD` now reads 0, an earlier turn already realigned
    the branch: skip to Step 4.
 3. Realign by merge method:
-   - **rebase merge:** `git rebase origin/<sourceBranch>`. Git drops the now-merged commits (matched
-     by patch-id) and replays only any genuinely-unmerged local commits, leaving the branch at the
-     merged HEAD (plus any real leftover work, which item 5 reports).
+   - **rebase merge:** `git rebase --no-keep-empty --force-rebase origin/<sourceBranch>`. Git drops
+     the now-merged commits (matched by patch-id) and replays only any genuinely-unmerged local
+     commits, leaving the branch at the merged HEAD (plus any real leftover work, which item 5
+     reports). `--no-keep-empty` also drops a commit that started empty, such as the
+     `chore(review)` ledger commit `/code-review` makes, which git otherwise keeps. GitHub's rebase
+     merge already left that commit off `<sourceBranch>`, and it has no files, so dropping it cannot
+     strand work. `--force-rebase` makes git replay a branch that already sits on the merged base,
+     where a plain rebase reports it is up to date and keeps the empty commit.
    - **squash merge:** the local commits do NOT patch-match the single squash commit, so a rebase
      would not cleanly drop them. Since step 1 confirmed the worktree is clean and every change is
      now in the squash on `<sourceBranch>`, reset the branch to the merged base instead:
@@ -225,9 +230,11 @@ positive. Realign the worktree branch onto the merged base, by `<mergeMethod>`:
    `git rebase --abort`, then report. Never leave a half-finished rebase in the worktree.
 5. Confirm nothing is left only on the local branch: `git rev-list --count
    origin/<sourceBranch>..HEAD` must read 0. If it does not, list the leftover commits with
-   `git log --oneline origin/<sourceBranch>..HEAD` and report them. A move to Done keeps the branch
-   but archives the task, and an automated move shows none of the warnings a drag does, so this
-   work would sit in Done with nobody told.
+   `git log --oneline origin/<sourceBranch>..HEAD`. When every one is an empty `chore(review)`
+   ledger commit (`git show --stat <sha>` lists no files), item 3 ran without its two flags. Run
+   item 3 as written, then this item again, and do not ask the user. Report any other leftover
+   commit. A move to Done keeps the branch but archives the task, and an automated move shows none
+   of the warnings a drag does, so this work would sit in Done with nobody told.
 
 ## Step 4 - Pull back into the local main checkout
 

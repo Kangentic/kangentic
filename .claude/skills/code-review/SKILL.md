@@ -257,7 +257,7 @@ When every fix landed on an already-dirty path and no test was added, Committabl
 
 `git commit --allow-empty --only -F <reviewDir>/COMMIT_MSG.tmp`
 
-with the subject `chore(review): record refuted findings and decisions` and the `--ledger` output as the body. `--only` with no paths commits nothing from the index, so a file the task agent left staged stays staged, which is the same guarantee the pathspec form gives. A bare `git commit --allow-empty -F` would sweep the whole index in. `/pull-request` keeps this commit through its rebase (git keeps commits that start empty) and finds no test files in it to re-run.
+with the subject `chore(review): record refuted findings and decisions` and the `--ledger` output as the body. `--only` with no paths commits nothing from the index, so a file the task agent left staged stays staged, which is the same guarantee the pathspec form gives. A bare `git commit --allow-empty -F` would sweep the whole index in. `/pull-request` keeps this commit through its rebase (git keeps commits that start empty) and finds no test files in it to re-run. The commit rides the PR. GitHub's rebase merge then drops it from `main`, and `/merge-pull-request`'s realign drops the local copy. Nothing is lost, because Step 4 reads the ledger only on this branch, before the merge.
 
 ### After the report
 
