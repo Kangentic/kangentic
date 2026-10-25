@@ -166,7 +166,7 @@ describe('workflowStepCondition before the last column', () => {
 });
 
 // The second ask, made only when the step is not done: why the agent stopped.
-// Its wording is measured with scripts/eval-condition-check.mjs; these pin what
+// Its wording is measured with the Condition eval harness; these pin what
 // each question must say so an edit cannot drop a case it covers.
 describe('why a step that is not done stopped', () => {
   it('asks whether the agent waits on work still running on its own, which wakes it by itself', () => {
