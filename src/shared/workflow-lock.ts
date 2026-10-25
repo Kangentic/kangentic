@@ -1,5 +1,6 @@
 import type { SwimlaneRole, WorkflowState } from './types';
 import { WORKFLOW_REFUSALS } from './workflow-refusals';
+import { isMoveByAPerson } from './task-move-origin';
 
 /**
  * Who may move a workflow task, as one pure predicate.
@@ -50,7 +51,7 @@ export function workflowMoveRefusal(check: WorkflowMoveCheck): string | null {
   if (check.fromSwimlaneId === check.toSwimlaneId) return null;
   if (check.workflowState === 'draft' || check.workflowState === 'done') return null;
   const label = `#${check.displayId}`;
-  const byHand = check.origin === 'renderer' || check.origin === 'mobile';
+  const byHand = isMoveByAPerson(check.origin);
   if (check.toRole === 'todo') {
     return byHand && check.workflowState === 'running'
       ? WORKFLOW_REFUSALS.locked(label, check.workflowTitle)

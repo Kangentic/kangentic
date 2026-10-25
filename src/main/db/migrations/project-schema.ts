@@ -1797,7 +1797,8 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // Migration: an automation's Condition (prose an agent judges at each run,
   // NULL = always runs) and Frequency (the most times it may run on one task
-  // since it last left Done, NULL = no limit). Nullable with no default, so
+  // since a person last moved it or it last left Done, NULL = no limit; see
+  // `AutomationRunRepository.countRuns`). Nullable with no default, so
   // every automation that exists keeps running exactly as it did, and a build
   // from before these columns that shares the database still inserts.
   const automationColumnNames = new Set(

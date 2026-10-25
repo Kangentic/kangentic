@@ -8,6 +8,7 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { agentRegistry } from '../agent/agent-registry';
 import type { IpcContext } from '../ipc/ipc-context';
 import { workflowMoveRefusal, type WorkflowMoveOrigin } from '../../shared/workflow-lock';
+import { isMoveByAPerson } from '../../shared/task-move-origin';
 import { workflowOfTask } from './workflow-home';
 
 /**
@@ -50,7 +51,7 @@ export function checkWorkflowMove(
   const swimlanes = new SwimlaneRepository(getProjectDb(args.projectId)).list();
   const toLane = swimlanes.find((lane) => lane.id === args.toSwimlaneId) ?? null;
   const fromLane = swimlanes.find((lane) => lane.id === task.swimlane_id) ?? null;
-  const byHand = args.origin === 'renderer' || args.origin === 'mobile';
+  const byHand = isMoveByAPerson(args.origin);
   // A gate is a column of the route a started task sits in. To Do runs no
   // agent either, but it is the queue: only the engine starts a task from it,
   // once its blockers are done, so a hand never drags one out. The board's
