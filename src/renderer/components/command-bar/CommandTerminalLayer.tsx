@@ -36,7 +36,9 @@ import {
 } from '../../window-manager';
 import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-manager';
 import { CommandTerminalPanel } from './CommandTerminalPanel';
-import { CommandTerminalRail } from './CommandTerminalRail';
+import { AT_CAP_REASON, CommandTerminalRail } from './CommandTerminalRail';
+import { NewTerminalButton } from './NewTerminalButton';
+import { usePopOutHeaderActionsSlot } from '../../pop-out/header-actions-slot';
 import type { RunningCommandTerminal } from './CommandTerminalRail';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
@@ -220,13 +222,6 @@ function isSlotUnused(
   if (!entry) return true;
   const session = state.sessions.find((candidate) => candidate.id === entry.sessionId);
   return session?.hasUserInput !== true;
-}
-
-/** Whether an Earlier row would resume in place of an unused terminal. */
-function useResumesInPlace(projectId: string | null): boolean {
-  const candidateSlot = commandWindowManager.store(inPlaceCandidateSlot);
-  return useSessionStore((state) =>
-    projectId !== null && candidateSlot !== null && isSlotUnused(state, projectId, candidateSlot));
 }
 
 /**
@@ -514,6 +509,10 @@ function CommandBackdrop({ onHide }: { onHide: () => void }) {
   );
 }
 
+/** What the panel adds around its terminals: the rail beside them and the
+ *  header above, plus the 1px border on each side. */
+const PANEL_CHROME = { width: COMMAND_RAIL_WIDTH_PX + 2, height: COMMAND_PANEL_HEADER_HEIGHT_PX + 2 };
+
 /** The smallest panel that still gives every terminal the pane floor: the rail
  *  beside one or two columns, under the panel header, plus the 1px border. */
 function panelMinSize(terminalCount: number): { width: number; height: number } {
@@ -529,7 +528,8 @@ function panelMinSize(terminalCount: number): { width: number; height: number } 
  * Where the layer is drawn: `panel` floats over the board in the main window;
  * `window` fills a window of its own (the detached Command Terminal), whose OS
  * frame already moves, sizes and closes it, so it draws the rail and the
- * terminals with no panel header, backdrop or geometry of its own.
+ * terminals with no panel header, backdrop or geometry of its own; New terminal
+ * goes in that window's title bar instead.
  */
 export type CommandTerminalHost = 'panel' | 'window';
 
@@ -539,11 +539,12 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const [layerRoot] = useState(() => (host === 'panel' ? getPortalHost(COMMAND_LAYER_ROOT_ID) : null));
   // The window engine renders INTO the panel's terminal area, once it exists.
   const [terminalArea, setTerminalArea] = useState<HTMLElement | null>(null);
+  // In a window of its own, where its title bar holds New terminal.
+  const popOutHeaderActions = usePopOutHeaderActionsSlot();
   const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const projectName = useProjectStore((state) => state.currentProject?.name ?? '');
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const atCap = useCommandTerminalAtCap(projectId);
-  const resumesInPlace = useResumesInPlace(projectId);
   const terminalsStarting = useTerminalsStarting(projectId);
   const handleNewTerminal = useCallback(() => { spawnAdditionalCommandTerminal(); }, []);
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
@@ -576,7 +577,6 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
     <CommandTerminalRail
       projectId={projectId}
       atCap={atCap}
-      resumesInPlace={resumesInPlace}
       running={running}
       onNewTerminal={handleNewTerminal}
       onResume={handleResume}
@@ -585,10 +585,17 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
     />
   );
 
+  const newTerminalDisabledReason = atCap ? AT_CAP_REASON : null;
+
   return (
     <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
       {layerRoot === null ? (
         <div className="flex flex-1 min-h-0" data-testid="command-terminal-detached">
+          {/* The window's own title bar takes the place of the panel header. */}
+          {popOutHeaderActions && createPortal(
+            <NewTerminalButton variant="icon" onNewTerminal={handleNewTerminal} disabledReason={newTerminalDisabledReason} />,
+            popOutHeaderActions,
+          )}
           {rail}
           <div ref={setTerminalArea} className="relative flex-1 min-w-0" data-testid="command-terminal-area" />
         </div>
@@ -600,6 +607,9 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
           <CommandTerminalPanel
             onHide={onHide}
             minSize={panelMinSize(terminalCount)}
+            chrome={PANEL_CHROME}
+            onNewTerminal={handleNewTerminal}
+            newTerminalDisabledReason={newTerminalDisabledReason}
             onTerminalAreaReady={setTerminalArea}
             onOpenInNewWindow={handleOpenInNewWindow}
             openInNewWindowDisabledReason={terminalsStarting ? TERMINALS_STARTING_REASON : null}

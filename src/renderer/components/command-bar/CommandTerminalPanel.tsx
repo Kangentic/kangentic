@@ -16,18 +16,38 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ReactNode } from 'react';
 import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
+import { NewTerminalButton } from './NewTerminalButton';
 import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { beginManagerResize, endManagerResize } from '../../window-manager/terminal/manager-resize-gate';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
 
-/** Where the panel opens before it was ever moved: centered, with a margin of board around it. */
-const DEFAULT_PANEL_GEOMETRY: CommandTerminalPanelGeometry = { x: 0.03, y: 0.04, w: 0.94, h: 0.92, maximized: false };
-
 interface PixelRect { left: number; top: number; width: number; height: number }
 
 interface PanelSize { width: number; height: number }
+
+/**
+ * The share of the area a Command Terminal opened at before the panel: a
+ * floating window centered at 58% by 70%, the window manager's first-window
+ * default. Copied rather than imported so a change to board windows' default
+ * does not move this panel.
+ */
+const RELEASED_TERMINAL_SHARE = { width: 0.58, height: 0.7 };
+
+/**
+ * Where the panel opens before it was ever moved or resized: centered, and
+ * sized so a lone terminal is as large as one opened before the panel existed,
+ * with the rail and the panel header (`chrome`) added around it. Every user
+ * meets this the first time they open the panel after updating, since the
+ * panel's place is a new setting. Fractions of the area, as a saved place is.
+ */
+function defaultPanelGeometry(area: PanelSize, chrome: PanelSize): CommandTerminalPanelGeometry {
+  if (area.width <= 0 || area.height <= 0) return { x: 0, y: 0, w: 1, h: 1, maximized: false };
+  const w = Math.min(1, (RELEASED_TERMINAL_SHARE.width * area.width + chrome.width) / area.width);
+  const h = Math.min(1, (RELEASED_TERMINAL_SHARE.height * area.height + chrome.height) / area.height);
+  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h, maximized: false };
+}
 
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
@@ -136,19 +156,35 @@ interface CommandTerminalPanelProps {
   onTerminalAreaReady: (element: HTMLElement | null) => void;
   /** The smallest the panel may be, from how many terminals it holds. */
   minSize: PanelSize;
+  /** What the panel adds around its terminals: the rail and the header, with the border. */
+  chrome: PanelSize;
+  /** Start another terminal. */
+  onNewTerminal: () => void;
+  /** Why New terminal is off right now (every slot taken), or null when it is on. */
+  newTerminalDisabledReason: string | null;
   /** Move the panel into a window of its own. */
   onOpenInNewWindow: () => void;
   /** Why Open in new window is off right now, or null when it is on. */
   openInNewWindowDisabledReason: string | null;
 }
 
-export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSize, onOpenInNewWindow, openInNewWindowDisabledReason }: CommandTerminalPanelProps) {
+export function CommandTerminalPanel({
+  onHide,
+  rail,
+  onTerminalAreaReady,
+  minSize,
+  chrome,
+  onNewTerminal,
+  newTerminalDisabledReason,
+  onOpenInNewWindow,
+  openInNewWindowDisabledReason,
+}: CommandTerminalPanelProps) {
   const areaRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
   const savedGeometry = useConfigStore((state) => state.globalConfig.commandTerminalPanel);
   const saveGeometry = useConfigStore((state) => state.saveCommandTerminalPanel);
-  const geometry = savedGeometry ?? DEFAULT_PANEL_GEOMETRY;
+  const geometry = savedGeometry ?? defaultPanelGeometry(areaSize, chrome);
   const rect = toPixels(geometry, areaSize, minSize);
 
   // The gesture in flight. A move translates the panel; a resize writes its box
@@ -324,6 +360,7 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
           >
             <SquareTerminal size={14} className="text-fg-muted flex-shrink-0" />
             <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">Command Terminal</span>
+            <NewTerminalButton variant="icon" onNewTerminal={onNewTerminal} disabledReason={newTerminalDisabledReason} />
             <Tooltip
               label={tipLabel({
                 disabled: openInNewWindowDisabledReason !== null,

@@ -6,7 +6,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
-import type { Session } from '../../src/shared/types';
+import { EventType, PromptReason, type Session } from '../../src/shared/types';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import {
   COMMAND_TERMINAL_HISTORY_LIMIT,
@@ -78,6 +78,11 @@ class FakeSessions extends EventEmitter {
     this.emit('session-removed', sessionId, { ...session });
     this.sessions.delete(sessionId);
   }
+
+  /** A Prompt event with its text, as a Command Terminal's hook reports one. */
+  prompt(sessionId: string, text: string): void {
+    this.emit('event', sessionId, { ts: Date.now(), type: EventType.Prompt, detail: text });
+  }
 }
 
 function setup(options: { available?: (agentSessionId: string) => boolean } = {}) {
@@ -97,6 +102,29 @@ function setup(options: { available?: (agentSessionId: string) => boolean } = {}
   histories.push(history);
   return { database, repository, sessions, history, notifyChanged };
 }
+
+describe('command_terminal_history migration', () => {
+  it('adds first_prompt to a table an earlier build created without it, and runs again cleanly', () => {
+    const database = openTestDatabase();
+    openDatabases.push(database);
+    database.exec(`
+      CREATE TABLE command_terminal_history (
+        agent_session_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL, label TEXT, cwd TEXT NOT NULL,
+        started_at TEXT NOT NULL, touched_at TEXT, ended_at TEXT, updated_at TEXT NOT NULL
+      )
+    `);
+    const now = new Date().toISOString();
+    database.prepare(
+      "INSERT INTO command_terminal_history VALUES ('conversation-old', 'claude', NULL, '/projects/demo', ?, ?, ?, ?)",
+    ).run(now, now, now, now);
+    runProjectMigrations(database);
+    runProjectMigrations(database);
+    const repository = new CommandTerminalHistoryRepository(database);
+    expect(repository.get('conversation-old')).toMatchObject({ agent_session_id: 'conversation-old', first_prompt: null });
+    repository.setFirstPrompt('conversation-old', 'hello');
+    expect(repository.get('conversation-old')?.first_prompt).toBe('hello');
+  });
+});
 
 describe('CommandTerminalHistory', () => {
   it('lists a used terminal once it ends, with its name and when it ended', async () => {
@@ -136,6 +164,60 @@ describe('CommandTerminalHistory', () => {
     sessions.reportAgentId('pty-1', 'conversation-a');
     sessions.remove('pty-1');
     expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'Early name' }]);
+  });
+
+  it('keeps the first prompt, on one line, for a conversation nothing named', async () => {
+    const { sessions, history } = setup();
+    sessions.add('pty-1', { hasUserInput: true });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.prompt('pty-1', '  why does the\n  sidebar count lag?  ');
+    // A later prompt never replaces it.
+    sessions.prompt('pty-1', 'and the board?');
+    sessions.remove('pty-1');
+    expect(await history.list(PROJECT_ID)).toMatchObject([
+      { agentSessionId: 'conversation-a', label: null, firstPrompt: 'why does the sidebar count lag?' },
+    ]);
+  });
+
+  it('keeps a first prompt that arrived before the agent reported its id', async () => {
+    const { sessions, history } = setup();
+    sessions.add('pty-1', { hasUserInput: true });
+    sessions.prompt('pty-1', 'hello');
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.remove('pty-1');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', firstPrompt: 'hello' }]);
+  });
+
+  it("skips the activity engine's synthetic prompt and an empty one", async () => {
+    const { sessions, history } = setup();
+    sessions.add('pty-1', { hasUserInput: true });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.prompt('pty-1', PromptReason.PtyActivity);
+    sessions.prompt('pty-1', '   ');
+    sessions.prompt('pty-1', 'the real question');
+    sessions.remove('pty-1');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ firstPrompt: 'the real question' }]);
+  });
+
+  it('gives each conversation of a terminal its own first prompt, and a resume keeps the original', async () => {
+    const { sessions, history, repository } = setup();
+    sessions.add('pty-1', { hasUserInput: true });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.prompt('pty-1', 'first question');
+    // A `/clear`: the new conversation's first prompt is its own.
+    sessions.reportAgentId('pty-1', 'conversation-b');
+    sessions.prompt('pty-1', 'second question');
+    sessions.remove('pty-1');
+    expect(repository.get('conversation-a')?.first_prompt).toBe('first question');
+    expect(repository.get('conversation-b')?.first_prompt).toBe('second question');
+
+    // A resumed terminal reports conversation-a again and is asked something new.
+    sessions.add('pty-2', { hasUserInput: true });
+    sessions.reportAgentId('pty-2', 'conversation-a');
+    sessions.prompt('pty-2', 'picking this back up');
+    sessions.remove('pty-2');
+    const entries = await history.list(PROJECT_ID);
+    expect(entries.find((entry) => entry.agentSessionId === 'conversation-a')?.firstPrompt).toBe('first question');
   });
 
   it('ends the earlier conversation when the agent moves the terminal to a new one', async () => {

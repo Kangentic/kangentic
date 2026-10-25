@@ -1753,7 +1753,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'command-terminal',
     reach: 'boot',
     description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail\'s Earlier list shows its empty hint, which is what the desktop shows a project in that state.',
-    alt: 'The Command Terminal panel open over the blurred board, a rail with New terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
+    alt: 'The Command Terminal panel open over the blurred board, a rail with Add terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
     ready: COMMAND_TERMINAL_WINDOW,
     // A person opening one: the pointer rests on the title bar's toggle, whose tip names the
@@ -1777,7 +1777,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal-tiled': {
     name: 'command-terminal-tiled',
     reach: 'boot',
-    description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then the rail\'s New terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
+    description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then Add terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame.',
     alt: 'The Command Terminal panel with two terminals side by side: on the left Claude Code has summarized the repository and listed its npm scripts in a table, on the right a second Claude Code has just started in the same project root and waits at its prompt.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(false) },
     // The second window's model pill, which the context bar shows only once the session's first

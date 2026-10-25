@@ -1,9 +1,10 @@
-import { useEffect, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, SquareTerminal, X } from 'lucide-react';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import type { PopOutKind } from '../../shared/pop-out';
 import { Tooltip } from '../components/Tooltip';
 import { escapeOwnedElsewhere } from '../utils/escape-ownership';
+import { PopOutHeaderActionsContext } from './header-actions-slot';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -32,12 +33,18 @@ const SURFACE_ICONS: Record<PopOutKind, typeof ChartColumn> = {
  * `title` for document.title only, so a surface can show one string in the header
  * (a file's full repo-relative path) and a shorter one in the taskbar (its
  * basename, via resolveSurfaceTitle - the same value main gave the BrowserWindow).
+ *
+ * The header keeps an empty slot beside the window controls that the surface can
+ * portal its own actions into (`usePopOutHeaderActionsSlot`); a surface that puts
+ * nothing there leaves the header as it was.
  */
 export function PopOutWindowFrame({ kind, title, documentTitle, children }: { kind: PopOutKind; title?: string; documentTitle?: string; children: ReactNode }) {
   const meta = POP_OUT_SURFACES[kind];
   const Icon = SURFACE_ICONS[kind];
   const displayTitle = title ?? meta.title;
   const osTitle = documentTitle ?? displayTitle;
+  // State set from a ref callback, so the surface re-renders with the slot once it exists.
+  const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     document.title = osTitle;
@@ -83,6 +90,12 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
             <span className="text-sm font-semibold text-fg-secondary truncate">{displayTitle}</span>
           </Tooltip>
         </div>
+        <div
+          ref={setHeaderActionsSlot}
+          className="flex items-center gap-1 empty:hidden"
+          style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+          data-testid="popout-header-actions"
+        />
         {!isMac && (
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
             <Tooltip label="Minimize">
@@ -120,7 +133,9 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
         )}
       </div>
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {children}
+        <PopOutHeaderActionsContext.Provider value={headerActionsSlot}>
+          {children}
+        </PopOutHeaderActionsContext.Provider>
       </div>
     </div>
   );

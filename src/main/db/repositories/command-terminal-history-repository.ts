@@ -11,6 +11,8 @@ export interface CommandTerminalHistoryRow {
   agent_session_id: string;
   agent_name: string;
   label: string | null;
+  /** The first thing typed into the conversation, one line; null until something was. */
+  first_prompt: string | null;
   cwd: string;
   started_at: string;
   touched_at: string | null;
@@ -18,7 +20,7 @@ export interface CommandTerminalHistoryRow {
   updated_at: string;
 }
 
-const COLUMNS = 'agent_session_id, agent_name, label, cwd, started_at, touched_at, ended_at, updated_at';
+const COLUMNS = 'agent_session_id, agent_name, label, first_prompt, cwd, started_at, touched_at, ended_at, updated_at';
 
 /**
  * The conversations a project's Command Terminals held (migration 91). Written
@@ -38,7 +40,7 @@ export class CommandTerminalHistoryRepository {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO command_terminal_history (${COLUMNS})
-      VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?)
       ON CONFLICT(agent_session_id) DO UPDATE SET
         agent_name = excluded.agent_name,
         cwd = excluded.cwd,
@@ -71,6 +73,13 @@ export class CommandTerminalHistoryRepository {
     this.db.prepare(
       'UPDATE command_terminal_history SET label = COALESCE(label, ?) WHERE agent_session_id = ?',
     ).run(label, agentSessionId);
+  }
+
+  /** The conversation's first prompt. First write wins, so a resume keeps the original. */
+  setFirstPrompt(agentSessionId: string, firstPrompt: string): void {
+    this.db.prepare(
+      'UPDATE command_terminal_history SET first_prompt = COALESCE(first_prompt, ?) WHERE agent_session_id = ?',
+    ).run(firstPrompt, agentSessionId);
   }
 
   /**

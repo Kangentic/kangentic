@@ -1,20 +1,22 @@
 /**
- * The Command Terminal panel's left rail: Running while one terminal is
- * expanded, Earlier (the project's ended conversations, newest first), and New
- * terminal at its foot.
+ * The Command Terminal panel's left rail: New terminal at its head, Running
+ * while one terminal is expanded, and Earlier (the project's ended
+ * conversations, newest first). The panel's header carries New terminal as an
+ * icon too, while both places are tried (`NewTerminalButton`).
  *
  * Running lists the terminals behind the expanded one. Each row's mark is that
  * terminal's own Stop button, so one can be stopped without bringing it back,
  * and its title expands it instead.
  *
- * Earlier shows as many rows as fit the rail and never scrolls: the list is a
+ * Earlier has no heading until a conversation has ended, then shows as many
+ * rows as fit the rail and never scrolls: the list is a
  * way back to a recent conversation, not an archive. A row resumes its
  * conversation in place of an unused terminal (nothing has reached it yet), or
  * in a new terminal beside the others. At the cap both are off and say why.
  */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { History, SquarePlus } from 'lucide-react';
+import { History } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
@@ -23,6 +25,7 @@ import { transientKey } from '../../stores/session-store/transient-session-slice
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { StopButtonIcon } from './StopButtonIcon';
+import { NewTerminalButton } from './NewTerminalButton';
 import { useCommandTerminalHistory } from './useCommandTerminalHistory';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
 
@@ -36,7 +39,8 @@ export interface RunningCommandTerminal {
 const EARLIER_ROW_PITCH_PX = 46;
 const EARLIER_ROW_GAP_PX = 2;
 
-const AT_CAP_REASON = 'Four terminals are running. Stop one to start another.';
+/** Why New terminal and the Earlier rows are off: every slot is taken. */
+export const AT_CAP_REASON = 'Four terminals are running. Stop one to start another.';
 
 const MINUTE_MS = 60 * 1000;
 const RECENT_MS = 2 * 24 * 60 * MINUTE_MS;
@@ -134,8 +138,6 @@ interface CommandTerminalRailProps {
   projectId: string | null;
   /** Every terminal slot is taken. */
   atCap: boolean;
-  /** A row would resume in place of the unused terminal, rather than beside it. */
-  resumesInPlace: boolean;
   /** The terminals behind the expanded one, in the order they tile; null while none is expanded. */
   running: RunningCommandTerminal[] | null;
   onNewTerminal: () => void;
@@ -147,7 +149,6 @@ interface CommandTerminalRailProps {
 export function CommandTerminalRail({
   projectId,
   atCap,
-  resumesInPlace,
   running,
   onNewTerminal,
   onResume,
@@ -163,9 +164,12 @@ export function CommandTerminalRail({
   return (
     <nav
       aria-label="Command Terminals"
-      className="flex w-[248px] flex-shrink-0 flex-col border-r border-edge px-2 pt-2.5 select-none"
+      className="flex w-[248px] flex-shrink-0 flex-col border-r border-edge px-2 py-2.5 select-none"
       data-testid="command-terminal-rail"
     >
+      <div className="flex-shrink-0 pb-1">
+        <NewTerminalButton variant="rail" onNewTerminal={onNewTerminal} disabledReason={atCap ? AT_CAP_REASON : null} />
+      </div>
       {running && running.length > 0 && (
         <>
           <div className="px-2 pt-3 pb-1 text-xs text-fg-muted">Running</div>
@@ -177,62 +181,42 @@ export function CommandTerminalRail({
           <div className="mx-0 mt-2.5 mb-1 h-px flex-shrink-0 bg-edge" aria-hidden />
         </>
       )}
-      <div className="px-2 pt-3 pb-1 text-xs text-fg-muted">Earlier</div>
+      {/* No heading and no hint until a conversation has ended. The list stays
+          mounted either way, so New terminal keeps its place at the foot and the
+          rail its width. */}
+      {entries.length > 0 && (
+        <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading">Earlier</div>
+      )}
       <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden" data-testid="command-terminal-earlier">
-        {entries.length === 0 ? (
-          <div className="px-2 py-1 text-sm text-fg-faint" data-testid="command-terminal-earlier-empty">
-            Stop a terminal and you can resume it from here.
-          </div>
-        ) : (
-          visibleEntries.map((entry) => {
-            const name = entry.label ?? 'Untitled conversation';
-            return (
-              <Tooltip
-                key={entry.agentSessionId}
-                label={tipLabel({
-                  disabled: atCap,
-                  disabledReason: AT_CAP_REASON,
-                  tip: resumesInPlace ? 'Resume here, in place of the unused terminal' : 'Resume in a new terminal',
-                })}
+        {visibleEntries.map((entry) => {
+          // Its name, else what was first asked in it (nothing names a terminal
+          // without an Automation agent).
+          const name = entry.label ?? entry.firstPrompt ?? 'Untitled conversation';
+          return (
+            // No tip while it can be clicked: the row reads as what it resumes.
+            // At the cap it says why it is off.
+            <Tooltip key={entry.agentSessionId} label={tipLabel({ disabled: atCap, disabledReason: AT_CAP_REASON })}>
+              <button
+                type="button"
+                onClick={() => {
+                  hide(entry.agentSessionId);
+                  onResume(entry);
+                }}
+                disabled={atCap}
+                className="flex h-11 flex-shrink-0 items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                aria-label={`Resume ${name}`}
+                data-testid="command-terminal-earlier-row"
+                data-agent-session-id={entry.agentSessionId}
               >
-                <button
-                  type="button"
-                  onClick={() => {
-                    hide(entry.agentSessionId);
-                    onResume(entry);
-                  }}
-                  disabled={atCap}
-                  className="flex h-11 flex-shrink-0 items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-                  aria-label={`Resume ${name}`}
-                  data-testid="command-terminal-earlier-row"
-                  data-agent-session-id={entry.agentSessionId}
-                >
-                  <History size={16} className="flex-shrink-0 text-fg-faint" />
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate text-[13px] text-fg">{name}</span>
-                    <span className="text-xs text-fg-muted">{endedLabel(entry.endedAt, now)}</span>
-                  </span>
-                </button>
-              </Tooltip>
-            );
-          })
-        )}
-      </div>
-      <div className="-mx-2 flex-shrink-0 p-3">
-        <Tooltip label={tipLabel({ disabled: atCap, disabledReason: AT_CAP_REASON })}>
-          <button
-            type="button"
-            onClick={onNewTerminal}
-            disabled={atCap}
-            className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/15 px-3 text-[13px] font-medium text-accent-fg transition-colors hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent/15"
-            data-testid="command-terminal-new"
-          >
-            <SquarePlus size={16} strokeWidth={2.25} />
-            {/* Trimmed to its cap height so it centers on the plus, as Pill's
-                text does: the line box sits the system font's letters low. */}
-            <span className="[text-box:trim-both_cap_alphabetic]">New terminal</span>
-          </button>
-        </Tooltip>
+                <History size={16} className="flex-shrink-0 text-fg-faint" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[13px] text-fg">{name}</span>
+                  <span className="text-xs text-fg-muted">{endedLabel(entry.endedAt, now)}</span>
+                </span>
+              </button>
+            </Tooltip>
+          );
+        })}
       </div>
     </nav>
   );

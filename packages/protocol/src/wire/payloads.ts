@@ -840,7 +840,10 @@ export interface CommandTerminalStartResponsePayload {
 export interface CommandTerminalEarlierConversationWire {
   /** What a `resume` names. */
   agentSessionId: string;
-  /** The terminal's name when it ended, or null when it was never named. */
+  /**
+   * What the row reads as: the terminal's name when it ended, else the
+   * conversation's first prompt on one line, or null when it has neither.
+   */
   name: string | null;
   /** UTC ISO 8601 time the conversation ended. */
   endedAt: string;
