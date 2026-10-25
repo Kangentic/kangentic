@@ -128,7 +128,7 @@ function encodeState(state) {
 }
 
 /**
- * Only the surface's OWN terminals are read: the board's bottom panel mounts one too (15 rows,
+ * Only the surface's OWN terminals are read: the board's bottom panel mounts one too (about 14 rows,
  * no surface of the matrix), and a Command Terminal the scene spawns has an id minted at spawn
  * time, so `spawned` stands for every session the sample install did not seed. The workflow
  * agent's session is minted when its pane opens, so its surface is a spawned one that decides

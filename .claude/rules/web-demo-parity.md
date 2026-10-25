@@ -147,7 +147,7 @@ three things staying in step, and each is enforced rather than remembered.
   a still frame arms no timer at all.
 - **A terminal fills its pane, plays its recording's bytes only on the recording's grid, and is
   never left dead or finished.** A recording's bytes address rows for their own grid, which no
-  page can promise: the board's bottom panel is 15 rows against a session's 37, and a grid moves
+  page can promise: the board's bottom panel is about 14 rows against a session's 37, and a grid moves
   with the host's frame size and the visitor's display scale. Bytes go only to a terminal on the
   recording's grid. Every other grid plays the recording through the page's own emulator
   (`demo/replay-emulator.ts`): the bytes written into a terminal at the RECORDED grid on the

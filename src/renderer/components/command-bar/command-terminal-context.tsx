@@ -18,6 +18,9 @@ export interface CommandTerminalLayerContextValue {
   hideLayer: () => void;
   /** Resume an earlier conversation in a new terminal beside the others. */
   resumeBeside: (agentSessionId: string) => void;
+  /** Whether the terminal area holds the grid at the pane floor. While it does
+   *  not, one terminal shows expanded and its Restore is off. */
+  gridFits: boolean;
 }
 
 const CommandTerminalLayerContext = createContext<CommandTerminalLayerContextValue | null>(null);
@@ -25,16 +28,21 @@ const CommandTerminalLayerContext = createContext<CommandTerminalLayerContextVal
 export function CommandTerminalLayerProvider({
   hideLayer,
   resumeBeside,
+  gridFits,
   children,
 }: {
   hideLayer: () => void;
   resumeBeside: (agentSessionId: string) => void;
+  gridFits: boolean;
   children: ReactNode;
 }) {
   // Memoize so the context value keeps a stable identity across re-renders and
   // does not re-render every `useCommandTerminalLayer()` consumer (the heavy
   // `CommandTerminalWindow`) whenever a parent re-renders.
-  const value = useMemo<CommandTerminalLayerContextValue>(() => ({ hideLayer, resumeBeside }), [hideLayer, resumeBeside]);
+  const value = useMemo<CommandTerminalLayerContextValue>(
+    () => ({ hideLayer, resumeBeside, gridFits }),
+    [hideLayer, resumeBeside, gridFits],
+  );
   return (
     <CommandTerminalLayerContext.Provider value={value}>
       {children}

@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG } from '../../shared/types';
+import { rendererTerminalDefaults } from './native-terminal-defaults';
 
 /**
  * The terminal font size range the Settings field accepts. The floor is also
@@ -26,7 +26,7 @@ export const TERMINAL_FONT_SIZE_MAX = 32;
  */
 export function resolveTerminalFontSize(configured: number | null | undefined): number {
   if (typeof configured !== 'number' || !Number.isFinite(configured) || configured <= 0) {
-    return DEFAULT_CONFIG.terminal.fontSize;
+    return rendererTerminalDefaults().fontSize;
   }
   return Math.max(configured, TERMINAL_FONT_SIZE_MIN);
 }

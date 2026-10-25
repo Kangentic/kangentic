@@ -319,7 +319,10 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   gutter is reserved in the alt buffer too; it is now MEASURED (`offsetWidth - clientWidth`) rather
   than assumed, which is both correct and constant across buffer modes. The old hardcoded 14px
   against the real 8px gutter was the actual cause of the empty right-hand strip that the
-  alt-buffer reclaim was mistakenly written to fix. Gated by
+  alt-buffer reclaim was mistakenly written to fix. The container geometry is the parent's box
+  less the `.xterm` element's own padding, which `index.css` sets to 8px on the left, top and
+  bottom to match Windows Terminal's default inset; the measured gutter is the right side's inset,
+  so the text does not sit flush against the pane's edges. Gated by
   `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
 - **Fit only on the renderer the terminal keeps.** The container is not the fit's only input: the
@@ -504,7 +507,9 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   and never above the configured size (`CONFORM_MAX_SCALE` is 1), so the frame the PTY paints
   is the frame the user sees rather than the taller grid clipped. The size it takes is the
   LARGEST quarter-pixel size at which the grid fits. It proposes one from a linear model of the
-  cell, steps down while rounding leaves the grid over the box, and, when the proposal fit at
+  cell, steps down while rounding leaves the grid over the box (up to 12 quarter-pixel steps,
+  `CONFORM_MAX_STEPS`: one device pixel of cell width spans about 1.8px of font, and a budget of
+  4 declined a 154 x 37 grid the pane could show once the terminal gained its 8px inset), and, when the proposal fit at
   once, steps back UP while the grid still fits (`CONFORM_MAX_STEP_UPS`): a cell is not linear in
   the font (the renderer floors its width to device pixels, and a face's height can drop a whole
   pixel between two sizes), so the proposal alone could stop a size short and letterbox rows the

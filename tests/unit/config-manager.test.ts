@@ -344,13 +344,14 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
   });
 
   it('does not rewrite a global config whose theme ids are already current', async () => {
-    // hasMigratedWindowLightDismissDefault and hasPurgedSeededDiscoveredModels both default to
-    // false, and neither of those migrations is gated on `parsed` - both would otherwise fire
-    // unconditionally on this file's first load. Set both markers true so only the theme-id
-    // migration is under test.
+    // hasMigratedWindowLightDismissDefault, hasPurgedSeededDiscoveredModels and
+    // hasMigratedNativeTerminalDefaults all default to false, and none of those migrations is
+    // gated on `parsed` - each would otherwise fire unconditionally on this file's first load.
+    // Set the markers true so only the theme-id migration is under test.
     fs.writeFileSync(configPath, JSON.stringify({
       theme: 'rust', themeLight: 'clay', themeDark: 'rust', themeFollowsSystem: true,
       hasMigratedWindowLightDismissDefault: true, hasPurgedSeededDiscoveredModels: true,
+      hasMigratedNativeTerminalDefaults: true,
     }));
     // Backdate so a spurious write is unmissable rather than possibly landing in the same
     // millisecond as the fixture write above.
@@ -942,6 +943,95 @@ describe('Config Manager - retired memory block', () => {
     expect(config).not.toHaveProperty('memory');
     expect(config.knowledgeGraph.enabled).toBe(true);
     expect(config.knowledgeGraph.localModel).toBe('bge-small');
+  });
+});
+
+describe('Config Manager -- native terminal defaults', () => {
+  // A fresh install gets its platform's own terminal font, size and cursor; an install
+  // that ran under the old shared default has those written to disk (save() writes the
+  // whole blob), so a one-time migration moves it, and only while it never chose its own.
+  async function nativeForThisPlatform() {
+    const { nativeTerminalDefaults } = await import('../../src/shared/terminal-native-defaults');
+    return nativeTerminalDefaults(process.platform);
+  }
+
+  it('gives a fresh install the native defaults and records the marker on disk', async () => {
+    const native = await nativeForThisPlatform();
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: native.fontFamily, fontSize: native.fontSize, cursorStyle: native.cursorStyle });
+    expect(config.hasMigratedNativeTerminalDefaults).toBe(true);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf-8')).hasMigratedNativeTerminalDefaults).toBe(true);
+  });
+
+  it('moves an install still on the old default font, size and cursor', async () => {
+    const native = await nativeForThisPlatform();
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' },
+    }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: native.fontFamily, fontSize: native.fontSize, cursorStyle: native.cursorStyle });
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.terminal.fontFamily).toBe(native.fontFamily);
+    expect(raw.hasMigratedNativeTerminalDefaults).toBe(true);
+  });
+
+  it('moves Windows to Windows Terminal\'s font and bar cursor, keeping 14px', async () => {
+    // Pinned to one platform so the case is not vacuous on a runner whose native
+    // default equals the old one (macOS keeps it for now).
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      fs.writeFileSync(configPath, JSON.stringify({
+        terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' },
+      }));
+      const config = (await createConfigManager()).load();
+      expect(config.terminal).toMatchObject({ fontFamily: '"Cascadia Mono", Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'bar' });
+    } finally {
+      if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
+    }
+  });
+
+  it('keeps a font the user chose', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ terminal: { fontFamily: 'Fira Code', fontSize: 14, cursorStyle: 'block' } }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: 'Fira Code', fontSize: 14, cursorStyle: 'block' });
+    expect(config.hasMigratedNativeTerminalDefaults).toBe(true);
+  });
+
+  it('keeps a size the user chose', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({ terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 18 } }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 18 });
+  });
+
+  it('moves the font but keeps a cursor the user changed', async () => {
+    const native = await nativeForThisPlatform();
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'underline' },
+    }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: native.fontFamily, fontSize: native.fontSize, cursorStyle: 'underline' });
+  });
+
+  it('leaves the old default alone once the marker is set', async () => {
+    fs.writeFileSync(configPath, JSON.stringify({
+      terminal: { fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' },
+      hasMigratedNativeTerminalDefaults: true,
+    }));
+
+    const config = (await createConfigManager()).load();
+
+    expect(config.terminal).toMatchObject({ fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' });
+    expect(config.hasMigratedNativeTerminalDefaults).toBe(true);
   });
 });
 

@@ -15,9 +15,6 @@ sources:
   - resource: src/renderer/window-manager/tiling/host-arrangement.ts
   - resource: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
   - resource: src/renderer/pop-out/surfaces/command-terminal-surface.tsx
-  - resource: src/renderer/pop-out/header-actions-slot.ts
-  - resource: src/renderer/pop-out/PopOutWindowFrame.tsx
-    title: the title bar's header actions slot the detached Command Terminal fills
   - resource: src/renderer/hooks/useCommandBar.ts
   - resource: src/shared/terminal-input-content.ts
   - resource: src/renderer/components/layout/TitleBar.tsx
@@ -71,10 +68,28 @@ seams that cross never reorder a grid). A dragged seam holds until the count cha
 persists globally in `AppConfig.commandTerminalWorkspace`, and a blob saved before the panel
 (floating windows) is re-tiled on load.
 
-The pane floor is 320 x 200 (`COMMAND_LAYER_OPTIONS.minSize`): what four terminals keep beside
-the rail at the 900 x 600 window floor, two columns of about 325px and two rows of about 240px.
-The panel's own minimum grows with the count (`panelMinSize`), so a resize can never squeeze a
-terminal below the floor.
+The pane floor is 650 x 200 (`COMMAND_LAYER_OPTIONS.minSize`): a task window's width
+(`DEFAULT_MIN_WIDTH_PX`), about the 80 columns an agent's interface is laid out for. A terminal
+area too small for the preset at that floor (`commandTerminalGridFits`) shows the focused
+terminal expanded and lists the rest under Running (`useExpandWhileGridDoesNotFit`), and the grid
+comes back once the area fits it, unless the user had expanded that terminal themselves. The
+expanded terminal's Restore is off meanwhile, with "Widen the panel to restore the grid" as its
+reason. The panel's own minimum is one terminal beside the rail, whatever the count, which at
+the 900px window floor is the window's whole width. Two side by side need about 1550px of panel:
+a 2560px screen fits them at the panel's default place, a 1920px screen only maximized.
+
+### Decision: a 650px floor instead of a one-row context bar (2026-10-25)
+
+The floor was 320 x 200, what four terminals kept beside the rail at the 900 x 600 window floor
+(two columns of about 325px). At that width a terminal is about 37 columns: the agent's own
+output wrapped, and the context bar wrapped to five rows and left the terminal one. Two fixes were
+drawn. One kept the 320px floor and folded the context bar to one row in every terminal, with
+the overflow behind a +N menu; that needed a fold order and a priority-plus layout in a component
+the board shares. The other gave Command Terminals the floor task windows already have, which
+caps the bar at two rows, as on the board, and fixes the narrow output too. The floor won: one
+behavior in every terminal and nothing new to maintain. What it costs is the four-terminal grid
+on small screens, where the fallback shows one terminal at a time with the others a click away
+under Running, the view Expand already had.
 
 ### Decision: one panel instead of floating windows (2026-10-24)
 
@@ -323,7 +338,8 @@ and the terminals keep running throughout. The button stays off while a terminal
 starting: main holds that slot reserved until the start lands (a cold start's fetch and checkout
 can take seconds), so a window opened then would find no session in the slot, ask main for it,
 and be refused with `slot-taken`. The window opens at least at the app window's own 900 x 600
-floor, which keeps four terminals at the pane floor.
+floor, which holds one terminal at the pane floor beside the rail; a window too small for the
+grid shows one terminal expanded, as the panel does.
 
 The window is a renderer of its own with no App.tsx, which is where most of its rules come from:
 
@@ -477,14 +493,15 @@ while the layer was open, so the title bar shifted as the panel opened and close
 the panel, where it disables with its reason once the project's windows and live terminals
 together hold `MAX_COMMAND_TERMINALS` slots. It first went to the rail's foot, which put it about
 2000px of pointer travel from the toggle that opens the panel (a 2560 by 1392 window, the panel at
-its default place). Two places are now drawn side by side to choose between (`NewTerminalButton`):
-an icon in the panel's header, left of Open in new window and about 230px from the toggle, drawn
-like the window controls beside it (`command-terminal-new`; a labelled button there read as out of
-place among them), and a labelled button at the top of the rail, at the head of the list it
-starts, which saves only the vertical part of the trip (`command-terminal-rail-new`). The detached
-window has no panel header, so the layer portals the header's icon into that window's title bar, a slot
-`PopOutWindowFrame` keeps beside its window controls (`usePopOutHeaderActionsSlot`); the layer
-mounts only once that window's terminals have synced, so the button cannot start one early.
+its default place). It now sits at the top of the rail, at the head of the list it starts, as
+**Add terminal** (`NewTerminalButton`, `command-terminal-new`; "Add" because "New terminal" read
+as replacing the open one). That saves the vertical part of the trip. An icon in the panel's
+header, left of Open in new window and about 230px from the toggle, was drawn beside it to choose
+between, and dropped: it added a fourth control to the header's window controls for a trip the
+rail button already shortens. A labelled button in the header read as out of place among the
+window controls. The detached window draws the same rail, so its Add terminal is in the same
+place, and the layer mounts only once that window's terminals have synced, so the button cannot
+start one early.
 
 The toggle uses the custom `CommandTerminalIcon` glyph, not a bare lucide icon: a thin wrapper
 over `components/ActivityMark.tsx`, rendering the `terminal-idle` and `terminal-working` marks from

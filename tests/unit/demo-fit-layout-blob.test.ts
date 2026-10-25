@@ -19,7 +19,8 @@ import { buildCellWidthTable, loadDemoScrollback } from '../captures/helpers/dem
 interface Geometry { x?: number; w?: number; h?: number; y?: number }
 interface ManagedWindow { id: string; fitToRecording?: string; geometry?: Geometry }
 interface LayoutBlob { windows: ManagedWindow[] }
-interface DeviceCell { width: number; gutter: number }
+/** The cell, the scrollbar gutter, and the terminal's own horizontal padding (index.css pads .xterm). */
+interface DeviceCell { width: number; gutter: number; padding: number }
 type Measure = () => DeviceCell | null;
 type FitLayoutBlob = (blob: LayoutBlob | null | undefined, measure: Measure) => LayoutBlob | null | undefined;
 interface RecordingsIndex { sessions: Record<string, { cols: number }> }
@@ -140,11 +141,11 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
   it('sets geometry w and x to the measured formula, and strips the marker', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
     const fitLayoutBlob = lift(recordings, 1024);
-    const measure: Measure = () => ({ width: 8, gutter: 15 });
+    const measure: Measure = () => ({ width: 8, gutter: 15, padding: 8 });
     const blob: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1' }] };
     const result = fitLayoutBlob(blob, measure);
     const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
-    const expectedWidth = (WINDOW_FRAME_BORDER_PX + 15 + (120 + 0.5) * 8) / frameWidth;
+    const expectedWidth = (WINDOW_FRAME_BORDER_PX + 15 + 8 + (120 + 0.5) * 8) / frameWidth;
     const resultWindow = result?.windows[0];
     expect(resultWindow).not.toHaveProperty('fitToRecording');
     expect(resultWindow?.geometry?.w).toBeCloseTo(expectedWidth, 10);
@@ -154,7 +155,7 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
   it('keeps a marked window clientWidth WIDER than the reference frame as the frame width, not the reference', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 80 } } };
     const fitLayoutBlob = lift(recordings, 2000);
-    const measure: Measure = () => ({ width: 9, gutter: 0 });
+    const measure: Measure = () => ({ width: 9, gutter: 0, padding: 0 });
     const blob: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1' }] };
     const result = fitLayoutBlob(blob, measure);
     const frameWidth = Math.max(2000, FIT_REFERENCE_FRAME_WIDTH);
@@ -166,7 +167,7 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
   it('merges the fitted x/w into any geometry the window already carried', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
     const fitLayoutBlob = lift(recordings, 1024);
-    const measure: Measure = () => ({ width: 8, gutter: 15 });
+    const measure: Measure = () => ({ width: 8, gutter: 15, padding: 8 });
     const blob: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1', geometry: { h: 0.6, y: 0.05 } }] };
     const result = fitLayoutBlob(blob, measure);
     const geometry = result?.windows[0].geometry;
@@ -190,7 +191,7 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
   it('does not mutate the input blob, its windows, or their geometry', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
     const fitLayoutBlob = lift(recordings, 1024);
-    const measure: Measure = () => ({ width: 8, gutter: 15 });
+    const measure: Measure = () => ({ width: 8, gutter: 15, padding: 8 });
     const original: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1', geometry: { h: 0.6 } }, { id: 'w2' }] };
     const snapshot = structuredClone(original);
     fitLayoutBlob(original, measure);
@@ -200,7 +201,7 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
   it('returns a NEW blob object (a copy), never the same reference, once a window is marked', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
     const fitLayoutBlob = lift(recordings, 1024);
-    const measure: Measure = () => ({ width: 8, gutter: 15 });
+    const measure: Measure = () => ({ width: 8, gutter: 15, padding: 8 });
     const original: LayoutBlob = { windows: [{ id: 'w1', fitToRecording: 'sess-1' }] };
     const result = fitLayoutBlob(original, measure);
     expect(result).not.toBe(original);
@@ -232,9 +233,9 @@ describe('fitCommandTerminalPanel', () => {
     const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
     const fit = liftPanelFit(recordings, 1024);
     const panel: Panel = { x: 0.1, y: 0.14, w: 0.5, h: 0.72, maximized: false, fitToRecording: 'sess-1' };
-    const result = fit(panel, () => ({ width: 8, gutter: 15 }));
+    const result = fit(panel, () => ({ width: 8, gutter: 15, padding: 8 }));
     const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
-    const chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + 15;
+    const chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + 15 + 8;
     const expectedWidth = (chrome + (120 + 0.5) * 8) / frameWidth;
     expect(result).not.toHaveProperty('fitToRecording');
     expect(result?.w).toBeCloseTo(expectedWidth, 10);

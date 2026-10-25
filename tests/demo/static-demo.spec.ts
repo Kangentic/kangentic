@@ -1698,11 +1698,14 @@ function paneBands(page: Page): Promise<PaneBands[]> {
     if (parentBox.width === 0 || parentBox.height === 0) return [];
     const style = getComputedStyle(xterm);
     const screenBox = screen.getBoundingClientRect();
-    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    // The terminal's own inset (index.css pads .xterm) is margin the app draws on purpose, not
+    // a band the fit left, so both bands are measured inside it, as the fit addon measures.
+    const paddingHorizontal = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const paddingVertical = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
     const textarea = xterm.querySelector<HTMLElement>('.xterm-helper-textarea');
     return [{
-      right: Math.round(parentBox.width - padding - (viewport.offsetWidth - viewport.clientWidth) - screenBox.width),
-      below: Math.round(parentBox.height - screenBox.height),
+      right: Math.round(parentBox.width - paddingHorizontal - (viewport.offsetWidth - viewport.clientWidth) - screenBox.width),
+      below: Math.round(parentBox.height - paddingVertical - screenBox.height),
       cellWidth: parseFloat(textarea?.style.width ?? '') || 0,
       cellHeight: parseFloat(textarea?.style.height ?? '') || 0,
     }];
@@ -4267,7 +4270,11 @@ test('Stop on a Command Terminal ends its recorded boot: no chunk reaches it onc
 
 test('a Command Terminal that tiles beside a new one repaints from the boot recorded at the tiled width', async ({ page }) => {
   const getUnexpectedErrors = collectUnexpectedErrors(page);
-  await gotoScene(page, { view: 'board' });
+  // The panel opens maximized, as in the tiled scene: in the 1600px frame only a maximized panel
+  // holds two terminals at the 650px floor, and at its default place the second would open
+  // expanded over the first instead of tiling beside it.
+  const maximizedPanel = { config: { commandTerminalPanel: { x: 0.18, y: 0.15, w: 0.64, h: 0.7, maximized: true } } };
+  await gotoScene(page, { view: 'board', state: encodeState(maximizedPanel) });
   // spring-petclinic has no Command Terminal yet, so opening the layer boots one alone, at the
   // single-window width.
   await page.locator('[data-testid="sidebar-project-list"]').getByText('spring-pet', { exact: false }).first().click();
@@ -4351,8 +4358,8 @@ test('the site\'s take-control dialog at a 1440 by 900 display fills the task wi
 });
 
 test('the board\'s bottom panel is live, where no grid could ever fit a recording', async ({ page }) => {
-  // The panel is 15 rows and a session recording is 37, which no font size reconciles: the hold
-  // would need type at 40 percent of the configured size, below its floor, so at every display
+  // The panel is about 14 rows and a session recording is 37, which no font size reconciles: the
+  // hold would need type under 40 percent of the configured size, below its floor, so at every display
   // scale this is the frame path. It is also the default layout, so it is the one a visitor
   // meets the product through. Every frame it paints is physical rows fitted to the panel: no
   // row wider than the grid, so nothing can wrap or spill, and the hold never engages.
@@ -4360,7 +4367,10 @@ test('the board\'s bottom panel is live, where no grid could ever fit a recordin
   await gotoScene(page, { view: 'board', embed: '1' });
   await SCENE_MARKERS.board(page);
   const grid = await mountedGrid(page, 'sess-cw-middleware');
-  expect(grid?.rows).toBe(15);
+  // The row count rides on the font's cell height, so this pins what the test is about rather
+  // than one platform's count: a pane too short for the hold's floor (HOLD_MIN_SCALE, 0.6).
+  expect(grid?.rows ?? 0).toBeGreaterThan(0);
+  expect((grid?.rows ?? 0) / MIDDLEWARE_RECORDED_GRID.rows).toBeLessThan(0.6);
   expect(await sentGrids(page, 'sess-cw-middleware')).not.toContainEqual(MIDDLEWARE_RECORDED_GRID);
   const frames = await paintedFrameRowWidths(page, 'sess-cw-middleware', 8_000);
   expect(frames.length).toBeGreaterThan(0);

@@ -14,7 +14,7 @@ paths:
 # Rule: the Command Terminal panel is slot-keyed, its geometry is global, and its population is per-project
 
 Ctrl+Shift+P opens the Command Terminal: one PANEL over a slight backdrop blur, holding a header
-(an Add terminal icon and the window controls), a rail (Add terminal, Earlier conversations, and a
+(the window controls), a rail (Add terminal, Earlier conversations, and a
 Running list while a terminal is expanded) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
 row, and each is a window of a SECOND window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail layer:
@@ -48,8 +48,13 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   sit side by side, three are one tall beside two stacked, four are a two by two grid split by
   columns (`hostArrangementTree`, `arrangeTiles`). Starting or stopping a terminal rebuilds the
   preset, and a dragged seam holds until the count changes (`isHostArranged`). The pane floor is
-  `COMMAND_LAYER_OPTIONS.minSize` (320 x 200): what four terminals keep beside the 248px rail at
-  the 900 x 600 window floor. There is no per-terminal pop-out, float or maximize. The panel's
+  `COMMAND_LAYER_OPTIONS.minSize`: a task window's 650px width (`DEFAULT_MIN_WIDTH_PX`, about
+  80 columns, so the context bar wraps to two rows at most) by 200px. A terminal area too small
+  for the preset at that floor (`commandTerminalGridFits`) shows the focused terminal expanded and
+  the rest under Running (`useExpandWhileGridDoesNotFit`), and gives the grid back once it fits,
+  unless the user expanded that terminal; its Restore is off meanwhile. So the panel's own minimum
+  is one terminal beside the rail, whatever the count. There is no per-terminal pop-out, float or
+  maximize. The panel's
   own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
   the status bar), it moves by its header and resizes live from its edges, and it maximizes. Its
   box is snapped to whole pixels (`toWholePixels`): the tiles are cut from the terminal area's
@@ -198,14 +203,12 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
   panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
-  terminal (`NewTerminalButton`; "Add", since "New" read as replacing the open terminal) is drawn
-  in two places while both are tried: an icon in the
-  panel's header, left of Open in new window and a short trip from the toggle
-  (`command-terminal-new`; in the detached window it is portaled into that window's title bar,
-  `usePopOutHeaderActionsSlot`), and a labelled button at the top of the rail
-  (`command-terminal-rail-new`). Both are disabled with their reason once windows and live
-  terminals together hold `MAX_COMMAND_TERMINALS` slots, as are the Earlier rows. At the rail's
-  foot it was about 2000px from the toggle.
+  terminal (`NewTerminalButton`, `command-terminal-new`; "Add", since "New" read as replacing the
+  open terminal) is one labelled button at the top of the rail, in the panel and the detached
+  window alike. The panel's header holds only its window controls: an Add icon there was tried
+  and dropped. Add terminal is disabled with its reason once windows and live terminals together
+  hold `MAX_COMMAND_TERMINALS` slots, as are the Earlier rows. At the rail's foot it was about
+  2000px from the toggle.
 - **Count and tone come from the UNSCOPED session list, through one shared selector.** Both the
   toggle and the sidebar indicator read `selectCommandTerminalSummary`
   (`transient-session-slice.ts`), which derives count and tone from `sessions`
@@ -233,6 +236,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   decides which slots get windows on open. `tests/unit/command-terminal-summary.test.ts` locks
   the shared count/tone selector, and `tests/unit/command-terminal-name.test.ts` the titles. All
   run in CI via `npm run test:unit`.
+- **Test (floor):** `tests/unit/command-terminal-grid-fit.test.ts` pins when the grid fits the
+  terminal area at the 650px floor, and `command-terminal.spec.ts` that a panel too narrow shows
+  the newest terminal expanded with its Restore off, gives the grid back once maximized, and
+  leaves a terminal the user expanded alone.
 - **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.

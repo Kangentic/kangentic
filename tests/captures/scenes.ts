@@ -256,9 +256,11 @@ const MIDDLEWARE_FLOATING_GEOMETRY = { x: 0.18, y: 0.15, w: 0.64, h: 0.7 };
  * percent a cell is 14.4 px against 14 at 100 and 200, and at the 0.7 height the window fitted
  * 36 rows there: a hold that the ROWS decide drops the font a quarter pixel, and the device-pixel
  * floor then takes the cell a whole pixel narrower, a band as wide as the one this exists to
- * remove. The spare rows sit below the grid as terminal background.
+ * remove. The spare rows sit below the grid as terminal background. The terminal's 8px inset
+ * above and below its rows (index.css) took 16px of that margin, and 125 percent fitted 36 rows
+ * again at 0.72, so the height is 0.74, still centered.
  */
-const FITTED_FLOATING_GEOMETRY = { x: 0.18, y: 0.14, w: 0.64, h: 0.72 };
+const FITTED_FLOATING_GEOMETRY = { x: 0.18, y: 0.13, w: 0.64, h: 0.74 };
 
 /** Where a restored task window sits, as fractions of the frame, and the session a floating one is fitted to. */
 interface TaskWindowPlacement {
@@ -1785,15 +1787,16 @@ export const SCENES: Record<string, SceneDefinition> = {
     // first output, as main's status-line push would): a still shot before that would show the
     // "Starting agent" spinner in the bar rather than the pills.
     ready: COMMAND_TERMINAL_SECOND_MODEL,
-    // The toggle opens the panel and the rail's New terminal starts a second terminal beside the
-    // first, each after the pointer rests on it long enough for its tip. The pair is the pose. Then
+    // The toggle opens the panel after the pointer rests on it long enough for its tip, and the
+    // rail's Add terminal starts a second terminal beside the first after a short rest (a labelled
+    // button, so it has no tip to wait for). The pair is the pose. Then
     // the pointer looks at the second terminal's model pill, and the cut stops that terminal (Stop
-    // ends it for good, so the next New terminal takes slot-2 again) and hides the layer behind the
+    // ends it for good, so the next Add terminal takes slot-2 again) and hides the layer behind the
     // veil, so the frame fades in on the board and the next cycle opens both again.
     choreography: [
       { hover: COMMAND_TERMINAL_TOGGLE, ms: 1800 },
       { click: COMMAND_TERMINAL_TOGGLE, waitFor: COMMAND_TERMINAL_WINDOW },
-      { hover: '[data-testid="command-terminal-new"]', ms: 1800 },
+      { hover: '[data-testid="command-terminal-new"]', ms: 600 },
       { click: '[data-testid="command-terminal-new"]', waitFor: COMMAND_TERMINAL_SECOND_MODEL },
       { hover: `${COMMAND_TERMINAL_SECOND} .xterm`, ms: 600 },
       { pose: true },

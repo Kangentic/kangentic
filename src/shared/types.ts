@@ -8,6 +8,7 @@ import type {
   AnnouncementArchiveEntry,
   AnnouncementsChangedPayload,
 } from './announcements';
+import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 
 // === Database Models ===
 
@@ -4632,6 +4633,14 @@ export interface AppConfig {
    *  Retirable (with its migration block) once no supported install can still predate the
    *  release that introduced it, like `hasMigratedWindowLightDismissDefault` above. */
   hasPurgedSeededDiscoveredModels: boolean;
+  /** One-shot marker for the move to each platform's native terminal font, size and
+   *  cursor (`terminal-native-defaults.ts`). `save()` writes the whole config and a
+   *  persisted value beats the default, so an install that ran under the old shared
+   *  default keeps it unless moved. The migration in `ConfigManager.load()` moves an
+   *  install still on exactly the old font and size (and its cursor, if still the old
+   *  block), and the marker bounds it to one rewrite. Same unreadable-file deferral
+   *  and retirement as `hasMigratedWindowLightDismissDefault`. */
+  hasMigratedNativeTerminalDefaults: boolean;
   /** Task IDs the automatic rename has already run for. Persisted so a restart never
    *  renames a task twice. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -4822,12 +4831,15 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   terminal: {
     shell: null,
-    fontFamily: 'Menlo, Consolas, "Courier New", monospace',
-    fontSize: 14,
+    // The platform-neutral fallback. Main replaces these three with the platform's
+    // native terminal defaults (`nativeTerminalDefaults`) before a fresh install's first
+    // read, and the renderer falls back to the same values.
+    fontFamily: PREVIOUS_TERMINAL_DEFAULTS.fontFamily,
+    fontSize: PREVIOUS_TERMINAL_DEFAULTS.fontSize,
     showPreview: false,
     panelHeight: 250,
     panelCollapsed: false,
-    cursorStyle: 'block',
+    cursorStyle: PREVIOUS_TERMINAL_DEFAULTS.cursorStyle,
     colors: {},
   },
   agent: {
@@ -4918,6 +4930,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   stopLeftoverProcesses: true,
   windowLightDismiss: 'focused',
   hasMigratedWindowLightDismissDefault: false,
+  hasMigratedNativeTerminalDefaults: false,
   hasPurgedSeededDiscoveredModels: false,
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,

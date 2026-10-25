@@ -16,7 +16,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ReactNode } from 'react';
 import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
-import { NewTerminalButton } from './NewTerminalButton';
 import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -34,6 +33,15 @@ interface PanelSize { width: number; height: number }
  * does not move this panel.
  */
 const RELEASED_TERMINAL_SHARE = { width: 0.58, height: 0.7 };
+
+/**
+ * The header's window controls are drawn the way a task window draws its own
+ * (`MaximizeToggleButton`, `TaskDetailWindow`'s close): 16px, in the dim
+ * `fg-faint` tone that brightens on hover. They were 15px in the brighter
+ * `fg-muted`, which read as smaller and louder beside the task windows.
+ */
+const PANEL_CONTROL_ICON_PX = 16;
+const PANEL_CONTROL_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0';
 
 /**
  * Where the panel opens before it was ever moved or resized: centered, and
@@ -158,10 +166,6 @@ interface CommandTerminalPanelProps {
   minSize: PanelSize;
   /** What the panel adds around its terminals: the rail and the header, with the border. */
   chrome: PanelSize;
-  /** Start another terminal. */
-  onNewTerminal: () => void;
-  /** Why New terminal is off right now (every slot taken), or null when it is on. */
-  newTerminalDisabledReason: string | null;
   /** Move the panel into a window of its own. */
   onOpenInNewWindow: () => void;
   /** Why Open in new window is off right now, or null when it is on. */
@@ -174,8 +178,6 @@ export function CommandTerminalPanel({
   onTerminalAreaReady,
   minSize,
   chrome,
-  onNewTerminal,
-  newTerminalDisabledReason,
   onOpenInNewWindow,
   openInNewWindowDisabledReason,
 }: CommandTerminalPanelProps) {
@@ -360,45 +362,44 @@ export function CommandTerminalPanel({
           >
             <SquareTerminal size={14} className="text-fg-muted flex-shrink-0" />
             <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">Command Terminal</span>
-            <NewTerminalButton variant="icon" onNewTerminal={onNewTerminal} disabledReason={newTerminalDisabledReason} />
             <Tooltip
               label={tipLabel({
                 disabled: openInNewWindowDisabledReason !== null,
                 disabledReason: openInNewWindowDisabledReason,
-                tip: 'Move the panel to its own window. The terminals keep running.',
+                tip: 'Move to its own window',
               })}
             >
               <button
                 type="button"
                 onClick={onOpenInNewWindow}
                 disabled={openInNewWindowDisabledReason !== null}
-                className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                className={`${PANEL_CONTROL_CLASS} disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-faint`}
                 aria-label="Open in new window"
                 data-testid="command-terminal-panel-pop-out"
               >
-                <SquareArrowOutUpRight size={15} />
+                <SquareArrowOutUpRight size={PANEL_CONTROL_ICON_PX} />
               </button>
             </Tooltip>
             <Tooltip label={geometry.maximized ? 'Restore panel' : 'Maximize panel'} keys="panel.maximize">
               <button
                 type="button"
                 onClick={toggleMaximized}
-                className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
+                className={PANEL_CONTROL_CLASS}
                 aria-label={geometry.maximized ? 'Restore panel' : 'Maximize panel'}
                 data-testid="command-terminal-panel-maximize"
               >
-                {geometry.maximized ? <Minimize size={15} /> : <Maximize size={15} />}
+                {geometry.maximized ? <Minimize size={PANEL_CONTROL_ICON_PX} /> : <Maximize size={PANEL_CONTROL_ICON_PX} />}
               </button>
             </Tooltip>
-            <Tooltip label="Hide. The terminals keep running." keys="panel.close">
+            <Tooltip label="Hide panel" keys="panel.close">
               <button
                 type="button"
                 onClick={onHide}
-                className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
+                className={PANEL_CONTROL_CLASS}
                 aria-label="Hide Command Terminal"
                 data-testid="command-terminal-panel-hide"
               >
-                <X size={15} />
+                <X size={PANEL_CONTROL_ICON_PX} />
               </button>
             </Tooltip>
           </div>
