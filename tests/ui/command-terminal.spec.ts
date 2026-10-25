@@ -1252,11 +1252,12 @@ test.describe('Command Terminal', () => {
   // since spawning a 2nd terminal calls spawnTransient again.
   // ---------------------------------------------------------------------------
   test.describe('Multiple terminals', () => {
-    test('the title-bar button only toggles the panel; New terminal lives in the panel\'s rail', async () => {
+    test('the title-bar button only toggles the panel; New terminal lives in the panel\'s header', async () => {
       // The title-bar terminal button is a plain open/close toggle - it never
       // spawns a terminal, so its own glyph always shows the shell prompt
       // (data-plus=false), and the title bar holds no other terminal control.
-      // A new terminal starts from the New terminal button at the rail's foot.
+      // A new terminal starts from the New terminal button in the panel's
+      // header, beside its window controls and near the toggle.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1267,8 +1268,22 @@ test.describe('Command Terminal', () => {
 
         await page.getByTestId('quick-session-button').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
-        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-panel-header').getByTestId('command-terminal-new')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toHaveCount(0);
         await expect(titleBarActions.getByTestId('command-terminal-new')).toHaveCount(0);
+        // While both places are tried, the rail carries a labelled one at its head too.
+        const railNew = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-rail-new');
+        await expect(railNew).toHaveText('Add terminal');
+        const railBox = await page.getByTestId('command-terminal-rail').boundingBox();
+        const railNewBox = await railNew.boundingBox();
+        if (!railBox || !railNewBox) throw new Error('no rail');
+        expect(railNewBox.y - railBox.y).toBeLessThan(24);
+        // It leads the window controls, just left of Open in new window.
+        const newBox = await page.getByTestId('command-terminal-new').boundingBox();
+        const popOutBox = await page.getByTestId('command-terminal-panel-pop-out').boundingBox();
+        if (!newBox || !popOutBox) throw new Error('no header controls');
+        expect(newBox.x + newBox.width).toBeLessThanOrEqual(popOutBox.x + 1);
+        expect(popOutBox.x - (newBox.x + newBox.width)).toBeLessThan(24);
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
 
         // Click again hides the panel, the one-click close even when it is maximized.
@@ -1280,8 +1295,8 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('the rail\'s New terminal button spawns a second terminal', async () => {
-      // With the layer open, the rail's New terminal button calls
+    test('New terminal spawns a second terminal', async () => {
+      // With the layer open, the header's New terminal button calls
       // spawnAdditionalCommandTerminal, which opens a new window in the next
       // free slot and tiles them side by side.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
@@ -1295,7 +1310,7 @@ test.describe('Command Terminal', () => {
         // Wait for one window to be present
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
 
-        // Click the rail's New terminal button to spawn a second terminal
+        // Click the header's New terminal to spawn a second terminal
         await page.getByTestId('command-terminal-new').click();
 
         // Second window should appear; total count goes 1 -> 2
@@ -1305,6 +1320,10 @@ test.describe('Command Terminal', () => {
         const windows = page.getByTestId('command-terminal-window');
         await expect(windows.nth(0)).toBeVisible();
         await expect(windows.nth(1)).toBeVisible();
+
+        // The rail's labelled one starts a terminal the same way.
+        await page.getByTestId('command-terminal-rail-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(3, { timeout: 5000 });
       } finally {
         await browser.close();
       }
@@ -1671,6 +1690,8 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(4);
         await expect(page.getByTestId('command-terminal-new')).toBeDisabled({ timeout: 3000 });
         await expect(page.getByTestId('command-terminal-new')).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
+        await expect(page.getByTestId('command-terminal-rail-new')).toBeDisabled();
+        await expect(page.getByTestId('command-terminal-rail-new')).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
       } finally {
         await browser.close();
       }
@@ -2157,6 +2178,31 @@ test.describe('Command Terminal', () => {
         await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         await expect(focusLines).toHaveCount(2);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a panel never moved opens centered, its lone terminal as large as one before the panel', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        expect(await page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel ?? null)).toBeNull();
+
+        const area = await page.getByTestId('command-terminal-panel-area').boundingBox();
+        const panel = await page.getByTestId('command-terminal-panel').boundingBox();
+        if (!area || !panel) throw new Error('no panel');
+        // The release opened a Command Terminal at 58% by 70% of this area.
+        await expect.poll(async () => {
+          const pane = (await layoutBoxes(page)).panes['slot-1'];
+          if (!pane) return 'no pane';
+          const off = Math.max(Math.abs(pane.width - area.width * 0.58), Math.abs(pane.height - area.height * 0.7));
+          return off <= 2 ? 'released size' : `${pane.width} x ${pane.height}`;
+        }, { timeout: 3000 }).toBe('released size');
+        expectNear(panel.x - area.x, area.x + area.width - (panel.x + panel.width), 'left and right margins');
+        expectNear(panel.y - area.y, area.y + area.height - (panel.y + panel.height), 'top and bottom margins');
       } finally {
         await browser.close();
       }
@@ -2780,13 +2826,15 @@ test.describe('Command Terminal', () => {
   test.describe('Earlier conversations', () => {
     const EARLIER_PROJECT_ID = 'proj-earlier';
 
-    interface SeededEntry { agentSessionId: string; label: string | null; agentName: string; endedAt: string }
+    interface SeededEntry { agentSessionId: string; label: string | null; firstPrompt: string | null; agentName: string; endedAt: string }
 
+    /** Named rows, except the second (never named, nothing typed) and the third (never named, its first prompt kept). */
     function earlierEntries(count: number): SeededEntry[] {
       const now = Date.now();
       return Array.from({ length: count }, (_, index) => ({
         agentSessionId: `conversation-${index + 1}`,
-        label: index === 1 ? null : `Conversation ${index + 1}`,
+        label: index === 1 || index === 2 ? null : `Conversation ${index + 1}`,
+        firstPrompt: index === 2 ? 'why does the sidebar count lag?' : null,
         agentName: 'claude',
         endedAt: new Date(now - (index + 1) * 60 * 60 * 1000).toISOString(),
       }));
@@ -2829,12 +2877,37 @@ test.describe('Command Terminal', () => {
       return (await transientEntriesFor(page, EARLIER_PROJECT_ID))[0].sessionId;
     }
 
-    test('shows the hint while nothing has ended', async () => {
+    test('shows no heading and no hint while nothing has ended, and the first end brings the heading back', async () => {
       const { browser, page } = await launchWithState(earlierPreConfig([]));
       try {
         await openWithOneTerminal(page);
-        await expect(page.getByTestId('command-terminal-earlier-empty')).toHaveText('Stop a terminal and you can resume it from here.');
+        const rail = page.getByTestId('command-terminal-rail');
         await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-earlier-heading')).toHaveCount(0);
+        await expect(rail).not.toContainText('Earlier');
+        await expect(rail).not.toContainText('resume it from here');
+        // The rail holds only its New terminal button.
+        await expect(rail).toHaveText('Add terminal');
+        const railBox = await rail.boundingBox();
+        if (!railBox) throw new Error('no rail');
+        const terminalWidth = (await page.getByTestId('command-terminal-window').boundingBox())?.width ?? 0;
+
+        // A conversation ends: main's push brings the heading back with its row.
+        await page.evaluate((projectId) => {
+          const host = window as unknown as {
+            __mockCommandTerminalHistory: Record<string, unknown[]>;
+            __mockFireCommandTerminalHistoryChanged: (id: string) => void;
+          };
+          host.__mockCommandTerminalHistory = {
+            [projectId]: [{ agentSessionId: 'conversation-1', agentName: 'claude', label: 'Conversation 1', firstPrompt: null, endedAt: new Date().toISOString() }],
+          };
+          host.__mockFireCommandTerminalHistoryChanged(projectId);
+        }, EARLIER_PROJECT_ID);
+        await expect(page.getByTestId('command-terminal-earlier-heading')).toHaveText('Earlier');
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(1);
+        // The rail kept its width, so the terminal did not resize.
+        expect(Math.abs(((await rail.boundingBox())?.width ?? 0) - railBox.width)).toBeLessThanOrEqual(1);
+        expect(Math.abs(((await page.getByTestId('command-terminal-window').boundingBox())?.width ?? 0) - terminalWidth)).toBeLessThanOrEqual(1);
       } finally {
         await browser.close();
       }
@@ -2847,8 +2920,10 @@ test.describe('Command Terminal', () => {
         const rows = page.getByTestId('command-terminal-earlier-row');
         await expect(rows.first()).toHaveAttribute('data-agent-session-id', 'conversation-1', { timeout: 5000 });
         await expect(rows.first()).toContainText('Conversation 1');
-        // A conversation never named shows a fallback rather than a blank row.
+        // A conversation never named reads as its first prompt, and with no
+        // prompt kept, a fallback rather than a blank row.
         await expect(rows.nth(1)).toContainText('Untitled conversation');
+        await expect(rows.nth(2)).toContainText('why does the sidebar count lag?');
 
         const visibleRows = await rows.count();
         expect(visibleRows).toBeGreaterThan(2);
@@ -2864,14 +2939,31 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    /** Watch for the resume's start screen, which can lift before a later check would look. */
+    async function watchForResumeLabel(page: Page): Promise<() => Promise<boolean>> {
+      await page.evaluate(() => {
+        const host = window as unknown as { __sawResumeLabel?: boolean };
+        host.__sawResumeLabel = false;
+        new MutationObserver(() => {
+          if (document.body.textContent?.includes('Resuming conversation...')) host.__sawResumeLabel = true;
+        }).observe(document.body, { childList: true, subtree: true, characterData: true });
+      });
+      return () => page.evaluate(() => (window as unknown as { __sawResumeLabel?: boolean }).__sawResumeLabel === true);
+    }
+
     test('a row resumes in place of the unused terminal', async () => {
       const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
       try {
         const freshSessionId = await openWithOneTerminal(page);
         const firstRow = page.getByTestId('command-terminal-earlier-row').first();
-        await expect(firstRow).toHaveAccessibleDescription('Resume here, in place of the unused terminal', { timeout: 5000 });
+        // No tip while it can be clicked: the row reads as what it resumes.
+        await firstRow.hover();
+        await expect(firstRow).toHaveAccessibleDescription('');
+        const sawResumeLabel = await watchForResumeLabel(page);
 
         await firstRow.click();
+        // The respawn says it is resuming, not starting.
+        await expect.poll(sawResumeLabel, { timeout: 5000 }).toBe(true);
         await expect.poll(async () => (await spawnCalls(page)).at(-1)?.resumeAgentSessionId, { timeout: 5000 }).toBe('conversation-1');
         expect((await spawnCalls(page)).at(-1)?.slot).toBe('slot-1');
         // The same window holds the resumed conversation; the fresh one is gone.
@@ -2897,10 +2989,14 @@ test.describe('Command Terminal', () => {
           });
         }, usedSessionId);
         const firstRow = page.getByTestId('command-terminal-earlier-row').first();
-        await expect(firstRow).toHaveAccessibleDescription('Resume in a new terminal', { timeout: 5000 });
+        await firstRow.hover();
+        await expect(firstRow).toHaveAccessibleDescription('');
+        const sawResumeLabel = await watchForResumeLabel(page);
 
         await firstRow.click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        // The new terminal says it is resuming, not starting.
+        await expect.poll(sawResumeLabel, { timeout: 5000 }).toBe(true);
         const lastCall = (await spawnCalls(page)).at(-1);
         expect(lastCall).toMatchObject({ slot: 'slot-2', resumeAgentSessionId: 'conversation-1' });
         // The used terminal kept its session.
@@ -3150,6 +3246,21 @@ test.describe('Command Terminal', () => {
           const calls = (window.electronAPI.sessions as unknown as { __setFocusedCalls: string[][] }).__setFocusedCalls;
           return calls.at(-1) ?? null;
         }), { timeout: 5000 }).toEqual([LIVE_TERMINAL_ID]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the window\'s title bar holds New terminal, where the panel has it in its header', async () => {
+      const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
+      try {
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 15000 });
+        const newTerminal = page.getByTestId('popout-header-actions').getByTestId('command-terminal-new');
+        await expect(newTerminal).toBeVisible();
+        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toHaveCount(0);
+
+        await newTerminal.click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       } finally {
         await browser.close();
       }

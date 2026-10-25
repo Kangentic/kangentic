@@ -13,9 +13,9 @@ paths:
 ---
 # Rule: the Command Terminal panel is slot-keyed, its geometry is global, and its population is per-project
 
-Ctrl+Shift+P opens the Command Terminal: one PANEL over a slight backdrop blur, holding a rail
-(Earlier conversations, a Running list while a terminal is expanded, and New terminal at its
-foot) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
+Ctrl+Shift+P opens the Command Terminal: one PANEL over a slight backdrop blur, holding a header
+(an Add terminal icon and the window controls), a rail (Add terminal, Earlier conversations, and a
+Running list while a terminal is expanded) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
 row, and each is a window of a SECOND window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail layer:
 the same engine (`src/renderer/window-manager/`) instantiated twice via `createWindowManagerStore`.
@@ -96,10 +96,14 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
   the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the
   previous row and starts a new one, and it skips an id a task or workflow owns. An untouched row
-  is deleted when it ends. Earlier lists only rows a user touched
+  is deleted when it ends. A row keeps the terminal's name and the conversation's first prompt
+  (`first_prompt`, one line), and reads as the name, else the first prompt: with no Automation
+  agent nothing names a terminal. The first prompt never seeds a resumed terminal's title. Earlier lists only rows a user touched
   (`Session.hasUserInput`, set in main from the input's content, never from xterm replies, focus
   reports or the repaint nudge) whose agent can resume by id (`canResumeConversationById`) and
-  still find the transcript, and that no live terminal or in-flight resume holds. A resume is a start with `resumeAgentSessionId`; main claims the
+  still find the transcript, and that no live terminal or in-flight resume holds. With no such
+  row the rail shows no Earlier heading and no hint; the list stays mounted, so the rail keeps its
+  width and New terminal its place. A resume is a start with `resumeAgentSessionId`; main claims the
   conversation first (`claimResume`) and refuses a second with `conversation-open`, and a row it
   cannot resume with `conversation-gone`. A row resumes IN PLACE of the focused terminal only
   while nothing has reached that terminal; a used terminal is never replaced, and the resume opens
@@ -193,10 +197,15 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   focus line shows only while two or more terminals are visible.
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
-  panel even when it is maximized over the backdrop. It carries the aggregate activity tone. New
-  terminal lives at the rail's foot (`command-terminal-new`), disabled with its reason once
-  windows and live terminals together hold `MAX_COMMAND_TERMINALS` slots, as are the Earlier
-  rows.
+  panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
+  terminal (`NewTerminalButton`; "Add", since "New" read as replacing the open terminal) is drawn
+  in two places while both are tried: an icon in the
+  panel's header, left of Open in new window and a short trip from the toggle
+  (`command-terminal-new`; in the detached window it is portaled into that window's title bar,
+  `usePopOutHeaderActionsSlot`), and a labelled button at the top of the rail
+  (`command-terminal-rail-new`). Both are disabled with their reason once windows and live
+  terminals together hold `MAX_COMMAND_TERMINALS` slots, as are the Earlier rows. At the rail's
+  foot it was about 2000px from the toggle.
 - **Count and tone come from the UNSCOPED session list, through one shared selector.** Both the
   toggle and the sidebar indicator read `selectCommandTerminalSummary`
   (`transient-session-slice.ts`), which derives count and tone from `sessions`

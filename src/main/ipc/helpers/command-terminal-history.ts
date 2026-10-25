@@ -14,24 +14,38 @@
  *   touched. Only touched rows are listed, and an untouched one is deleted when
  *   it ends, so a terminal nobody used leaves nothing behind.
  * - The terminal is named: the row keeps the name.
+ * - The first prompt reaches the agent: the row keeps it, on one line, so a
+ *   conversation nothing named still reads as what it was about.
  * - The terminal ends: the row is stamped ended.
  *
  * Rows are written as the id is captured, not when the terminal ends, because a
  * quit removes no row (`killAll` never calls `remove()`): a terminal open at
  * quit keeps its row, and the list stamps its end the first time it reads it.
  */
-import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
+import { EventType, PromptReason, type CommandTerminalHistoryEntry, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { CommandTerminalHistoryRepository, CommandTerminalHistoryRow } from '../../db/repositories/command-terminal-history-repository';
 
 type AgentSessionIdListener = (sessionId: string, taskId: string, projectId: string, agentSessionId: string) => void;
 type SessionListener = (sessionId: string, session?: Session) => void;
+type SessionEventListener = (sessionId: string, event: SessionEvent) => void;
+
+/** Longer than any rail or phone row shows; the row cuts it with an ellipsis. */
+const FIRST_PROMPT_MAX_LENGTH = 200;
+
+/** A prompt on one line, as a row shows it, or null when it says nothing. */
+export function firstPromptLine(promptText: string): string | null {
+  const line = promptText.replace(/\s+/g, ' ').trim();
+  return line ? line.slice(0, FIRST_PROMPT_MAX_LENGTH) : null;
+}
 
 export interface CommandTerminalHistorySessionSource {
   on(event: 'agent-session-id', listener: AgentSessionIdListener): unknown;
   on(event: 'session-changed' | 'session-removed', listener: SessionListener): unknown;
+  on(event: 'event', listener: SessionEventListener): unknown;
   off(event: 'agent-session-id', listener: AgentSessionIdListener): unknown;
   off(event: 'session-changed' | 'session-removed', listener: SessionListener): unknown;
+  off(event: 'event', listener: SessionEventListener): unknown;
   getSession(sessionId: string): Session | undefined;
   getSessionAgentName(sessionId: string): string | undefined;
   listSessions(): Session[];
@@ -56,10 +70,17 @@ interface HeldConversation {
   agentSessionId: string;
   touched: boolean;
   labeled: boolean;
+  /** Its first prompt has been written. */
+  prompted: boolean;
 }
 
 export class CommandTerminalHistory {
   private readonly heldBySession = new Map<string, HeldConversation>();
+  /**
+   * A first prompt that arrived before the terminal's agent reported its id,
+   * by terminal, written to the row the id then records.
+   */
+  private readonly promptBeforeRow = new Map<string, string>();
   /**
    * Conversations a resume is starting, by agent session id, with the terminal
    * that took each once it spawned (null while the start runs). A resumed
@@ -78,6 +99,7 @@ export class CommandTerminalHistory {
     this.deps.sessionManager.on('agent-session-id', this.onAgentSessionId);
     this.deps.sessionManager.on('session-changed', this.onSessionChanged);
     this.deps.sessionManager.on('session-removed', this.onSessionRemoved);
+    this.deps.sessionManager.on('event', this.onSessionEvent);
   }
 
   /** Synchronous: detaches the listeners. */
@@ -88,8 +110,10 @@ export class CommandTerminalHistory {
       this.deps.sessionManager.off('agent-session-id', this.onAgentSessionId);
       this.deps.sessionManager.off('session-changed', this.onSessionChanged);
       this.deps.sessionManager.off('session-removed', this.onSessionRemoved);
+      this.deps.sessionManager.off('event', this.onSessionEvent);
     }
     this.heldBySession.clear();
+    this.promptBeforeRow.clear();
     this.resumesInFlight.clear();
   }
 
@@ -168,7 +192,13 @@ export class CommandTerminalHistory {
         const backfilledEnd = endedAt;
         this.write(() => repository.markEnded(row.agent_session_id, backfilledEnd), 'backfill');
       }
-      entries.push({ agentSessionId: row.agent_session_id, label: row.label, agentName: row.agent_name, endedAt });
+      entries.push({
+        agentSessionId: row.agent_session_id,
+        label: row.label,
+        firstPrompt: row.first_prompt,
+        agentName: row.agent_name,
+        endedAt,
+      });
     }
     return entries;
   }
@@ -198,6 +228,7 @@ export class CommandTerminalHistory {
     // to its card, so the terminal records nothing until it moves on again.
     if (this.read(() => repository.isOwnedElsewhere(agentSessionId), false, 'owner')) {
       this.heldBySession.delete(sessionId);
+      this.promptBeforeRow.delete(sessionId);
       this.deps.notifyChanged(projectId);
       return;
     }
@@ -210,9 +241,40 @@ export class CommandTerminalHistory {
       label,
       touched,
     }), 'record');
-    this.heldBySession.set(sessionId, { projectId, agentSessionId, touched, labeled: label !== null });
+    const conversation: HeldConversation = { projectId, agentSessionId, touched, labeled: label !== null, prompted: false };
+    this.heldBySession.set(sessionId, conversation);
+    const earlyPrompt = this.promptBeforeRow.get(sessionId);
+    if (earlyPrompt !== undefined) {
+      this.promptBeforeRow.delete(sessionId);
+      this.writeFirstPrompt(conversation, earlyPrompt);
+    }
     this.deps.notifyChanged(projectId);
   };
+
+  private readonly onSessionEvent: SessionEventListener = (sessionId, event) => {
+    if (this.disposed || event.type !== EventType.Prompt) return;
+    // The activity engine's synthetic prompt (typing seen on the PTY, for an
+    // agent with no prompt hook) carries a marker, not anything the user wrote.
+    const promptText = event.detail ?? '';
+    if (promptText.trim() === PromptReason.PtyActivity) return;
+    const line = firstPromptLine(promptText);
+    if (!line) return;
+    const held = this.heldBySession.get(sessionId);
+    if (held) {
+      if (!held.prompted) this.writeFirstPrompt(held, line);
+      return;
+    }
+    const session = this.deps.sessionManager.getSession(sessionId);
+    if (!session || !isCommandTerminalSession(session) || this.promptBeforeRow.has(sessionId)) return;
+    this.promptBeforeRow.set(sessionId, line);
+  };
+
+  private writeFirstPrompt(held: HeldConversation, line: string): void {
+    held.prompted = true;
+    const repository = this.deps.getRepository(held.projectId);
+    if (!repository) return;
+    this.write(() => repository.setFirstPrompt(held.agentSessionId, line), 'first-prompt');
+  }
 
   private readonly onSessionChanged: SessionListener = (sessionId, session) => {
     if (this.disposed || !session) return;
@@ -235,6 +297,7 @@ export class CommandTerminalHistory {
 
   private readonly onSessionRemoved: SessionListener = (sessionId) => {
     this.releaseResumesOf(sessionId);
+    this.promptBeforeRow.delete(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (!held) return;
     this.heldBySession.delete(sessionId);

@@ -15,6 +15,9 @@ sources:
   - resource: src/renderer/window-manager/tiling/host-arrangement.ts
   - resource: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
   - resource: src/renderer/pop-out/surfaces/command-terminal-surface.tsx
+  - resource: src/renderer/pop-out/header-actions-slot.ts
+  - resource: src/renderer/pop-out/PopOutWindowFrame.tsx
+    title: the title bar's header actions slot the detached Command Terminal fills
   - resource: src/renderer/hooks/useCommandBar.ts
   - resource: src/shared/terminal-input-content.ts
   - resource: src/renderer/components/layout/TitleBar.tsx
@@ -31,9 +34,12 @@ The end-user walkthrough is in [Command Terminal](../../user-guide/command-termi
 ## One panel over a second window-manager layer
 
 The Command Terminal is one panel over a slight backdrop blur (`CommandTerminalPanel`): a header
-with Open in new window, Maximize and Hide; a 248px rail (`CommandTerminalRail`) with the Earlier
-list, a Running list while a terminal is expanded, and New terminal at its foot; and up to four
-terminals in the rest. The panel moves by its header, resizes from its outer edges, and maximizes
+with an Add terminal icon, Open in new window, Maximize and Hide; a 248px rail
+(`CommandTerminalRail`) with Add terminal at its top, the Earlier list, and a Running list while a
+terminal is expanded; and up to four terminals in the rest. The button says "Add", as "Add task"
+and "Add column" do, because "New terminal" read as replacing the terminal already open. The
+panel's Maximize keeps the corners icon (`Maximize`) on purpose: each terminal's Expand uses the
+diagonal arrows (`Maximize2`) a task window's maximize does, and the two sit one above the other. The panel moves by its header, resizes from its outer edges, and maximizes
 to the area between the title bar and the status bar. A move translates the real panel and a
 resize changes its box live, and both are saved once, on release. The first build drew a dashed
 outline during a resize and changed nothing until the release, which no other resizable surface
@@ -43,7 +49,12 @@ terminals re-tile with the panel but keep their grids, and the gate holds every
 `scheduleWindowTerminalResize` the re-tiling asks for and sends one when the gesture ends, so each
 terminal refits once on release instead of sending its agent a SIGWINCH per pointer frame (12 for
 one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, fractions of that
-area, so it rescales with the window.
+area, so it rescales with the window. A panel never moved opens centered at the size that gives a
+lone terminal what a Command Terminal window had before the panel (58% by 70% of the area, the
+window manager's first-window default), with the 248px rail and the 40px header added around it.
+Every user meets that default on the first open after updating, because the panel's place is a new
+setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
+it.
 
 Each terminal is a window of a second window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail
@@ -213,6 +224,12 @@ SessionManager's own events, in main:
   `locateSessionHistoryFile`, wired in `register-all.ts`), and no live terminal or resume in
   flight holds it. The newest 50 ended rows per project are kept
   (`COMMAND_TERMINAL_HISTORY_LIMIT`).
+- **A row reads as its name, else its first prompt.** The name comes from the namer, which runs
+  only with an Automation agent set, and the Automation agent has no default. Every row read
+  "Untitled conversation" until the row kept the conversation's first prompt too (`first_prompt`,
+  from the Prompt event's text, collapsed to one line and capped at 200 characters; a prompt that
+  arrives before the agent reports its id is held until the row exists). The rail and the phone's
+  list both show it. A resumed terminal is never titled from it: only a real name seeds the title.
 
 A resume is a start with `resumeAgentSessionId`. Main claims the conversation before the spawn
 (`claimResume`), so two clicks, or a desktop and a phone, can never put two agents on one
@@ -456,9 +473,18 @@ The title bar holds one Command Terminal control: a plain open/close **toggle**
 (`useCommandBar().open` / `close`, `TitleBar.tsx`'s `quick-session-button`) that never spawns a
 terminal, so there is always a discoverable one-click way to hide the panel even when it is
 maximized over the backdrop. Until the panel, a second **New terminal** button sat to its left
-while the layer was open. It moved to the rail's foot (`command-terminal-new`), where it disables
-with its reason once the project's windows and live terminals together hold
-`MAX_COMMAND_TERMINALS` slots, and the title bar no longer shifts as the panel opens and closes.
+while the layer was open, so the title bar shifted as the panel opened and closed. It moved into
+the panel, where it disables with its reason once the project's windows and live terminals
+together hold `MAX_COMMAND_TERMINALS` slots. It first went to the rail's foot, which put it about
+2000px of pointer travel from the toggle that opens the panel (a 2560 by 1392 window, the panel at
+its default place). Two places are now drawn side by side to choose between (`NewTerminalButton`):
+an icon in the panel's header, left of Open in new window and about 230px from the toggle, drawn
+like the window controls beside it (`command-terminal-new`; a labelled button there read as out of
+place among them), and a labelled button at the top of the rail, at the head of the list it
+starts, which saves only the vertical part of the trip (`command-terminal-rail-new`). The detached
+window has no panel header, so the layer portals the header's icon into that window's title bar, a slot
+`PopOutWindowFrame` keeps beside its window controls (`usePopOutHeaderActionsSlot`); the layer
+mounts only once that window's terminals have synced, so the button cannot start one early.
 
 The toggle uses the custom `CommandTerminalIcon` glyph, not a bare lucide icon: a thin wrapper
 over `components/ActivityMark.tsx`, rendering the `terminal-idle` and `terminal-working` marks from

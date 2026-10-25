@@ -97,7 +97,8 @@ export async function handleCommandTerminal(
       projectId: project.projectId,
       conversations: entries.map((entry) => ({
         agentSessionId: entry.agentSessionId,
-        name: entry.label,
+        // The first prompt when nothing named it, as the desktop's row reads.
+        name: entry.label ?? entry.firstPrompt,
         endedAt: entry.endedAt,
       })),
     };

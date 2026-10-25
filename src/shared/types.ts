@@ -6925,6 +6925,12 @@ export interface CommandTerminalHistoryEntry {
   agentSessionId: string;
   /** The terminal's name when it ended, or null if it was never named. */
   label: string | null;
+  /**
+   * The first thing typed into the conversation, on one line, or null. Names
+   * the row when `label` is null: with no Automation agent nothing names a
+   * terminal. Never seeded as a resumed terminal's title.
+   */
+  firstPrompt: string | null;
   agentName: string;
   /** UTC ISO time the conversation ended. */
   endedAt: string;

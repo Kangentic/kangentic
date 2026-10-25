@@ -38,7 +38,7 @@ function fakeRequest(payload: Record<string, unknown>): CapabilityRequestMessage
   return { type: 'capability-request', requestId: 'req-1', verb: 'command-terminal', payload };
 }
 
-interface EarlierEntry { agentSessionId: string; label: string | null; agentName: string; endedAt: string }
+interface EarlierEntry { agentSessionId: string; label: string | null; firstPrompt: string | null; agentName: string; endedAt: string }
 
 function fakeContext(options: {
   project?: boolean;
@@ -168,11 +168,12 @@ describe('command-terminal: earlier conversations', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  it('lists the project\'s ended conversations as the desktop\'s rail does, newest first', async () => {
+  it('lists the project\'s ended conversations as the desktop\'s rail does, newest first, named by the first prompt when nothing named them', async () => {
     const { context, listHistory } = fakeContext({
       earlier: [
-        { agentSessionId: 'conv-2', label: 'Profile the diff panel', agentName: 'claude', endedAt: '2026-10-24T10:00:00.000Z' },
-        { agentSessionId: 'conv-1', label: null, agentName: 'claude', endedAt: '2026-10-23T09:00:00.000Z' },
+        { agentSessionId: 'conv-3', label: 'Profile the diff panel', firstPrompt: 'profile the first open', agentName: 'claude', endedAt: '2026-10-24T10:00:00.000Z' },
+        { agentSessionId: 'conv-2', label: null, firstPrompt: 'how are you', agentName: 'claude', endedAt: '2026-10-23T12:00:00.000Z' },
+        { agentSessionId: 'conv-1', label: null, firstPrompt: null, agentName: 'claude', endedAt: '2026-10-23T09:00:00.000Z' },
       ],
     });
 
@@ -187,7 +188,8 @@ describe('command-terminal: earlier conversations', () => {
         ok: true,
         projectId: 'proj-1',
         conversations: [
-          { agentSessionId: 'conv-2', name: 'Profile the diff panel', endedAt: '2026-10-24T10:00:00.000Z' },
+          { agentSessionId: 'conv-3', name: 'Profile the diff panel', endedAt: '2026-10-24T10:00:00.000Z' },
+          { agentSessionId: 'conv-2', name: 'how are you', endedAt: '2026-10-23T12:00:00.000Z' },
           { agentSessionId: 'conv-1', name: null, endedAt: '2026-10-23T09:00:00.000Z' },
         ],
       },

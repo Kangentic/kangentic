@@ -1985,12 +1985,15 @@ export function runProjectMigrations(db: Database.Database): void {
   // tasks), so it keeps its own. One row per agent conversation, keyed by the
   // agent's session id. A row is listed only once someone used the terminal
   // (`touched_at`), so an untouched terminal leaves nothing behind. No backfill:
-  // terminals before this kept no record.
+  // terminals before this kept no record. `first_prompt` is the first thing
+  // typed into the conversation, one line, which names its Earlier row when no
+  // Automation agent named the terminal.
   db.exec(`
     CREATE TABLE IF NOT EXISTS command_terminal_history (
       agent_session_id TEXT PRIMARY KEY,
       agent_name TEXT NOT NULL,
       label TEXT,
+      first_prompt TEXT,
       cwd TEXT NOT NULL,
       started_at TEXT NOT NULL,
       touched_at TEXT,
@@ -1998,6 +2001,14 @@ export function runProjectMigrations(db: Database.Database): void {
       updated_at TEXT NOT NULL
     )
   `);
+  // A table an earlier build of this migration created has no `first_prompt`,
+  // and CREATE TABLE IF NOT EXISTS never reshapes one. NULL for those rows,
+  // which keep the "Untitled conversation" fallback.
+  const hasFirstPromptColumn = (db.pragma('table_info(command_terminal_history)') as Array<{ name: string }>)
+    .some((column) => column.name === 'first_prompt');
+  if (!hasFirstPromptColumn) {
+    db.exec('ALTER TABLE command_terminal_history ADD COLUMN first_prompt TEXT DEFAULT NULL');
+  }
   // The prune keeps the newest ended rows, so it filters and sorts on ended_at.
   db.exec('CREATE INDEX IF NOT EXISTS idx_command_terminal_history_ended ON command_terminal_history(ended_at)');
 }

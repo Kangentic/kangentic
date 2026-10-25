@@ -56,6 +56,7 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
 /** The launch overlay's label, before the spawn returns and after it, so the
  *  hand-off from the window's overlay to the pane's reads as one surface. */
 const COMMAND_TERMINAL_LAUNCH_LABEL = 'Starting Command Terminal...';
+const COMMAND_TERMINAL_RESUME_LABEL = 'Resuming conversation...';
 
 /** What a window attaches to at mount; see `resolveMountAttach`. */
 type MountAttach =
@@ -330,6 +331,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   // two non-derivable answers.
   const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null);
   const terminalReady = readyLatch || hasAgentOnScreen;
+  // Whether the start in flight resumes a conversation, so the shimmer says so:
+  // an Earlier row that opened this window left its request for the mount to
+  // take, and a resume in place or a branch switch sets it as it respawns.
+  const [startingResume, setStartingResume] = useState(() => {
+    const projectId = useProjectStore.getState().currentProject?.id ?? null;
+    return projectId !== null && !!useSessionStore.getState().pendingCommandTerminalResumes[transientKey(projectId, slot)];
+  });
+  const launchLabel = startingResume ? COMMAND_TERMINAL_RESUME_LABEL : COMMAND_TERMINAL_LAUNCH_LABEL;
 
   // Lift the shimmer if the session exits before its agent is on screen.
   useEffect(() => {
@@ -386,6 +395,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       }
       setSessionId(null);
       setReadyLatch(false);
+      setStartingResume(false);
       const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
       liveSessionIdRef.current = result.session.id;
       setSessionId(result.session.id);
@@ -424,6 +434,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       }
       setSessionId(null);
       setReadyLatch(false);
+      setStartingResume(true);
       const result = await useSessionStore.getState().spawnTransientSession(slot, undefined, grid, agentSessionId);
       liveSessionIdRef.current = result.session.id;
       setSessionId(result.session.id);
@@ -741,7 +752,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           {/* Covers the spawn in flight, before there is a pane. From then on
               the pane draws the overlay inside its own `data-terminal-host`
               until the agent is on screen (see CommandTerminalPane). */}
-          {!sessionId && <LaunchOverlay label={COMMAND_TERMINAL_LAUNCH_LABEL} />}
+          {!sessionId && <LaunchOverlay label={launchLabel} />}
           {/* Keyed (and gated, not just keyed) by session id: useTerminal is
               unmount-only teardown, so a session swap on a live instance would
               leave onData/onResize/clipboard/WebGL bound to the dead session.
@@ -758,7 +769,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               isMaximized={isMaximized}
               layoutExpanded={layoutExpanded}
               ready={terminalReady}
-              launchLabel={COMMAND_TERMINAL_LAUNCH_LABEL}
+              launchLabel={launchLabel}
               gridGetterRef={gridGetterRef}
             />
           )}

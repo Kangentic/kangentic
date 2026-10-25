@@ -287,6 +287,7 @@ The conversations a project's Command Terminals held, so the Command Terminal pa
 | agent_session_id | TEXT | PRIMARY KEY | |
 | agent_name | TEXT | NOT NULL | |
 | label | TEXT | | NULL |
+| first_prompt | TEXT | | NULL |
 | cwd | TEXT | NOT NULL | |
 | started_at | TEXT | NOT NULL | |
 | touched_at | TEXT | | NULL |
@@ -297,6 +298,7 @@ Written in main by `CommandTerminalHistory` (`src/main/ipc/helpers/command-termi
 - A row is written when the agent reports its session id. A `/clear` or `/resume` inside a terminal reports a new id, which stamps the previous row's `ended_at` and writes a new one.
 - `touched_at` is set once someone used the terminal (`Session.hasUserInput`). Only touched rows are listed, and an untouched row is deleted when it ends, so a terminal nobody used leaves nothing behind.
 - `label` takes the terminal's name, first write wins.
+- `first_prompt` takes the conversation's first prompt on one line (capped at 200 characters), first write wins, so a resume keeps the original. The Earlier row and the phone's list show it when `label` is null, which is every row while no Automation agent is set. The activity engine's synthetic prompt marker is skipped.
 - `ended_at` is stamped when the terminal ends.
 
 Rows are written as the id is captured rather than at the end because a quit removes no row (`killAll` never calls `remove()`). A row left open by a quit is listed once no live terminal holds it, and the list stamps its `ended_at` from `updated_at`. An id that a `sessions` or `workflows` row owns is never recorded: a `/resume` into a task's or a workflow's conversation belongs to its card. The list drops a row whose agent can no longer find the transcript (`locateSessionHistoryFile`), since it can never be resumed. Pruned to the newest 50 ended rows (`COMMAND_TERMINAL_HISTORY_LIMIT`). A row with no `ended_at` is never pruned, so an unused live terminal's row is still there when it is first touched. All timestamps are UTC ISO 8601. Index: `idx_command_terminal_history_ended` (ended_at), which the prune filters and sorts on.
