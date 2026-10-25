@@ -2668,6 +2668,101 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test.describe('Held picture', () => {
+      /** A 1 x 1 PNG standing in for the window's capture of the terminal area. */
+      const CAPTURED_AREA = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+      const setCapture = (page: Page, url: string | null) => page.evaluate((picture) => {
+        (window as unknown as { __mockCaptureRegion?: string | null }).__mockCaptureRegion = picture;
+      }, url);
+
+      /** What the slot's veil shows while it is up: the picture's url, or 'none'. Resolves once it is up. */
+      const veilPictureOf = (page: Page, slot: string) => page.evaluate((target) => new Promise<string>((resolve, reject) => {
+        const veil = document.querySelector<HTMLElement>(`[data-command-slot="${target}"] [data-testid="command-terminal-resize-veil"]`);
+        if (!veil) { reject(new Error(`no veil for ${target}`)); return; }
+        const read = () => resolve(veil.style.backgroundImage || 'none');
+        if (veil.hasAttribute('data-veiled')) { read(); return; }
+        const observer = new MutationObserver(() => {
+          if (!veil.hasAttribute('data-veiled')) return;
+          observer.disconnect();
+          read();
+        });
+        observer.observe(veil, { attributes: true, attributeFilter: ['data-veiled'] });
+      }), slot);
+
+      /** Whether the slot's veil faded to nothing before it came down, from its next raise. */
+      const veilFadesOut = (page: Page, slot: string) => page.evaluate((target) => new Promise<boolean>((resolve) => {
+        const veil = document.querySelector<HTMLElement>(`[data-command-slot="${target}"] [data-testid="command-terminal-resize-veil"]`);
+        if (!veil) { resolve(false); return; }
+        let wasUp = false;
+        let faded = false;
+        const observer = new MutationObserver(() => {
+          const up = veil.hasAttribute('data-veiled');
+          if (up) wasUp = true;
+          if (up && veil.style.opacity === '0') faded = true;
+          if (wasUp && !up) {
+            observer.disconnect();
+            resolve(faded);
+          }
+        });
+        observer.observe(veil, { attributes: true, attributeFilter: ['data-veiled', 'style'] });
+        setTimeout(() => { observer.disconnect(); resolve(false); }, 3000);
+      }), slot);
+
+      test('Expand and Restore hold each terminal\'s picture from just before the switch, and fade it into the live terminal', async () => {
+        const { browser, page } = await launchWithState(multiTerminalPreConfig());
+        try {
+          await openTwoReady(page);
+          await setCapture(page, CAPTURED_AREA);
+
+          // Expand: the expanding terminal holds its own frame, not the background.
+          const expandPicture = veilPictureOf(page, 'slot-1');
+          const expandFade = veilFadesOut(page, 'slot-1');
+          await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+          expect(await expandPicture).toContain('data:image/png');
+          expect(await expandFade).toBe(true);
+          await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+          await expect(veilOf(page, 'slot-2')).toBeHidden({ timeout: 3000 });
+
+          // Restore with a capture that fails. The terminal that was on screen gets the
+          // plain veil, never an older picture of itself; the one coming out from behind
+          // shows the frame it had when it was hidden, the last the user saw of it.
+          await setCapture(page, null);
+          const shownPicture = veilPictureOf(page, 'slot-1');
+          const hiddenPicture = veilPictureOf(page, 'slot-2');
+          await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+          expect(await shownPicture).toBe('none');
+          expect(await hiddenPicture).toContain('data:image/png');
+          await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+          await expect(veilOf(page, 'slot-2')).toBeHidden({ timeout: 3000 });
+        } finally {
+          await browser.close();
+        }
+      });
+
+      test('a swap drag\'s veil never borrows a picture from an earlier switch', async () => {
+        const { browser, page } = await launchWithState(multiTerminalPreConfig());
+        try {
+          await openTwoReady(page);
+          await setCapture(page, CAPTURED_AREA);
+          await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+          await expect(veilOf(page, 'slot-1')).toBeHidden({ timeout: 3000 });
+          await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+          await expect(veilOf(page, 'slot-2')).toBeHidden({ timeout: 3000 });
+          // Long after that switch, a jump that took no picture of its own raises a plain veil.
+          await page.waitForTimeout(400);
+          const jumpPicture = veilPictureOf(page, 'slot-2');
+          await page.evaluate(() => {
+            document.querySelector('[data-command-slot="slot-2"] [data-testid="command-bar-terminal-pane"]')
+              ?.dispatchEvent(new Event('kangentic:terminal-jump'));
+          });
+          expect(await jumpPicture).toBe('none');
+        } finally {
+          await browser.close();
+        }
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------

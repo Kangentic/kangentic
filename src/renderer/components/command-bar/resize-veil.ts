@@ -36,6 +36,12 @@ export const RESIZE_VEIL_MIN_HOLD_MS = 190;
 export const RESIZE_VEIL_QUIET_MS = 40;
 /** The veil comes down by this long after the jump, even under output that never stops. */
 export const RESIZE_VEIL_MAX_HOLD_MS = 500;
+/**
+ * Coming down, the veil fades out over this long, so the live terminal takes
+ * over from the picture it held (`held-terminal-picture.ts`) instead of
+ * replacing it in one frame. Animations off drops the fade.
+ */
+export const RESIZE_VEIL_FADE_MS = 120;
 
 /**
  * How long until the veil may come down, given when the jump was and when the
