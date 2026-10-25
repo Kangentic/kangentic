@@ -24,7 +24,8 @@ import {
 import { createRepaintNudge, isUserInputData, isMouseReport, mouseReportLane, type RepaintNudgeController } from '../utils/repaint-nudge';
 import { registerMountedTerminal } from '../utils/terminal-mount-registry';
 import { registerTerminalAnchor } from '../utils/terminal-anchor-registry';
-import { DEFAULT_CONFIG, type PastedImageCapability, type PtyResizeOrigin, type SessionResizeResult, type TerminalColorOverrides } from '../../shared/types';
+import type { PastedImageCapability, PtyResizeOrigin, SessionResizeResult, TerminalColorOverrides } from '../../shared/types';
+import { rendererTerminalDefaults } from '../utils/native-terminal-defaults';
 // Type only, so this creates no runtime edge to the arbiter (the hook stays
 // surface-agnostic and never reads the policy - it only labels its own paths).
 import type { ArrivalFocusSite } from '../utils/terminal-arrival-focus';
@@ -580,8 +581,13 @@ export function resolveReplayWidthAction(input: ReplayWidthInput): ReplayWidthDe
 }
 
 /** How many quarter-pixel steps conformToHeldGrid takes below its proposal
- *  before giving up on a grid the box will not hold. */
-const CONFORM_MAX_STEPS = 4;
+ *  before giving up on a grid the box will not hold. The WebGL renderer floors a
+ *  cell to whole device pixels, and one device pixel of width spans about 1.8px of
+ *  font at a typical 0.55em advance, so the walk to the next narrower cell can take
+ *  up to 8 steps. It was 4 (1px of font) until the terminal's 8px inset moved a
+ *  held 154 x 37 grid in a 926px pane from three steps to five, and the conform
+ *  declined a grid the pane could show. */
+const CONFORM_MAX_STEPS = 12;
 /** How many quarter-pixel steps conformToHeldGrid takes ABOVE a proposal that
  *  fit, looking for the largest size that still does. Four pixels of font: far
  *  more than the gap a linear proposal leaves (Courier New at twice scale needed
@@ -709,8 +715,10 @@ export function useTerminal(options: UseTerminalOptions) {
    *  out of xterm (DESKTOP-1J/1K). Every read of the size goes through this one
    *  value, so the conform memo and the display effect never disagree on it. */
   const configuredFontSize = resolveTerminalFontSize(options.fontSize);
-  /** The configured font family, or the default, read once for the same reason. */
-  const configuredFontFamily = options.fontFamily || DEFAULT_CONFIG.terminal.fontFamily;
+  /** The configured font family and cursor, or the platform's native default, read
+   *  once for the same reason. */
+  const configuredFontFamily = options.fontFamily || rendererTerminalDefaults().fontFamily;
+  const configuredCursorStyle = options.cursorStyle || rendererTerminalDefaults().cursorStyle;
   /** The configured font size and the session, updated on every commit, so the
    *  conform callbacks below (stable, ref-reading) scale from the size the user
    *  chose and label their traces with the session they serve. */
@@ -1279,7 +1287,7 @@ export function useTerminal(options: UseTerminalOptions) {
       theme: xtermTheme,
       scrollback: TERMINAL_SCROLLBACK_LINES,
       cursorBlink: true,
-      cursorStyle: options.cursorStyle || 'block',
+      cursorStyle: configuredCursorStyle,
       // HIDE the cursor when this terminal is BLURRED. Only the focused pane (where
       // you are typing) shows a cursor - a solid blinking block - so the cursor is a
       // clean "you are here" cue. The window's accent outline + pulsing line carry
@@ -1616,7 +1624,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fitElapsedMs = readClock() - fitStartedAt;
       traceInitTiming('session-less');
     }
-  }, [options.sessionId, configuredFontFamily, configuredFontSize, options.cursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
+  }, [options.sessionId, configuredFontFamily, configuredFontSize, configuredCursorStyle, customBackground, customForeground, customCursor, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback, armScrollbackWatchdog, traceReplay, dropHeldBytesSupersededBySample, focusOnArrival, fitTerminal, requestGrid, handleRendererChange]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -2054,7 +2062,7 @@ export function useTerminal(options: UseTerminalOptions) {
         // While main holds the grid the size is the conformed one; the fit()
         // below re-derives it for the new family's metrics.
         fontSize: applied,
-        cursorStyle: options.cursorStyle || 'block',
+        cursorStyle: configuredCursorStyle,
         scrollback: TERMINAL_SCROLLBACK_LINES,
         theme: buildTerminalTheme({
           background: customBackground,
@@ -2104,7 +2112,7 @@ export function useTerminal(options: UseTerminalOptions) {
     return () => {
       cancelled = true;
     };
-  }, [configuredFontFamily, configuredFontSize, options.cursorStyle, customBackground, customForeground, customCursor, fit]);
+  }, [configuredFontFamily, configuredFontSize, configuredCursorStyle, customBackground, customForeground, customCursor, fit]);
 
   // Flush a pending (debounced) PTY resize immediately, instead of waiting out
   // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the

@@ -1,8 +1,7 @@
 /**
- * The Command Terminal panel's left rail: New terminal at its head, Running
- * while one terminal is expanded, and Earlier (the project's ended
- * conversations, newest first). The panel's header carries New terminal as an
- * icon too, while both places are tried (`NewTerminalButton`).
+ * The Command Terminal panel's left rail: Add terminal at its head (the only
+ * place it is, `NewTerminalButton`), Running while one terminal is expanded,
+ * and Earlier (the project's ended conversations, newest first).
  *
  * Running lists the terminals behind the expanded one. Each row's mark is that
  * terminal's own Stop button, so one can be stopped without bringing it back,
@@ -40,7 +39,7 @@ const EARLIER_ROW_PITCH_PX = 46;
 const EARLIER_ROW_GAP_PX = 2;
 
 /** Why New terminal and the Earlier rows are off: every slot is taken. */
-export const AT_CAP_REASON = 'Four terminals are running. Stop one to start another.';
+export const AT_CAP_REASON = 'Stop one of the four to add another';
 
 const MINUTE_MS = 60 * 1000;
 const RECENT_MS = 2 * 24 * 60 * MINUTE_MS;
@@ -168,7 +167,7 @@ export function CommandTerminalRail({
       data-testid="command-terminal-rail"
     >
       <div className="flex-shrink-0 pb-1">
-        <NewTerminalButton variant="rail" onNewTerminal={onNewTerminal} disabledReason={atCap ? AT_CAP_REASON : null} />
+        <NewTerminalButton onNewTerminal={onNewTerminal} disabledReason={atCap ? AT_CAP_REASON : null} />
       </div>
       {running && running.length > 0 && (
         <>

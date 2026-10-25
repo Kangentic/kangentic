@@ -700,9 +700,18 @@
 
 /* xterm: fill parent height so scrollbar is flush with bottom edge.
    xterm.js creates a .xterm child div that is content-sized (rows * cellHeight)
-   rather than filling its container, leaving a gap at the bottom. */
+   rather than filling its container, leaving a gap at the bottom.
+
+   The padding is Windows Terminal's default 8px inset (`profiles.schema.json`,
+   "8, 8, 8, 8") on every platform, so the text sits off the pane's edges as it
+   does in a terminal of its own instead of against them (and against the
+   neighbour's seam when two terminals sit side by side). The right side takes
+   none: the 8px scrollbar gutter (below) is that side's 8px. It goes on
+   `.xterm` itself because fit-addon.ts subtracts exactly this element's padding
+   when it picks cols and rows; padding on the host would be counted as room. */
 .xterm {
   height: 100%;
+  padding: 8px 0 8px 8px;
 }
 
 /* Let the host container's resolved terminal background (near-black by

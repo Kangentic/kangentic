@@ -10,6 +10,18 @@ import { migrateLegacyGitKeys } from './legacy-git-keys';
 import { migrateLegacyIdleTimeout } from './legacy-idle-timeout';
 import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
 import { timeSyncWork } from '../diagnostics/event-loop-lag';
+import { PREVIOUS_TERMINAL_DEFAULTS, isPreviousTerminalDefault, nativeTerminalDefaults } from '../../shared/terminal-native-defaults';
+
+/** `DEFAULT_CONFIG` with this platform's native terminal font, size and cursor, as a
+ *  fresh copy: the shallow spread the load paths used shared `DEFAULT_CONFIG`'s nested
+ *  `terminal` object, which a later write to `this.config.terminal` would mutate. */
+function platformDefaults(): AppConfig {
+  const native = nativeTerminalDefaults(process.platform);
+  return {
+    ...DEFAULT_CONFIG,
+    terminal: { ...DEFAULT_CONFIG.terminal, fontFamily: native.fontFamily, fontSize: native.fontSize, cursorStyle: native.cursorStyle },
+  };
+}
 
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
@@ -204,13 +216,13 @@ export class ConfigManager {
       // an unparseable file: fall back to defaults in memory, leave the file untouched.
       if (rawParsed !== null && typeof rawParsed === 'object' && !Array.isArray(rawParsed)) {
         parsed = rawParsed as Record<string, unknown>;
-        this.config = deepMergeConfig(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
+        this.config = deepMergeConfig(platformDefaults(), parsed as Partial<AppConfig>);
       } else {
-        this.config = { ...DEFAULT_CONFIG };
+        this.config = platformDefaults();
         configFileUnreadable = true;
       }
     } catch {
-      this.config = { ...DEFAULT_CONFIG };
+      this.config = platformDefaults();
       configFileUnreadable = fs.existsSync(PATHS.configFile);
     }
 
@@ -361,6 +373,31 @@ export class ConfigManager {
     if (!this.config.hasPurgedSeededDiscoveredModels) {
       this.config.hasPurgedSeededDiscoveredModels = true;
       this.config.discoveredModelsByAgent = {};
+      if (!configFileUnreadable) {
+        this.save(this.config);
+      }
+    }
+
+    // One-time migration: move an install still on the old shared terminal font and
+    // size to its platform's native default (Windows Terminal's on Windows, GNOME
+    // Terminal's on Linux). A fresh install already has it from `platformDefaults()`;
+    // an older one has the old values written to disk by its first save. The exact old
+    // font AND size means nobody chose them; the cursor moves with them only while it
+    // is still the old block. Same marker, fresh-install persistence and
+    // unreadable-file deferral as the light-dismiss migration above.
+    if (!this.config.hasMigratedNativeTerminalDefaults) {
+      this.config.hasMigratedNativeTerminalDefaults = true;
+      if (isPreviousTerminalDefault(this.config.terminal)) {
+        const native = nativeTerminalDefaults(process.platform);
+        this.config.terminal = {
+          ...this.config.terminal,
+          fontFamily: native.fontFamily,
+          fontSize: native.fontSize,
+          cursorStyle: this.config.terminal.cursorStyle === PREVIOUS_TERMINAL_DEFAULTS.cursorStyle
+            ? native.cursorStyle
+            : this.config.terminal.cursorStyle,
+        };
+      }
       if (!configFileUnreadable) {
         this.save(this.config);
       }

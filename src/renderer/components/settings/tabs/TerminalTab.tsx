@@ -1,9 +1,10 @@
 import { useId, useRef, useState } from 'react';
 import { RotateCcw, SquareTerminal } from 'lucide-react';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
-import { DEFAULT_CONFIG, THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
+import { THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
 import { TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from '../../../utils/terminal-font-size';
+import { rendererTerminalDefaults } from '../../../utils/native-terminal-defaults';
 import { useConfigStore } from '../../../stores/config-store';
 import { Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardChoiceRow } from '../settings-card';
@@ -149,7 +150,7 @@ function FontSizeField({ value, onCommit }: { value: number; onCommit: (fontSize
         max={TERMINAL_FONT_SIZE_MAX}
         aria-invalid={outOfRange}
         aria-describedby={outOfRange ? rangeMessageId : undefined}
-        placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
+        placeholder={String(rendererTerminalDefaults().fontSize)}
         className={`${INPUT_CLASS} ${outOfRange ? 'border-warning focus:border-warning' : ''}`}
       />
       {outOfRange && (
@@ -218,7 +219,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
         </CardRow>
         <CardRow {...settingProps('terminal.fontSize')}>
           <FontSizeField
-            value={globalConfig.terminal.fontSize ?? DEFAULT_CONFIG.terminal.fontSize}
+            value={globalConfig.terminal.fontSize ?? rendererTerminalDefaults().fontSize}
             onCommit={(fontSize) => updateGlobal({ terminal: { fontSize } })}
           />
         </CardRow>
@@ -227,7 +228,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
             value={globalConfig.terminal.fontFamily ?? ''}
             onChange={(value) => updateGlobal({ terminal: { fontFamily: value } })}
             fonts={fonts}
-            placeholder={DEFAULT_CONFIG.terminal.fontFamily}
+            placeholder={rendererTerminalDefaults().fontFamily}
             testId="terminal-font-family"
           />
         </CardRow>

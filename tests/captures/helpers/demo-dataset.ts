@@ -1800,7 +1800,8 @@ export function buildDemoPreConfig(options: {
       var FIT_REFERENCE_FRAME_WIDTH = 1600;
       // WindowFrame's 1px border on each side, the only chrome between a window's width and its
       // terminal's parent: a task window and a Command Terminal both measure 1024px against a
-      // 1022px parent, with no padding.
+      // 1022px parent. The terminal's own padding is inside that parent, and is measured with
+      // the gutter (terminalPaddingWidth).
       var WINDOW_FRAME_BORDER_PX = 2;
       // The terminal's cell in DEVICE pixels at the configured font and this display's scale, as
       // xterm's WebGL renderer sizes it: the width floored and the height ceiled (WebglRenderer.ts
@@ -1840,6 +1841,19 @@ export function buildDemoPreConfig(options: {
         probe.remove();
         return gutter;
       }
+      // The terminal's own inset (index.css pads the .xterm element), which fit-addon.ts subtracts
+      // before it picks the columns, read off a probe carrying the class the way the
+      // gutter is.
+      function terminalPaddingWidth() {
+        var probe = document.createElement('div');
+        probe.className = 'xterm';
+        probe.style.cssText = 'position:absolute;left:-1000px;top:-1000px;width:100px;height:100px;visibility:hidden';
+        (document.body || document.documentElement).appendChild(probe);
+        var style = getComputedStyle(probe);
+        var padding = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+        probe.remove();
+        return padding;
+      }
       // One layout blob's windows, with each marked window's width set and its marker removed.
       // The blob is copied, not edited, because it is the scene registry's own object.
       function fitLayoutBlob(blob, measure) {
@@ -1862,7 +1876,7 @@ export function buildDemoPreConfig(options: {
           if (!cell) return fitted;
           var frameWidth = Math.max(document.documentElement.clientWidth || 0, FIT_REFERENCE_FRAME_WIDTH);
           // Half a cell of slack, so the parent's rounded width still floors to the recording's columns.
-          var width = Math.min(1, (WINDOW_FRAME_BORDER_PX + cell.gutter + (indexed.cols + 0.5) * cell.width) / frameWidth);
+          var width = Math.min(1, (WINDOW_FRAME_BORDER_PX + cell.gutter + cell.padding + (indexed.cols + 0.5) * cell.width) / frameWidth);
           fitted.geometry = Object.assign({}, fitted.geometry, { x: (1 - width) / 2, w: width });
           return fitted;
         });
@@ -1890,7 +1904,7 @@ export function buildDemoPreConfig(options: {
         var cell = measure();
         if (!cell) return fitted;
         var frameWidth = Math.max(document.documentElement.clientWidth || 0, FIT_REFERENCE_FRAME_WIDTH);
-        var chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + cell.gutter;
+        var chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + cell.gutter + cell.padding;
         var width = Math.min(1, (chrome + (indexed.cols + 0.5) * cell.width) / frameWidth);
         fitted.x = (1 - width) / 2;
         fitted.w = width;
@@ -1905,7 +1919,7 @@ export function buildDemoPreConfig(options: {
         var measure = function () {
           if (measured === undefined) {
             var width = measuredTerminalCell(config.terminal);
-            measured = width ? { width: width, gutter: scrollbarGutterWidth() } : null;
+            measured = width ? { width: width, gutter: scrollbarGutterWidth(), padding: terminalPaddingWidth() } : null;
           }
           return measured;
         };
@@ -2381,7 +2395,7 @@ export function buildDemoPreConfig(options: {
       });
       window.__demoScrollback = scrollback;
       // The grid a terminal mounts with is the visitor's, not the recording's: the bottom panel
-      // is 15 rows tall, and a display scaled to 125 percent fits 144 by 36 in the task window
+      // is about 14 rows tall, and a display scaled to 125 percent fits 144 by 36 in the task window
       // where the recordings hold 154 by 37. A recording's bytes address rows for its own grid
       // (Windows ConPTY re-emits Claude's classic renderer with absolute cursor positions), so
       // replayed into any other grid they land two frames' text on one row. Main routes such a

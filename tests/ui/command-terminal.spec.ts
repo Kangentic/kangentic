@@ -170,6 +170,15 @@ function twoProjectPreConfig(): string {
 }
 
 /**
+ * The window most of this spec runs in. A terminal's floor is 650px wide, so the
+ * panel shows two terminals side by side only when its terminal area holds two
+ * of them; at 2560 the panel's default place (58% of the area, plus the rail)
+ * gives about 1485px, so the grid tests see the grid. The fallback a narrower
+ * panel takes, one terminal expanded, has its own tests at 1920.
+ */
+const GRID_VIEWPORT = { width: 2560, height: 1440 };
+
+/**
  * Launch a fresh browser+context with the given preconfig registered as an init
  * script. The returned browser and context are shared across multiple tests via
  * beforeAll/afterAll. Each test navigates to VITE_URL in beforeEach so the
@@ -182,7 +191,7 @@ async function launchSharedBrowser(preConfigScript: string): Promise<{
 }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({ viewport: GRID_VIEWPORT });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
@@ -200,10 +209,13 @@ async function launchSharedBrowser(preConfigScript: string): Promise<{
  * Used when the preconfig is test-specific (e.g. custom spawnTransient overrides)
  * or when sharing is not safe.
  */
-async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+async function launchWithState(
+  preConfigScript: string,
+  viewport: { width: number; height: number } = GRID_VIEWPORT,
+): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({ viewport });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
@@ -1252,12 +1264,12 @@ test.describe('Command Terminal', () => {
   // since spawning a 2nd terminal calls spawnTransient again.
   // ---------------------------------------------------------------------------
   test.describe('Multiple terminals', () => {
-    test('the title-bar button only toggles the panel; New terminal lives in the panel\'s header', async () => {
+    test('the title-bar button only toggles the panel; Add terminal lives at the head of the rail', async () => {
       // The title-bar terminal button is a plain open/close toggle - it never
       // spawns a terminal, so its own glyph always shows the shell prompt
       // (data-plus=false), and the title bar holds no other terminal control.
-      // A new terminal starts from the New terminal button in the panel's
-      // header, beside its window controls and near the toggle.
+      // A new terminal starts from Add terminal at the top of the rail; the
+      // panel's header holds only its window controls.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1268,22 +1280,15 @@ test.describe('Command Terminal', () => {
 
         await page.getByTestId('quick-session-button').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
-        await expect(page.getByTestId('command-terminal-panel-header').getByTestId('command-terminal-new')).toBeVisible();
-        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-new')).toHaveCount(1);
+        await expect(page.getByTestId('command-terminal-panel-header').getByTestId('command-terminal-new')).toHaveCount(0);
         await expect(titleBarActions.getByTestId('command-terminal-new')).toHaveCount(0);
-        // While both places are tried, the rail carries a labelled one at its head too.
-        const railNew = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-rail-new');
+        const railNew = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new');
         await expect(railNew).toHaveText('Add terminal');
         const railBox = await page.getByTestId('command-terminal-rail').boundingBox();
         const railNewBox = await railNew.boundingBox();
         if (!railBox || !railNewBox) throw new Error('no rail');
         expect(railNewBox.y - railBox.y).toBeLessThan(24);
-        // It leads the window controls, just left of Open in new window.
-        const newBox = await page.getByTestId('command-terminal-new').boundingBox();
-        const popOutBox = await page.getByTestId('command-terminal-panel-pop-out').boundingBox();
-        if (!newBox || !popOutBox) throw new Error('no header controls');
-        expect(newBox.x + newBox.width).toBeLessThanOrEqual(popOutBox.x + 1);
-        expect(popOutBox.x - (newBox.x + newBox.width)).toBeLessThan(24);
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
 
         // Click again hides the panel, the one-click close even when it is maximized.
@@ -1296,7 +1301,7 @@ test.describe('Command Terminal', () => {
     });
 
     test('New terminal spawns a second terminal', async () => {
-      // With the layer open, the header's New terminal button calls
+      // With the layer open, the rail's Add terminal button calls
       // spawnAdditionalCommandTerminal, which opens a new window in the next
       // free slot and tiles them side by side.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
@@ -1310,7 +1315,7 @@ test.describe('Command Terminal', () => {
         // Wait for one window to be present
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
 
-        // Click the header's New terminal to spawn a second terminal
+        // Click Add terminal to spawn a second terminal
         await page.getByTestId('command-terminal-new').click();
 
         // Second window should appear; total count goes 1 -> 2
@@ -1320,10 +1325,6 @@ test.describe('Command Terminal', () => {
         const windows = page.getByTestId('command-terminal-window');
         await expect(windows.nth(0)).toBeVisible();
         await expect(windows.nth(1)).toBeVisible();
-
-        // The rail's labelled one starts a terminal the same way.
-        await page.getByTestId('command-terminal-rail-new').click();
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(3, { timeout: 5000 });
       } finally {
         await browser.close();
       }
@@ -1689,9 +1690,7 @@ test.describe('Command Terminal', () => {
         // At cap (4 windows) - New terminal is disabled, and its tip says why.
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(4);
         await expect(page.getByTestId('command-terminal-new')).toBeDisabled({ timeout: 3000 });
-        await expect(page.getByTestId('command-terminal-new')).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
-        await expect(page.getByTestId('command-terminal-rail-new')).toBeDisabled();
-        await expect(page.getByTestId('command-terminal-rail-new')).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
+        await expect(page.getByTestId('command-terminal-new')).toHaveAccessibleDescription('Stop one of the four to add another');
       } finally {
         await browser.close();
       }
@@ -2208,6 +2207,47 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    test('a terminal\'s text sits 8px in from its pane\'s left, top and bottom, the scrollbar gutter on its right', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+
+        await expect.poll(() => page.evaluate(() => {
+          const panes = [...document.querySelectorAll('[data-testid="command-bar-terminal-pane"]')];
+          if (panes.length !== 2) return 'not mounted';
+          const problems: string[] = [];
+          for (const pane of panes) {
+            const screen = pane.querySelector('.xterm-screen');
+            const viewport = pane.querySelector<HTMLElement>('.xterm-viewport');
+            if (!screen || !viewport) return 'no screen';
+            const paneBox = pane.getBoundingClientRect();
+            const screenBox = screen.getBoundingClientRect();
+            if (screenBox.width === 0) return 'no screen yet';
+            // A generous cell bound: the leftover is under one row or column.
+            const cellHeight = 30;
+            const gutter = viewport.offsetWidth - viewport.clientWidth;
+            const left = screenBox.left - paneBox.left;
+            const top = screenBox.top - paneBox.top;
+            const bottom = paneBox.bottom - screenBox.bottom;
+            const right = paneBox.right - screenBox.right;
+            if (Math.abs(left - 8) > 0.5) problems.push(`left ${left}`);
+            if (Math.abs(top - 8) > 0.5) problems.push(`top ${top}`);
+            // The rows end on whole cells, so the bottom takes the 8px plus under a row.
+            if (bottom < 7.5 || bottom > 8 + cellHeight) problems.push(`bottom ${bottom}`);
+            // The gutter is the right side's inset, plus under a column of leftover.
+            if (right < gutter - 0.5 || right > gutter + 20) problems.push(`right ${right} (gutter ${gutter})`);
+          }
+          return problems.length ? problems.join('; ') : 'inset';
+        }), { timeout: 5000 }).toBe('inset');
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('the panel sits on whole pixels, so no terminal border is cut by its clip', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
@@ -2449,6 +2489,65 @@ test.describe('Command Terminal', () => {
         await expect(page.locator('[data-testid^="window-frame-"][aria-hidden="true"]')).toHaveCount(0);
         await expect(page.getByTestId('command-terminal-running')).toHaveCount(0);
         await expect(page.locator('[data-testid^="tile-splitter-"]')).toHaveCount(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a panel too narrow for the grid shows the newest terminal expanded, and the grid returns once there is room', async () => {
+      // At 1920 the panel's default place leaves about 1113px for terminals, short of
+      // two at the 650px floor, so a second terminal does not tile.
+      const { browser, page } = await launchWithState(multiTerminalPreConfig(), { width: 1920, height: 1080 });
+      try {
+        await openTerminals(page, 2);
+        // The terminal just added is the one shown; the first lists under Running.
+        await expect(frameOf(page, 'slot-2')).toHaveAttribute('data-expanded', 'true');
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('aria-hidden', 'true');
+        expect(await runningSlots(page)).toEqual(['slot-1']);
+        await expect(page.locator('[data-testid^="tile-splitter-"]')).toHaveCount(0);
+        // There is no grid to restore to, so Restore is off and says why.
+        const restore = page.locator('[data-command-slot="slot-2"]').getByTestId('command-bar-expand');
+        await expect(restore).toBeDisabled();
+        await expect(restore).toHaveAccessibleDescription('Widen the panel to restore the grid');
+        // The terminal shown is never under the floor.
+        const shownBox = await frameOf(page, 'slot-2').boundingBox();
+        expect(shownBox?.width ?? 0).toBeGreaterThanOrEqual(650);
+
+        // A Running row brings its terminal forward, still one at a time.
+        await page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-1"]')
+          .getByTestId('command-terminal-running-expand').click();
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        expect(await runningSlots(page)).toEqual(['slot-2']);
+
+        // Maximized, the panel holds two at the floor, and the grid comes back by itself.
+        await page.getByTestId('command-terminal-panel-maximize').click();
+        await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0, { timeout: 3000 });
+        await expect(page.getByTestId('command-terminal-running')).toHaveCount(0);
+        await expect(page.locator('[data-testid^="tile-splitter-"]')).toHaveCount(1);
+        for (const slot of ['slot-1', 'slot-2']) {
+          const tileBox = await frameOf(page, slot).boundingBox();
+          expect(tileBox?.width ?? 0).toBeGreaterThanOrEqual(650);
+        }
+
+        // Back to its own place, it expands again rather than squeezing the tiles.
+        await page.getByTestId('command-terminal-panel-maximize').click();
+        await expect(page.locator('[data-testid^="window-frame-"][data-expanded="true"]')).toHaveCount(1, { timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a terminal the user expanded stays expanded when the panel grows', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTerminals(page, 2);
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        await page.getByTestId('command-terminal-panel-maximize').click();
+        await expect(page.getByTestId('command-terminal-panel')).toHaveAttribute('data-maximized', 'true');
+        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        // The grid fits, so its Restore is on.
+        await expect(page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand')).toBeEnabled();
       } finally {
         await browser.close();
       }
@@ -3016,7 +3115,7 @@ test.describe('Command Terminal', () => {
         }
         const firstRow = page.getByTestId('command-terminal-earlier-row').first();
         await expect(firstRow).toBeDisabled({ timeout: 3000 });
-        await expect(firstRow).toHaveAccessibleDescription('Four terminals are running. Stop one to start another.');
+        await expect(firstRow).toHaveAccessibleDescription('Stop one of the four to add another');
       } finally {
         await browser.close();
       }
@@ -3251,13 +3350,13 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('the window\'s title bar holds New terminal, where the panel has it in its header', async () => {
+    test('the window\'s rail holds Add terminal, as the panel\'s does', async () => {
       const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
       try {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 15000 });
-        const newTerminal = page.getByTestId('popout-header-actions').getByTestId('command-terminal-new');
+        const newTerminal = page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new');
         await expect(newTerminal).toBeVisible();
-        await expect(page.getByTestId('command-terminal-rail').getByTestId('command-terminal-new')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-new')).toHaveCount(1);
 
         await newTerminal.click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });

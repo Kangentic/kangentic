@@ -22,6 +22,7 @@ import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { Tooltip } from '../Tooltip';
+import { tipLabel } from '../../utils/tooltip';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
@@ -131,7 +132,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       terminalBackground: resolveTerminalBackground(useConfigStore.getState().config.terminal.colors),
     });
   }, [swapTargetIds, windowId, swapWindows]);
-  const { hideLayer, resumeBeside } = useCommandTerminalLayer();
+  const { hideLayer, resumeBeside, gridFits } = useCommandTerminalLayer();
+  // While the panel is too small for the grid, the layer keeps one terminal
+  // expanded, so there is no grid to restore to.
+  const restoreDisabledReason = isExpanded && !gridFits ? 'Widen the panel to restore the grid' : null;
 
   // What this window attaches to at mount, decided ONCE, before the first
   // paint, so the mount effect below only performs side effects and the two
@@ -713,11 +717,18 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               behind it and list in the rail. Only beside another terminal: a
               lone one already fills the panel. */}
           {canExpand && (
-            <Tooltip label={isExpanded ? 'Restore the grid' : 'Expand terminal'}>
+            <Tooltip
+              label={tipLabel({
+                disabled: restoreDisabledReason !== null,
+                disabledReason: restoreDisabledReason,
+                tip: isExpanded ? 'Restore the grid' : 'Expand terminal',
+              })}
+            >
               <button
                 type="button"
                 onClick={handleToggleExpanded}
-                className={`p-1.5 rounded transition-colors flex-shrink-0 ${
+                disabled={restoreDisabledReason !== null}
+                className={`p-1.5 rounded transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40 ${
                   isExpanded ? 'bg-surface-hover text-fg' : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover'
                 }`}
                 aria-label={isExpanded ? 'Restore the grid' : 'Expand terminal'}
