@@ -29,9 +29,11 @@ const {
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
+  verifySpawnWorkerLoads,
   buildProbeScript,
   buildRetrievalLoadScript,
   buildPtyHostLoadScript,
+  buildSpawnWorkerLoadScript,
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
   DICTATION_WORKER_EXTERNALS,
@@ -433,5 +435,60 @@ describe('pty host gate', () => {
     // path relative to its own, so both trees unpack.
     expect(asarUnpack).toContain('"node_modules/koffi/**"');
     expect(asarUnpack).toContain('"node_modules/@koromix/koffi-*/**"');
+  });
+});
+
+describe('pty host spawn worker gate', () => {
+  it('runs the probe under the given Electron binary as Node, and throws with its stderr on failure', () => {
+    const spawn = vi.fn(() => {
+      const error: SpawnError = new Error('Command failed');
+      error.stderr = 'Error: Cannot find module \'pty-host-spawn-worker.js\'';
+      throw error;
+    });
+    const binary = path.join(path.sep, 'mock', 'Kangentic.exe');
+    expect(() => verifySpawnWorkerLoads({ unpackedRoot: MOCK_ROOT, electronBinaryPath: binary, spawn, log: vi.fn() }))
+      .toThrow(/spawn worker cannot run a child[\s\S]*pty-host-spawn-worker\.js in `asarUnpack`[\s\S]*Cannot find module/);
+    expect(spawn).toHaveBeenCalledWith(
+      binary,
+      ['-e', expect.stringContaining('new Worker(workerPath')],
+      expect.objectContaining({ env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }) }),
+    );
+    expect(buildSpawnWorkerLoadScript(MOCK_ROOT)).toContain("path.join(root, '.vite', 'build', 'pty-host-spawn-worker.js')");
+  });
+
+  it('starts the real worker bundle and runs a child through it, under this checkout\'s Electron', async () => {
+    // The bundle is built the way scripts/build.js builds it, into a packaged layout.
+    const esbuild = await import('esbuild');
+    const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf8');
+    const externals = [...(buildSource.match(/external:\s*\[([^\]]*)\]/)?.[1] ?? '').matchAll(/'([^']+)'/g)].map((match) => match[1]);
+    const unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-spawn-worker-gate-'));
+    try {
+      await esbuild.build({
+        bundle: true,
+        platform: 'node',
+        target: 'node24',
+        format: 'cjs',
+        external: externals,
+        conditions: ['require'],
+        define: { MAIN_WINDOW_VITE_DEV_SERVER_URL: '""', MAIN_WINDOW_VITE_NAME: '"main_window"', __KANGENTIC_DEV__: 'false' },
+        entryPoints: [path.join(REPO_ROOT, 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts')],
+        outfile: path.join(unpackedRoot, '.vite', 'build', 'pty-host-spawn-worker.js'),
+        logLevel: 'silent',
+      });
+      const electronBinary = require('electron') as unknown as string;
+      const log = vi.fn();
+      verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath: electronBinary, log });
+      expect(log).toHaveBeenCalledWith('[afterPack] pty host spawn worker: the spawn worker started and ran a child');
+    } finally {
+      fs.rmSync(unpackedRoot, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('unpacks the worker bundle, which Node\'s own loader reads', () => {
+    const config = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8');
+    const asarUnpack = config.match(/\nasarUnpack:\n([\s\S]*?)\nextraResources:/)?.[1] ?? '';
+    expect(asarUnpack).toContain('".vite/build/pty-host-spawn-worker.js"');
+    const afterPack = fs.readFileSync(path.join(REPO_ROOT, 'build', 'afterPack.js'), 'utf8');
+    expect(afterPack).toContain('verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath });');
   });
 });

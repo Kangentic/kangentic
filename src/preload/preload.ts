@@ -5,6 +5,8 @@ import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
+import { PtyPortClient } from './pty-port-client';
+import type { ScrollbackInvokeResult } from '../shared/pty-port-protocol';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 
 // Decodes the standard base64 main writes with `Buffer.from(text, 'utf-8').toString('base64')`.
@@ -33,6 +35,18 @@ function readPopOutDescriptor(): PopOutDescriptor | null {
   }
 }
 const popOutDescriptor = readPopOutDescriptor();
+
+// This renderer's direct port to the pty host: a terminal's keystrokes and
+// output travel on it and never wait on main's event loop. Asked for once per
+// page load, before any terminal mounts; main sends it again after a pty host
+// restart, and the client takes the new one.
+const ptyPortClient = new PtyPortClient((sessionId, requestId) =>
+  ipcRenderer.invoke(IPC.SESSION_GET_SCROLLBACK, sessionId, requestId) as Promise<ScrollbackInvokeResult | string>);
+ipcRenderer.on(IPC.PTY_PORT, (event) => {
+  const port = event.ports[0];
+  if (port) ptyPortClient.attachPort(port);
+});
+ipcRenderer.send(IPC.PTY_PORT_REQUEST);
 
 // Forward renderer console.* + window error events to the main-process
 // diagnostics subsystem. The main side decides whether to persist based on
@@ -269,18 +283,19 @@ const api: ElectronAPI = {
     resume: (taskId, resumePrompt?, projectId?) => ipcRenderer.invoke(IPC.SESSION_RESUME, taskId, resumePrompt, projectId),
     reconcile: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_RECONCILE, taskId, projectId),
     reset: (taskId, projectId) => ipcRenderer.invoke(IPC.SESSION_RESET, taskId, projectId),
-    write: (id, data) => ipcRenderer.invoke(IPC.SESSION_WRITE, id, data),
+    // Keystrokes, output, acks and the replay's answer ride this renderer's
+    // own port to the pty host (pty-port-client.ts), never main.
+    write: (id, data) => {
+      ptyPortClient.write(id, data);
+      return Promise.resolve();
+    },
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
-    getScrollback: (id) => ipcRenderer.invoke(IPC.SESSION_GET_SCROLLBACK, id),
+    getScrollback: (id) => ptyPortClient.getScrollback(id),
     getFirstOutput: () => ipcRenderer.invoke(IPC.SESSION_GET_FIRST_OUTPUT),
     getUsage: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_USAGE, projectId),
-    onData: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string, projectId?: string) => callback(sessionId, data, projectId);
-      ipcRenderer.on(IPC.SESSION_DATA, handler);
-      return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
-    },
-    ackData: (id, bytes) => ipcRenderer.send(IPC.SESSION_DRAIN_ACK, id, bytes),
+    onData: (callback) => ptyPortClient.onData((sessionId, data) => callback(sessionId, data)),
+    ackData: (id, bytes) => ptyPortClient.ack(id, bytes),
     onPtyResized: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, cols: number, rows: number, origin: PtyResizeOrigin) => callback(sessionId, cols, rows, origin);
       ipcRenderer.on(IPC.SESSION_PTY_RESIZED, handler);

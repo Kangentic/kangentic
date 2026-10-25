@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["tests/demo/**/*.ts", "tests/captures/**/*.ts", "demo/**/*.ts"]
+  "include": ["tests/demo/**/*.ts", "tests/captures/**/*.ts", "demo/**/*.ts", "src/types/devtools-flag.d.ts"]
 }

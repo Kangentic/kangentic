@@ -45,6 +45,9 @@ export interface RendererRoundTripReading {
   armedAt: number | null;
   armedUntil: number;
   now: number;
+  /** `performance.timeOrigin`: the wall clock `at` counts from, to line this
+   *  ring up with the pty host's. */
+  timeOrigin?: number;
   events: RendererRoundTripEvent[];
   droppedEvents: number;
 }
@@ -125,5 +128,5 @@ export function noteScrollLatencyParsed(sessionId: string, chars: number): void 
 }
 
 export function readScrollLatencyProbe(): RendererRoundTripReading {
-  return { armedAt, armedUntil, now: performance.now(), events: events.slice(), droppedEvents };
+  return { armedAt, armedUntil, now: performance.now(), timeOrigin: performance.timeOrigin, events: events.slice(), droppedEvents };
 }

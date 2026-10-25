@@ -1,4 +1,5 @@
 import { simpleGit, type SimpleGit } from 'simple-git';
+import { stackCallerLabel, withSpawnCaller } from '../diagnostics/spawn-caller';
 
 /**
  * The ambient git variables simple-git 4 is told to keep. It removes every
@@ -19,7 +20,28 @@ export const SIMPLE_GIT_ALLOWED_ENVIRONMENT: readonly string[] = ['GIT_CEILING_D
 /**
  * A simple-git client for `directory`. Every simple-git call in the app opens
  * its client here, so the allowance above applies to all of them.
+ *
+ * In a dev build each method call also records its Kangentic caller for the
+ * lag report's `spawn:git:<caller>` span: simple-git starts the process from
+ * its own scheduler, behind an `await`, where the spawn's stack no longer
+ * reaches the caller (`spawn-caller.ts`).
  */
 export function openSimpleGit(directory: string): SimpleGit {
-  return simpleGit(directory, { allowEnvironment: SIMPLE_GIT_ALLOWED_ENVIRONMENT });
+  const client = simpleGit(directory, { allowEnvironment: SIMPLE_GIT_ALLOWED_ENVIRONMENT });
+  return __KANGENTIC_DEV__ ? withCallerAttribution(client) : client;
+}
+
+function withCallerAttribution(client: SimpleGit): SimpleGit {
+  const proxy: SimpleGit = new Proxy(client, {
+    get(target, property, receiver) {
+      const value: unknown = Reflect.get(target, property, receiver);
+      if (typeof value !== 'function') return value;
+      return function tracedGitMethod(...args: unknown[]): unknown {
+        const result: unknown = withSpawnCaller(stackCallerLabel(), () => Reflect.apply(value, target, args));
+        // A chained call (`git.cwd(x).raw(...)`) keeps going through the proxy.
+        return result === target ? proxy : result;
+      };
+    },
+  });
+  return proxy;
 }

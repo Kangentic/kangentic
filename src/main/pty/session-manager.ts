@@ -39,8 +39,9 @@ import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
-import { createWriteQueue, type WriteQueue } from './write-queue';
-import { PromptDraftLedger, type WriteOrigin } from './prompt-draft-ledger';
+import type { WriteOrigin } from './prompt-draft-ledger';
+import type { RendererPort } from './host/protocol';
+import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
 import { recordTerminalTrace, traceTerminal } from './terminal-trace';
 import { InProcessPtyHostTransport, PtyHostClient, type PtyHostTransport } from './host/pty-host-client';
 import type {
@@ -469,18 +470,15 @@ export class SessionManager extends EventEmitter {
    */
   private focusedByRenderer = new Map<number, Set<string>>();
   /**
-   * Per-session FIFO write queue. Every `write()` call appends to the same
-   * buffer and is drained by a single loop that yields via setImmediate
-   * between 4KB chunks. Guarantees byte order across concurrent callers
-   * (user input, paste, terminal-submit keystrokes) so bracketed-paste sequences
-   * cannot be fragmented by interleaved writes.
+   * Main's mirror of each session's unsent prompt text. The ledger itself runs
+   * in the pty host (`PromptDraftLedger`), where every write reaches the PTY,
+   * a renderer's keystrokes included, which no longer cross this process; the
+   * host reports each change (`promptDraft`). Read by keystroke injection so an
+   * auto_command never concatenates onto a draft.
    */
-  private writeQueues = new Map<string, WriteQueue>();
-  /**
-   * Per-session record of what the user has typed and not yet sent. Read by
-   * keystroke injection so an auto_command never concatenates onto a draft.
-   */
-  private promptDrafts = new PromptDraftLedger();
+  private promptDraftMirror = new Map<string, string>();
+  /** Renderers that hold a direct port to the host, to re-issue on a host restart. */
+  private portRenderers = new Set<number>();
   /**
    * Terminal dimensions from a resize that arrived before the session's PTY
    * existed (the renderer mounted and fit its container before the auto-resume
@@ -615,8 +613,13 @@ export class SessionManager extends EventEmitter {
         this.emit('pty-host-lost', takenDown);
       },
       onHostRestarted: () => {
-        // The new host knows nothing: replay what gates its output.
-        this.host.post({ type: 'setFocused', sessionIds: [...this.focusedSessionIds] });
+        // The new host knows nothing. Every renderer's port died with the old
+        // one, so the IPC layer issues each a new one first (synchronously,
+        // inside this emit); then what gates its output.
+        this.emit('renderer-ports-lost', [...this.portRenderers]);
+        for (const [rendererId, sessionIds] of this.focusedByRenderer) {
+          this.host.post({ type: 'setRendererFocus', rendererId, sessionIds: [...sessionIds] });
+        }
         this.publishTapped();
         this.emit('pty-host-restarted');
       },
@@ -870,19 +873,12 @@ export class SessionManager extends EventEmitter {
       this.statusFileReader,
     );
 
-    // Free the per-session write queue when a PTY exits naturally (without
-    // going through kill()). dispose() is idempotent so the kill() path
-    // double-disposing is harmless.
+    // The host dropped the PTY's write queue, its draft and its backpressure
+    // accounting when the PTY exited.
     this.on('exit', (sessionId: string) => {
-      const writeQueue = this.writeQueues.get(sessionId);
-      if (writeQueue) {
-        writeQueue.dispose();
-        this.writeQueues.delete(sessionId);
-      }
       // The prompt died with the PTY; a remembered draft would otherwise be
-      // reported as discarded by the next session to reuse this id. (The host
-      // dropped the session's backpressure accounting when the PTY exited.)
-      this.promptDrafts.clear(sessionId);
+      // reported as discarded by the next session to reuse this id.
+      this.promptDraftMirror.delete(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
       // A deferred force-kill whose PTY exited on its own inside the grace has
@@ -908,12 +904,9 @@ export class SessionManager extends EventEmitter {
    */
   private handleHostEvent(event: PtyHostEvent): void {
     switch (event.type) {
-      case 'data':
-        // Output for a focused session (the host gates on the focus union).
-        // Rechecked here: a focus change can cross a slice in flight, and
-        // such a slice has no renderer left to go to. The host releases its
-        // accounting for every session a focus change touched.
-        if (this.focusedSessionIds.has(event.sessionId)) this.emit('data', event.sessionId, event.data);
+      case 'promptDraft':
+        if (event.draft === null) this.promptDraftMirror.delete(event.sessionId);
+        else this.promptDraftMirror.set(event.sessionId, event.draft);
         return;
       case 'tap':
         // Raw output for a session someone subscribed to (subscribeDataTap):
@@ -1249,6 +1242,9 @@ export class SessionManager extends EventEmitter {
     if (sessionIds.length === 0) this.focusedByRenderer.delete(rendererId);
     else this.focusedByRenderer.set(rendererId, new Set(sessionIds));
     this.recomputeFocusedUnion();
+    // The host routes each session's output to the ports of the renderers that
+    // show it, so it gets each renderer's set, not only the union.
+    this.host.post({ type: 'setRendererFocus', rendererId, sessionIds: [...sessionIds] });
     // Prior in-flight accounting is stale for the sessions THIS renderer just
     // changed: one leaving its visible set would otherwise stay paused forever,
     // because that renderer no longer acks its data. Resume those and clear
@@ -1608,14 +1604,21 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The renderer reports that it has consumed `bytes` of this session's output
-   * (written to xterm or deliberately dropped during scrollback replay), which
-   * drops the in-flight count and resumes a paused PTY once it has caught up.
-   * Acking dropped bytes too is essential: otherwise a session whose data is
-   * dropped (overlay / scrollback reload) would never resume.
+   * Give the pty host a renderer's direct port (one end of a
+   * `MessageChannelMain` the IPC layer brokers; the renderer holds the other).
+   * Its keystrokes go to the host on it and its sessions' output comes back on
+   * it, so neither waits on this process's event loop. A reload asks again,
+   * and the host replaces the old port.
    */
-  acknowledgeDrain(sessionId: string, bytes: number): void {
-    this.host.post({ type: 'ack', sessionId, bytes });
+  attachRendererPort(rendererId: number, port: RendererPort): void {
+    this.portRenderers.add(rendererId);
+    this.host.attachRendererPort(rendererId, port);
+  }
+
+  /** The renderer is gone: the host drops its port and its visible set. */
+  detachRendererPort(rendererId: number): void {
+    if (!this.portRenderers.delete(rendererId)) return;
+    this.host.post({ type: 'forgetRenderer', rendererId });
   }
 
   /**
@@ -1641,20 +1644,6 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * The renderers that currently have this session visible. The IPC layer sends
-   * that session's data to exactly these, instead of blanket-sending to the main
-   * window - which is both correct for a detached host and strictly less IPC
-   * than before for everyone else.
-   */
-  getRenderersFocusedOn(sessionId: string): number[] {
-    const renderers: number[] = [];
-    for (const [rendererId, sessionIds] of this.focusedByRenderer) {
-      if (sessionIds.has(sessionId)) renderers.push(rendererId);
-    }
-    return renderers;
-  }
-
-  /**
    * Drop a renderer's claims when its window goes away - BOTH its focus set
    * and its mounted set (kept under the original name because it is the one
    * teardown call site, wired once per renderer in the session IPC handlers).
@@ -1671,6 +1660,7 @@ export class SessionManager extends EventEmitter {
       return;
     }
     this.recomputeFocusedUnion();
+    this.host.post({ type: 'setRendererFocus', rendererId, sessionIds: [] });
     // A closed window leaves its sessions unwatched exactly as an unfocus
     // does; park their grids on the same delay.
     for (const sessionId of new Set([...(departingSessionIds ?? []), ...(departingMountedIds ?? [])])) {
@@ -1713,10 +1703,8 @@ export class SessionManager extends EventEmitter {
         }
       }
     }
+    // The host derives the same union from the per-renderer sets it is sent.
     this.focusedSessionIds = union;
-    // The host emits output only for these, so an unwatched session's bytes
-    // never reach this process.
-    this.host.post({ type: 'setFocused', sessionIds: [...union] });
   }
 
   private recomputeMountedUnion(): void {
@@ -2035,26 +2023,18 @@ export class SessionManager extends EventEmitter {
    *
    * `origin` tells the prompt-draft ledger whether these bytes are something a
    * human typed. It defaults to `'system'` so an unmarked caller can never be
-   * mistaken for user input; the human-facing entry points (the renderer's
-   * SESSION_WRITE, dictation, the mobile bridge's interactive terminal and
-   * permission-prompt answers) pass `'user'` explicitly.
+   * mistaken for user input; the human-facing entry points that come through
+   * here (dictation, the mobile bridge's interactive terminal and
+   * permission-prompt answers) pass `'user'` explicitly. A renderer's own
+   * keystrokes reach the host on its port and are tagged `'user'` there.
    */
   write(sessionId: string, data: string, origin: WriteOrigin = 'system'): void {
     const session = this.registry.get(sessionId);
     if (!session?.pty || data.length === 0) return;
-
-    this.promptDrafts.record(sessionId, data, origin);
-
-    let queue = this.writeQueues.get(sessionId);
-    if (!queue) {
-      queue = createWriteQueue(
-        () => this.registry.get(sessionId)?.pty ?? null,
-        undefined,
-        { onAutoDispose: () => this.writeQueues.delete(sessionId) },
-      );
-      this.writeQueues.set(sessionId, queue);
-    }
-    queue.enqueue(data);
+    // Into the PTY's write queue in the host, which a renderer's keystrokes
+    // share: 4 KB chunks, a bracketed paste kept whole, FIFO across every
+    // writer, so a key typed during a paste can never land inside it.
+    this.host.post({ type: 'enqueueWrite', ptyId: session.pty.ptyId, data, origin });
   }
 
   /**
@@ -2063,12 +2043,13 @@ export class SessionManager extends EventEmitter {
    * after a large paste (e.g. the embedded browser pane sends payload ->
    * await drain -> Escape -> Enter so the submit keystrokes don't race the
    * chunked drain loop and split the paste mid-stream).
-   * Resolves immediately if there is no active queue or it is already idle.
+   * Resolves immediately when the session has no live PTY, and when the host
+   * cannot answer (its PTYs, queue included, went with it).
    */
   drain(sessionId: string): Promise<void> {
-    const queue = this.writeQueues.get(sessionId);
-    if (!queue) return Promise.resolve();
-    return queue.drained();
+    const pty = this.registry.get(sessionId)?.pty;
+    if (!pty) return Promise.resolve();
+    return this.host.drainWrites(pty.ptyId).then(() => undefined, () => undefined);
   }
 
   /**
@@ -2077,7 +2058,7 @@ export class SessionManager extends EventEmitter {
    * whether a clear is needed and to report what it discarded.
    */
   getPendingDraft(sessionId: string): string | null {
-    return this.promptDrafts.get(sessionId);
+    return this.promptDraftMirror.get(sessionId) ?? null;
   }
 
   /**
@@ -3081,6 +3062,10 @@ export class SessionManager extends EventEmitter {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
       const childPid = ptyRef.pid;
+      // A renderer's keystrokes stop reaching it now, and anything still
+      // queued for it is dropped, as when they crossed this process and found
+      // the handle nulled. The exit sequence below is written past the seal.
+      ptyRef.sealUserInput();
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       // An agent whose console close is its graceful exit (Claude on Windows
       // and Linux, measured with the scripts/probe-claude-exit-paths* probes)
@@ -3089,9 +3074,8 @@ export class SessionManager extends EventEmitter {
       // awaitExit() and the reap wait for its own exit after the close
       // (host/exited-root-wait.ts).
       if (options?.immediate !== true && session.consoleCloseIsGraceful !== true && isYoungSession(session)) {
-        // Written straight to the PTY, not through the write queue: the queue
-        // is disposed below and drains through `session.pty`, which is already
-        // null. The onData / onExit disposables move to the parked entry so the
+        // Written straight to the PTY, not through the write queue, which the
+        // seal above disposed in the host. The onData / onExit disposables move to the parked entry so the
         // quit path can still detach them after remove() has deleted this row;
         // they stay attached until then, because the onExit they carry is what
         // emits 'exit' (awaitExit) and cancels the timer on a natural exit.
@@ -3102,13 +3086,6 @@ export class SessionManager extends EventEmitter {
       } else {
         safeKillPty(ptyRef);
       }
-    }
-    // Drop pending bytes; a stale drain loop scheduled via setImmediate will
-    // observe the disposed flag on its next tick and exit cleanly.
-    const writeQueue = this.writeQueues.get(sessionId);
-    if (writeQueue) {
-      writeQueue.dispose();
-      this.writeQueues.delete(sessionId);
     }
     // Remove from queue if queued, and mark as exited.
     // Queued sessions have no PTY, so onExit never fires. Emit the exit
@@ -3300,7 +3277,11 @@ export class SessionManager extends EventEmitter {
         consoleCloseIsGraceful: session.consoleCloseIsGraceful === true,
         emitter: this,
         sessionId,
-        clearPty: () => { session.pty = null; },
+        clearPty: () => {
+          // As in kill(): a renderer's keystrokes stop reaching it from here.
+          session.pty?.sealUserInput();
+          session.pty = null;
+        },
         killPty: safeKillPty,
       });
       // A close ends the shell at once and the agent a moment later: wait for
@@ -3343,6 +3324,17 @@ export class SessionManager extends EventEmitter {
     // PtyBufferManager.getReplaySnapshot). The reply rides the same ordered
     // channel as the session's output, so no flushed slice overtakes it.
     return this.host.getScrollback(sessionId, !!this.registry.get(sessionId)?.pty);
+  }
+
+  /**
+   * A renderer's replay (`getScrollback` above), answered on that renderer's
+   * port. The request still comes through here, so the host applies every
+   * resize this process sent before it ahead of the sample; the answer goes on
+   * the port that carries the session's output, after what was flushed before
+   * the sample, which is the order the renderer's held-byte drop relies on.
+   */
+  getScrollbackForRenderer(sessionId: string, rendererId: number, requestId: number): Promise<ScrollbackInvokeResult> {
+    return this.host.getScrollbackForRenderer(sessionId, !!this.registry.get(sessionId)?.pty, rendererId, requestId);
   }
 
   /**

@@ -273,9 +273,9 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     //
     // The guarantee is per-renderer ROUTING, not global silence. Main's emit
     // gate is a union across renderers, so a session a detached monitor already
-    // holds is being read the whole time - but SESSION_DATA is dispatched only
-    // to the renderers focused on that session (`sendToFocusedRenderers` ->
-    // `getRenderersFocusedOn`), so this renderer receives nothing until its own
+    // holds is being read the whole time - but the pty host sends a session's
+    // output only to the ports of the renderers focused on it
+    // (`setRendererFocus`), so this renderer receives nothing until its own
     // setFocused lands. Anything that did arrive first would predate the sample,
     // which is exactly what the replay's queue reset exists to discard.
     syncFocusedTerminals(new Set(focusedIds));

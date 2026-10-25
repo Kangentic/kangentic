@@ -15,8 +15,12 @@
  * events delivered synchronously (`InProcessPtyHostTransport`).
  */
 
+import type { spawn } from 'node:child_process';
 import * as nodePty from 'node-pty';
 import type { ActivityState, AgentParser, ExitSequenceStep, StreamOutputParser } from '../../../shared/types';
+import type { FromPtyHostPortMessage, ScrollbackInvokeResult, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
+import { createWriteQueue, type WriteQueue } from '../write-queue';
+import { PromptDraftLedger, type WriteOrigin } from '../prompt-draft-ledger';
 import { PtyBufferManager } from '../buffer/pty-buffer-manager';
 import { TranscriptWriter, type TranscriptSink } from '../buffer/transcript-writer';
 import { BackpressureController } from '../buffer/backpressure-controller';
@@ -45,8 +49,8 @@ import {
 import { RootPidGate, processNotStartedError, type RootPidOutcome } from './root-pid-gate';
 import { writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
-import { launchesOwnBinary, runHostExec } from './host-exec';
-import { HostCliProcesses } from './host-cli-processes';
+import { launchesOwnBinary } from './host-exec';
+import { LocalSpawnService, type HostSpawnService, type SpawnServiceHooks } from './host-spawn-service';
 import { createTaggedProcessReader } from '../process-tag/reader-factory';
 import {
   TaggedReaper,
@@ -71,8 +75,20 @@ import {
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
   type QueuedPtyHostMethod,
+  type RendererPort,
   type SeedFrameResult,
 } from './protocol';
+
+/** A renderer's port message, checked before it is trusted: the renderer is
+ *  another process, and a malformed message is dropped, never thrown on. */
+function isPortMessage(value: unknown): value is ToPtyHostPortMessage {
+  if (typeof value !== 'object' || value === null) return false;
+  const message = value as Record<string, unknown>;
+  if (typeof message.sessionId !== 'string') return false;
+  if (message.type === 'write') return typeof message.data === 'string';
+  if (message.type === 'ack') return typeof message.bytes === 'number' && Number.isFinite(message.bytes);
+  return false;
+}
 
 /** The request method each `TaggedReaper` queue answers, for `batch-started`. */
 const QUEUED_METHOD_OF: Record<TaggedReaperQueue, QueuedPtyHostMethod> = {
@@ -108,8 +124,15 @@ export interface PtyHostCoreDeps {
    *  so a flood costs main a few messages a second instead of one per chunk. */
   coalesceMs: number;
   spawnPty?: typeof nodePty.spawn;
-  /** Starts the agent CLI runs; `child_process.spawn` unless a test swaps it. */
-  spawnChild?: ConstructorParameters<typeof HostCliProcesses>[1];
+  /**
+   * Starts every child process the host runs for main: the one-shot runs, the
+   * agent CLI runs, the process table's probe. The utility host passes the
+   * spawn worker's (`WorkerSpawnService`), so no process start holds the thread
+   * that carries terminal input and output. `LocalSpawnService` otherwise.
+   */
+  createSpawnService?: (hooks: SpawnServiceHooks) => HostSpawnService;
+  /** `LocalSpawnService`'s child spawner; `child_process.spawn` unless a test swaps it. */
+  spawnChild?: typeof spawn;
   /** The task-tag reader; the platform's own unless a test swaps it. */
   createTaggedProcessReader?: () => TaggedProcessReader | null;
   /**
@@ -216,6 +239,14 @@ interface PtyEntry extends RawPtyEntry {
   exitSequence: ExitSequenceStep[];
   /** The task the PTY runs for, so a reap can wait for what it leaves running. */
   taskId: string | null;
+  /**
+   * The PTY's serial write queue, created on the first queued write: a
+   * renderer's keystrokes and main's queued writes (a paste, a submit, an
+   * injected command) share it, so a key never lands inside a paste.
+   */
+  writeQueue: WriteQueue | null;
+  /** Main took this PTY off its row (`sealUserInput`): a renderer's writes are dropped. */
+  userInputSealed: boolean;
 }
 
 interface CoalesceState {
@@ -231,7 +262,14 @@ interface CoalesceState {
 export class PtyHostCore {
   private readonly sessions = new Map<string, HostSession>();
   private readonly ptys = new Map<number, PtyEntry>();
+  /** The union of every renderer's visible set: these sessions flush to a renderer. */
   private readonly focused = new Set<string>();
+  /** Each renderer's visible sessions (`setRendererFocus`), the routing table for output. */
+  private readonly rendererFocus = new Map<number, Set<string>>();
+  /** Each renderer's direct port: its keystrokes arrive on it and its output leaves on it. */
+  private readonly rendererPorts = new Map<number, RendererPort>();
+  /** What each session's user has typed and not sent, in the order the PTY gets it. */
+  private readonly promptDrafts = new PromptDraftLedger();
   private readonly tapped = new Set<string>();
   /** The background-shell watcher's process table source, created on first
    *  use: Toolhelp on Windows, `ps` on POSIX (`host-process-table.ts`). */
@@ -240,8 +278,8 @@ export class PtyHostCore {
   private taggedReaper: TaggedReaper | null = null;
   /** Raw PTYs (`spawnRaw`), by ptyId. */
   private readonly rawPtys = new Map<number, RawPtyEntry>();
-  /** Agent CLI runs (`cliSpawn`), with piped stdio. */
-  private readonly cliProcesses: HostCliProcesses;
+  /** Every child process start: one-shot runs, agent CLI runs (`cliSpawn`), the process table's probe. */
+  private readonly spawnService: HostSpawnService;
   private readonly firstOutput = new FirstOutputTracker();
   private readonly agentOutput = new AgentOutputTracker();
   private readonly resizeManager = new ResizeManager();
@@ -269,14 +307,19 @@ export class PtyHostCore {
     this.now = deps.now ?? Date.now;
     // Loaded ahead, so the first PTY is pinned in the turn its pid is known.
     if (this.onWindows) void this.ensureOrphanApi();
-    this.cliProcesses = new HostCliProcesses((event) => this.deps.emit(event), deps.spawnChild, undefined, (pid) => this.pinRun(pid));
+    const spawnHooks: SpawnServiceHooks = { emit: (event) => this.deps.emit(event), pinRun: (pid) => this.pinRun(pid) };
+    this.spawnService = deps.createSpawnService
+      ? deps.createSpawnService(spawnHooks)
+      : new LocalSpawnService(spawnHooks, { spawnChild: deps.spawnChild });
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data, endOffset) => {
         this.consumeFirstOutput(sessionId, data);
         if (this.tapped.has(sessionId)) this.deps.emit({ type: 'tap', sessionId, data, endOffset });
         if (this.focused.has(sessionId)) {
           if (__KANGENTIC_DEV__) noteRoundTripStage(sessionId, 'flush', data);
-          this.deps.emit({ type: 'data', sessionId, data });
+          // Straight to each renderer that shows it, on its own port: output
+          // never crosses main, so main's event loop cannot hold an echo back.
+          this.postToRenderersShowing(sessionId, { type: 'data', sessionId, data });
           const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
           this.backpressure.recordEmitted(sessionId, data.length);
           if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
@@ -386,6 +429,8 @@ export class PtyHostCore {
       wslRoot: isWslRoot(params.file),
       exitSequence: params.exitSequence ?? ['\x03'],
       taskId: params.taskId ?? null,
+      writeQueue: null,
+      userInputSealed: false,
     };
     this.ptys.set(params.ptyId, entry);
     entry.disposables.push(...subscribeThroughGate(
@@ -430,6 +475,117 @@ export class PtyHostCore {
   async getScrollback(sessionId: string, settle: boolean): Promise<string> {
     if (settle) await this.bufferManager.waitForResizeRepaint(sessionId);
     return this.bufferManager.getReplaySnapshot(sessionId);
+  }
+
+  /**
+   * A renderer's replay, answered on its own port. The sample's answer leaves
+   * in the same turn the sample ends, on the port that carries the session's
+   * output, so every byte flushed before the sample arrives before the answer
+   * and every byte after it arrives after: the order the renderer's held-byte
+   * drop relies on (`useTerminal.ts`). Main only learns where the answer went.
+   */
+  async getScrollbackForRenderer(params: PtyHostRequestMap['getScrollbackForRenderer']['params']): Promise<ScrollbackInvokeResult> {
+    let data: string;
+    try {
+      data = await this.getScrollback(params.sessionId, params.settle);
+    } catch (error) {
+      const port = this.rendererPorts.get(params.rendererId);
+      if (!port) throw error;
+      port.postMessage({ type: 'scrollbackFailed', requestId: params.requestId, message: error instanceof Error ? error.message : String(error) });
+      return { sentToPort: true };
+    }
+    const port = this.rendererPorts.get(params.rendererId);
+    if (!port) return { sentToPort: false, data };
+    port.postMessage({ type: 'scrollback', requestId: params.requestId, data });
+    return { sentToPort: true };
+  }
+
+  /**
+   * Take a renderer's direct port (main brokers one per renderer and replaces
+   * it on a reload or a host restart). Its keystrokes and acks arrive on it,
+   * and the output of the sessions it shows leaves on it.
+   */
+  attachRendererPort(rendererId: number, port: RendererPort): void {
+    const previous = this.rendererPorts.get(rendererId);
+    if (previous && previous !== port) {
+      try {
+        previous.close();
+      } catch {
+        // Already closed with the page that held it.
+      }
+    }
+    this.rendererPorts.set(rendererId, port);
+    port.on('message', (messageEvent) => this.onPortMessage(messageEvent.data));
+    port.on('close', () => {
+      if (this.rendererPorts.get(rendererId) === port) this.rendererPorts.delete(rendererId);
+    });
+    port.start();
+  }
+
+  private onPortMessage(message: unknown): void {
+    if (!isPortMessage(message)) return;
+    if (message.type === 'ack') {
+      this.backpressure.acknowledge(message.sessionId, message.bytes);
+      return;
+    }
+    this.writeUserInput(message.sessionId, message.data);
+  }
+
+  /** A renderer's keystrokes for a session: to its live PTY, unless main sealed it. */
+  private writeUserInput(sessionId: string, data: string): void {
+    const ptyId = this.sessions.get(sessionId)?.livePtyId;
+    const entry = ptyId === null || ptyId === undefined ? undefined : this.ptys.get(ptyId);
+    if (!entry || entry.exited || entry.userInputSealed || data.length === 0) return;
+    this.enqueueWrite(entry, data, 'user');
+  }
+
+  /** Into the PTY's write queue, written at once when nothing is ahead of it. */
+  private enqueueWrite(entry: PtyEntry, data: string, origin: WriteOrigin): void {
+    if (entry.exited || data.length === 0) return;
+    if (__KANGENTIC_DEV__) noteRoundTripStage(entry.sessionId, 'write', data);
+    // In the alt screen, the answer to this input flushes on the next loop turn, not the 16 ms timer.
+    this.bufferManager.noteInput(entry.sessionId);
+    this.recordDraft(entry.sessionId, data, origin);
+    entry.writeQueue ??= createWriteQueue(
+      () => (entry.exited ? null : entry.pty),
+      undefined,
+      { onAutoDispose: () => { entry.writeQueue = null; } },
+    );
+    entry.writeQueue.enqueue(data);
+  }
+
+  /** Fold a write into the session's draft, and tell main when the draft changed. */
+  private recordDraft(sessionId: string, data: string, origin: WriteOrigin): void {
+    const before = this.promptDrafts.get(sessionId);
+    this.promptDrafts.record(sessionId, data, origin);
+    const after = this.promptDrafts.get(sessionId);
+    if (after !== before) this.deps.emit({ type: 'promptDraft', sessionId, draft: after });
+  }
+
+  private clearDraft(sessionId: string): void {
+    if (this.promptDrafts.get(sessionId) === null) return;
+    this.promptDrafts.clear(sessionId);
+    this.deps.emit({ type: 'promptDraft', sessionId, draft: null });
+  }
+
+  /** Stop a PTY's queued writes: what is still queued is dropped. */
+  private disposeWriteQueue(entry: PtyEntry): void {
+    entry.writeQueue?.dispose();
+    entry.writeQueue = null;
+  }
+
+  private postToRenderersShowing(sessionId: string, message: FromPtyHostPortMessage): void {
+    for (const [rendererId, sessionIds] of this.rendererFocus) {
+      if (!sessionIds.has(sessionId)) continue;
+      this.rendererPorts.get(rendererId)?.postMessage(message);
+    }
+  }
+
+  private recomputeFocused(): void {
+    this.focused.clear();
+    for (const sessionIds of this.rendererFocus.values()) {
+      for (const sessionId of sessionIds) this.focused.add(sessionId);
+    }
   }
 
   async getSerializedFrame(sessionId: string, settle: boolean): Promise<string> {
@@ -503,6 +659,12 @@ export class PtyHostCore {
         const { sessionId, settle } = params as PtyHostRequestMap['getScrollback']['params'];
         return this.getScrollback(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
       }
+      case 'getScrollbackForRenderer':
+        return this.getScrollbackForRenderer(params as PtyHostRequestMap['getScrollbackForRenderer']['params']) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'drainWrites': {
+        const queue = this.ptys.get((params as PtyHostRequestMap['drainWrites']['params']).ptyId)?.writeQueue;
+        return (queue ? queue.drained().then(() => true as const) : Promise.resolve(true as const)) as Promise<PtyHostRequestMap[M]['result']>;
+      }
       case 'getSerializedFrame': {
         const { sessionId, settle } = params as PtyHostRequestMap['getSerializedFrame']['params'];
         return this.getSerializedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
@@ -523,9 +685,9 @@ export class PtyHostCore {
         this.deps.closeProject?.((params as { projectId: string }).projectId);
         return true as PtyHostRequestMap[M]['result'];
       case 'exec':
-        return runHostExec(params as HostExecRequest) as Promise<PtyHostRequestMap[M]['result']>;
+        return this.spawnService.exec(params as HostExecRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'listProcesses':
-        this.processTable ??= new HostProcessTable();
+        this.processTable ??= new HostProcessTable({ createFallbackProbe: () => this.spawnService.processTableProbe() });
         return this.processTable.list() as Promise<PtyHostRequestMap[M]['result']>;
       case 'reapTaggedProcesses':
         return this.reapTaggedProcesses(params as TaggedReapRequest) as Promise<PtyHostRequestMap[M]['result']>;
@@ -569,6 +731,21 @@ export class PtyHostCore {
           entry.pty.write(command.data);
         });
         return;
+      case 'enqueueWrite':
+        // Main's queued writes; a sealed PTY takes only the direct ones (its exit sequence).
+        this.withLivePty(command.ptyId, (entry) => {
+          if (!entry.userInputSealed) this.enqueueWrite(entry, command.data, command.origin);
+        });
+        return;
+      case 'sealUserInput': {
+        const entry = this.ptys.get(command.ptyId);
+        if (!entry) return;
+        entry.userInputSealed = true;
+        // Main dropped its row's handle, so what was still queued for it goes
+        // too, as main's own queue dropped it when the handle was nulled.
+        this.disposeWriteQueue(entry);
+        return;
+      }
       case 'resizePty': {
         if (this.withRawPty(command.ptyId, (rawPty) => rawPty.resize(command.cols, command.rows))) return;
         const entry = this.ptys.get(command.ptyId);
@@ -598,16 +775,26 @@ export class PtyHostCore {
         if (this.killRaw(command.ptyId)) return;
         this.kill(command.ptyId);
         return;
-      case 'setFocused':
-        this.focused.clear();
-        for (const sessionId of command.sessionIds) this.focused.add(sessionId);
+      case 'setRendererFocus':
+        if (command.sessionIds.length === 0) this.rendererFocus.delete(command.rendererId);
+        else this.rendererFocus.set(command.rendererId, new Set(command.sessionIds));
+        this.recomputeFocused();
         return;
+      case 'forgetRenderer': {
+        this.rendererFocus.delete(command.rendererId);
+        this.recomputeFocused();
+        const port = this.rendererPorts.get(command.rendererId);
+        this.rendererPorts.delete(command.rendererId);
+        try {
+          port?.close();
+        } catch {
+          // Closed with its page already.
+        }
+        return;
+      }
       case 'setTapped':
         this.tapped.clear();
         for (const sessionId of command.sessionIds) this.tapped.add(sessionId);
-        return;
-      case 'ack':
-        this.backpressure.acknowledge(command.sessionId, command.bytes);
         return;
       case 'releaseBackpressure':
         for (const sessionId of command.sessionIds) this.backpressure.release(sessionId);
@@ -635,16 +822,16 @@ export class PtyHostCore {
         this.bufferManager.initSession(command.sessionId, command.scrollback, command.cols);
         return;
       case 'cliSpawn':
-        this.cliProcesses.start(command.params);
+        this.spawnService.startCli(command.params);
         return;
       case 'cliWrite':
-        this.cliProcesses.write(command.processId, command.data);
+        this.spawnService.writeCli(command.processId, command.data);
         return;
       case 'cliEndInput':
-        this.cliProcesses.endInput(command.processId, command.data);
+        this.spawnService.endCliInput(command.processId, command.data);
         return;
       case 'cliStop':
-        this.cliProcesses.stop(command.processId);
+        this.spawnService.stopCli(command.processId);
         return;
       case 'shutdown':
         // Main's killAll has already posted every kill, a young session's
@@ -659,7 +846,7 @@ export class PtyHostCore {
         // A CLI left running would keep its run directory, and the live MCP
         // token in it, on disk after the app is gone. Main's stopAllCliRuns
         // has posted most of these stops already; a second is a no-op.
-        this.cliProcesses.stopAll();
+        this.spawnService.stopAllCli();
         return;
       default: {
         const unknownCommand: never = command;
@@ -769,7 +956,7 @@ export class PtyHostCore {
     const pin = (api: DeadRootOrphanApi | null): void => {
       if (!api || holder.exited || holder.rootPin || holder.pty.pid <= 0) return;
       try {
-        holder.rootPin = api.pinRoot(holder.pty.pid, holder.spawnedAtMs - SPAWN_CLOCK_SLACK_MS);
+        holder.rootPin = timeSyncWork('pty:pinRoot', () => api.pinRoot(holder.pty.pid, holder.spawnedAtMs - SPAWN_CLOCK_SLACK_MS));
       } catch (error) {
         console.warn('[pty-host] could not pin a PTY root:', error instanceof Error ? error.message : String(error));
         return;
@@ -871,7 +1058,7 @@ export class PtyHostCore {
 
   /** Everything the shutdown waits on: the live PTYs and CLI runs. */
   get liveChildCount(): number {
-    return this.livePtyCount + this.cliProcesses.liveCount;
+    return this.livePtyCount + this.spawnService.liveCliCount;
   }
 
   /**
@@ -883,13 +1070,14 @@ export class PtyHostCore {
     const spawnedAtMs = this.now();
     try {
       refuseOwnExecutable(params.file);
-      rawPty = this.spawnPty(params.file, params.args, {
+      // A probe's pseudo console starts on this thread too, like `pty:spawn`.
+      rawPty = timeSyncWork('pty:spawnRaw', () => this.spawnPty(params.file, params.args, {
         name: params.name,
         cols: params.cols,
         rows: params.rows,
         cwd: params.cwd,
         env: params.env,
-      });
+      }));
     } catch (error) {
       return { ok: false, error: toPtyHostError(error) };
     }
@@ -972,6 +1160,7 @@ export class PtyHostCore {
     const entry = this.ptys.get(ptyId);
     if (!entry || entry.exited || entry.killed) return;
     entry.killed = true;
+    this.disposeWriteQueue(entry);
     // Recorded now, not at the exit, so a reap posted right after the kill
     // (a Command Terminal's, on its row's removal) already finds the root.
     const descendants = this.listDescendantsBeforeKill(entry);
@@ -1046,6 +1235,7 @@ export class PtyHostCore {
 
   private dropSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.clearDraft(sessionId);
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter.remove(sessionId);
     this.firstOutput.removeSession(sessionId);
@@ -1149,8 +1339,14 @@ export class PtyHostCore {
       }
     }
     this.ptys.delete(entry.ptyId);
+    this.disposeWriteQueue(entry);
     const session = this.sessions.get(entry.sessionId);
-    if (session?.livePtyId === entry.ptyId) session.livePtyId = null;
+    if (session?.livePtyId === entry.ptyId) {
+      session.livePtyId = null;
+      // The prompt died with the PTY; a remembered draft would otherwise be
+      // reported as discarded by the next session to reuse this id.
+      this.clearDraft(entry.sessionId);
+    }
     this.backpressure.release(entry.sessionId);
     this.flushCoalesced(entry.sessionId);
     // Flush the transcript before main hears of the exit, as the spawn flow's

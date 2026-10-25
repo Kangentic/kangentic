@@ -18,6 +18,7 @@
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { HostExecFailure, HostExecOptions, HostExecRequest, HostExecResult } from '../pty/host/protocol';
+import { describeSpawnCaller } from '../diagnostics/spawn-caller';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 
 export interface OffMainExecOptions {
@@ -125,11 +126,13 @@ async function runRemote(run: OffMainExecutor, request: HostExecRequest): Promis
 export function execAsync(command: string, options: OffMainExecOptions = {}): Promise<ExecOutput> {
   const run = executor;
   if (!run) return localExec(command, options);
-  return runRemote(run, { kind: 'exec', command, options: toHostOptions(options) });
+  const caller = __KANGENTIC_DEV__ ? describeSpawnCaller() : undefined;
+  return runRemote(run, { kind: 'exec', command, options: toHostOptions(options), ...(caller ? { caller } : {}) });
 }
 
 export function execFileAsync(file: string, args: readonly string[] = [], options: OffMainExecOptions = {}): Promise<ExecOutput> {
   const run = executor;
   if (!run) return localExecFile(file, [...args], options);
-  return runRemote(run, { kind: 'execFile', file, args: [...args], options: toHostOptions(options) });
+  const caller = __KANGENTIC_DEV__ ? describeSpawnCaller() : undefined;
+  return runRemote(run, { kind: 'execFile', file, args: [...args], options: toHostOptions(options), ...(caller ? { caller } : {}) });
 }

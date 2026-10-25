@@ -5,6 +5,9 @@ paths:
   - "src/main/shared/child-tree-stop.ts"
   - "src/main/agent/shared/cli-print.ts"
   - "src/main/ipc/register-all.ts"
+  - "src/main/ipc/handlers/sessions.ts"
+  - "src/preload/pty-port-client.ts"
+  - "src/shared/pty-port-protocol.ts"
   - "build/verify-unpacked-worker.js"
 ---
 # Rule: every PTY runs in the pty host, never in main
@@ -29,10 +32,40 @@ at the Windows timer floor.
   width) is mirrored from host events. Everything else is an async request: scrollback, the serialized
   frame, the phone's seed frame (`getSeedFrame`), raw scrollback, the output peek, diagnostics. Do not add a synchronous read of host state
   to main.
-- **Output reaches main only where something consumes it.** The host sends `data` for the focused
-  union (`setFocused`), `tap` for sessions a phone streams (`subscribeDataTap`, ref-counted), and a
-  coalesced `outputSeen` (no bytes) for everything else. A new consumer of raw output subscribes a
-  tap for as long as it needs one; it never widens `data`.
+- **Terminal input and echo never cross main.** A keystroke used to reach the host through main's
+  IPC and its echo came back the same way, so a git start or a `node_modules` deletion on main
+  held every terminal: echo p99 293 ms and max 454 ms under a worktree create. Each renderer now
+  holds its own port to the host, one end of a `MessageChannelMain` that `ipc/handlers/sessions.ts`
+  brokers when the preload asks (`PTY_PORT_REQUEST`) and never relays. The preload keeps its end
+  (`src/preload/pty-port-client.ts`) behind the unchanged `ElectronAPI` shape. Keystrokes and acks
+  go to the host on it, and the host sends a session's output only to the ports of the renderers
+  that show it (`setRendererFocus`, kept per renderer). A scrollback request still goes through
+  main, behind that renderer's resizes, and the host answers on the asking port after the output
+  it flushed before the sample. The host owns the write queue and the prompt-draft ledger, and
+  main mirrors the draft from `promptDraft`. Every place main drops a session's PTY handle calls
+  `sealUserInput()` first, so a renderer's keystrokes stop reaching an agent in its exit. A host
+  restart issues every renderer a new port before it replays each renderer's focus set. The
+  in-process fallback keeps main's end, so typing crosses main only there.
+- **A phone and everything else stay off the ports.** The host sends `tap` for sessions a phone
+  streams (`subscribeDataTap`, ref-counted) and a coalesced `outputSeen` (no bytes) for everything
+  else. A new consumer of raw output subscribes a tap for as long as it needs one; it never gets a
+  renderer's port.
+- **Chromium's deferral after input stays on.** Chromium holds a posted message until the frame
+  after a keystroke has painted (`DeferRendererTasksAfterInput`), so an idle echo paints one frame
+  later than one that crossed main. Do not turn the feature off to win that frame back. Measured
+  off, React's own scheduled work ran ahead of a drag's drop frame too: the drop painted 15 to
+  62 ms after release instead of 29 to 40, with seven long frames in six drags.
+- **The host's I/O thread starts no process.** On Windows CreateProcess runs synchronously on the
+  calling thread, and under disk load a git start took 190 to 454 ms there, freezing every
+  terminal. Every one-shot child (`runHostExec`), agent CLI run (`host-cli-processes.ts`) and
+  process-table tool (`ps`, `lsappinfo`, the PowerShell fallback, `taskkill`) starts on the host's
+  spawn worker instead, through `HostSpawnService`. The worker (`host/spawn-worker/`, built as
+  `pty-host-spawn-worker.js` and unpacked) is a `worker_threads` Worker that loads only `node:`
+  built-ins and pure modules; main hands the host its path in `init`. The I/O thread still pins a
+  run's pid for a tree stop (`pinRun`). After three worker crashes, or a worker that fails to
+  start, the host starts processes itself again. node-pty is the one exception: its handle belongs
+  to the thread that spawned it, so a PTY spawn stays on the I/O thread (`pty:spawn`, 5 to 38 ms
+  measured under load).
 - **One host, forked once, built in two places only.** `register-all.ts` constructs the
   `UtilityPtyHostTransport`; `SessionManager.createInProcessHost` is the only place the core runs in
   main, as the unit tests' host and as the fallback after five host crashes.
@@ -69,8 +102,8 @@ at the Windows timer floor.
   synchronously on the calling thread, 15 to 30 ms a spawn; agent detection alone ran 30 of them on
   main at startup, 17 at 16 ms or more. Use `execAsync` / `execFileAsync` from
   `src/main/utility-process/off-main-exec.ts`, never `promisify(exec)` or `promisify(execFile)`:
-  they resolve and reject exactly as `promisify` does, run the child in the host (`host-exec.ts`),
-  and fall back to a local spawn where no host is registered or reachable. The host never forks and
+  they resolve and reject exactly as `promisify` does, run the child in the host (`host-exec.ts`,
+  on its spawn worker), and fall back to a local spawn where no host is registered or reachable. The host never forks and
   refuses to launch its own executable or main's (the init message carries `mainExecutable`, since
   on macOS the host runs from the Helper bundle), either of which, with the RunAsNode fuse off,
   would boot a second app. A session's or a probe's PTY whose program is one of them is refused
@@ -95,8 +128,8 @@ at the Windows timer floor.
   in the host the first, cold launch measured 51 ms and later ones stayed under 16 ms. Once posted
   a run never falls back to a local spawn, and a host crash fails it with `error`, `exit`, `close`
   rather than rerunning it (a second paid answer); main then stops the orphaned CLI's tree, since
-  on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F`, with the run's
-  pid pinned by a host handle until taskkill exits, or the process
+  on Windows a child outlives its parent. Stops run in the host (`taskkill /T /F` on the spawn
+  worker, with the run's pid pinned by the I/O thread's handle until taskkill exits, or the process
   group's SIGTERM then SIGKILL), and the host's shutdown stops every run still going and waits for
   them inside its exit bound. At quit, `stopAllCliRuns` also stops each run's tree from main by pid
   (`killChildTreeByPid`): with no terminal open the quit does not wait for the host, which can be
@@ -118,6 +151,27 @@ at the Windows timer floor.
   pins that `child-tree-stop.ts` never forks, spawns nothing but `taskkill`, imports only `spawn`,
   and is the only place a CLI tree stop builds a `taskkill`. Runs in CI via `npm run test:unit`.
   `tests/unit/child-tree-stop.test.ts` pins each stop branch per platform.
+- **Test (input and echo):** `tests/unit/terminal-input-path.test.ts` fails when an IPC channel
+  carries a keystroke, the echo or its ack again, when main emits or listens for a renderer `data`
+  event, when the preload's `write`, `onData`, `ackData` or `getScrollback` touches
+  `ipcRenderer`, when main stops brokering the port or reissuing it after a restart, when
+  `useTerminal` asks for the scrollback outside its grid request's continuation, when a kill
+  path drops a PTY handle without sealing it, and when anything under `src/main` names
+  `DeferRendererTasksAfterInput`. `tests/unit/pty-port-client.test.ts` pins the
+  preload's client (writes kept until the port, the answer before the output after it, unknown ids
+  dropped, a port swap failing what the dead host never answered).
+  `tests/unit/pty-host-core.test.ts` pins the host side: output only to the ports that show the
+  session, one write queue for a renderer's keystrokes and main's writes, the seal, the scrollback
+  answer's place among the output, and the draft mirror.
+  `tests/e2e/terminal-input-second-renderer.spec.ts` types into a terminal in the detached Agent
+  Monitor and reads the echo there, then closes it and types into the main window's, so two real
+  webContents each get their own port and closing one forgets only that one.
+- **Test (spawn worker):** `tests/unit/pty-host-spawn-worker.test.ts` builds the real worker, runs
+  an exec and a CLI run through `PtyHostCore`, and fails when the test thread starts a process;
+  `pty-host-boundary.test.ts` builds the worker's graph and fails on a native module or a main-only
+  module in it, and pins its build entries and `asarUnpack`; `event-loop-watchdog.test.ts` names
+  it among the `worker_threads` importers; `verify-unpacked-worker.test.ts` runs the afterPack
+  gate, which starts the worker under this checkout's Electron and runs one child through it.
   `tests/unit/off-main-exec.test.ts` pins the drop-in's routing, error shape and fallback;
   `tests/unit/host-cli-processes.test.ts` runs real children through the host's runner (pipes,
   event order, stop, shutdown, a failed start, the own-executable refusal);
@@ -132,8 +186,9 @@ at the Windows timer floor.
   packaging (all of `node_modules/node-pty/**` and `.vite/build/pty-host.js` unpacked) and runs the
   afterPack probe's real spawn under this checkout's Electron.
 - **Packaging gate:** `build/afterPack.js` resolves node-pty from the unpacked tree and spawns a
-  real process with it under the packaged Electron binary, and on Windows and macOS loads koffi
-  from the same place and makes one native call, failing the build when either cannot.
+  real process with it under the packaged Electron binary, on Windows and macOS loads koffi
+  from the same place and makes one native call, and starts the spawn worker and runs one child
+  through it, failing the build when any of them cannot.
 - **Packaged smoke:** `.github/workflows/package-smoke.yml` packages on Windows, macOS and Linux
   when a pull request touches the host, its clients or the packaging, and runs
   `scripts/package-smoke.mjs`: a terminal in the finished app, a Knowledge Graph read from the
@@ -147,7 +202,8 @@ at the Windows timer floor.
 ## Scope
 
 Session PTYs and their output pipeline (`src/main/pty/**`), the host's fork and wiring in
-`register-all.ts`, one-shot child processes on main, the probes' raw PTYs (the Claude model
+`register-all.ts`, each renderer's port (`src/preload/pty-port-client.ts` and the broker in
+`ipc/handlers/sessions.ts`), one-shot child processes on main, the probes' raw PTYs (the Claude model
 picker, the Antigravity print runner spawn through `spawnOffMainPty`, `off-main-pty.ts`), the
 agent CLI runs (`spawnCli`, `off-main-cli.ts`), and the packaging.
 

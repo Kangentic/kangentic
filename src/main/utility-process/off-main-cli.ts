@@ -13,6 +13,7 @@
  */
 
 import type { EventEmitter } from 'node:events';
+import { describeSpawnCaller } from '../diagnostics/spawn-caller';
 import { withoutCrashpadPipeName } from '../shared/child-env';
 
 /** A run's stdout or stderr: `data` events carrying Buffers. */
@@ -56,6 +57,9 @@ export interface OffMainCliOptions {
   env: Record<string, string>;
   /** Lead a process group of its own (POSIX), so a stop reaches its children. */
   detached: boolean;
+  /** Dev builds: who asked for the run, set by `spawnOffMainCli` for the
+   *  host's spawn span (`spawn-caller.ts`). */
+  caller?: string;
 }
 
 export type OffMainCliSpawner = (command: string, args: string[], options: OffMainCliOptions) => CliChildProcess;
@@ -73,5 +77,7 @@ export function setOffMainCliSpawner(next: OffMainCliSpawner | null): void {
  * anything.
  */
 export function spawnOffMainCli(command: string, args: string[], options: OffMainCliOptions): CliChildProcess | null {
-  return spawner ? spawner(command, args, { ...options, env: withoutCrashpadPipeName(options.env) }) : null;
+  if (!spawner) return null;
+  const caller = __KANGENTIC_DEV__ ? describeSpawnCaller() : undefined;
+  return spawner(command, args, { ...options, env: withoutCrashpadPipeName(options.env), ...(caller ? { caller } : {}) });
 }

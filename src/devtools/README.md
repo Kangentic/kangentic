@@ -135,9 +135,15 @@ arrival, parse, paint) and the host's
 (`src/main/diagnostics/pty-round-trip-probe.ts`: PTY write, first output,
 flush, and how late each flush timer fired). It then drives trusted wheel
 ticks through CDP, or records a person's own scrolling for a window, and
-joins the rings. Every interval is taken on one process's clock; IPC and
-main come from pairing the renderer's k-th report with the host's k-th.
-`profileHost` adds a CPU profile of the host thread. For a zero-quota
+joins the rings. Every interval is taken on one process's clock; the
+`transport` (both hops between the renderer and the host, over the
+renderer's own port) comes from pairing the renderer's k-th report with the
+host's k-th, and `transportLegs` splits it into its two hops by lining the
+rings up by each process's `performance.timeOrigin`, to about a millisecond.
+Every leg reports p50, p95, p99 and max, and each session's stream carries
+the longest gap between its flushes and between its arrivals, which says
+whether every terminal froze or only one. `profileHost` adds a CPU profile
+of the host thread. For a zero-quota
 floor, point a preview's `agent.cliPaths.claude` at a `.cmd` that runs
 `tests/fixtures/mock-claude-scroll.js`, which answers each wheel report at
 once (`scroll-load=<hz>` in a task's prompt makes it a streaming load).

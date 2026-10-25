@@ -12,9 +12,9 @@
  *
  * ## Why `output-seen`
  *
- * `SessionManager`'s `data` event is gated on the renderer's focused set, which
- * is exactly wrong here: the monitor's whole job is showing sessions you are NOT
- * looking at. `output-seen` fires for every session that produced output, at
+ * A terminal's bytes go from the pty host straight to the ports of the renderers
+ * focused on it, which is exactly wrong here: the monitor's whole job is showing
+ * sessions you are NOT looking at. `output-seen` fires for every session that produced output, at
  * most a few times a second (the pty host merges chunks), and carries no bytes:
  * the tracker only needs to know which grids changed, and the grids are read
  * from the host.
@@ -56,11 +56,11 @@
  * on `MONITOR_CHANGED`. A monitor renderer displays all of those rows, so it needs
  * all of them.
  *
- * Do not read the `SESSION_DATA` exclusion in `POP_OUT_SURFACES.monitor.channels`
- * as a precedent against this. That exclusion is about VOLUME: SESSION_DATA is a
- * raw, unbounded per-session byte stream, so it is routed off the focus map and
- * participates in backpressure. A peek is at most a few short lines, change-gated,
- * and sampled at most twice a second.
+ * Do not read a terminal's output staying off `POP_OUT_SURFACES.monitor.channels`
+ * as a precedent against this. That is about VOLUME: a terminal's output is a
+ * raw, unbounded per-session byte stream, so the pty host sends it on each
+ * showing renderer's own port and it participates in backpressure. A peek is at
+ * most a few short lines, change-gated, and sampled at most twice a second.
  */
 import type { SessionManager } from '../pty/session-manager';
 import { peeksEqual } from '../pty/buffer/output-peek';

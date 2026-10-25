@@ -65,8 +65,9 @@ vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
 });
 
 import * as pty from 'node-pty';
-import { SessionManager } from '../../src/main/pty/session-manager';
+import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
 import { recordTerminalTrace } from '../../src/main/pty/terminal-trace';
+import { createFakeRendererPort } from './helpers/fake-renderer-port';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import {
   InProcessPtyHostTransport,
@@ -264,9 +265,43 @@ describe("SessionManager: 'pty-host-restarted'", () => {
     transport.hostUp(true);
 
     // The new host knows nothing, so it gets what gates its output.
-    expect(transport.posted).toContainEqual({ type: 'setFocused', sessionIds: [session.id] });
+    expect(transport.posted).toContainEqual({ type: 'setRendererFocus', rendererId: SHARED_RENDERER_ID, sessionIds: [session.id] });
     expect(transport.posted).toContainEqual({ type: 'setTapped', sessionIds: [session.id] });
     expect(restartedListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('issues every renderer that held a port a new one before replaying each renderer\'s own focus set', async () => {
+    const { manager, transport } = makeManager();
+    const first = await spawnSession(manager, 'task-first-window', 203);
+    const second = await spawnSession(manager, 'task-second-window', 204);
+    const issued: number[] = [];
+    // The IPC layer's broker: a new channel, whose host end comes back here.
+    manager.on('renderer-ports-lost', (rendererIds: number[]) => {
+      for (const rendererId of rendererIds) {
+        issued.push(rendererId);
+        expect(transport.posted.some((command) => command.type === 'setRendererFocus')).toBe(false);
+        manager.attachRendererPort(rendererId, createFakeRendererPort().port);
+      }
+    });
+    manager.attachRendererPort(1, createFakeRendererPort().port);
+    manager.attachRendererPort(2, createFakeRendererPort().port);
+    manager.attachRendererPort(3, createFakeRendererPort().port);
+    manager.detachRendererPort(3);
+    manager.setFocusedSessions([first.id], 1);
+    manager.setFocusedSessions([second.id], 2);
+    transport.posted.length = 0;
+
+    transport.hostUp(true);
+
+    // A renderer that went away gets none.
+    expect(issued).toEqual([1, 2]);
+    // Per renderer, not the union: the host routes each session's output to
+    // the ports that show it.
+    const focusReplays = transport.posted.filter((command) => command.type === 'setRendererFocus');
+    expect(focusReplays).toEqual([
+      { type: 'setRendererFocus', rendererId: 1, sessionIds: [first.id] },
+      { type: 'setRendererFocus', rendererId: 2, sessionIds: [second.id] },
+    ]);
   });
 
   it('does nothing for the host coming up the first time', async () => {

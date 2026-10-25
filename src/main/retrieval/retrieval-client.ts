@@ -28,7 +28,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { app, utilityProcess, type UtilityProcess } from 'electron';
 import { PATHS } from '../config/paths';
-import { recordSyncSpan } from '../diagnostics/event-loop-lag';
+import { recordRelayedSyncSpan } from '../diagnostics/event-loop-lag';
 import { unpacked } from '../utility-process/paths';
 import { UtilityRestartPolicy } from '../utility-process/restart-policy';
 import { StderrTail, UTILITY_PROCESS_STDIO, captureWorkerStderr } from '../utility-process/stderr-tail';
@@ -230,7 +230,7 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
       return;
     }
     if (record.type === 'slow-span') {
-      recordSyncSpan(`worker:${record.label}`, record.ms);
+      recordRelayedSyncSpan(`worker:${record.label}`, record.ms);
       return;
     }
     if (record.type === 'log') logFromWorker(record.level, record.text);

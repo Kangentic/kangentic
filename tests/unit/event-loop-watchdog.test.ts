@@ -191,11 +191,18 @@ describe('event-loop watchdog', () => {
     for (const moduleName of requires) expect(moduleName.startsWith('node:')).toBe(true);
   });
 
-  it('is the only worker thread in src/main', () => {
+  it('is one of the two worker threads in src/main, both loading only node built-ins', () => {
+    // The second is the pty host's spawn worker (started in pty-host-entry.ts),
+    // which keeps process starts off the thread that carries terminal I/O. Its
+    // graph is held to built-ins and pure modules by pty-host-boundary.test.ts.
     expect(
       sourceFilesContaining(/['"](node:)?worker_threads['"]/),
-      'A second worker thread in src/main: see .claude/rules/retrieval-out-of-process.md before adding one, and update this list if it is deliberate.',
-    ).toEqual(['retrieval/worker/event-loop-watchdog.ts']);
+      'A new worker thread in src/main: see .claude/rules/retrieval-out-of-process.md and pty-host-out-of-process.md before adding one, and update this list if it is deliberate.',
+    ).toEqual([
+      'pty/host/pty-host-entry.ts',
+      'pty/host/spawn-worker/spawn-worker-entry.ts',
+      'retrieval/worker/event-loop-watchdog.ts',
+    ]);
   });
 
   it('writes its line to stderr when stderr is a pipe, as the utility process forks it', { timeout: 15_000 }, async () => {

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Session IPC channels
-description: "The session, usage, Agent Monitor, task-detail ownership, agent, handoff, transcript, search and Knowledge Graph IPC channels: PTY spawn and Command Terminal calls, session:data and activity pushes, monitor subscribe and peek, detail:syncOwned, transcript paging, the Ask stream."
+description: "The session, usage, Agent Monitor, task-detail ownership, agent, handoff, transcript, search and Knowledge Graph IPC channels: PTY spawn and Command Terminal calls, the pty port a renderer types and reads on, activity pushes, monitor subscribe and peek, detail:syncOwned, transcript paging, the Ask stream."
 tags: [ipc, channels, sessions, monitor, transcript]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (45 channels)
+## Sessions (44 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -18,10 +18,11 @@ sources:
 | `session:resume` | invoke | Resume suspended session. Resolves null when a newer resume, a suspend, a reset or a project relocation cancelled it. |
 | `session:reconcile` | invoke | Targeted self-heal probe: returns the live registry session for a task (or null) and clears stale `task.session_id`. Used by the task detail dialog to heal a renderer cache that drifted to `suspended`. |
 | `session:reset` | invoke | Reset unrecoverable session (kill PTY, mark DB exited, clear task reference) |
-| `session:write` | invoke | Write to session stdin |
+| `pty:portRequest` | send | The preload asks, once per page load, for its own port to the pty host. Keystrokes, the output of the sessions this renderer shows, and its acks all ride that port, so typing never waits on main's event loop |
+| `pty:port` | on | Main's answer: one end of a `MessageChannelMain` whose other end went to the pty host (`attachRendererPort`). Sent again with a new port after a pty host restart |
 | `session:resize` | invoke | Resize PTY (cols/rows) |
 | `session:list` | invoke | Fetch all sessions |
-| `session:getScrollback` | invoke | Get terminal scrollback buffer |
+| `session:getScrollback` | invoke | Get terminal scrollback buffer. Goes through main so it stays behind this renderer's resizes; the pty host answers on the renderer's port, after the output it flushed before the sample, and the invoke itself returns the data only when the host held no port for that renderer |
 | `session:getFirstOutput` | invoke | Fetch the agent-on-screen cache (sessionId -> true, `SessionManager.markAgentReady`) so `syncSessions` can rebuild `sessionFirstOutput` after an HMR reload |
 | `session:getUsage` | invoke | Fetch session usage (tokens, cost). Optional `projectId` scopes to one project. |
 | `session:getActivity` | invoke | Fetch activity state (thinking/idle). Optional `projectId` scopes to one project. |
@@ -32,11 +33,9 @@ sources:
 | `session:getEventsCache` | invoke | Fetch cached event arrays. Optional `projectId` scopes to one project. |
 | `session:getMessageTrails` | invoke | Fetch every session's agent message trail (sessionId -> `AssistantMessageTrailEntry[]`, oldest first) so `syncSessions` can seed the board cards on mount and after an HMR reload |
 | `session:messageTrail` | on | A session's agent message trail changed (the whole trail, plus `projectId`). Pushed by the main-side `MessageTrailTracker` only when a new line appears; never buffered, since it coalesces at the source |
-| `session:setFocused` | invoke | Set which sessions are visible in the renderer (optimizes IPC traffic) |
+| `session:setFocused` | invoke | Set which sessions are visible in the renderer: the pty host sends a session's output only to the ports of the renderers that show it |
 | `session:setMounted` | invoke | Set which sessions this renderer has an xterm MOUNTED for. Broader than the focused set: a parked terminal is unfocused but still holds a grid, and main must not reshape a PTY something is still rendering at its own size |
 | `session:notifyUserInterrupt` | invoke | Notify telemetry of a user Ctrl+C; arms the 3-second settle timer that synthesizes Interrupted if hooks don't recover |
-| `session:data` | on | Terminal output available (includes `projectId`) |
-| `session:drainAck` | send | Renderer-to-main flow-control ack for per-session PTY backpressure; fire-and-forget (no projectId) |
 | `session:ptyResized` | on | The PTY's grid actually changed (`cols`, `rows`, `PtyResizeOrigin`). Broadcast to every window; the mounted owner xterm uses it to detect and heal a width divergence (xterm re-sends dims only when its own size changes) |
 | `session:firstOutput` | on | The session's agent is on screen (`SessionManager.markAgentReady`: its first text after the shell ran the spawn command, its first alt-screen entry, its SessionStart hook, or a 15 s ceiling), lifting the launch overlay. Never the adapter's first-output detector for an agent session, which a shell preamble can trip. Broadcast once per session to the main window and to every pop-out whose surface declares it, today the Agent Monitor (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |

@@ -68,14 +68,21 @@ function commandName(file: string, platform: NodeJS.Platform): string {
 }
 
 /**
- * The `timeSyncWork` label for a spawn here, naming the program it starts
- * (`cli:spawn:git`, `exec:spawn:gh`). CreateProcess holds this thread, the one
- * that flushes every terminal, so a report that says which program's start
- * stalled it names its caller without anyone hunting for a timer.
+ * The `timeSyncWork` label for a spawn here, naming the program it starts and,
+ * in dev builds, the main-side code that asked for it (`cli:spawn:git`,
+ * `exec:spawn:gh:refreshPullRequest<tick`). CreateProcess holds the thread that
+ * runs it, so a report that says which program's start stalled it, and for
+ * whom, names its caller without anyone hunting for a timer.
  */
-export function spawnSpanLabel(kind: 'cli' | 'exec', executable: string, platform: NodeJS.Platform = process.platform): string {
+export function spawnSpanLabel(
+  kind: 'cli' | 'exec',
+  executable: string,
+  platform: NodeJS.Platform = process.platform,
+  caller?: string,
+): string {
   const program = commandName(executable, platform).replace(/\.(cmd|bat)$/, '');
-  return program ? `${kind}:spawn:${program}` : `${kind}:spawn`;
+  const base = program ? `${kind}:spawn:${program}` : `${kind}:spawn`;
+  return caller ? `${base}:${caller}` : base;
 }
 
 /** Real paths of the executables compared, kept once read: they do not move
@@ -204,11 +211,11 @@ export function runHostExec(request: HostExecRequest): Promise<HostExecResult> {
     };
     try {
       if (request.kind === 'exec') {
-        timeSyncWork(spawnSpanLabel('exec', leadingExecutable(request.command)), () => {
+        timeSyncWork(spawnSpanLabel('exec', leadingExecutable(request.command), process.platform, request.caller), () => {
           exec(request.command, { ...request.options, encoding: 'utf8' }, done);
         });
       } else {
-        timeSyncWork(spawnSpanLabel('exec', request.file), () => {
+        timeSyncWork(spawnSpanLabel('exec', request.file, process.platform, request.caller), () => {
           execFile(request.file, request.args, { ...request.options, encoding: 'utf8' }, done);
         });
       }

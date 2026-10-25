@@ -29,8 +29,8 @@
  */
 
 import path from 'node:path';
-import { app, utilityProcess, type UtilityProcess } from 'electron';
-import { recordSyncSpan } from '../../diagnostics/event-loop-lag';
+import { app, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
+import { recordRelayedSyncSpan } from '../../diagnostics/event-loop-lag';
 import { unpacked } from '../../utility-process/paths';
 import { UtilityRestartPolicy } from '../../utility-process/restart-policy';
 import { killChildTreeByPid } from '../../shared/child-tree-stop';
@@ -82,6 +82,15 @@ export function ptyHostEntryPath(bundleDirectory: string, platform: NodeJS.Platf
   return platform === 'darwin' ? bundled : unpacked(bundled);
 }
 
+/**
+ * Where the host starts its spawn worker from (`spawn-worker-entry.ts`): the
+ * unpacked tree on every platform. A worker thread loads its file with Node's
+ * own loader, so the bundle is a real file, not one inside the asar.
+ */
+export function ptyHostSpawnWorkerPath(bundleDirectory: string): string {
+  return unpacked(path.join(bundleDirectory, 'pty-host-spawn-worker.js'));
+}
+
 interface PendingRequest {
   method: PtyHostMethod;
   /** The request's budget, restarted in full when a batch of its method starts. */
@@ -118,8 +127,9 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
   /** Set once the crash cap is reached: the host core runs in main from then on. */
   private fallback: PtyHostTransport | null = null;
   private fallbackFactory: (() => PtyHostTransport) | null = null;
-  /** Messages for a host that is restarting after a crash, sent once it is up. */
-  private readonly queuedWhileDown: ToPtyHostMessage[] = [];
+  /** Messages for a host that is restarting after a crash, sent once it is up,
+   *  each with the ports it transfers (a renderer's, for `attachRendererPort`). */
+  private readonly queuedWhileDown: Array<{ message: ToPtyHostMessage; transfer?: MessagePortMain[] }> = [];
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatInFlight = false;
@@ -168,6 +178,16 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     this.send(command);
   }
 
+  /** Hand a renderer's port to the host, transferred with the message, in order
+   *  with every command posted before and after it. */
+  attachRendererPort(rendererId: number, port: MessagePortMain): void {
+    if (this.fallback) {
+      this.fallback.attachRendererPort(rendererId, port);
+      return;
+    }
+    this.send({ type: 'attachRendererPort', rendererId }, [port]);
+  }
+
   request<M extends PtyHostMethod>(
     method: M,
     params: PtyHostRequestMap[M]['params'],
@@ -203,7 +223,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
       const entry = this.pending.get(requestId);
       if (!entry) return;
       this.pending.delete(requestId);
-      const neverPosted = this.queuedWhileDown.some((queued) => queued.type === 'request' && queued.id === requestId);
+      const neverPosted = this.queuedWhileDown.some(({ message }) => message.type === 'request' && message.id === requestId);
       if (neverPosted) {
         entry.reject(new PtyHostExitedError(`The pty host exited and did not answer ${entry.method} in time`));
         return;
@@ -268,14 +288,14 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     }
   }
 
-  private send(message: ToPtyHostMessage): void {
+  private send(message: ToPtyHostMessage, transfer?: MessagePortMain[]): void {
     const child = this.ensureChild();
     if (!child) {
-      this.queuedWhileDown.push(message);
+      this.queuedWhileDown.push({ message, transfer });
       return;
     }
     try {
-      child.postMessage(message);
+      child.postMessage(message, transfer);
     } catch {
       // The host died between the check and the post; its exit handling
       // reports what it held.
@@ -303,14 +323,19 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     captureWorkerStderr(child, stderrTail, !app.isPackaged);
     child.on('message', (message: unknown) => this.onHostMessage(child, message));
     child.on('exit', (code: number) => this.onHostExit(child, code, stderrTail));
-    child.postMessage({ type: 'init', projectsDir: this.options.projectsDir, mainExecutable: process.execPath } satisfies ToPtyHostMessage);
+    child.postMessage({
+      type: 'init',
+      projectsDir: this.options.projectsDir,
+      mainExecutable: process.execPath,
+      spawnWorkerPath: ptyHostSpawnWorkerPath(__dirname),
+    } satisfies ToPtyHostMessage);
     // Whatever was posted while the previous host was down goes after init,
     // except a request whose caller already timed out (`switchToFallback`
     // skips it too): that caller was told it failed and may retry, and an
     // exec that writes (`git worktree remove --force`) would then run twice.
-    for (const queued of this.queuedWhileDown.splice(0)) {
-      if (queued.type === 'request' && !this.pending.has(queued.id)) continue;
-      child.postMessage(queued);
+    for (const { message, transfer } of this.queuedWhileDown.splice(0)) {
+      if (message.type === 'request' && !this.pending.has(message.id)) continue;
+      child.postMessage(message, transfer);
     }
     return child;
   }
@@ -343,7 +368,7 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
         logFromHost(record.level, record.text);
         return;
       case 'slow-span':
-        recordSyncSpan(`pty-host:${record.label}`, record.ms);
+        recordRelayedSyncSpan(`pty-host:${record.label}`, record.ms);
         return;
       case 'batch-started':
         this.restartBudgets(record.method);
@@ -404,17 +429,22 @@ export class UtilityPtyHostTransport implements PtyHostTransport {
     if (this.listener) fallback.setEventListener(this.listener);
     this.fallback = fallback;
     // Requests that were waiting for a restart are answered by the fallback.
-    for (const queued of this.queuedWhileDown.splice(0)) {
-      if (queued.type === 'init') continue;
-      if (queued.type === 'request') {
-        const entry = this.pending.get(queued.id);
+    for (const { message, transfer } of this.queuedWhileDown.splice(0)) {
+      if (message.type === 'init') continue;
+      if (message.type === 'request') {
+        const entry = this.pending.get(message.id);
         if (!entry) continue;
-        this.pending.delete(queued.id);
+        this.pending.delete(message.id);
         clearTimeout(entry.timer);
-        fallback.request(queued.method, queued.params).then(entry.resolve, entry.reject);
+        fallback.request(message.method, message.params).then(entry.resolve, entry.reject);
         continue;
       }
-      fallback.post(queued);
+      if (message.type === 'attachRendererPort') {
+        const port = transfer?.[0];
+        if (port) fallback.attachRendererPort(message.rendererId, port);
+        continue;
+      }
+      fallback.post(message);
     }
     this.lifecycle?.onHostUp(true);
   }

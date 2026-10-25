@@ -412,6 +412,9 @@ export interface DarwinReaderOptions {
   loadKernel?: () => Promise<DarwinKernel>;
   /** `lsappinfo`'s output, or null when it could not run or failed. */
   runLsappinfo?: (args: string[]) => Promise<string | null>;
+  /** Runs a tool as `runTool` does. The utility host passes one that starts it
+   *  on its spawn worker, off the thread that carries terminal I/O. */
+  runTool?: (command: string, args: string[], timeoutMs: number) => Promise<string | null>;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
   uid?: number;
@@ -428,7 +431,8 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       kernelPromise ??= loadDarwinKernel();
       return kernelPromise;
     });
-    this.runLsappinfo = options.runLsappinfo ?? ((args) => runTool(LSAPPINFO_PATH, args));
+    const run = options.runTool ?? runTool;
+    this.runLsappinfo = options.runLsappinfo ?? ((args) => run(LSAPPINFO_PATH, args, TOOL_TIMEOUT_MS));
     this.sendSignal = options.signal ?? ((pid, signalName) => process.kill(pid, signalName));
     this.ownUid = options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null);
   }

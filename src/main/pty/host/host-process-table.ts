@@ -16,13 +16,17 @@
  * as "skip the cycle", as it does a probe timeout.
  */
 
-import { createProcessTreeProbe, type ProcessInfo, type ProcessTreeProbe } from '../../activity-engine/background-shell/process-tree';
+import { createProcessTreeProbe, type ProcessInfo } from '../../activity-engine/background-shell/process-tree';
 import { listWin32Processes, type Win32ProcessRow } from '../process-tag/win32-reader';
+import type { ProcessTableProbe } from './host-spawn-service';
 
 export interface HostProcessTableDeps {
   platform?: NodeJS.Platform;
   listToolhelp?: () => Promise<Win32ProcessRow[]>;
-  createFallbackProbe?: () => ProcessTreeProbe;
+  /** The `ps` / PowerShell probe. In the utility host it runs in the spawn
+   *  worker (`HostSpawnService.processTableProbe`), so its process starts never
+   *  hold the terminal thread; Toolhelp stays here (a native call). */
+  createFallbackProbe?: () => ProcessTableProbe;
 }
 
 /** A Toolhelp row in the watcher's shape: the image name lowercased, `.exe` dropped, as the PowerShell probe parsed it. */
@@ -31,7 +35,7 @@ export function toProcessInfo(row: Win32ProcessRow): ProcessInfo {
 }
 
 export class HostProcessTable {
-  private fallbackProbe: ProcessTreeProbe | null = null;
+  private fallbackProbe: ProcessTableProbe | null = null;
   private toolhelpUnavailable = false;
 
   constructor(private readonly deps: HostProcessTableDeps = {}) {}

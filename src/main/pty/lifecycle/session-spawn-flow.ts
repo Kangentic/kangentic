@@ -7,7 +7,7 @@ import { toSession } from '../session-registry';
 import type { SessionTelemetry } from '../../activity-engine/session-telemetry';
 import type { SessionIdManager } from './session-id-manager';
 import type { SessionFileManager } from './session-file-manager';
-import type { StatusFileReader } from '../readers/status-file-reader';
+import { resetStatusFiles, type StatusFileReader } from '../readers/status-file-reader';
 import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
 import type { FirstOutputTracker } from './first-output-tracker';
@@ -254,6 +254,7 @@ export async function performSpawn(
     // that would emit data with the same session ID (double output).
     if (sibling.pty) {
       const ptyRef = sibling.pty;
+      ptyRef.sealUserInput();
       sibling.pty = null;
       safeKillPty(ptyRef);
     }
@@ -367,6 +368,15 @@ export async function performSpawn(
   const restoredGrid = input.restoredGrid ? context.restoredGrid?.(input.restoredGrid) : undefined;
   const spawnCols = pendingResize?.cols ?? requestedCols ?? inheritedGrid?.cols ?? restoredGrid?.cols ?? DEFAULT_PTY_COLS;
   const spawnRows = pendingResize?.rows ?? requestedRows ?? inheritedGrid?.rows ?? restoredGrid?.rows ?? DEFAULT_PTY_ROWS;
+
+  // Empty the session's status and events files before the agent exists, so
+  // its first lines land after the reset (see resetStatusFiles). Awaited off
+  // main's thread; a teardown that lands meanwhile is handled as one that
+  // lands in the host round trip below, with no PTY started.
+  if (input.statusOutputPath || input.eventsOutputPath) {
+    await resetStatusFiles(input.statusOutputPath || null, input.eventsOutputPath || null);
+    if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
+  }
 
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
@@ -514,9 +524,8 @@ export async function performSpawn(
   // status/events file paths (today only Claude). The reader owns the
   // FileWatcher instances and dispatches parsed telemetry via the
   // generic SessionTelemetry primitives wired in StatusFileReader's
-  // callbacks. When the session has no parser, the reader still runs
-  // startup file cleanup (delete stale status.json, truncate stale
-  // events.jsonl) but skips watcher setup.
+  // callbacks. The files were emptied before the spawn, above. When the
+  // session has no parser, the reader skips the status watcher.
   if (input.statusOutputPath || input.eventsOutputPath) {
     context.statusFileReader.attach({
       sessionId: id,
@@ -559,8 +568,8 @@ export async function performSpawn(
   //
   // No "status already flowed" guard is needed here (unlike the
   // onAgentSessionId re-attach path in session-manager): this fires at
-  // spawn, and StatusFileReader.attach deletes any stale status.json first,
-  // so status.json cannot have flowed yet. For Claude this is the sole
+  // spawn, and resetStatusFiles emptied any stale status.json before it,
+  // so a previous run's status cannot have flowed. For Claude this is the sole
   // trigger that starts the transcript fallback for a background session.
   const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
   if (input.agentSessionId && callerOwnedSessionHistory) {

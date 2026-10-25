@@ -56,7 +56,8 @@ vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
 });
 
 import * as pty from 'node-pty';
-import { SessionManager } from '../../src/main/pty/session-manager';
+import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
+import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
 import { traceTerminal } from '../../src/main/pty/terminal-trace';
@@ -1316,15 +1317,18 @@ describe('Data buffering', () => {
     return { session, ...mock };
   }
 
+  /** The renderer's port, as the shared renderer `setFocusedSessions` defaults to. */
+  function attachRenderer() {
+    const rendererPort = createFakeRendererPort();
+    manager.attachRendererPort(SHARED_RENDERER_ID, rendererPort.port);
+    return rendererPort;
+  }
+
   it('batches multiple onData calls into single data emission', async () => {
     const { session, feedData } = await spawnSession();
-    // The gate is default-closed: 'data' only fires for focused sessions.
+    const rendererPort = attachRenderer();
+    // The gate is default-closed: output only reaches a renderer that shows the session.
     manager.setFocusedSessions([session.id]);
-
-    const emissions: string[] = [];
-    manager.on('data', (sessionId: string, data: string) => {
-      if (sessionId === session.id) emissions.push(data);
-    });
 
     // Three rapid onData calls within the 16ms flush window
     feedData('aaa');
@@ -1334,20 +1338,17 @@ describe('Data buffering', () => {
     // Wait for the 16ms setTimeout to flush
     await new Promise((resolve) => setTimeout(resolve, 50));
 
+    const emissions = receivedOutput(rendererPort).filter((output) => output.sessionId === session.id);
     expect(emissions).toHaveLength(1);
-    expect(emissions[0]).toBe('aaabbbccc');
+    expect(emissions[0].data).toBe('aaabbbccc');
   });
 
   it('flush is skipped when session is removed during 16ms window', async () => {
     const { session, feedData } = await spawnSession();
-    // Focus the session so a surviving flush WOULD emit - otherwise this
-    // test passes vacuously under the default-closed gate.
+    const rendererPort = attachRenderer();
+    // Focus the session so a surviving flush WOULD reach the renderer -
+    // otherwise this test passes vacuously under the default-closed gate.
     manager.setFocusedSessions([session.id]);
-
-    const emissions: string[] = [];
-    manager.on('data', (sessionId: string, data: string) => {
-      if (sessionId === session.id) emissions.push(data);
-    });
 
     feedData('data-before-remove');
     // Remove session before the 16ms flush fires
@@ -1356,7 +1357,7 @@ describe('Data buffering', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(emissions).toHaveLength(0);
+    expect(receivedOutput(rendererPort).filter((output) => output.sessionId === session.id)).toHaveLength(0);
   });
 });
 
@@ -2995,19 +2996,6 @@ describe('Per-renderer focus scoping', () => {
 
     expect(await inFlightBytesFor(sessionA.id)).toBe(0);
     expect(await inFlightBytesFor(sessionB.id)).toBeGreaterThan(0);
-  });
-
-  it('getRenderersFocusedOn reports every renderer currently showing a session', async () => {
-    const RENDERER_1 = 1;
-    const RENDERER_2 = 2;
-    const { session: sessionA } = await spawnSession('task-scope-e');
-    const { session: sessionB } = await spawnSession('task-scope-f');
-
-    manager.setFocusedSessions([sessionA.id, sessionB.id], RENDERER_1);
-    manager.setFocusedSessions([sessionB.id], RENDERER_2);
-
-    expect(manager.getRenderersFocusedOn(sessionA.id)).toEqual([RENDERER_1]);
-    expect(manager.getRenderersFocusedOn(sessionB.id).slice().sort()).toEqual([RENDERER_1, RENDERER_2]);
   });
 });
 

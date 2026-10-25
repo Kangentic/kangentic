@@ -109,6 +109,9 @@ asarUnpack:
   - ".vite/build/dictation-worker.js"
   - ".vite/build/retrieval-worker.js"
   - ".vite/build/pty-host.js"
+  # The pty host's spawn worker is a worker thread, whose file Node's own
+  # loader reads, so it must be a real file on every platform.
+  - ".vite/build/pty-host-spawn-worker.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plan-approval-bridge.js"

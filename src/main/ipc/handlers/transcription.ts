@@ -80,8 +80,9 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   });
 
   // Live experience: write raw bytes (text and/or \x7f backspaces) straight into
-  // the focused terminal as the user speaks. Same ordered FIFO write path as
-  // SESSION_WRITE, so it never fragments concurrent user typing.
+  // the focused terminal as the user speaks. Into the same ordered FIFO in the
+  // pty host that the user's keystrokes go through, so it never fragments
+  // concurrent typing.
   ipcMain.on(IPC.TRANSCRIBE_LIVE_WRITE, (_event, sessionId: string, payload: string) => {
     // 'user': dictation is the user speaking into the prompt, so it counts as
     // a draft that an injected auto_command must not concatenate onto.
