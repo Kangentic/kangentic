@@ -13,6 +13,7 @@ import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-pass
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { getProjectRepos } from '../ipc/helpers';
 import type { IpcContext } from '../ipc/ipc-context';
+import { noteWorkflowTaskPaused } from '../workflows/workflow-recovery';
 import {
   createIdleAgentPauser,
   isPauseEligible,
@@ -115,7 +116,11 @@ export function createLowMemoryAgentPauser(getContext: () => IpcContext | null):
     },
     onPaused: (paused) => {
       const context = getContext();
-      if (!context || context.mainWindow.isDestroyed()) return;
+      if (!context) return;
+      // A running workflow task under recovery has nobody left to nudge it:
+      // its recovery stops and the user is told, window or not.
+      noteWorkflowTaskPaused(context, paused.facts.taskId);
+      if (context.mainWindow.isDestroyed()) return;
       context.mainWindow.webContents.send(IPC.HOST_MEMORY_AGENT_PAUSED, buildAgentPausedEvent(context, paused));
     },
   });

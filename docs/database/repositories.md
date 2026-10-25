@@ -108,7 +108,7 @@ Operates on a per-project DB.
 | `listForTask(taskId, limit)` | Everything that ran for one card, newest first, each with the check that answered it (`AutomationRun.check`, joined from `background_calls`) |
 | `listForAutomation(automationId, limit)` | Every run of one automation, newest first, with its check. Across ALL tasks: it answers "did my automation work", not "what happened to this card". |
 | `markStaleRunsInterrupted(startedBefore)` | Stamp every row still `running` and started before this time as `interrupted`. Returns the count, so the caller raises ONE summary push rather than one per row. |
-| `pruneTo(limit)` | Keep the newest N rows, plus every counted run of an automation with a Frequency limit on a task that is not archived, so pruning never resets a limit. Nothing else bounds the table. |
+| `pruneTo(limit)` | Keep the newest N rows, plus every counted run of an automation with a Frequency limit on a task that is not archived, so pruning never resets a limit, plus a workflow task's own rows in the column it is in now while it is not archived, so a restart's recovery rebuild still finds them. Nothing else bounds the table. |
 
 ## BackgroundCallRepository
 

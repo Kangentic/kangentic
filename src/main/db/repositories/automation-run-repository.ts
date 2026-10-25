@@ -139,6 +139,13 @@ const PERSON_MOVE_ORIGINS_SQL = Object.entries(MOVED_BY_A_PERSON)
   .map(([origin]) => `'${origin}'`)
   .join(', ');
 
+/**
+ * The rows a workflow writes for itself: step answers, recovery attempts, and
+ * the latches recovery rebuilds from after a restart (`workflow-recovery.ts`).
+ */
+const WORKFLOW_RUN_TYPES_SQL = "type IN ('workflow_step', 'workflow_recovery', 'workflow_stalled', 'workflow_waiting', "
+  + "'workflow_recovery_start', 'workflow_interrupt')";
+
 export class AutomationRunRepository {
   constructor(private db: Database.Database) {}
 
@@ -210,18 +217,26 @@ export class AutomationRunRepository {
    * automation, and its type `workflow_step` is none of the registry's: a reader
    * of the log shows it as written. A yes that moved the task is `succeeded`, a
    * no is `skipped` (as a Condition's no is), each with the answer's reason.
+   *
+   * A check that could not answer is recorded too, with `met` null: `failed`
+   * when the call failed (it is tried again), `skipped` when no Automation
+   * agent can run one (`unjudgedStatus`). Its `condition_met` stays NULL, so it
+   * never counts as the reply having been judged (`hasWorkflowStepSince`).
    */
   recordWorkflowStep(input: {
     taskId: string;
     swimlaneId: string;
     workflowId: string;
-    met: boolean;
+    met: boolean | null;
     reason: string | null;
     detail: string;
     /** The background call that answered the step check, when one was recorded. */
     backgroundCallId?: string | null;
+    /** The status of a check that could not answer (`met` null). */
+    unjudgedStatus?: Extract<AutomationRunStatus, 'failed' | 'skipped'>;
   }): void {
     const now = new Date().toISOString();
+    const status = input.met === null ? (input.unjudgedStatus ?? 'failed') : input.met ? 'succeeded' : 'skipped';
     this.db.prepare(`
       INSERT INTO automation_runs
         (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
@@ -232,11 +247,11 @@ export class AutomationRunRepository {
       `workflow-step:${input.workflowId}`,
       input.taskId,
       input.swimlaneId,
-      input.met ? 'succeeded' : 'skipped',
+      status,
       input.detail,
       now,
       now,
-      input.met ? 1 : 0,
+      input.met === null ? null : input.met ? 1 : 0,
       input.reason,
       input.backgroundCallId ?? null,
     );
@@ -245,13 +260,287 @@ export class AutomationRunRepository {
   /**
    * Has a workflow step check answered for this task in this column since
    * `since`? A check writes its row once it has answered, after the reply it
-   * judged, so a reply older than the newest row has been judged.
+   * judged, so a reply older than the newest row has been judged. A check that
+   * could not answer judged nothing, so its row does not count.
    */
   hasWorkflowStepSince(taskId: string, swimlaneId: string, since: string): boolean {
     const row = this.db
-      .prepare(`SELECT 1 FROM automation_runs WHERE type = 'workflow_step' AND task_id = ? AND swimlane_id = ? AND started_at >= ? LIMIT 1`)
+      .prepare(`SELECT 1 FROM automation_runs WHERE type = 'workflow_step' AND task_id = ? AND swimlane_id = ? AND condition_met IS NOT NULL AND started_at >= ? LIMIT 1`)
       .get(taskId, swimlaneId, since);
     return row !== undefined;
+  }
+
+  /**
+   * Has a workflow step row with exactly this detail been written for this
+   * task in this column since `since`? Lets a step with no Automation agent
+   * say so once a visit rather than at every turn end of a long chat.
+   */
+  hasWorkflowStepDetailSince(taskId: string, swimlaneId: string, since: string | null, detail: string): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 FROM automation_runs WHERE type = 'workflow_step' AND task_id = ? AND swimlane_id = ? AND detail = ? AND started_at >= ? LIMIT 1`)
+      .get(taskId, swimlaneId, detail, since ?? '');
+    return row !== undefined;
+  }
+
+  /**
+   * Record one attempt of a workflow task's recovery (`workflow-recovery.ts`):
+   * a nudge sent (`succeeded`), one held off while the user was there
+   * (`skipped`), or one that did nothing (`failed`: the nudge was not
+   * delivered, or its turn failed). Returns the row's id, so a nudge whose turn
+   * later fails can be marked so (`finish`). Type `workflow_recovery`, which
+   * names no column automation; the trigger is `turn_end`, as the step's is.
+   */
+  recordWorkflowRecovery(input: {
+    taskId: string;
+    swimlaneId: string;
+    workflowId: string;
+    status: Extract<AutomationRunStatus, 'succeeded' | 'skipped' | 'failed'>;
+    detail: string;
+  }): string {
+    return this.insertWorkflowRow({
+      type: 'workflow_recovery',
+      name: 'Workflow recovery',
+      automationId: `workflow-recovery:${input.workflowId}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: input.status,
+      detail: input.detail,
+      attempts: 1,
+    });
+  }
+
+  /**
+   * Record that a workflow task's hung turn was interrupted
+   * (`workflow-hang-check.ts`): its agent showed working and wrote nothing for
+   * longer than a healthy turn goes quiet. Its own type, so it is never counted
+   * as a recovery attempt; recovery takes the interrupted turn from there.
+   */
+  recordWorkflowInterrupt(input: { taskId: string; swimlaneId: string; workflowId: string; detail: string }): void {
+    this.insertWorkflowRow({
+      type: 'workflow_interrupt',
+      name: 'Workflow recovery',
+      automationId: `workflow-recovery:${input.workflowId}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'succeeded',
+      detail: input.detail,
+      attempts: 1,
+    });
+  }
+
+  /**
+   * Record that a workflow task stalled: its recovery ran out, or a pause
+   * stopped it. The row is the one notice's latch and the task's "Stalled"
+   * mark (`listStalledTasks`), so both survive a restart. `reason` is what the
+   * notice and the mark say. `countedNudges` (the nudges that had run by then)
+   * rides in `attempts`, so a restart knows how much of the budget is spent.
+   */
+  recordWorkflowStall(input: { taskId: string; swimlaneId: string; workflowId: string; reason: string; countedNudges: number }): void {
+    this.insertWorkflowRow({
+      type: 'workflow_stalled',
+      name: 'Workflow stalled',
+      automationId: `workflow-stalled:${input.workflowId}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'skipped',
+      detail: `Stalled: ${input.reason}`,
+      attempts: input.countedNudges,
+      conditionReason: input.reason,
+    });
+  }
+
+  /**
+   * Record that a workflow task's agent waits on the user, and that the user
+   * was told: its step check said so, or no Automation agent can judge it. The
+   * row starts a fresh recovery (the user answers, and the next stall is a new
+   * one), and says the task waits on the user until a later turn is judged
+   * (`isWaitingOnUser`).
+   */
+  recordWorkflowWaiting(input: { taskId: string; swimlaneId: string; workflowId: string; reason: string }): void {
+    this.insertWorkflowRow({
+      type: 'workflow_waiting',
+      name: 'Waiting on you',
+      automationId: `workflow-waiting:${input.workflowId}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'skipped',
+      detail: `Waiting on you: ${input.reason}`,
+      attempts: 0,
+      conditionReason: input.reason,
+    });
+  }
+
+  /**
+   * Record that a workflow task's recovery starts over: after a stall, a turn
+   * recovery did not start stopped again, or the hang check ended a hung turn,
+   * so what comes next is a new stall with its own nudges and its own notice.
+   * The row is where the next rebuild counts from, inclusively, so `at` puts it
+   * after a stall row written the same moment.
+   */
+  recordWorkflowRecoveryStart(input: { taskId: string; swimlaneId: string; workflowId: string; at?: Date; detail?: string }): void {
+    this.insertWorkflowRow({
+      type: 'workflow_recovery_start',
+      name: 'Workflow recovery',
+      automationId: `workflow-recovery:${input.workflowId}`,
+      taskId: input.taskId,
+      swimlaneId: input.swimlaneId,
+      status: 'skipped',
+      detail: input.detail ?? 'Recovery starts over: the agent stopped again on a turn recovery did not start.',
+      attempts: 0,
+      at: input.at,
+    });
+  }
+
+  /**
+   * One row a workflow writes for itself beside its step answers, finished as
+   * it is written. Its automation id names the workflow, never a column
+   * automation, and its trigger is `turn_end`, as the step's is. `at` defaults
+   * to now; it is a `Date` so the stored text is always the ISO form the
+   * boundary queries compare. Returns the row's id.
+   */
+  private insertWorkflowRow(row: {
+    type: 'workflow_recovery' | 'workflow_interrupt' | 'workflow_stalled' | 'workflow_waiting' | 'workflow_recovery_start';
+    name: string;
+    automationId: string;
+    taskId: string;
+    swimlaneId: string;
+    status: AutomationRunStatus;
+    detail: string;
+    attempts: number;
+    conditionReason?: string;
+    at?: Date;
+  }): string {
+    const id = uuidv4();
+    const at = (row.at ?? new Date()).toISOString();
+    this.db.prepare(`
+      INSERT INTO automation_runs
+        (id, automation_id, automation_name, type, task_id, swimlane_id, trigger, status, detail, attempts,
+         started_at, finished_at, condition_reason)
+      VALUES (?, ?, ?, ?, ?, ?, 'turn_end', ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      row.automationId,
+      row.name,
+      row.type,
+      row.taskId,
+      row.swimlaneId,
+      row.status,
+      row.detail,
+      row.attempts,
+      at,
+      at,
+      row.conditionReason ?? null,
+    );
+    return id;
+  }
+
+  /**
+   * The newest point this task's recovery in this column counts from since
+   * `since`: a wait on the user it was told of, or a recovery that started
+   * over. Null when there is neither.
+   */
+  latestWorkflowRecoveryBoundaryAt(taskId: string, swimlaneId: string, since: string | null): string | null {
+    const row = this.db
+      .prepare(`
+        SELECT MAX(started_at) AS at FROM automation_runs
+        WHERE type IN ('workflow_waiting', 'workflow_recovery_start') AND task_id = ? AND swimlane_id = ? AND started_at >= ?
+      `)
+      .get(taskId, swimlaneId, since ?? '') as { at: string | null } | undefined;
+    return row?.at ?? null;
+  }
+
+  /** The newest waiting row for this task in this column since `since`, or null. */
+  latestWorkflowWaitingAt(taskId: string, swimlaneId: string, since: string | null): string | null {
+    const row = this.db
+      .prepare(`SELECT MAX(started_at) AS at FROM automation_runs WHERE type = 'workflow_waiting' AND task_id = ? AND swimlane_id = ? AND started_at >= ?`)
+      .get(taskId, swimlaneId, since ?? '') as { at: string | null } | undefined;
+    return row?.at ?? null;
+  }
+
+  /**
+   * Does this task's agent wait on the user, as its newest judged turn left it?
+   * True while a waiting row is newer than every step check that judged a turn
+   * since `since`: the user was told, and no turn has ended since.
+   */
+  isWaitingOnUser(taskId: string, swimlaneId: string, since: string | null): boolean {
+    const waitingAt = this.latestWorkflowWaitingAt(taskId, swimlaneId, since);
+    if (waitingAt === null) return false;
+    const judged = this.db
+      .prepare(`SELECT 1 FROM automation_runs WHERE type = 'workflow_step' AND task_id = ? AND swimlane_id = ? AND condition_met IS NOT NULL AND started_at > ? LIMIT 1`)
+      .get(taskId, swimlaneId, waitingAt);
+    return judged === undefined;
+  }
+
+  /**
+   * A workflow task's recovery in this column since `since` (its visit's
+   * start), so a restart picks it up where it stopped:
+   * - `lastStall`: the newest stall row, with the nudges that had run by then;
+   * - `attempts` and `countedNudges`: the attempts after that row (after
+   *   `since` when there is none), and the nudges among them that ran;
+   * - `firstAt`: when this recovery began, the oldest attempt since `since`,
+   *   or null.
+   */
+  workflowRecoverySince(taskId: string, swimlaneId: string, since: string | null): {
+    lastStall: { at: string; countedNudges: number } | null;
+    attempts: number;
+    countedNudges: number;
+    firstAt: string | null;
+  } {
+    const stall = this.db
+      .prepare(`
+        SELECT started_at AS at, attempts FROM automation_runs
+        WHERE type = 'workflow_stalled' AND task_id = ? AND swimlane_id = ? AND started_at >= ?
+        ORDER BY started_at DESC LIMIT 1
+      `)
+      .get(taskId, swimlaneId, since ?? '') as { at: string; attempts: number } | undefined;
+    // Strictly after the stall row: the nudge that spent the budget can share
+    // its millisecond, and the row's own count already holds it.
+    const afterOperator = stall ? '>' : '>=';
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS attempts, COALESCE(SUM(status = 'succeeded'), 0) AS counted
+      FROM automation_runs
+      WHERE type = 'workflow_recovery' AND task_id = ? AND swimlane_id = ? AND started_at ${afterOperator} ?
+    `).get(taskId, swimlaneId, stall ? stall.at : since ?? '') as { attempts: number; counted: number } | undefined;
+    // When this recovery began: its oldest attempt in the visit, stall or not.
+    const first = this.db
+      .prepare(`SELECT MIN(started_at) AS at FROM automation_runs WHERE type = 'workflow_recovery' AND task_id = ? AND swimlane_id = ? AND started_at >= ?`)
+      .get(taskId, swimlaneId, since ?? '') as { at: string | null } | undefined;
+    return {
+      lastStall: stall ? { at: stall.at, countedNudges: stall.attempts } : null,
+      attempts: row?.attempts ?? 0,
+      countedNudges: row?.counted ?? 0,
+      firstAt: first?.at ?? stall?.at ?? null,
+    };
+  }
+
+  /**
+   * The workflow tasks on this board that are stalled now, with what their
+   * notice said. A task is stalled while its newest stall row is in its current
+   * visit to the column it is in, and nothing has moved it on since: no step
+   * check has judged a turn and no nudge has run after it. One read per board.
+   */
+  listStalledTasks(): Map<string, string> {
+    const rows = this.db.prepare(`
+      SELECT stall.task_id AS task_id, stall.condition_reason AS reason
+      FROM automation_runs stall
+      JOIN tasks task ON task.id = stall.task_id AND task.swimlane_id = stall.swimlane_id
+      WHERE stall.type = 'workflow_stalled'
+        AND task.archived_at IS NULL
+        AND stall.started_at = (
+          SELECT MAX(newest.started_at) FROM automation_runs newest
+          WHERE newest.type = 'workflow_stalled' AND newest.task_id = stall.task_id AND newest.swimlane_id = stall.swimlane_id
+        )
+        AND stall.started_at >= COALESCE((
+          SELECT MAX(moves.at) FROM task_moves moves WHERE moves.task_id = stall.task_id AND moves.to_swimlane_id = stall.swimlane_id
+        ), '')
+        AND NOT EXISTS (
+          SELECT 1 FROM automation_runs later
+          WHERE later.task_id = stall.task_id AND later.swimlane_id = stall.swimlane_id AND later.started_at > stall.started_at
+            AND ((later.type = 'workflow_step' AND later.condition_met IS NOT NULL)
+              OR (later.type = 'workflow_recovery' AND later.status = 'succeeded'))
+        )
+    `).all() as Array<{ task_id: string; reason: string | null }>;
+    return new Map(rows.map((row) => [row.task_id, row.reason ?? 'its step did not finish']));
   }
 
   /**
@@ -370,6 +659,15 @@ export class AutomationRunRepository {
    * checks record a skipped row at every turn end, so the newest 200 can be a
    * single busy afternoon, and pruning a review loop's earlier passes would
    * quietly reset its round-trip count. Those rows go once the task is done.
+   *
+   * And a workflow task's own rows in the column it is in now. The prune runs
+   * on project open, which is a restart, which is when recovery rebuilds a
+   * parked task from them: a pruned stall row would drop the card's mark and
+   * start a second recovery with a second notice, and a pruned wait on the
+   * user would tell the user again. One board wrote 136 to 169 rows a day,
+   * so the newest 200 can be a single night. Only the current column's rows
+   * are read, so those are all that is kept; they go once the task moves on
+   * or is archived.
    */
   pruneTo(limit = AUTOMATION_RUN_RETENTION): number {
     const result = this.db
@@ -380,6 +678,16 @@ export class AutomationRunRepository {
             ${EXECUTED_STATUSES_SQL}
             AND automation_id IN (SELECT id FROM column_automations WHERE max_runs IS NOT NULL)
             AND task_id IN (SELECT id FROM tasks WHERE archived_at IS NULL)
+          )
+          AND NOT (
+            ${WORKFLOW_RUN_TYPES_SQL}
+            AND EXISTS (
+              SELECT 1 FROM tasks task
+              WHERE task.id = automation_runs.task_id
+                AND task.archived_at IS NULL
+                AND task.workflow_id IS NOT NULL
+                AND task.swimlane_id = automation_runs.swimlane_id
+            )
           )
       `)
       .run(limit);
@@ -422,6 +730,9 @@ function mapRows(rows: AutomationRunWithCheckRow[]): AutomationRun[] {
       id: row.id,
       automation_id: row.automation_id,
       automation_name: row.automation_name,
+      // Not always one of the registry's types: a workflow writes its own rows
+      // (`workflow_step`, `workflow_recovery`, ...), so a reader that looks a
+      // run's type up in the manifest guards the lookup.
       type: row.type as AutomationType,
       task_id: row.task_id,
       swimlane_id: row.swimlane_id,

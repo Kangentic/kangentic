@@ -153,6 +153,14 @@ export interface SubagentTranscriptSignature {
   maxMtimeMs: number;
 }
 
+/** `AgentAdapter.hungTurn`: when a busy turn has hung, and the keys that end it. */
+export interface HungTurnSpec {
+  /** Longer than the agent was measured to go without a write in a healthy turn. */
+  quietLimitMs: number;
+  /** The CLI's own interrupt of a busy turn. */
+  interruptKeys: string;
+}
+
 /**
  * Result of `AgentAdapter.parseSubagentUsage`.
  *
@@ -692,6 +700,20 @@ export interface AgentAdapter {
    * Default (if not implemented): false.
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
+
+  /**
+   * Optional: how to tell that this agent's turn hung, and how to end it, for
+   * the workflow hang check (`src/main/workflows/workflow-hang-check.ts`). A
+   * running workflow task whose turn shows working, with no write to its
+   * session history (`locateSessionHistoryFile`) or a subagent's
+   * (`statSubagentTranscripts`) for `quietLimitMs`, is hung: the check writes
+   * `interruptKeys`, and recovery takes the idle turn from there. Declare it
+   * only from a measurement of the real CLI's longest healthy quiet, with the
+   * CLI's own interrupt, which must end a busy turn and nothing else.
+   *
+   * Default (if not implemented): no hang check for this agent.
+   */
+  readonly hungTurn?: HungTurnSpec;
 
   /**
    * Optional: whether this adapter's plan tool approval hook may answer a

@@ -24,6 +24,8 @@ export interface BoardWorkflow {
   humanGateTargetId: string | null;
   /** It has a link, either way, so its strip can show the links. */
   hasLinks: boolean;
+  /** Why its running workflow stalled on it, while that holds, for the strip's mark. */
+  stallReason: string | null;
 }
 
 const NOTHING: readonly string[] = [];
@@ -61,6 +63,7 @@ export function toBoardWorkflow(source: BoardWorkflowSource): BoardWorkflow {
     waitingFor: source.facts?.waitingFor ?? NOTHING,
     humanGateTargetId: source.facts?.humanGateTargetId ?? null,
     hasLinks: source.facts?.hasLinks ?? false,
+    stallReason: source.facts?.stallReason ?? null,
   };
 }
 

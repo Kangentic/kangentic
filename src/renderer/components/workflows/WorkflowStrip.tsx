@@ -1,5 +1,5 @@
 import React from 'react';
-import { Folder, Workflow as WorkflowIcon } from 'lucide-react';
+import { AlertTriangle, Folder, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { trackStops, type TrackStop } from './workflow-track';
@@ -161,13 +161,36 @@ interface WorkflowCardStripProps {
   place: WorkflowTaskPlace;
   /** How the stop the task is at is drawn: the column's marker, or the board's bar. */
   currentStep?: CurrentStepStyle;
+  /** Why its running workflow stalled on this task, while it is: a mark before the track. */
+  stallReason?: string | null;
 }
 
-export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker' }: WorkflowCardStripProps) {
+/**
+ * A running workflow stalled on this task: a warning glyph before the track,
+ * with why on hover. In the strip, not the footer, because a stalled task's
+ * footer is still its live session's.
+ */
+function StallMark({ reason }: { reason: string }) {
+  return (
+    <Tooltip label={`Stalled: ${reason}`}>
+      <span className="inline-flex shrink-0 text-warning" role="img" aria-label="Stalled" data-testid="workflow-card-stalled">
+        <AlertTriangle size={12} />
+      </span>
+    </Tooltip>
+  );
+}
+
+export const WorkflowCardStrip = React.memo(function WorkflowCardStrip({ leading = null, steps, ends, place, currentStep = 'marker', stallReason = null }: WorkflowCardStripProps) {
+  const track = <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />;
   return (
     <CardStrip data-testid="workflow-card-strip">
       {leading ?? <span aria-hidden="true" />}
-      <WorkflowStepTrack steps={steps} ends={ends} place={place} currentStep={currentStep} />
+      {stallReason ? (
+        <span className="inline-flex items-center gap-1.5 shrink-0">
+          <StallMark reason={stallReason} />
+          {track}
+        </span>
+      ) : track}
     </CardStrip>
   );
 });

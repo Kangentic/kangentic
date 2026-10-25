@@ -518,6 +518,49 @@ describe('AutomationRunRepository', () => {
     expect(runs.listForTask(taskId).map((row) => row.id)).toEqual(['run-9', 'run-8', 'run-7', 'run-6']);
   });
 
+  // The prune runs on project open, a restart, which is when recovery rebuilds a
+  // parked workflow task from its rows. Pruned, its stall row would start a
+  // second recovery with a second notice.
+  it('keeps a live workflow task\'s own rows in the column it is in, and prunes the rest as before', () => {
+    const { database, runs, columnId, taskId } = setup();
+    const lanes = new SwimlaneRepository(database).list();
+    const earlierColumnId = lanes[1].id;
+    database.prepare('UPDATE tasks SET workflow_id = ? WHERE id = ?').run('workflow-1', taskId);
+    database
+      .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('task-plain', 'An ordinary task', '', columnId, 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+    const stamp = (id: string, second: number) => database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(at(second), id);
+    // The oldest rows: this column's stall and its earlier column's step answer.
+    runs.recordWorkflowStall({ taskId, swimlaneId: columnId, workflowId: 'workflow-1', reason: 'the agent stopped before its step was done.', countedNudges: 4 });
+    const stallId = runs.listForTask(taskId)[0].id;
+    stamp(stallId, 0);
+    runs.recordWorkflowStep({ taskId, swimlaneId: earlierColumnId, workflowId: 'workflow-1', met: true, reason: 'Done.', detail: 'Step done.' });
+    const earlierStepId = runs.listForTask(taskId).find((row) => row.swimlane_id === earlierColumnId)!.id;
+    stamp(earlierStepId, 1);
+    // An ordinary task's old row, then newer rows that fill the limit.
+    runs.start({ id: 'plain-old', automation: automation('a1', columnId), taskId: 'task-plain' });
+    stamp('plain-old', 2);
+    for (let index = 0; index < 4; index += 1) {
+      runs.start({ id: `plain-${index}`, automation: automation('a1', columnId), taskId: 'task-plain' });
+      stamp(`plain-${index}`, 10 + index);
+    }
+
+    runs.pruneTo(4);
+
+    const kept = new Set(database.prepare('SELECT id FROM automation_runs').all().map((row) => (row as { id: string }).id));
+    expect(kept.has(stallId)).toBe(true);
+    expect(kept.has(earlierStepId)).toBe(false);
+    expect(kept.has('plain-old')).toBe(false);
+    expect([...kept].filter((id) => id.startsWith('plain-'))).toHaveLength(4);
+
+    // Archived, the task needs none of it.
+    database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', taskId);
+    runs.pruneTo(4);
+    expect(runs.listForTask(taskId)).toEqual([]);
+  });
+
   it('drops a task runs when the task is deleted', () => {
     const { database, runs, columnId, taskId } = setup();
     runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId });
@@ -525,5 +568,134 @@ describe('AutomationRunRepository', () => {
     database.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
 
     expect(runs.listForTask(taskId)).toEqual([]);
+  });
+
+  // The board's "Stalled" mark is read from the run log, so it survives a
+  // restart and an automatic pause, and nothing else keeps it in step: it ends
+  // when the run log says the task moved on. Every row writes the current time,
+  // and the query compares strictly, so each row here is stamped at a second of
+  // its own. Each case marks the task first, so a "not marked" can only come
+  // from the one fact it flips.
+  describe('listStalledTasks', () => {
+    const REASON = 'the agent stopped before its step was done.';
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+
+    function stalledSetup() {
+      const fixture = setup();
+      const { database, runs, columnId, taskId } = fixture;
+      const rowIds = () => (database.prepare('SELECT id FROM automation_runs').all() as Array<{ id: string }>).map((row) => row.id);
+
+      /** Writes one run-log row through the repository, then stamps it at this second. */
+      function stamped(second: number, record: () => void): void {
+        const before = new Set(rowIds());
+        record();
+        const added = rowIds().filter((id) => !before.has(id));
+        expect(added).toHaveLength(1);
+        database.prepare('UPDATE automation_runs SET started_at = ?, finished_at = ? WHERE id = ?').run(at(second), at(second), added[0]);
+      }
+
+      return {
+        ...fixture,
+        otherColumnId: new SwimlaneRepository(database).list()[1].id,
+        stall: (second: number, reason = REASON) => stamped(second, () => runs.recordWorkflowStall({
+          taskId, swimlaneId: columnId, workflowId: 'workflow-1', reason, countedNudges: 0,
+        })),
+        recovery: (second: number, status: 'succeeded' | 'skipped' | 'failed') => stamped(second, () => {
+          runs.recordWorkflowRecovery({ taskId, swimlaneId: columnId, workflowId: 'workflow-1', status, detail: 'A nudge.' });
+        }),
+        step: (second: number, met: boolean | null) => stamped(second, () => runs.recordWorkflowStep({
+          taskId, swimlaneId: columnId, workflowId: 'workflow-1', met, reason: 'Not yet.', detail: 'Not done yet: Not yet.',
+        })),
+        moveInto: (second: number) => {
+          database
+            .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(`move-${second}`, taskId, null, columnId, 'workflow', null, at(second));
+        },
+      };
+    }
+
+    it('marks a task with the reason its stall notice gave', () => {
+      const { runs, taskId, stall } = stalledSetup();
+      expect(runs.listStalledTasks().size).toBe(0);
+
+      stall(10);
+
+      expect(runs.listStalledTasks()).toEqual(new Map([[taskId, REASON]]));
+    });
+
+    it('clears the mark when a later recovery nudge ran', () => {
+      const { runs, taskId, stall, recovery } = stalledSetup();
+      stall(10);
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+
+      recovery(20, 'succeeded');
+
+      expect(runs.listStalledTasks().size).toBe(0);
+    });
+
+    it.each(['skipped', 'failed'] as const)('keeps the mark through a later recovery attempt that was %s, since no nudge ran', (status) => {
+      const { runs, taskId, stall, recovery } = stalledSetup();
+      stall(10);
+
+      recovery(20, status);
+
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+    });
+
+    it('keeps the mark through a later step check that could not answer, and clears it once one judges a turn', () => {
+      const { runs, taskId, stall, step } = stalledSetup();
+      stall(10);
+
+      // The check's call failed: its condition_met is NULL, so no turn was judged.
+      step(20, null);
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+
+      // A "not done" answer is a judged turn all the same.
+      step(30, false);
+      expect(runs.listStalledTasks().size).toBe(0);
+    });
+
+    it('does not mark a stall from an earlier visit to the column', () => {
+      const { runs, taskId, stall, moveInto } = stalledSetup();
+      moveInto(5);
+      stall(10);
+      // The stall is in the visit that began at second 5.
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+
+      // The task left and came back after the stall: a new visit, with no stall of its own yet.
+      moveInto(20);
+
+      expect(runs.listStalledTasks().size).toBe(0);
+    });
+
+    it('does not mark a task that has since moved to another column', () => {
+      const { database, runs, taskId, stall, otherColumnId } = stalledSetup();
+      stall(10);
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+
+      database.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(otherColumnId, taskId);
+
+      expect(runs.listStalledTasks().size).toBe(0);
+    });
+
+    it('does not mark an archived task', () => {
+      const { database, runs, taskId, stall } = stalledSetup();
+      stall(10);
+      expect(runs.listStalledTasks().get(taskId)).toBe(REASON);
+
+      database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run(at(30), taskId);
+
+      expect(runs.listStalledTasks().size).toBe(0);
+    });
+
+    it('gives the newest stall\'s reason when the task stalled more than once in the visit', () => {
+      const { runs, taskId, stall } = stalledSetup();
+      // The newest row is written first, so a read that kept the last row
+      // returned would hand back the older reason.
+      stall(20, 'the newest stall.');
+      stall(10, 'an older stall.');
+
+      expect(runs.listStalledTasks()).toEqual(new Map([[taskId, 'the newest stall.']]));
+    });
   });
 });

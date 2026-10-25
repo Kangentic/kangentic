@@ -4,7 +4,7 @@ import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
-type NotifyEventKey = 'onAgentIdle' | 'onAgentCrash' | 'onPlanComplete' | 'onWorkflowComplete' | 'onSpawnStalled';
+type NotifyEventKey = 'onAgentIdle' | 'onAgentCrash' | 'onPlanComplete' | 'onWorkflowComplete' | 'onWorkflowStalled' | 'onSpawnStalled';
 
 type NotifyChannel = 'off' | 'desktop' | 'toast' | 'both';
 
@@ -58,7 +58,7 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
         icon={<Bell size={16} />}
         label="Events"
         description="Where each kind of alert shows up."
-        searchIds={['notifications.onAgentIdle', 'notifications.onAgentCrash', 'notifications.onPlanComplete', 'notifications.onWorkflowComplete', 'notifications.onSpawnStalled']}
+        searchIds={['notifications.onAgentIdle', 'notifications.onAgentCrash', 'notifications.onPlanComplete', 'notifications.onWorkflowComplete', 'notifications.onWorkflowStalled', 'notifications.onSpawnStalled']}
       >
         <NotifyChannelRow
           eventKey="onAgentIdle"
@@ -79,6 +79,11 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
           eventKey="onWorkflowComplete"
           config={globalConfig.notifications}
           searchId="notifications.onWorkflowComplete"
+        />
+        <NotifyChannelRow
+          eventKey="onWorkflowStalled"
+          config={globalConfig.notifications}
+          searchId="notifications.onWorkflowStalled"
         />
         <NotifyChannelRow
           eventKey="onSpawnStalled"

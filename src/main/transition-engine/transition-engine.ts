@@ -425,7 +425,7 @@ export class TransitionEngine {
   /** Answer Conditions on the Automation agent, or say why that cannot happen. */
   async checkConditions(input: ConditionPromptInput, limits?: ConditionCheckLimits, call?: ConditionCheckCall): Promise<ConditionCheckOutcome> {
     if (!this.services.checkConditions) {
-      return { ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.' };
+      return { ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.', cause: 'unavailable' };
     }
     return this.services.checkConditions(input, limits, call);
   }

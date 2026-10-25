@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
+import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
@@ -194,6 +194,11 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, completed: WorkflowCompletedEvent) => callback(completed);
       ipcRenderer.on(IPC.WORKFLOW_COMPLETED, handler);
       return () => ipcRenderer.removeListener(IPC.WORKFLOW_COMPLETED, handler);
+    },
+    onWorkflowStalled: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, stalled: WorkflowStalledEvent) => callback(stalled);
+      ipcRenderer.on(IPC.WORKFLOW_STALLED, handler);
+      return () => ipcRenderer.removeListener(IPC.WORKFLOW_STALLED, handler);
     },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>

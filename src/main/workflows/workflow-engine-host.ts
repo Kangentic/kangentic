@@ -27,6 +27,7 @@ import { announceWorkflowComplete } from './workflow-complete';
 import { endWorkflowAgent } from './workflow-agent';
 import { notifyWorkflowChanged, setWorkflowChangedWindow } from './workflow-changed';
 import { probeWorkflowProject, type WorkflowProjectProbe } from './workflow-project-probe';
+import { announceWorkflowStall } from './workflow-recovery';
 import { setWorkflowWake } from './workflow-wake';
 import { setWorkflowRuntimeContext } from './workflow-runtime';
 
@@ -70,7 +71,9 @@ import { setWorkflowRuntimeContext } from './workflow-runtime';
  *   is a one-shot timer for that one task, never a polling loop. Pause stops
  *   it (a paused workflow starts nothing), Resume retries at once, and a task
  *   that leaves To Do or its workflow drops its backoff. The user sees the
- *   toast a failed move shows, once per reason, and nothing new on the card.
+ *   toast a failed move shows, once per reason. A start still failing after
+ *   30 minutes is a stalled workflow: one notice on desktop and phone, and a
+ *   "Stalled" mark on the card (`announceWorkflowStall`), while the retries go on.
  */
 
 const DEBOUNCE_MS = 150;
@@ -83,6 +86,12 @@ const START_RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000];
 const UNREAD_RETRY_DELAYS_MS = [5_000, 30_000, 60_000, 120_000, 300_000];
 const TIMING_WINDOW = 200;
 
+/**
+ * How long a start may keep failing before the user is told the workflow
+ * stalled on it. The retries go on after the notice.
+ */
+const START_STALL_NOTICE_MS = 30 * 60_000;
+
 interface FailedStart {
   workflowId: string;
   /** The task's own board, so a pass that could not read it keeps the backoff. */
@@ -92,6 +101,10 @@ interface FailedStart {
   timer: ReturnType<typeof setTimeout> | null;
   /** The last failure's message: a new reason toasts again, the same one does not. */
   reason: string;
+  /** When this run of failures began (epoch ms). */
+  firstFailedAt: number;
+  /** The stall notice went out for this run of failures. */
+  stallNoticeSent: boolean;
 }
 
 const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -197,6 +210,8 @@ export class WorkflowEngineHost {
       retryAt: Date.now() + delayMs,
       timer: null,
       reason,
+      firstFailedAt: previous?.firstFailedAt ?? Date.now(),
+      stallNoticeSent: previous?.stallNoticeSent ?? false,
     };
     failure.timer = setTimeout(() => {
       failure.timer = null;
@@ -212,6 +227,34 @@ export class WorkflowEngineHost {
     this.failedStarts.set(key, failure);
     console.error(`[WORKFLOW] Start of task ${intent.taskId.slice(0, 8)} failed (attempt ${attempts}, retrying in ${Math.round(delayMs / 1000)}s):`, error);
     if (previous?.reason !== reason) this.toastFailedStart(intent, error);
+    if (!failure.stallNoticeSent && Date.now() - failure.firstFailedAt >= START_STALL_NOTICE_MS) {
+      failure.stallNoticeSent = true;
+      this.announceStalledStart(intent, reason);
+    }
+  }
+
+  /**
+   * A start that kept failing for `START_STALL_NOTICE_MS`: the workflow is
+   * stalled on it, and the toast, which reaches no one overnight, is not
+   * enough. One notice a run of failures, through the same path a recovery
+   * that ran out takes. The retries go on.
+   */
+  private announceStalledStart(intent: Extract<CoreIntent, { kind: 'start' }>, reason: string): void {
+    try {
+      const db = getExistingProjectDb(intent.projectId);
+      const task = db ? new TaskRepository(db).getById(intent.taskId) : undefined;
+      if (!task) return;
+      announceWorkflowStall(this.context, {
+        projectId: intent.projectId,
+        taskId: intent.taskId,
+        workflowId: intent.workflowId,
+        columnId: task.swimlane_id,
+        reason: `it could not start: ${reason}`,
+        countedNudges: 0,
+      });
+    } catch (error) {
+      console.warn('[WORKFLOW] Could not report a start that keeps failing:', error);
+    }
   }
 
   /** The toast a failed move shows the user, for a start nobody dragged. */

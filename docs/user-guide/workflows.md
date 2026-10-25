@@ -117,6 +117,35 @@ approve plans for, it shows Manual and Automatic is disabled. Before Start, an a
 `planApproval`. Without an Automation agent, or in a column with no agent, you drag the card on
 yourself.
 
+**When a step does not finish.** A running workflow stops a task only for a decision that only you
+can make. When a turn ends with the step not done, the Automation agent also judges why it stopped:
+
+- **It needs you**: a choice that changes the result, information or a secret it cannot find, or an
+  approval for something outside the step, such as deleting data. You get a notice with the
+  question, at once, and nothing is typed for you. Asking whether to go ahead with the step's own
+  work ("Should I commit and run the gate now?") is not this.
+- **Work it started is still running** ("the gate is still running, I'll report back"). It is left
+  alone for an hour. When that work wakes the agent, the turn it ends is judged as usual.
+- **Anything else.** Kangentic types one line into its terminal telling it to carry on with the
+  step's own work without asking, at 5, 15, 30 and 60 minutes, up to four times, and only while you
+  are not there: no text typed, its terminal not on screen, the agent idle. A nudge whose turn
+  fails, as in an outage, does not count. The line shows in the conversation like any message.
+
+With Claude Code, a turn that hangs (shown working while Claude writes nothing for 20 minutes) is
+interrupted with Claude's own Esc, then nudged the same way. If the interrupt does not reach it,
+you get the stall notice instead. Other agents are not checked for this yet. If you have raised
+Claude Code's limit on a foreground command past 20 minutes, a long command can be interrupted.
+
+When the nudges run out, or a check cannot run for a whole schedule, you get one notice, "Workflow
+stalled", on your desktop and your paired phone. The card and the Workflows view's header show
+Stalled with why on hover. Through an outage Kangentic keeps checking every hour, so when the
+service comes back the task moves on by itself. If you answer a stalled task and it stops again
+later, recovery starts over for it, with its own notice. A task the low-memory pause stops gets
+the same notice, and so do a start that keeps failing for 30 minutes and a hung turn the interrupt
+does not end. Pausing the workflow
+cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
+**Workflow stalled** switch is in Settings > Notifications.
+
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step
 track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
 task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps

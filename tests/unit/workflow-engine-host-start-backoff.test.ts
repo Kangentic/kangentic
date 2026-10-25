@@ -44,6 +44,7 @@ const harness = vi.hoisted(() => ({
   getExistingProjectDbCalls: [] as string[],
   handleTaskMove: vi.fn(),
   notifySpawnBlocked: vi.fn(),
+  announceWorkflowStall: vi.fn(),
 }));
 
 // Every database here is open, so the engine never looks at an unopened one.
@@ -76,6 +77,7 @@ vi.mock('../../src/main/workflows/workflow-changed', () => ({
   setWorkflowChangedWindow: vi.fn(),
 }));
 vi.mock('../../src/main/workflows/workflow-runtime', () => ({ setWorkflowRuntimeContext: vi.fn() }));
+vi.mock('../../src/main/workflows/workflow-recovery', () => ({ announceWorkflowStall: harness.announceWorkflowStall }));
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
@@ -161,6 +163,7 @@ describe('the workflow engine host', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     harness.handleTaskMove.mockReset();
     harness.notifySpawnBlocked.mockReset();
+    harness.announceWorkflowStall.mockReset();
     startTimes = [];
     freeAgentSlots = 10;
     harness.dbs.clear();
@@ -220,6 +223,34 @@ describe('the workflow engine host', () => {
           expect(startTimes).toHaveLength(attempt + 1);
         }
       }
+    });
+
+    // A toast reaches no one overnight. A start still failing after 30 minutes
+    // is a stalled workflow, said once, while the retries go on.
+    it('says the workflow stalled once the start has kept failing for 30 minutes, once, and keeps retrying', async () => {
+      const { workflowId, taskIds: [taskId] } = runningWorkflow('Usage budgets');
+      moveFails(new Error('Worktree setup failed: disk full'));
+      await advance(DEBOUNCE_MS);
+
+      // 30 s, 60 s, 120 s, then every 300 s: about 28 minutes in, still quiet.
+      await advance(28 * 60_000);
+      expect(harness.announceWorkflowStall).not.toHaveBeenCalled();
+
+      await advance(10 * 60_000);
+      expect(harness.announceWorkflowStall).toHaveBeenCalledTimes(1);
+      expect(harness.announceWorkflowStall).toHaveBeenCalledWith(context, expect.objectContaining({
+        projectId: 'home',
+        taskId,
+        workflowId,
+        columnId: todoOf('home').id,
+        reason: 'it could not start: Worktree setup failed: disk full',
+      }));
+
+      // The retries go on, and say nothing more.
+      const startsBefore = startTimes.length;
+      await advance(30 * 60_000);
+      expect(startTimes.length).toBeGreaterThan(startsBefore);
+      expect(harness.announceWorkflowStall).toHaveBeenCalledTimes(1);
     });
 
     it('is retried when its timer fires before the clock reaches the stored retry time, because the timer\'s own wake treats the retry as due', async () => {

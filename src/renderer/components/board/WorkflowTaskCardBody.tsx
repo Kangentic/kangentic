@@ -86,6 +86,7 @@ const BoardWorkflowStrip = React.memo(function BoardWorkflowStrip({ task, densit
         place={place}
         // The lane the card sits in names its column, so the board keeps the bar.
         currentStep="bar"
+        stallReason={workflow.state === 'running' ? workflow.stallReason : null}
       />
     </div>
   );

@@ -37,7 +37,8 @@ export function formatWorkflow(view: WorkflowView): string {
       const settings = workflow.state === 'draft' ? describeRunSettings(task) : '';
       // A planned task's board is in its settings, as save_workflow's `project`.
       const board = task.board !== null && workflow.state !== 'draft' ? ` on board "${task.board}"` : '';
-      lines.push(`- ${label} ${task.title}. In ${task.column}${board}. Route: ${route}.${waits}${settings}`);
+      const stalled = task.stalled ? ` Stalled: ${task.stalled}` : '';
+      lines.push(`- ${label} ${task.title}. In ${task.column}${board}. Route: ${route}.${waits}${settings}${stalled}`);
     }
   }
   return lines.join('\n');

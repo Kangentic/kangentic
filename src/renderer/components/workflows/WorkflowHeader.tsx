@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDetail, WorkflowSummary } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { ActivityMark } from '../ActivityMark';
@@ -35,6 +35,8 @@ import { WorkflowPicker } from './WorkflowPicker';
 const LADDER = {
   /** The counts line folds into the bar's tooltip. */
   counts: 'hidden @[1235px]:inline',
+  /** "Stalled on #412" goes icon-only, its words in its tooltip. */
+  stalledLabel: 'hidden @[1040px]:inline',
   /** Rename, Delete and New workflow go icon-only. */
   actionButton: 'w-9 @[1040px]:w-24',
   actionLabel: 'hidden @[1040px]:inline',
@@ -88,6 +90,16 @@ function progressSegments(detail: WorkflowDetail | null, doneColumnColor: string
     .sort((left, right) => right.order - left.order)
     .map((task): ProgressSegment => ({ key: task.key, color: task.color, tasks: 1, kind: 'working' }));
   return [...done, ...working];
+}
+
+/** "Stalled on #412", or "Stalled on 3 tasks". */
+function stalledLine(stalled: WorkflowSummary['stalledTasks']): string {
+  return stalled.length === 1 ? `Stalled on #${stalled[0].displayId}` : `Stalled on ${stalled.length} tasks`;
+}
+
+/** Each stalled task and why, for the stalled mark's tooltip. */
+function stalledTip(stalled: WorkflowSummary['stalledTasks']): string {
+  return stalled.map((entry) => `#${entry.displayId}: ${entry.reason}`).join(' ');
 }
 
 function countsLine(summary: WorkflowSummary): string {
@@ -240,6 +252,19 @@ export function WorkflowHeader({
                     ))}
                   </span>
                 </Tooltip>
+                {selected.stalledTasks.length > 0 && (
+                  <Tooltip label={stalledTip(selected.stalledTasks)}>
+                    <span
+                      className="inline-flex shrink-0 items-center gap-1 text-xs text-warning whitespace-nowrap"
+                      role="status"
+                      aria-label={stalledLine(selected.stalledTasks)}
+                      data-testid="workflow-stalled"
+                    >
+                      <AlertTriangle size={12} className="shrink-0" />
+                      <span className={LADDER.stalledLabel}>{stalledLine(selected.stalledTasks)}</span>
+                    </span>
+                  </Tooltip>
+                )}
                 {counts && (
                   <span className={`min-w-0 truncate text-xs text-fg-faint ${LADDER.counts}`} data-testid="workflow-counts">{counts}</span>
                 )}

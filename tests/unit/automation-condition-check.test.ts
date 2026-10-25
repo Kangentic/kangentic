@@ -357,7 +357,8 @@ describe('checkAutomationConditions limits', () => {
     await vi.advanceTimersByTimeAsync(1_000);
 
     // The CLI ran and is still paid for, so the outcome names its call.
-    await expect(pending).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, callId: expect.any(String) });
+    // A time limit that ran out is the agent's failure, which a later try may pass.
+    await expect(pending).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, cause: 'failed', callId: expect.any(String) });
   });
 
   it('does not give up before timeoutMs', async () => {
@@ -377,7 +378,7 @@ describe('checkAutomationConditions limits', () => {
     const pending = check(agent.deps, input(), { signal: controller.signal, timeoutMs: BACKSTOP_MS });
     await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
 
-    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON });
+    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON, cause: 'stopped' });
     expect(agent.held).toHaveLength(0);
   });
 
@@ -390,7 +391,7 @@ describe('checkAutomationConditions limits', () => {
     controller.abort();
     await vi.advanceTimersByTimeAsync(BACKSTOP_MS + 1);
 
-    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON, callId: expect.any(String) });
+    await expect(pending).resolves.toEqual({ ok: false, reason: STOPPED_REASON, cause: 'stopped', callId: expect.any(String) });
   });
 
   it('resolves not ok, naming the failure and the call, when the first call fails, and asks no second time', async () => {
@@ -404,6 +405,7 @@ describe('checkAutomationConditions limits', () => {
     await expect(pending).resolves.toEqual({
       ok: false,
       reason: 'The Automation agent could not check the condition: CLI exited 1',
+      cause: 'failed',
       callId: expect.any(String),
     });
     // A failure is not a skipped label: nothing is asked again.
@@ -428,7 +430,7 @@ describe('checkAutomationConditions limits', () => {
 
       await vi.advanceTimersByTimeAsync(1_000);
 
-      expect(outcome).toEqual({ ok: false, reason: TIMED_OUT_REASON });
+      expect(outcome).toEqual({ ok: false, reason: TIMED_OUT_REASON, cause: 'failed' });
       expect(agent.held).toHaveLength(0);
     });
 
@@ -445,7 +447,7 @@ describe('checkAutomationConditions limits', () => {
       controller.abort();
       await settle();
 
-      expect(outcome).toEqual({ ok: false, reason: STOPPED_REASON });
+      expect(outcome).toEqual({ ok: false, reason: STOPPED_REASON, cause: 'stopped' });
       expect(agent.held).toHaveLength(0);
     });
 
@@ -468,6 +470,8 @@ describe('checkAutomationConditions limits', () => {
       await expect(check(agent.deps, input())).resolves.toEqual({
         ok: false,
         reason: `The Automation agent could not be set up, so the condition was not checked: ${message}`,
+        // A setup step that threw may work on a later try, unlike a setting nobody filled in.
+        cause: 'failed',
       });
       expect(agent.held).toHaveLength(0);
     });
@@ -485,7 +489,7 @@ describe('checkAutomationConditions limits', () => {
       await settle();
       expect(agent.held).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(queued).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON });
+      await expect(queued).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, cause: 'failed' });
 
       // One slow check finishes. The slot it frees must go to a fourth check,
       // not to the waiter that already gave up (which would hold it forever).
@@ -507,7 +511,7 @@ describe('checkAutomationConditions limits', () => {
       await settle();
       expect(agent.held).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(1_000);
-      await expect(abandoned).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, callId: expect.any(String) });
+      await expect(abandoned).resolves.toEqual({ ok: false, reason: TIMED_OUT_REASON, cause: 'failed', callId: expect.any(String) });
 
       // The caller is gone, but its CLI run is not: a third check still waits.
       const waiting = check(agent.deps, input());

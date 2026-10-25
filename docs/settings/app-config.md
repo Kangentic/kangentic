@@ -190,15 +190,17 @@ something is listening on.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn or needs permission. Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project |
+| `notifications.desktop.onAgentIdle` | boolean | `true` | Desktop notification when an agent finishes its turn or needs permission. Suppressed only while the window is focused AND that session's project is the open one, so an unfocused window still alerts on the open project. A running workflow task's plain idle raises none: its step check notifies instead, with why, when its agent waits on the user |
 | `notifications.desktop.onAgentCrash` | boolean | `true` | Desktop notification when session exits with error |
 | `notifications.desktop.onPlanComplete` | boolean | `true` | Desktop notification when plan completes and task auto-moves |
 | `notifications.desktop.onWorkflowComplete` | boolean | `true` | Desktop notification when every task in a workflow reaches Done ("Workflow complete: <title>", the project's name as the body; a click opens the project). Through the same focus gate and cooldown as Plan Complete |
+| `notifications.desktop.onWorkflowStalled` | boolean | `true` | Desktop notification, raised by main, when a running workflow stalls on a task: its recovery ran out, a low-memory pause stopped it, its start kept failing for 30 minutes, or a hung turn did not answer an interrupt. The task's title over "<project>: <workflow>. Stalled: <why>". Once per stall. It skips the focus gate, so it shows even while the window is in front, since a window left in front would swallow the only one |
 | `notifications.desktop.onSpawnStalled` | boolean | `true` | Desktop notification when a task spawn stays in a preparing phase (worktree/git queue) past the stall threshold (~8s) |
 | `notifications.toasts.onAgentIdle` | boolean | `true` | In-app toast when an agent finishes its turn or needs permission, on the open project. Skipped while that session's terminal is already on screen: a task-detail window, the in-app or detached Agent Monitor, or a phone streaming it |
 | `notifications.toasts.onAgentCrash` | boolean | `true` | In-app toast when a session exits (error or clean); the `notifications.desktop.onAgentCrash` row fires on error exits only |
 | `notifications.toasts.onPlanComplete` | boolean | `true` | In-app toast when a plan completes and its task auto-moves, on the open project |
 | `notifications.toasts.onWorkflowComplete` | boolean | `true` | In-app toast when every task in a workflow reaches Done, on the workflow's project, titled "Workflow complete" over "All 9 tasks of "Usage budgets" are in Done." It opens nothing on a click, since a finished workflow leaves the Workflows view |
+| `notifications.toasts.onWorkflowStalled` | boolean | `true` | In-app toast when a running workflow stalls on a task, on that task's project, titled "Workflow stalled" over the task and why. A click on it opens the task |
 | `notifications.toasts.onSpawnStalled` | boolean | `true` | In-app toast when a task spawn stalls past the threshold while preparing. It stays until the spawn resolves, and a click on it opens the task |
 | `notifications.toasts.durationSeconds` | number | `4` | Toast auto-dismiss time in seconds (1-30) |
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |

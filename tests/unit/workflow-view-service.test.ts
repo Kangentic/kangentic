@@ -25,6 +25,7 @@ const { runProjectMigrations } = await import('../../src/main/db/migrations/proj
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const { AutomationRunRepository } = await import('../../src/main/db/repositories/automation-run-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 const view = await import('../../src/main/workflows/workflow-view-service');
 const lock = await import('../../src/main/workflows/workflow-lock-check');
@@ -279,9 +280,9 @@ describe('the Workflows view operations', () => {
     it('gives each board card what it waits for, where a hand may move it, and whether it has links', async () => {
       const { workflow, api, ui, docs } = await started();
       const [before] = view.listWorkflowSummaries(context, 'home');
-      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null, hasLinks: true });
+      expect(before.boardTasks[ui.id]).toEqual({ waitingFor: [`#${api.display_id}`], humanGateTargetId: null, hasLinks: true, stallReason: null });
       // Docs has no link either way, so its strip offers none to show.
-      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null, hasLinks: false });
+      expect(before.boardTasks[docs.id]).toEqual({ waitingFor: [], humanGateTargetId: null, hasLinks: false, stallReason: null });
 
       // In a column whose work no agent can judge (here, none is chosen), a person drags it on.
       new TaskRepository(homeDb()).move(
@@ -290,8 +291,38 @@ describe('the Workflows view operations', () => {
       );
       const [after] = view.listWorkflowSummaries(context, 'home');
       // A blocker has links too: the link is read from either end.
-      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review'), hasLinks: true });
+      expect(after.boardTasks[api.id]).toEqual({ waitingFor: [], humanGateTargetId: laneId('home', 'Code Review'), hasLinks: true, stallReason: null });
       expect(after.workflow).toMatchObject({ id: workflow.id, state: 'running' });
+    });
+
+    // A stall is read from the run log (`listStalledTasks`), so the mark
+    // survives a restart and an automatic pause, and a later judged turn or a
+    // move clears it with no other state to keep in step.
+    it('marks a task the workflow stalled on, until a turn is judged or it moves', async () => {
+      const { workflow, api } = await started();
+      const executing = laneId('home', 'Executing');
+      new TaskRepository(homeDb()).move({ taskId: api.id, targetSwimlaneId: executing, targetPosition: 0 }, { origin: 'workflow' });
+      const runs = new AutomationRunRepository(homeDb());
+      runs.recordWorkflowStall({ taskId: api.id, swimlaneId: executing, workflowId: workflow.id, reason: 'the step check could not run.', countedNudges: 0 });
+
+      const [stalled] = view.listWorkflowSummaries(context, 'home');
+      expect(stalled.stalledTasks).toEqual([{ taskId: api.id, displayId: api.display_id, reason: 'the step check could not run.' }]);
+      expect(stalled.boardTasks[api.id].stallReason).toBe('the step check could not run.');
+      expect(view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((task) => task.key === api.id)!.stallReason)
+        .toBe('the step check could not run.');
+      expect(service.readWorkflow(context, 'home', workflow.id).tasks.find((task) => task.taskId === api.id)!.stalled)
+        .toBe('the step check could not run.');
+
+      // A paused workflow says Paused, not Stalled.
+      new WorkflowRepository(homeDb()).setState(workflow.id, 'paused');
+      expect(view.listWorkflowSummaries(context, 'home')[0].stalledTasks).toEqual([]);
+      new WorkflowRepository(homeDb()).setState(workflow.id, 'running');
+
+      // A later turn the step check judged clears it.
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      runs.recordWorkflowStep({ taskId: api.id, swimlaneId: executing, workflowId: workflow.id, met: false, reason: 'Not yet.', detail: 'Not done yet: Not yet.' });
+      expect(view.listWorkflowSummaries(context, 'home')[0].stalledTasks).toEqual([]);
+      expect(view.listWorkflowSummaries(context, 'home')[0].boardTasks[api.id].stallReason).toBeNull();
     });
 
     describe('when a blocker on another board is missing from the read', () => {

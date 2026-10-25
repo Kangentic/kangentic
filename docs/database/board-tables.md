@@ -345,6 +345,21 @@ archived, so pruning can never reset a limit.
 `automation_name` and `type` are DENORMALIZED and there is no foreign key to `column_automations`:
 a run log that empties itself when you rename or delete the automation is not a log.
 
+**A workflow's own rows.** Six types name no column automation. Each sets `automation_id` to
+`<prefix>:<workflowId>` and `trigger` to `turn_end`, since a read drops any other trigger. The
+prefix is `workflow-step` for `workflow_step`, `workflow-stalled` for `workflow_stalled`,
+`workflow-waiting` for `workflow_waiting`, and `workflow-recovery` for the other three
+(`workflow_recovery`, `workflow_recovery_start`, `workflow_interrupt`).
+
+| `type` | Written by | What it holds |
+|--------|------------|---------------|
+| `workflow_step` | the step check (`recordWorkflowStep`) | Its answer: `succeeded` (done) or `skipped` (not done) with `condition_met` 1 or 0. A check that could not answer has `condition_met` NULL: `failed` when the call failed, `skipped` once a visit when no Automation agent can run one. A NULL row judged nothing, so it never counts as an answer (`hasWorkflowStepSince`). |
+| `workflow_recovery` | each recovery attempt (`recordWorkflowRecovery`) | `succeeded` for a nudge sent, rewritten to `failed` when its turn failed. Also `failed` for a nudge not delivered, and `skipped` for one held off while the user was there. A restart counts these to resume the schedule. |
+| `workflow_stalled` | the stall notice (`recordWorkflowStall`) | The notice's latch and the card's "Stalled" mark (`listStalledTasks`). `condition_reason` is why, and `attempts` holds the nudges that had run by then. |
+| `workflow_waiting` | a wait on the user that was told (`recordWorkflowWaiting`) | The boundary a fresh recovery counts from, and what keeps a task waiting on a question from being armed again (`isWaitingOnUser`). |
+| `workflow_recovery_start` | a recovery that starts over (`recordWorkflowRecoveryStart`) | After a stall, a turn recovery did not start stopped again. The row is where the next recovery counts from, so that stall gets its own nudges and its own notice. |
+| `workflow_interrupt` | the hang check (`recordWorkflowInterrupt`) | A turn shown working whose agent wrote nothing past its limit, interrupted with the CLI's own key. Never counted as a recovery attempt. |
+
 Three indices, one per question the log is asked:
 
 | Index | Columns | Serves |
@@ -356,8 +371,11 @@ Three indices, one per question the log is asked:
 **Project-open sweep.** In the same pass that runs `retryFailedDoneCleanups`, two things happen.
 `markStaleRunsInterrupted(startedBefore)` stamps every row still `running` as `interrupted`, and
 `pruneTo(200)` keeps the newest 200 rows per project, because nothing else bounds the table, plus
-every counted run of an automation with a Frequency limit on a task that is not archived. The
-sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
+every counted run of an automation with a Frequency limit on a task that is not archived, plus a
+workflow task's own rows (the six types above) in the column it is in now, while it is not
+archived. Recovery rebuilds a parked task from those rows after a restart, which is when the
+prune runs, and one board wrote 136 to 169 rows a day, so the newest 200 can be a single night.
+The sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
 `running` row at boot is a known orphan, and without this "these always run" is false on every
 restart.
 

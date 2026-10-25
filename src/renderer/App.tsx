@@ -1244,6 +1244,22 @@ export function App() {
         }
       }));
     }
+    // A running workflow stalled on a task. Main raises the desktop
+    // notification itself (it must reach a user with no window open); this is
+    // the toast, for the project on screen.
+    if (tasks?.onWorkflowStalled) {
+      cleanups.push(tasks.onWorkflowStalled((stalled) => {
+        const notifyConfig = useConfigStore.getState().config.notifications;
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (stalled.projectId !== activeProjectId || !notifyConfig.toasts.onWorkflowStalled) return;
+        useToastStore.getState().addToast({
+          title: 'Workflow stalled',
+          message: stalled.taskTitle ? `"${stalled.taskTitle}": ${stalled.reason}` : stalled.reason,
+          variant: 'warning',
+          onOpen: () => { openTaskFromNotification(stalled.projectId, stalled.taskId); },
+        });
+      }));
+    }
     // A workflow or its tasks changed, whoever changed it: the Workflows view
     // (and its segment's count) reloads that one workflow.
     const workflows = window.electronAPI?.workflows;

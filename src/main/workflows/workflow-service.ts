@@ -19,6 +19,7 @@ import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, PERMISSION_MODES, RUN_MODES, hasRunSettings, isPermissionMode, isRunMode } from '../../shared/workflow-run-settings';
 import { isValidGitBranchName } from '../../shared/git-utils';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
+import { AutomationRunRepository } from '../db/repositories/automation-run-repository';
 import { writeTransaction } from '../db/transaction';
 import { TaskRepository, applyProfileExclusivity } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -37,6 +38,7 @@ import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { MAX_WORKFLOW_TASKS } from './workflow-limits';
 import { wakeWorkflowEngine } from './workflow-wake';
 import { notifyWorkflowChanged } from './workflow-changed';
+import { cancelWorkflowRecovery, forgetWorkflowRecovery } from './workflow-recovery-state';
 import { announceBoardChange } from './workflow-board-announce';
 import { endWorkflowAgent } from './workflow-agent';
 import { linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
@@ -90,6 +92,33 @@ export interface WorkflowTaskView {
   runSettings: WorkflowTaskRunSettings;
   /** The name of its Board Profile on its board, when it rides one that still exists. */
   profileName: string | null;
+  /** Why its running workflow stalled on it, while that holds; null otherwise. */
+  stalled: string | null;
+}
+
+/**
+ * Why a running workflow is stalled on each of its tasks, read from each
+ * board's run log once (`listStalledTasks`), so the mark survives a restart
+ * and an automatic pause. A paused or finished workflow shows no stall: its
+ * state says what it is doing.
+ */
+export function stallReader(workflow: Workflow): (projectId: string, taskId: string) => string | null {
+  const byProject = new Map<string, Map<string, string>>();
+  return (projectId, taskId) => {
+    if (workflow.state !== 'running') return null;
+    let stalls = byProject.get(projectId);
+    if (!stalls) {
+      try {
+        const db = getExistingProjectDb(projectId);
+        stalls = db ? new AutomationRunRepository(db).listStalledTasks() : new Map<string, string>();
+      } catch {
+        // A board whose run log cannot be read shows no stall.
+        stalls = new Map<string, string>();
+      }
+      byProject.set(projectId, stalls);
+    }
+    return stalls.get(taskId) ?? null;
+  };
 }
 
 export interface WorkflowView {
@@ -151,6 +180,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         waitsFor: draft.links.filter((link) => link.blocked === planned.key).map((link) => link.blocker),
         runSettings: runSettingsOf(planned),
         profileName: profileNameOn(context, projectId, planned.profile_id),
+        stalled: null,
       };
     });
     return { workflow, homeProjectId, tasks };
@@ -173,6 +203,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     if (linkEndState(context, blocker, workflowId, present, unreadProjectIds) === 'gone') return [];
     return [`a task on "${boardOf(link.blocker_project_id) ?? 'this board'}" that could not be read`];
   };
+  const stallOf = stallReader(workflow);
   const tasks = created.map(({ projectId, task }): WorkflowTaskView => {
     const lanes = safeLanes(projectId);
     const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
@@ -190,6 +221,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       waitsFor: links.filter((link) => link.blocked_task_id === task.id).flatMap(blockerKeys),
       runSettings: runSettingsOf(task),
       profileName: profileNameOn(context, projectId, task.profile_id),
+      stalled: place === 'done' ? null : stallOf(projectId, task.id),
     };
   });
   return { workflow, homeProjectId, tasks };
@@ -904,6 +936,8 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'running') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, so there is nothing to pause.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'paused');
+  // Before the sessions suspend: a pending nudge must not land on a paused workflow.
+  cancelWorkflowRecovery(workflowId);
   // The header flips to Resume at once; the sessions suspend after.
   notifyWorkflowChanged(homeProjectId, workflowId);
   announceWorkflowBoards(context, homeProjectId, workflowId);
@@ -1211,6 +1245,8 @@ export function removeFromWorkflow(
   // on it would never start (a blocker the workflow cannot see is never done).
   new TaskLinkRepository(getProjectDb(homeProjectId)).deleteForTask(resolved.task.id);
   tasks.setWorkflowMembership(resolved.task.id, null);
+  // An ordinary task now: nothing recovers it, and nothing nudges its agent.
+  forgetWorkflowRecovery(resolved.task.id);
   new WorkflowRepository(getProjectDb(homeProjectId)).bumpRevision(workflowId);
   announceBoardChange(context, resolved.projectId);
   wakeWorkflowEngine();
@@ -1237,6 +1273,7 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
     }
   }
   new WorkflowRepository(getProjectDb(homeProjectId)).delete(workflowId);
+  cancelWorkflowRecovery(workflowId);
   // Its agent's conversation goes with it, and so does its session.
   endWorkflowAgent(context, workflowId).catch((error: unknown) => {
     console.error(`[WORKFLOW] Could not end the agent of ${workflowId.slice(0, 8)}:`, error);

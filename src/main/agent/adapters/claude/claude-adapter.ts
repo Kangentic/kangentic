@@ -56,6 +56,7 @@ import type {
   AnswerFromContextOptions,
   AnswerSession,
   AnswerSessionInput,
+  HungTurnSpec,
   ParsedSubagentUsage,
   SubagentTranscriptSignature,
   SummarizeOptions,
@@ -522,6 +523,16 @@ export class ClaudeAdapter implements AgentAdapter {
   consoleCloseIsGraceful(platform: NodeJS.Platform): boolean {
     return platform === 'win32' || platform === 'linux';
   }
+
+  /**
+   * Measured 2026-10-25 on 437 turns of a board's workflow tasks: no healthy
+   * turn went more than 10.0 minutes without a write to its transcript or a
+   * subagent's, which is Claude Code's own cap on a foreground command (past it
+   * the command moves to the background). Three hung turns went 114 minutes.
+   * Twice the cap is the limit. Esc is Claude's interrupt of a busy turn; the
+   * check never writes it to a permission prompt, where it would mean no.
+   */
+  readonly hungTurn: HungTurnSpec = { quietLimitMs: 20 * 60_000, interruptKeys: '\x1b' };
 
   /**
    * Any MCP tool but Kangentic's own: the most a session's allow rules can hand

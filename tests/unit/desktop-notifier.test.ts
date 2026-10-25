@@ -478,4 +478,76 @@ describe('DesktopNotifier', () => {
 
     consoleErrorSpy.mockRestore();
   });
+
+  // A running workflow task's idle is its step check's to report
+  // (workflow-recovery.ts): a wait on the user at once, a stall once recovery
+  // runs out. The generic idle notice would fire at every nudged turn.
+  describe('a running workflow task', () => {
+    beforeEach(() => {
+      config = makeConfig({ desktop: { ...makeConfig().desktop, onWorkflowStalled: true } });
+      resolveWorkflowTitle = vi.fn(() => 'Usage budgets');
+    });
+
+    it('raises no idle notice, but still notifies on a permission prompt', () => {
+      sessionManager.getSession.mockReturnValue(makeSession());
+      buildNotifier({ isWorkflowStepTask: () => true });
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+      expect(showNotification).not.toHaveBeenCalled();
+
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      expect(shownInputs()[0].body).toContain('Needs permission');
+    });
+
+    it('raises the idle notice as before once the workflow is not running (the control)', () => {
+      sessionManager.getSession.mockReturnValue(makeSession());
+      buildNotifier({ isWorkflowStepTask: () => false });
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends a stall notice even with the window focused on the project, since it is the only one', () => {
+      focused = true;
+      activeProjectId = 'proj-1';
+      buildNotifier({ isWorkflowStepTask: () => true });
+
+      notifier.notifyWorkflowTask({ projectId: 'proj-1', taskId: 'task-1', kind: 'stalled', reason: 'the step check could not run.' });
+
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      expect(shownInputs()[0]).toEqual({
+        title: 'Build the thing',
+        body: 'My Project: Usage budgets workflow. Stalled: the step check could not run.',
+        projectId: 'proj-1',
+        taskId: 'task-1',
+      });
+    });
+
+    it('sends no stall notice with the Workflow stalled switch off', () => {
+      config = makeConfig({ desktop: { ...makeConfig().desktop, onWorkflowStalled: false } });
+      buildNotifier({ isWorkflowStepTask: () => true });
+
+      notifier.notifyWorkflowTask({ projectId: 'proj-1', taskId: 'task-1', kind: 'stalled', reason: 'it could not start: git failed.' });
+
+      expect(showNotification).not.toHaveBeenCalled();
+    });
+
+    it('sends a wait on the user like the idle notice it replaced: behind its switch and its focus gate', () => {
+      buildNotifier({ isWorkflowStepTask: () => true });
+      notifier.notifyWorkflowTask({ projectId: 'proj-1', taskId: 'task-1', sessionId: 'sess-1', kind: 'waiting', reason: 'It asks which layout to use.' });
+      expect(shownInputs()[0].body).toBe('My Project: Usage budgets workflow. Waiting on you: It asks which layout to use.');
+
+      // The same session's idle cooldown holds a second one back.
+      notifier.notifyWorkflowTask({ projectId: 'proj-1', taskId: 'task-1', sessionId: 'sess-1', kind: 'waiting', reason: 'Again.' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+
+      // Looking at the project: no notice, as for an idle one.
+      vi.advanceTimersByTime(20_000);
+      focused = true;
+      activeProjectId = 'proj-1';
+      notifier.notifyWorkflowTask({ projectId: 'proj-1', taskId: 'task-1', sessionId: 'sess-1', kind: 'waiting', reason: 'Once more.' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+  });
 });

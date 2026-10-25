@@ -156,7 +156,7 @@ A Move to column row moves the task on Run again (and `kangentic_run_automation`
 
 ### Interrupted runs and the project-open sweep
 
-`synchronous-shutdown.md` forbids awaiting a drain on quit, so a `running` row at boot is a known orphan. In the same pass that runs `retryFailedDoneCleanups`, project open calls `markStaleRunsInterrupted()` and then `pruneTo(200)`. The first keeps the log honest; without it "these always run" is false on every restart. The second bounds a table nothing else bounds. If any row was interrupted, ONE summary toast, never one per row.
+`synchronous-shutdown.md` forbids awaiting a drain on quit, so a `running` row at boot is a known orphan. In the same pass that runs `retryFailedDoneCleanups`, project open calls `markStaleRunsInterrupted()` and then `pruneTo(200)`. The first keeps the log honest; without it "these always run" is false on every restart. The second bounds a table nothing else bounds, keeping the rows a Frequency limit counts and a live workflow task's own rows in its current column. If any row was interrupted, ONE summary toast, never one per row.
 
 There is no automatic retry across a restart, ever. A fired webhook and a half-run script are not safe to repeat blind, so the user gets Run again on the row instead.
 

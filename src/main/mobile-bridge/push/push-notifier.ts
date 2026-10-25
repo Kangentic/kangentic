@@ -255,6 +255,11 @@ export interface PushNotifierOptions {
   readTaskPlacement: (projectId: string, taskId: string) => PushTaskPlacement | null;
   /** The device's roster static public key, sealed into every envelope as AAD. Null means "unknown device, skip". */
   getDeviceStaticPublicKey: (deviceId: string) => Uint8Array | null;
+  /**
+   * Is this session a running workflow task's, mid-route? Its idle is its step
+   * check's to report (`notifyWorkflowTask`), so `turn-complete` skips it.
+   */
+  isWorkflowStepSession?: (sessionId: string) => boolean;
   /** Injectable for tests; defaults to the protocol package's sealPushEnvelope. */
   sealEnvelope?: typeof sealPushEnvelope;
   /** Injectable for tests; defaults to the protocol package's sealPushClear. */
@@ -462,6 +467,8 @@ export class PushNotifier {
       this.idleSettleTimers.delete(sessionId);
       const statsSnapshot = this.options.sessionManager.getActivityStatsSnapshot(sessionId);
       if (statsSnapshot?.activity !== 'idle') return;
+      // A running workflow task says itself when it needs the user.
+      if (this.options.isWorkflowStepSession?.(sessionId)) return;
       this.notify(sessionId, 'turn-complete', '');
     }, IDLE_SETTLE_MS);
     settleTimer.unref?.();
@@ -494,6 +501,20 @@ export class PushNotifier {
     const taskContext = this.options.resolveTaskContextByTaskId(taskId);
     if (!taskContext) return;
     this.notifyWithContext(taskContext, taskId, '', 'spawn-stalled', '');
+  }
+
+  /**
+   * A running workflow task needs the user: its agent waits on them, or the
+   * workflow stalled on it (`workflow-recovery.ts`). Sent as `input-required`,
+   * which every phone already shows and opens on the task, so no protocol
+   * release is needed. Cooled down and cleared per task, not per session: the
+   * idle sweep can pause the session after a stall, and its exit must not
+   * clear the notice. A move of the task clears it.
+   */
+  notifyWorkflowTask(input: { projectId: string; taskId: string; taskTitle: string; swimlaneId?: string; detail: string }): void {
+    if (this.disposed) return;
+    const { detail, ...taskContext } = input;
+    this.notifyWithContext(taskContext, `workflow-task:${input.taskId}`, '', 'input-required', detail);
   }
 
   /**
