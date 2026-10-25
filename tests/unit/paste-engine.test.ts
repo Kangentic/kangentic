@@ -62,12 +62,10 @@ class MockSessionManager extends EventEmitter {
   }
 
   emitData(sessionId: string, chunk: string): void {
-    // Mirror the real SessionManager fan-out for a FOCUSED session: the
-    // unconditional 'data-tap' first, then the renderer-gated 'data',
-    // back-to-back for the same bytes (session-manager.ts onFlush). The
-    // engine listens on 'data-tap'; the unfocused test emits it alone.
+    // Mirror the real SessionManager for a tapped session: 'data-tap' is the
+    // only output event main emits. A renderer's bytes go from the pty host
+    // to its own port and never pass through here.
     this.emit('data-tap', sessionId, chunk);
-    this.emit('data', sessionId, chunk);
   }
 
   emitActivity(sessionId: string, activity: string): void {

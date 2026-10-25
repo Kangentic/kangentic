@@ -7,6 +7,7 @@ export interface TranscriptSink {
 // shared transcript formatter can reuse it. Re-exported here to keep the PTY
 // lifecycle import sites (resize-manager, session-id-manager, tests) stable.
 import { stripAnsiEscapes } from '../../../shared/ansi-strip';
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 export { stripAnsiEscapes };
 
 /**
@@ -163,7 +164,9 @@ export class TranscriptWriter {
     const projectId = this.projectBySession.get(sessionId);
     if (!projectId) return;
     try {
-      this.sinkFor(projectId)?.appendChunk(sessionId, chunk);
+      // A synchronous INSERT (and, the first time for a project, its database
+      // open) on the host's terminal thread: labelled for the lag report.
+      timeSyncWork('transcript:flush', () => this.sinkFor(projectId)?.appendChunk(sessionId, chunk));
     } catch (error) {
       // Best effort - don't crash the session if DB write fails
       console.error(`[TranscriptWriter] Failed to flush transcript for ${sessionId.slice(0, 8)}:`, error);

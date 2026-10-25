@@ -62,6 +62,9 @@ export interface HostRoundTripReading {
   armedAt: number | null;
   armedUntil: number;
   now: number;
+  /** `performance.timeOrigin`: the wall clock `at` counts from, to line this
+   *  ring up with the renderer's. */
+  timeOrigin?: number;
   events: HostRoundTripEvent[];
   flushTimers: FlushTimerSample[];
   /** The host's event-loop delay over the armed window, at 1 ms resolution. */
@@ -150,6 +153,7 @@ export function readRoundTripProbe(): HostRoundTripReading {
     armedAt,
     armedUntil,
     now: performance.now(),
+    timeOrigin: performance.timeOrigin,
     events: events.slice(),
     flushTimers: flushTimers.slice(),
     eventLoopDelay,

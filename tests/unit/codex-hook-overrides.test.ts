@@ -349,7 +349,9 @@ describe('readCodexHookTrust', () => {
     vi.advanceTimersByTime(9_999);
     expect(fs.existsSync(scratch)).toBe(true);
     vi.advanceTimersByTime(1);
-    expect(fs.existsSync(scratch)).toBe(false);
+    // The removal runs off main's thread, so it lands after the timer fires.
+    vi.useRealTimers();
+    await expect.poll(() => fs.existsSync(scratch), { timeout: 2000 }).toBe(false);
   });
 });
 

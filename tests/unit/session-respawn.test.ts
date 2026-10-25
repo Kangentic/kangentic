@@ -35,7 +35,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import * as pty from 'node-pty';
-import { SessionManager } from '../../src/main/pty/session-manager';
+import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
+import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
 
 let tmpDir: string;
 
@@ -212,18 +213,16 @@ describe('Session respawn (column transition)', () => {
 
     manager.suspend(firstId);
     const { session: second, feedData } = await spawnForTask('task-9');
+    const rendererPort = createFakeRendererPort();
+    manager.attachRendererPort(SHARED_RENDERER_ID, rendererPort.port);
     // Focus BOTH ids so a leak under the old id would still be caught
-    // (the gate is default-closed and only emits for focused sessions).
+    // (the gate is default-closed and only sends focused sessions' output).
     manager.setFocusedSessions([firstId, second.id]);
-
-    const emissions: Array<{ sessionId: string; data: string }> = [];
-    manager.on('data', (sessionId: string, data: string) => {
-      emissions.push({ sessionId, data });
-    });
 
     feedData('new session output');
     await new Promise((resolve) => setTimeout(resolve, 50));
 
+    const emissions = receivedOutput(rendererPort);
     expect(emissions).toHaveLength(1);
     expect(emissions[0].sessionId).toBe(second.id);
     expect(emissions[0].sessionId).not.toBe(firstId);

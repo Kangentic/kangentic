@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Crash recovery and PTY host
-description: "The project-open recovery pipeline: orphan marking, getInterruptedExited records, per (task, isolated_swimlane_id) dedup, registerSuspendedPlaceholder, restoredGrid, task-locked resumes, the pass scoped to lost sessions after a pty host crash, and what the pty host owns."
+description: "The project-open recovery pipeline: orphan marking, getInterruptedExited records, per (task, isolated_swimlane_id) dedup, registerSuspendedPlaceholder, restoredGrid, task-locked resumes, the pass scoped to lost sessions after a pty host crash, and what the pty host owns (renderer ports, its spawn worker)."
 tags: [sessions, crash-recovery, pty-host, startup]
 sources:
   - resource: src/main/transition-engine/session-startup/index.ts
@@ -17,6 +17,8 @@ sources:
   - resource: src/main/pty/host/pty-host-core.ts
   - resource: src/main/pty/host/protocol.ts
   - resource: src/main/pty/host/pty-host-entry.ts
+  - resource: src/main/pty/host/host-spawn-service.ts
+  - resource: src/main/pty/host/worker-spawn-service.ts
   - resource: src/main/diagnostics/thread-cpu-profile.ts
 ---
 # Crash recovery and PTY host
@@ -77,7 +79,10 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   serialized frame, the phone's seed frame (`getSeedFrame`: that frame, the parser offset it
   covers, and the time its settle and serialize took), raw scrollback, the output peek and
   diagnostics by request.
-- **Which output reaches main.** `data` for the focused union (`setFocused`), `tap` for the
+- **Where output goes.** A renderer's output never reaches main: the host sends each flush on the
+  port of every renderer that shows the session (`setRendererFocus`, kept per renderer), and that
+  renderer's keystrokes come back on the same port (see
+  [Input and echo path](output-streaming.md#input-and-echo-path)). Main gets `tap` for the
   sessions a phone streams (`subscribeDataTap`, reference counted, so a reader that needs raw output
   briefly subscribes for that long; each `tap` chunk carries its cumulative parser offset,
   `endOffset`, and `SessionManager` re-emits it with no focus gate as
@@ -89,20 +94,31 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   PTY is then reported through its own exit listener with
   `PTY_HOST_LOST_EXIT_CODE` (-2), so the session ends exactly as a PTY exit ends it. The renderer and
   the desktop notifier fold those exits into one "Terminals restarted" notice. The host restarts at
-  once (then after 1, 5 and 15 s), main replays its focus and tap sets, and the lost agent sessions
-  resume (see Crash Recovery above). After five crashes the same core runs in main for the rest of
-  the run, which is how terminals ran before the host existed.
+  once (then after 1, 5 and 15 s). Every renderer's port died with the old host, so main issues each
+  a new one (`renderer-ports-lost`), then replays each renderer's focus set and the tap set, and the
+  lost agent sessions resume (see Crash Recovery above). A preload whose port is replaced fails the
+  scrollback requests the old host never answered, which the renderer's existing rejection paths
+  handle. After five crashes the same core runs in main for the rest of the run, which is how
+  terminals ran before the host existed; each renderer's port then ends in main, so only there does
+  typing cross main's loop.
 - **Off-main spawns.** One-shot child processes (`off-main-exec.ts`), the probes' raw PTYs
   (`off-main-pty.ts`), the agent CLIs' headless runs (`off-main-cli.ts`) and the background-shell
   watcher's process table run in the host too, since a Windows spawn's CreateProcess is synchronous
   on the calling thread. A CLI run is a command, so `spawnCli` gets its handle at once; a host crash
   fails a running one (it is never rerun, which would be a second paid answer) and main stops the
   orphaned CLI's tree. At quit both sides stop every run still going: the host in its shutdown, and
-  main by pid, since with no terminal open the quit does not wait for the host. A spawn holds the
-  host's only thread, the one that flushes every terminal, so each is a `timeSyncWork` span that
-  names its program: `cli:spawn:<program>` for a CLI or git run, `exec:spawn:<program>` for a
-  one-shot, `pty:spawn` for a session PTY. On the dogfooding machine `cli:spawn` held it 105 times
-  in 20 hours, for 16 to 291 ms each, several on a 5-minute cadence (2026-10-24).
+  main by pid, since with no terminal open the quit does not wait for the host. A spawn used to
+  hold the host's only thread, the one that flushes every terminal: on the dogfooding machine
+  `cli:spawn` held it 105 times in 20 hours, for 16 to 291 ms each (2026-10-24), and under disk load
+  one git start held it 454 ms. So every one of them now starts on the host's spawn worker
+  (`spawn-worker/`), a `worker_threads` Worker that loads only `node:` built-ins and pure modules,
+  reached through `HostSpawnService`. The worker reports its spans to the host, which relays them
+  as `spawn-worker:<kind>:spawn:<program>:<caller>` (a dev build names the caller), so they still
+  show in a stall report without counting as stalls of the I/O thread. The I/O thread keeps the
+  pin a tree stop needs (`pinRun`). After three worker crashes, or a worker that fails to start,
+  the host starts processes itself again. Only node-pty stays on the I/O thread, since a PTY's
+  handle belongs to the thread that spawned it: `pty:spawn` and `pty:spawnRaw`, 5 to 38 ms under
+  load.
 - **Dev diagnostics.** A dev build's host runs its own event-loop monitor and answers four `dev*`
   requests, which a production host refuses: `devLagReport` (its stalls, delay windows, GC pauses
   and every span per label, which the inspection server's event-loop-lag route serves as

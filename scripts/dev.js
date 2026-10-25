@@ -284,6 +284,12 @@ function buildMainBundles() {
       entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
       outfile: path.join(projectDir, '.vite/build/pty-host.js'),
     }),
+    // The pty host's spawn worker, as in scripts/build.js.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts')],
+      outfile: path.join(projectDir, '.vite/build/pty-host-spawn-worker.js'),
+    }),
   ]);
 }
 

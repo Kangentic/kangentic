@@ -9,9 +9,13 @@
  *   contract: a write posted before a kill lands before it.
  * - Requests, main to host, answered once (`PtyHostRequest`, matched by id).
  * - Events, host to main (`PtyHostEvent`), in the order the host produced them.
- *   A reply and the events around it keep that order too, which is what the
- *   scrollback replay relies on: data flushed before a sample arrives before
- *   the sample's reply.
+ *
+ * A terminal's keystrokes and output do not use it. Each renderer has its own
+ * port to the host (`RendererPort`, `src/shared/pty-port-protocol.ts`), so
+ * typing never waits on main's event loop. A renderer's scrollback request
+ * still comes through main, ordered after the resize main applied first, and
+ * its answer goes out on that renderer's port, after the output flushed before
+ * the sample: the order the replay's held-byte drop relies on.
  *
  * Every field is plain data, because the utility process path structured-clones
  * it. The in-process host used by unit tests passes the same objects by
@@ -23,6 +27,8 @@ import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsage } from
 import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { WriteOrigin } from '../prompt-draft-ledger';
+import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
 
 /** Where and how to spawn one PTY, plus the session state the host keeps. */
@@ -99,6 +105,9 @@ export interface PtyHostCliSpawnParams {
   env: Record<string, string>;
   /** Lead a process group (POSIX), so a stop signals what the CLI started. */
   detached: boolean;
+  /** Dev builds: the main-side code that asked for the run, for the spawn
+   *  span's label (`spawn-caller.ts`). */
+  caller?: string;
 }
 
 export type PtyHostSpawnResult =
@@ -107,8 +116,29 @@ export type PtyHostSpawnResult =
    *  so main can show it with the failure's diagnostic. */
   | { ok: false; error: PtyHostError; previousScrollback: string };
 
+/**
+ * A renderer's direct port to the host (`MessagePortMain`, from main or, in
+ * the utility process, from its parent port). Structural, so the host core
+ * imports nothing of electron.
+ */
+export interface RendererPort {
+  postMessage(message: FromPtyHostPortMessage): void;
+  on(event: 'message', listener: (messageEvent: { data: unknown }) => void): unknown;
+  on(event: 'close', listener: () => void): unknown;
+  start(): void;
+  close(): void;
+}
+
 export type PtyHostCommand =
+  /** Straight to the PTY, ahead of anything queued: the exit sequence, a
+   *  bracketed-paste packet after a `drainWrites`, a probe's keys. */
   | { type: 'write'; ptyId: number; data: string }
+  /** Through the PTY's write queue (4 KB chunks, a bracketed paste kept whole),
+   *  which the renderer's keystrokes share, and into the prompt-draft ledger. */
+  | { type: 'enqueueWrite'; ptyId: number; data: string; origin: WriteOrigin }
+  /** Main took this PTY off its row (a kill, a suspend's end, a respawn): drop
+   *  what a renderer types into it from here on, and anything still queued. */
+  | { type: 'sealUserInput'; ptyId: number }
   /** Reshape the PTY itself (the child sees a SIGWINCH). */
   | { type: 'resizePty'; ptyId: number; cols: number; rows: number }
   /** Reshape the session's headless parser and arm the repaint settle. */
@@ -117,12 +147,14 @@ export type PtyHostCommand =
    *  from reading as new activity. */
   | { type: 'markResized'; sessionId: string }
   | { type: 'kill'; ptyId: number }
-  /** The union of every renderer's visible sessions: only these emit `data`. */
-  | { type: 'setFocused'; sessionIds: string[] }
-  /** Sessions a phone streams: these emit `tap` for every flushed byte. */
+  /** One renderer's visible sessions: their output goes to that renderer's
+   *  port. The union of every renderer's set gates the flush. */
+  | { type: 'setRendererFocus'; rendererId: number; sessionIds: string[] }
+  /** The renderer is gone: drop its port and its visible set. */
+  | { type: 'forgetRenderer'; rendererId: number }
+  /** Sessions a phone streams: these emit `tap` for every flushed byte. A
+   *  renderer acknowledges what it consumed on its own port (`ack`). */
   | { type: 'setTapped'; sessionIds: string[] }
-  /** The renderer consumed this many characters of a session's output. */
-  | { type: 'ack'; sessionId: string; bytes: number }
   /** Forget these sessions' in-flight accounting and resume their PTYs. */
   | { type: 'releaseBackpressure'; sessionIds: string[] }
   /** The session's activity changed; the host's redraw filter reads it. */
@@ -181,13 +213,17 @@ export interface HostExecOptions {
   timeout?: number;
   maxBuffer?: number;
   windowsHide?: boolean;
+  /** What a run past its `timeout` is sent; SIGTERM by default. */
+  killSignal?: NodeJS.Signals;
 }
 
 /** A one-shot child process for the host to run: `exec` through a shell, or
- *  `execFile` without one, as `node:child_process` names them. */
+ *  `execFile` without one, as `node:child_process` names them. `caller`, in
+ *  dev builds, names the main-side code that asked, for the spawn span's
+ *  label (`spawn-caller.ts`). */
 export type HostExecRequest =
-  | { kind: 'exec'; command: string; options: HostExecOptions }
-  | { kind: 'execFile'; file: string; args: string[]; options: HostExecOptions };
+  | { kind: 'exec'; command: string; options: HostExecOptions; caller?: string }
+  | { kind: 'execFile'; file: string; args: string[]; options: HostExecOptions; caller?: string };
 
 /** A failed run, with what `promisify(exec)` attaches to its rejection. */
 export interface HostExecFailure extends PtyHostError {
@@ -239,6 +275,15 @@ export interface PtyHostRequestMap {
   /** The desktop replay. `settle` waits for a pending resize's repaint first,
    *  which only a live PTY can deliver. */
   getScrollback: { params: { sessionId: string; settle: boolean }; result: string };
+  /** The same replay for a renderer, answered on that renderer's port after
+   *  the output flushed before the sample (`sentToPort`), or here when the
+   *  host holds no port for it. */
+  getScrollbackForRenderer: {
+    params: { sessionId: string; settle: boolean; rendererId: number; requestId: number };
+    result: ScrollbackInvokeResult;
+  };
+  /** Resolve once the PTY's write queue has written everything queued so far. */
+  drainWrites: { params: { ptyId: number }; result: true };
   /** The parsed-grid frame, with the same settle (the prompt-options probe). */
   getSerializedFrame: { params: { sessionId: string; settle: boolean }; result: string };
   /** The phone's seed frame, with the same settle (see SeedFrameResult).
@@ -303,8 +348,10 @@ export interface PtyHostRequest<M extends PtyHostMethod = PtyHostMethod> {
 
 export type PtyHostEvent =
   | { type: 'exit'; ptyId: number; sessionId: string; exitCode: number }
-  /** Output for a focused session, in flush-sized slices. */
-  | { type: 'data'; sessionId: string; data: string }
+  /** The session's unsent prompt text changed (`PromptDraftLedger`, kept here
+   *  because every write reaches the PTY here, in the order the PTY gets it).
+   *  Null once the prompt looks empty. Main mirrors it for `getPendingDraft`. */
+  | { type: 'promptDraft'; sessionId: string; draft: string | null }
   /** Output for a tapped session: every flushed slice, and the bytes a replay
    *  sample drained before they could flush. `endOffset` is the cumulative
    *  parser offset just past `data` (compare getSeedFrame's barrierOffset). */
@@ -351,10 +398,21 @@ export interface PtyHostInitMessage {
   /** Main's executable, so the host refuses to launch it too: on macOS the
    *  host runs from the Helper bundle, whose `execPath` is not the app's. */
   mainExecutable?: string;
+  /** The spawn worker's bundle (`pty-host-spawn-worker.js`, unpacked in a
+   *  packaged build), resolved by main: the host cannot import `electron`, and
+   *  on macOS it runs from inside the asar. */
+  spawnWorkerPath?: string;
+}
+
+/** A renderer's port, transferred with this message (`MessagePortMain`). The
+ *  in-process host takes the port as an argument instead. */
+export interface PtyHostAttachRendererPortMessage {
+  type: 'attachRendererPort';
+  rendererId: number;
 }
 
 /** Everything main sends the utility process. */
-export type ToPtyHostMessage = PtyHostInitMessage | PtyHostCommand | PtyHostRequest;
+export type ToPtyHostMessage = PtyHostInitMessage | PtyHostCommand | PtyHostRequest | PtyHostAttachRendererPortMessage;
 
 /** Everything the utility process sends main. */
 export type FromPtyHostMessage =

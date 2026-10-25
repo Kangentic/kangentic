@@ -59,7 +59,7 @@ export class HostCliProcesses {
     try {
       // Labelled: this is the cost moved here from main, paid on the thread
       // that also carries terminal output. The label names the program.
-      child = timeSyncWork(spawnSpanLabel('cli', executable), () => this.spawnChild(params.command, params.args, {
+      child = timeSyncWork(spawnSpanLabel('cli', executable, process.platform, params.caller), () => this.spawnChild(params.command, params.args, {
         cwd: params.cwd,
         shell: params.shell,
         windowsHide: true,

@@ -376,18 +376,12 @@ export class FakeTui {
 export interface SimulatedSessionManagerOptions {
   /** Extra latency before enqueued bytes reach the TUI. Models a busy queue. */
   writeQueueDelayMs?: number;
-  /** Whether the session is renderer-focused, gating the `'data'` event. */
-  focused?: boolean;
 }
 
 /**
  * Stands in for `SessionManager` on the seams `TerminalSubmit` uses: `write`,
- * `drain`, and the `'data'` / `'data-tap'` events.
- *
- * `'data'` is emitted only when `focused` is true, mirroring the real
- * `focusedSessionIds` gate; `'data-tap'` always fires. The rig defaults to
- * unfocused because that is the normal case for auto_command injection - the
- * task being dragged is usually not the terminal on screen.
+ * `drain`, and the `'data-tap'` event, the only output event main emits (a
+ * renderer's bytes go from the pty host to its own port).
  */
 export class SimulatedSessionManager extends EventEmitter {
   readonly writes: string[] = [];
@@ -397,7 +391,6 @@ export class SimulatedSessionManager extends EventEmitter {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private drainWaiters: Array<() => void> = [];
   private readonly writeQueueDelayMs: number;
-  private readonly focused: boolean;
 
   constructor(
     readonly sessionId: string,
@@ -406,10 +399,8 @@ export class SimulatedSessionManager extends EventEmitter {
   ) {
     super();
     this.writeQueueDelayMs = options.writeQueueDelayMs ?? 0;
-    this.focused = options.focused ?? false;
     this.tui = new FakeTui(tuiOptions, (data) => {
       this.emit('data-tap', this.sessionId, data);
-      if (this.focused) this.emit('data', this.sessionId, data);
     });
   }
 

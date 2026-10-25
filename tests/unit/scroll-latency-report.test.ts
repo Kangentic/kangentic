@@ -45,7 +45,7 @@ function threeAnsweredReports(): { renderer: RendererRoundTripEvent[]; host: Hos
 
 describe('latencyStats', () => {
   it('reports nulls for no samples', () => {
-    expect(latencyStats([])).toEqual({ count: 0, p50Ms: null, p95Ms: null, maxMs: null, meanMs: null });
+    expect(latencyStats([])).toEqual({ count: 0, p50Ms: null, p95Ms: null, p99Ms: null, maxMs: null, meanMs: null });
   });
 
   it('reads percentiles off the sorted samples', () => {
@@ -54,6 +54,14 @@ describe('latencyStats', () => {
     expect(stats.p50Ms).toBe(30);
     expect(stats.maxMs).toBe(40);
     expect(stats.meanMs).toBe(25);
+  });
+
+  it('reads p99 apart from the max once there are enough samples', () => {
+    // 1..200: the 99th percentile by nearest rank is the 199th sample.
+    const stats = latencyStats(Array.from({ length: 200 }, (_, index) => index + 1));
+    expect(stats.p95Ms).toBe(191);
+    expect(stats.p99Ms).toBe(199);
+    expect(stats.maxMs).toBe(200);
   });
 });
 
@@ -76,10 +84,10 @@ describe('buildScrollLatencyReport', () => {
     expect(session.host?.firstOutputToFlush.p50Ms).toBe(16);
     expect(session.host?.writeToFlush.p50Ms).toBe(56);
     // 60 ms seen by the renderer, 56 of it inside the host.
-    expect(session.ipcAndMain?.p50Ms).toBe(4);
+    expect(session.transport?.p50Ms).toBe(4);
     expect(session.breakdownMs).toEqual({
       pacedQueue: 5,
-      ipcAndMain: 4,
+      transport: 4,
       agent: 40,
       hostFlushWait: 16,
       rendererParse: 2,
@@ -120,11 +128,26 @@ describe('buildScrollLatencyReport', () => {
     expect(report.sessions[0].host?.agentResponse.p50Ms).toBe(40);
   });
 
+  it('splits the transport into its two hops once both rings say where their clocks start', () => {
+    const { renderer, host } = threeAnsweredReports();
+    // The host's 5000 is the renderer's 1001: each input takes 1 ms to reach
+    // the host, and each answer 3 ms back (60 seen, 56 inside the host).
+    const rendererWithOrigin = { ...rendererReading(renderer), timeOrigin: 1_700_000_003_999 };
+    const hostWithOrigin = { ...hostReading(host), timeOrigin: 1_700_000_000_000 };
+    const session = buildScrollLatencyReport(rendererWithOrigin, hostWithOrigin).sessions[0];
+    expect(session.transportLegs?.toHost.p50Ms).toBe(1);
+    expect(session.transportLegs?.toRenderer.p50Ms).toBe(3);
+    expect(session.transport?.p50Ms).toBe(4);
+
+    // Without the origins nothing joins across the clocks but the order.
+    expect(buildScrollLatencyReport(rendererReading(renderer), hostReading(host)).sessions[0].transportLegs).toBeNull();
+  });
+
   it('says why it cannot pair when the two sides saw different report counts', () => {
     const { renderer, host } = threeAnsweredReports();
     const report = buildScrollLatencyReport(rendererReading(renderer), hostReading(host.slice(3)));
     expect(report.sessions[0].pairing).toBe('unpaired: the renderer sent 3 inputs and the host wrote 2');
-    expect(report.sessions[0].ipcAndMain).toBeNull();
+    expect(report.sessions[0].transport).toBeNull();
     expect(report.sessions[0].breakdownMs.agent).toBe(40);
   });
 
@@ -233,9 +256,35 @@ describe('buildScrollLatencyReport', () => {
     ];
     const report = buildScrollLatencyReport(rendererReading(renderer), hostReading(host));
     expect(report.streams).toEqual([
-      { sessionId: OTHER_SESSION, hostFlushes: 2, hostFlushChars: 120, hostPauses: 1, rendererArrivals: 1, rendererChars: 120 },
-      { sessionId: SESSION, hostFlushes: 1, hostFlushChars: 100, hostPauses: 0, rendererArrivals: 0, rendererChars: 0 },
+      {
+        sessionId: OTHER_SESSION, hostFlushes: 2, hostFlushChars: 120, hostPauses: 1, rendererArrivals: 1, rendererChars: 120,
+        hostMaxFlushGapMs: 1, rendererMaxArrivalGapMs: null,
+      },
+      {
+        sessionId: SESSION, hostFlushes: 1, hostFlushChars: 100, hostPauses: 0, rendererArrivals: 0, rendererChars: 0,
+        hostMaxFlushGapMs: null, rendererMaxArrivalGapMs: null,
+      },
     ]);
+  });
+
+  it('names the terminal that froze by its longest gap between arrivals', () => {
+    // Two sessions repainting every 50 ms; the second stops arriving for 800 ms
+    // in the renderer while the host kept flushing it.
+    const host: HostRoundTripEvent[] = [];
+    const renderer: RendererRoundTripEvent[] = [];
+    for (let tick = 0; tick < 40; tick++) {
+      const at = tick * 50;
+      host.push({ at, sessionId: SESSION, stage: 'flush', chars: 10 });
+      host.push({ at, sessionId: OTHER_SESSION, stage: 'flush', chars: 10 });
+      renderer.push({ at: at + 2, sessionId: SESSION, stage: 'arrive', chars: 10 });
+      if (at < 500 || at >= 1300) renderer.push({ at: at + 2, sessionId: OTHER_SESSION, stage: 'arrive', chars: 10 });
+    }
+    const streams = buildScrollLatencyReport(rendererReading(renderer), hostReading(host)).streams;
+    const steady = streams.find((stream) => stream.sessionId === SESSION);
+    const frozen = streams.find((stream) => stream.sessionId === OTHER_SESSION);
+    expect(steady?.rendererMaxArrivalGapMs).toBe(50);
+    expect(frozen?.hostMaxFlushGapMs).toBe(50);
+    expect(frozen?.rendererMaxArrivalGapMs).toBe(850);
   });
 
   it('reports how late the flush timer fired, apart from the prompt flushes', () => {

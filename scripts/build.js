@@ -616,9 +616,17 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/pty/host/pty-host-entry.ts')],
       outfile: path.join(projectDir, '.vite/build/pty-host.js'),
     },
+    // The pty host's spawn worker (a worker thread inside the host): every
+    // child process the host starts, off the thread that carries terminal I/O.
+    // It loads only node: built-ins, so it bundles whole.
+    {
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts')],
+      outfile: path.join(projectDir, '.vite/build/pty-host-spawn-worker.js'),
+    },
   ];
   await runEsbuildBundles(bundleOptions, (options) => esbuild.build(options), { sequential: uploadSourcemaps });
-  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
+  console.log('[build] Main + preload + embed, line-count, dictation and retrieval workers, the pty host and its spawn worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

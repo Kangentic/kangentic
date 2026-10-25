@@ -57,7 +57,6 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_GET_TOOL_RESULT_TOKENS',
   // Session by-session-id / global / transient (separate ephemeral lifecycle)
   'SESSION_KILL',
-  'SESSION_WRITE',
   'SESSION_RESIZE',
   'SESSION_SET_FOCUSED',
   // By-session-id, per-renderer, no project semantics: the whole-set replace

@@ -18,6 +18,10 @@ import * as esbuild from 'esbuild';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const HOST_ENTRY = 'src/main/pty/host/pty-host-entry.ts';
 const HOST_OUTPUT = '.vite/build/pty-host.js';
+const SPAWN_WORKER_ENTRY = 'src/main/pty/host/spawn-worker/spawn-worker-entry.ts';
+const SPAWN_WORKER_OUTPUT = '.vite/build/pty-host-spawn-worker.js';
+/** Imports the spawn worker's graph must not hold. */
+const NATIVE_OR_MAIN_ONLY = new Set(['electron', 'koffi', 'node-pty', 'better-sqlite3', 'sherpa-onnx-node']);
 
 function readEsbuildExternals(): string[] {
   const buildSource = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'build.js'), 'utf-8');
@@ -103,6 +107,69 @@ describe('pty host out-of-process boundary', () => {
       expect(inputNames.some((input) => input.endsWith('src/main/pty/host/pty-host-core.ts'))).toBe(true);
       expect(inputNames.some((input) => input.endsWith('src/main/pty/buffer/pty-buffer-manager.ts'))).toBe(true);
     }
+  }, 60_000);
+
+  it('builds the spawn worker as its own entry in both build.js and dev.js', () => {
+    for (const scriptName of ['build.js', 'dev.js']) {
+      const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', scriptName), 'utf-8');
+      expect(source, `scripts/${scriptName} must build ${SPAWN_WORKER_ENTRY} as its own entry`).toContain(SPAWN_WORKER_ENTRY);
+      expect(source, `scripts/${scriptName} must output ${SPAWN_WORKER_OUTPUT}`).toContain(SPAWN_WORKER_OUTPUT);
+    }
+    const builderConfig = fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf-8');
+    expect(builderConfig, 'A worker thread loads its file with Node\'s own loader: unpack it').toContain(`- "${SPAWN_WORKER_OUTPUT}"`);
+  });
+
+  it('keeps native modules, electron and main-only code out of the spawn worker', async () => {
+    // A native module is unsafe in a worker thread (retrieval-out-of-process.md):
+    // koffi stays on the terminal thread, which pins pids for the worker.
+    for (const devBuild of [false, true]) {
+      const inputs = await bundleInputs(SPAWN_WORKER_ENTRY, devBuild);
+      const offenders: string[] = [];
+      for (const [input, info] of Object.entries(inputs)) {
+        const normalized = input.replace(/\\/g, '/');
+        if (/src\/main\/(analytics|ipc|pop-out|retrieval)\//.test(normalized)) offenders.push(`${normalized} (main-only module)`);
+        if (/src\/devtools\//.test(normalized)) offenders.push(`${normalized} (dev tooling)`);
+        for (const imported of info.imports) {
+          if (NATIVE_OR_MAIN_ONLY.has(imported.path)) offenders.push(`${normalized} imports ${imported.path}`);
+        }
+      }
+      expect(offenders, `The spawn worker's ${devBuild ? 'dev' : 'production'} graph:\n${offenders.join('\n')}`).toEqual([]);
+      const inputNames = Object.keys(inputs).map((input) => input.replace(/\\/g, '/'));
+      expect(inputNames.some((input) => input.endsWith('src/main/pty/host/host-cli-processes.ts'))).toBe(true);
+      expect(inputNames.some((input) => input.endsWith('src/main/pty/host/host-exec.ts'))).toBe(true);
+    }
+  }, 60_000);
+
+  it('starts no process on the terminal thread: every child_process importer in the host is classified', async () => {
+    // The utility host runs every process start on its spawn worker
+    // (WorkerSpawnService). A module in the host's graph that imports
+    // child_process is a start that could land on the thread carrying terminal
+    // I/O, so each one is here with the reason it never does.
+    // `tests/unit/pty-host-spawn-worker.test.ts` runs real children through the
+    // core and counts the starts on its thread.
+    const classified: Record<string, string> = {
+      'src/main/utility-process/off-main-exec.ts': 'bundled with the agent registry the host reads parsers from; runs only in main',
+      'src/main/agent/shared/cli-print.ts': 'bundled with the agent registry the host reads parsers from; runs only in main',
+      'src/main/pty/host/host-exec.ts': 'LocalSpawnService (the in-process core) and the spawn worker',
+      'src/main/pty/host/host-cli-processes.ts': 'LocalSpawnService (the in-process core) and the spawn worker',
+      'src/main/activity-engine/background-shell/process-tree.ts': 'LocalSpawnService\'s probe; the utility host lists through the worker',
+      'src/main/shared/child-tree-stop.ts': 'host-cli-processes, and a by-pid stop of a run a dead worker left',
+      'src/main/pty/process-tag/darwin-reader.ts': 'runTool\'s default; the utility host passes runToolThrough(the spawn service)',
+    };
+    for (const devBuild of [false, true]) {
+      const inputs = await bundleInputs(HOST_ENTRY, devBuild);
+      const unclassified: string[] = [];
+      for (const [input, info] of Object.entries(inputs)) {
+        const normalized = input.replace(/\\/g, '/');
+        if (!info.imports.some((imported) => /^(node:)?child_process$/.test(imported.path))) continue;
+        if (!Object.keys(classified).some((file) => normalized.endsWith(file))) unclassified.push(normalized);
+      }
+      expect(unclassified, 'Route a new process start through the spawn service, or classify it here with the reason').toEqual([]);
+    }
+    const entry = fs.readFileSync(path.join(REPO_ROOT, HOST_ENTRY), 'utf-8');
+    expect(entry, 'The utility host hands the core the worker-backed spawn service').toMatch(/createSpawnService:\s*\(hooks\)\s*=>\s*\{\s*spawnService = createSpawnService\(message, hooks\)/);
+    expect(entry).toMatch(/new WorkerSpawnService\(/);
+    expect(entry, 'macOS runs lsappinfo through the spawn service').toMatch(/runTool:\s*runToolThrough\(/);
   }, 60_000);
 
   it('forks the utility host only from register-all.ts, and runs the core in main only as the fallback', () => {

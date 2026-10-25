@@ -28,6 +28,13 @@
  * suspect that is not wrapped yet. Recording is skipped entirely while the
  * monitor is not running, so a production build pays one boolean check.
  *
+ * Spans another process relays here (`pty-host:*`, `worker:*`) never held this
+ * loop, so they go to a ring of their own, `recentRelayedSlowSyncWork`: in the
+ * shared ring a busy host's 16 ms spans evicted main's own within minutes. Any
+ * span of `LONG_SYNC_THRESHOLD_MS` or more, from either source, is also kept in
+ * `recentLongSyncWork`, so a multi-second stall stays attributable long after
+ * the 16 ms ones around it have rotated out.
+ *
  * The rings hold the latest few; the counters beside them hold everything.
  * `syncWorkByLabel` counts every span per label, with its total, its worst and
  * how many reached each of `DURATION_EDGES_MS`, and `lagAtLeastMs` does the same
@@ -114,8 +121,16 @@ export interface EventLoopLagReport {
   recentSpikes: EventLoopLagSpike[];
   /** Spans wrapped in `timeSyncWork` had to reach this many ms to be recorded. */
   slowSyncThresholdMs: number;
-  /** The most recent slow synchronous spans (bounded ring, newest last). */
+  /** The most recent slow synchronous spans of this process (bounded ring, newest last). */
   recentSlowSyncWork: SlowSyncWork[];
+  /** The most recent slow spans other processes relayed here, labelled by
+   *  their source (bounded ring, newest last). */
+  recentRelayedSlowSyncWork: SlowSyncWork[];
+  /** Spans had to reach this many ms to be kept in `recentLongSyncWork`. */
+  longSyncThresholdMs: number;
+  /** The most recent long spans from this process and relayed ones alike
+   *  (bounded ring, newest last). */
+  recentLongSyncWork: SlowSyncWork[];
   /** Every timed span since start, per label. */
   syncWorkByLabel: Record<string, SyncWorkStats>;
   /** Samples whose lag reached each edge in `DURATION_EDGES_MS`, keyed by the edge. */
@@ -138,6 +153,9 @@ const RING_SIZE = 120;
 /** One frame at 60 Hz: a span this long already drops a frame's worth of input. */
 const SLOW_SYNC_THRESHOLD_MS = 16;
 const SLOW_SYNC_RING_SIZE = 200;
+/** A span this long froze typing for a user who was watching. */
+const LONG_SYNC_THRESHOLD_MS = 100;
+const LONG_SYNC_RING_SIZE = 100;
 const DURATION_EDGES_MS = [4, 8, 16, 32, 64, 128, 256] as const;
 export const DELAY_RESOLUTION_MS = 1;
 const DELAY_WINDOW_MS = 10_000;
@@ -171,6 +189,8 @@ let maxLagMs = 0;
 let spikeCount = 0;
 const recentSpikes: EventLoopLagSpike[] = [];
 const recentSlowSyncWork: SlowSyncWork[] = [];
+const recentRelayedSlowSyncWork: SlowSyncWork[] = [];
+const recentLongSyncWork: SlowSyncWork[] = [];
 const syncWorkByLabel = new Map<string, SyncWorkStats>();
 /** Where a process with no monitor of its own sends its slow spans (see `relaySlowSyncSpans`). */
 let spanRelay: ((label: string, elapsedMs: number) => void) | null = null;
@@ -185,8 +205,13 @@ let gcObserver: PerformanceObserver | null = null;
 const recentDelayWindows: DelayWindow[] = [];
 const delayWindowMaxAtLeastMs = emptyEdgeCounts();
 
-/** Count one span under its label, and keep it in the ring when it is slow. */
-function recordSpan(label: string, elapsed: number): void {
+function pushBounded(ring: SlowSyncWork[], span: SlowSyncWork, size: number): void {
+  ring.push(span);
+  while (ring.length > size) ring.shift();
+}
+
+/** Count one span under its label, and keep it in `ring` when it is slow. */
+function recordSpan(label: string, elapsed: number, ring: SlowSyncWork[] = recentSlowSyncWork): void {
   let stats = syncWorkByLabel.get(label);
   if (!stats) {
     stats = { count: 0, totalMs: 0, maxMs: 0, atLeastMs: emptyEdgeCounts() };
@@ -196,10 +221,20 @@ function recordSpan(label: string, elapsed: number): void {
   stats.totalMs += elapsed;
   if (elapsed > stats.maxMs) stats.maxMs = elapsed;
   countEdges(stats.atLeastMs, elapsed);
-  if (elapsed >= SLOW_SYNC_THRESHOLD_MS) {
-    recentSlowSyncWork.push({ at: new Date().toISOString(), label, ms: Math.round(elapsed) });
-    while (recentSlowSyncWork.length > SLOW_SYNC_RING_SIZE) recentSlowSyncWork.shift();
-  }
+  if (elapsed < SLOW_SYNC_THRESHOLD_MS) return;
+  const span = { at: new Date().toISOString(), label, ms: Math.round(elapsed) };
+  pushBounded(ring, span, SLOW_SYNC_RING_SIZE);
+  if (elapsed >= LONG_SYNC_THRESHOLD_MS) pushBounded(recentLongSyncWork, span, LONG_SYNC_RING_SIZE);
+}
+
+/**
+ * Count a slow span another process measured on its own thread and relayed
+ * here (`label` carries its source, `pty-host:` or `worker:`). It goes to the
+ * relayed ring, never to this process's own, since it never held this loop.
+ */
+export function recordRelayedSyncSpan(label: string, elapsedMs: number): void {
+  if (timer === null) return;
+  recordSpan(label, elapsedMs, recentRelayedSlowSyncWork);
 }
 
 /**
@@ -387,6 +422,9 @@ export function getEventLoopLagReport(): EventLoopLagReport {
     recentSpikes: [...recentSpikes],
     slowSyncThresholdMs: SLOW_SYNC_THRESHOLD_MS,
     recentSlowSyncWork: [...recentSlowSyncWork],
+    recentRelayedSlowSyncWork: [...recentRelayedSlowSyncWork],
+    longSyncThresholdMs: LONG_SYNC_THRESHOLD_MS,
+    recentLongSyncWork: [...recentLongSyncWork],
     syncWorkByLabel: getSyncWorkByLabel(),
     lagAtLeastMs: { ...lagAtLeastMs },
     delayResolutionMs: DELAY_RESOLUTION_MS,

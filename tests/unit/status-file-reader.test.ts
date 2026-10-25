@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   StatusFileReader,
+  resetStatusFiles,
+  type StatusFileAttachOptions,
   type StatusFileReaderCallbacks,
   type StatusFileHook,
 } from '../../src/main/pty/readers/status-file-reader';
@@ -102,6 +104,16 @@ describe('StatusFileReader', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
+  /** What a spawn does: `performSpawn` empties both files (resetStatusFiles)
+   *  before the agent starts, then attaches. Done synchronously here so a
+   *  test's own writes land after it. */
+  function attachAfterReset(options: StatusFileAttachOptions): void {
+    for (const filePath of [options.statusOutputPath, options.eventsOutputPath]) {
+      if (filePath) fs.writeFileSync(filePath, '');
+    }
+    reader.attach(options);
+  }
+
   // ---------------------------------------------------------------------------
   // attach / detach lifecycle
   // ---------------------------------------------------------------------------
@@ -115,16 +127,16 @@ describe('StatusFileReader', () => {
       parseStatus: () => expectedUsage,
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
       statusFileHook: parser,
     });
 
-    // WAIT: attach() truncates stale status.json on setup, then the watcher
-    // triggers an initial read of the (now-empty) file. So we need to
-    // re-write content AFTER attach.
+    // The spawn's reset emptied the stale status.json before the attach, and
+    // the watcher triggers an initial read of the (now-empty) file. So we
+    // need to re-write content AFTER attach.
     fs.writeFileSync(statusPath, '{"fresh":"data"}');
 
     // Trigger flush to read it synchronously (the real reader has
@@ -138,59 +150,62 @@ describe('StatusFileReader', () => {
     expect(reader.isAttached('session-1')).toBe(true);
   });
 
-  it('truncates stale status.json on attach so the watcher does not emit cached data', () => {
+  it('resetStatusFiles empties a stale status.json and events.jsonl, and creates a missing one', async () => {
     const statusPath = path.join(tempDir, 'status.json');
+    const eventsPath = path.join(tempDir, 'events.jsonl');
     fs.writeFileSync(statusPath, '{"stale":"prev-run"}');
 
-    const parser = makeStubStatusFileHook({
-      parseStatus: (raw) => {
-        if (raw.includes('stale')) {
-          throw new Error('should never parse stale content');
-        }
-        return null;
-      },
-    });
+    await resetStatusFiles(statusPath, eventsPath);
+
+    // Truncated, not unlinked: an existing file is what puts FileWatcher on
+    // the FILE instead of falling back to watching the session DIRECTORY,
+    // which is the arm that spins a CPU core on Windows once it is deleted.
+    expect(fs.readFileSync(statusPath, 'utf-8')).toBe('');
+    expect(fs.readFileSync(eventsPath, 'utf-8')).toBe('');
+  });
+
+  it('resetStatusFiles skips a path whose directory is missing and still empties the other', async () => {
+    const statusPath = path.join(tempDir, 'gone', 'status.json');
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '{"old":"event"}\n');
+
+    await expect(resetStatusFiles(statusPath, eventsPath)).resolves.toBeUndefined();
+
+    expect(fs.existsSync(statusPath)).toBe(false);
+    expect(fs.readFileSync(eventsPath, 'utf-8')).toBe('');
+  });
+
+  it('attach writes nothing, so lines the agent wrote before it are dispatched', async () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    await resetStatusFiles(statusPath, eventsPath);
+    // The agent started before the reader attached and has already written.
+    fs.writeFileSync(statusPath, '{"early":"status"}');
+    fs.writeFileSync(eventsPath, `${REAL_TOOL_START_LINE}\n`);
+    const expectedUsage = makeUsage(4321);
 
     reader.attach({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
-      eventsOutputPath: null,
-      statusFileHook: parser,
-    });
-
-    // File should exist but be empty, mirroring events.jsonl below. The stub
-    // parser above throws on stale content, so an empty read is what keeps
-    // this green. Truncating rather than unlinking is what puts FileWatcher on
-    // the FILE instead of falling back to watching the session DIRECTORY,
-    // which is the arm that spins a CPU core on Windows once it is deleted.
-    expect(fs.existsSync(statusPath)).toBe(true);
-    expect(fs.readFileSync(statusPath, 'utf-8')).toBe('');
-  });
-
-  it('truncates stale events.jsonl on attach', () => {
-    const eventsPath = path.join(tempDir, 'events.jsonl');
-    fs.writeFileSync(eventsPath, '{"old":"event"}\n{"also":"old"}\n');
-
-    const parser = makeStubStatusFileHook({});
-
-    reader.attach({
-      sessionId: 'session-1',
-      statusOutputPath: null,
       eventsOutputPath: eventsPath,
-      statusFileHook: parser,
+      statusFileHook: makeStubStatusFileHook({
+        parseStatus: (raw) => (raw.includes('early') ? expectedUsage : null),
+      }),
     });
 
-    // File should exist but be empty.
-    expect(fs.existsSync(eventsPath)).toBe(true);
-    expect(fs.readFileSync(eventsPath, 'utf-8')).toBe('');
+    expect(fs.readFileSync(statusPath, 'utf-8')).toBe('{"early":"status"}');
+    expect(fs.readFileSync(eventsPath, 'utf-8')).toBe(`${REAL_TOOL_START_LINE}\n`);
+    await vi.waitFor(() => expect(callbacks.onUsageParsed).toHaveBeenCalledWith('session-1', expectedUsage));
+    reader.flushPendingEvents('session-1');
+    const rawLines = (callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls.flatMap((call) => call[1] as string[]);
+    expect(rawLines).toEqual([REAL_TOOL_START_LINE]);
   });
 
   it('detach closes watchers and deletes files', () => {
     const statusPath = path.join(tempDir, 'status.json');
     const eventsPath = path.join(tempDir, 'events.jsonl');
-    fs.writeFileSync(eventsPath, ''); // attach will truncate anyway
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: eventsPath,
@@ -212,7 +227,7 @@ describe('StatusFileReader', () => {
     const statusPath = path.join(tempDir, 'status.json');
     const eventsPath = path.join(tempDir, 'events.jsonl');
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: eventsPath,
@@ -236,13 +251,13 @@ describe('StatusFileReader', () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({});
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
       statusFileHook: parser,
     });
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
@@ -259,7 +274,7 @@ describe('StatusFileReader', () => {
   });
 
   it('no-op attach when both paths are null', () => {
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: null,
@@ -280,7 +295,7 @@ describe('StatusFileReader', () => {
       parseStatus: () => expectedUsage,
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: eventsPath,
@@ -306,7 +321,7 @@ describe('StatusFileReader', () => {
     const parser = makeStubStatusFileHook({ parseStatus });
     const reads = watchStatusReads();
     try {
-      reader.attach({
+      attachAfterReset({
         sessionId: 'session-1',
         statusOutputPath: statusPath,
         eventsOutputPath: null,
@@ -333,7 +348,7 @@ describe('StatusFileReader', () => {
     const statusPath = path.join(tempDir, 'status.json');
     const reads = watchStatusReads();
     try {
-      reader.attach({
+      attachAfterReset({
         sessionId: 'session-1',
         statusOutputPath: statusPath,
         eventsOutputPath: null,
@@ -365,7 +380,7 @@ describe('StatusFileReader', () => {
   it('fires onFirstStatus exactly once across multiple status writes, after onUsageParsed', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
@@ -395,7 +410,7 @@ describe('StatusFileReader', () => {
     const parseStatus = vi.fn((): SessionUsage | null => null);
     const reads = watchStatusReads();
     try {
-      reader.attach({
+      attachAfterReset({
         sessionId: 'session-1',
         statusOutputPath: statusPath,
         eventsOutputPath: null,
@@ -418,7 +433,7 @@ describe('StatusFileReader', () => {
   it('hasReceivedStatus flips true after the first parse and resets on re-attach', async () => {
     const statusPath = path.join(tempDir, 'status.json');
     const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
@@ -435,7 +450,7 @@ describe('StatusFileReader', () => {
     // Detach clears state; a fresh attach starts un-delivered.
     reader.detach('session-1');
     expect(reader.hasReceivedStatus('session-1')).toBe(false);
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusPath,
       eventsOutputPath: null,
@@ -457,7 +472,7 @@ describe('StatusFileReader', () => {
       },
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -490,7 +505,7 @@ describe('StatusFileReader', () => {
       parseEvent: (line) => ({ ts: 1, type: EventType.Prompt, detail: line } as SessionEvent),
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -518,7 +533,7 @@ describe('StatusFileReader', () => {
       parseEvent: (line) => ({ ts: 1, type: EventType.Prompt, detail: line } as SessionEvent),
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -546,7 +561,7 @@ describe('StatusFileReader', () => {
       },
     });
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -573,7 +588,7 @@ describe('StatusFileReader', () => {
     // populated - exactly what captureHookSessionIds needs).
     const eventsPath = path.join(tempDir, 'events.jsonl');
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -602,15 +617,15 @@ describe('StatusFileReader', () => {
 
   it('flushPendingEvents is idempotent on empty files', () => {
     const eventsPath = path.join(tempDir, 'events.jsonl');
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
       statusFileHook: makeStubStatusFileHook({}),
     });
 
-    // Reader already truncated events.jsonl on attach. Flushing should
-    // be a no-op.
+    // The spawn's reset emptied events.jsonl before the attach. Flushing
+    // should be a no-op.
     reader.flushPendingEvents('session-1');
     reader.flushPendingEvents('session-1');
 
@@ -623,7 +638,7 @@ describe('StatusFileReader', () => {
 
   it('an exit flush during an asynchronous events read dispatches each line once, in order', async () => {
     const eventsPath = path.join(tempDir, 'events.jsonl');
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -664,7 +679,7 @@ describe('StatusFileReader', () => {
     fs.mkdirSync(sessionDir, { recursive: true });
     const eventsPath = path.join(sessionDir, 'events.jsonl');
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -711,7 +726,7 @@ describe('StatusFileReader', () => {
 
   it('repairMissingEventsDir is a no-op when the directory still exists', () => {
     const eventsPath = path.join(tempDir, 'events.jsonl');
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: null,
       eventsOutputPath: eventsPath,
@@ -742,13 +757,13 @@ describe('StatusFileReader', () => {
     const statusB = path.join(tempDir, 'b-status.json');
     const eventsB = path.join(tempDir, 'b-events.jsonl');
 
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-1',
       statusOutputPath: statusA,
       eventsOutputPath: eventsA,
       statusFileHook: makeStubStatusFileHook({}),
     });
-    reader.attach({
+    attachAfterReset({
       sessionId: 'session-2',
       statusOutputPath: statusB,
       eventsOutputPath: eventsB,

@@ -367,10 +367,12 @@ describe('SessionManager - natural PTY exit disposes write queue', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 5. A pty.write that throws never wedges the session's writes. The PTY lives
-//    in the pty host, so the throw lands there (the host drops that write) and
-//    main's queue keeps draining in order; the queue's own onAutoDispose path is
-//    covered by write-queue's unit tests.
+// 5. A pty.write that throws never wedges the session's writes. The PTY and its
+//    write queue live in the pty host, so the throw reaches the queue, which drops
+//    the rest of that payload and disposes itself (its contract, pinned in
+//    write-queue's unit tests: node-pty's write throws when its handle is torn
+//    down, and nothing more can be written then). The next write gets a fresh
+//    queue.
 // ---------------------------------------------------------------------------
 
 describe('SessionManager.write - onAutoDispose recovery', () => {
@@ -385,7 +387,7 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
-  it('keeps delivering after pty.write throws in the host: the next payload arrives, in order', async () => {
+  it('keeps delivering after pty.write throws in the host: the next payload arrives whole, on a fresh queue', async () => {
     vi.useFakeTimers();
     try {
       const { session, mockPty } = await spawnSessionWithMock(
@@ -406,9 +408,11 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
       // First write: start a drain loop for a large payload.
       manager.write(session.id, 'a'.repeat(20000));
       // The first synchronous chunk has landed. Now arm the throw.
+      const writesBeforeThrow = mockPty.write.mock.calls.length;
       shouldThrow = true;
       vi.advanceTimersToNextTimer();
-      // The throw fires inside the host, which drops that one write.
+      // The throw fires inside the host's queue, which drops the rest of the
+      // first payload and disposes itself.
 
       shouldThrow = false;
       mockPty.write.mockClear();
@@ -420,17 +424,12 @@ describe('SessionManager.write - onAutoDispose recovery', () => {
         .map((callArgs) => callArgs[0])
         .join('');
 
-      // The rest of the first payload, then the second, in order. Exactly: the
-      // queue drains DEFAULT_CHUNK_SIZE bytes per tick, so two chunks of the 20000
-      // are gone before the mock is cleared (the synchronous first, and the one the
-      // armed throw dropped in the host), the remainder is what is still buffered,
-      // and the recovery payload was appended behind it on the same queue. A queue
-      // that dropped its buffer on the throw would leave only the recovery payload,
-      // and `a*` alone would have matched that (and the empty string).
-      const firstPayloadLength = 20000;
-      const chunksAlreadyDrained = 2;
-      const remainderOfFirstPayload = 'a'.repeat(firstPayloadLength - chunksAlreadyDrained * DEFAULT_CHUNK_SIZE);
-      expect(writtenText).toBe(`${remainderOfFirstPayload}recovery-payload`);
+      // Exactly the second payload: nothing of the first leaks in behind the
+      // throw, and the session was not left writing into a disposed queue
+      // (which would have written nothing at all).
+      expect(writtenText).toBe('recovery-payload');
+      // The first payload's drain had started, a chunk at a time, before the throw.
+      expect(writesBeforeThrow).toBeGreaterThan(0);
 
       errorSpy.mockRestore();
     } finally {

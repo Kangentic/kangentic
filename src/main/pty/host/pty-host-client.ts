@@ -29,8 +29,10 @@ import {
   type PtyHostRequestMap,
   type PtyHostSpawnParams,
   type PtyHostSpawnResult,
+  type RendererPort,
   type SeedFrameResult,
 } from './protocol';
+import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
 
@@ -52,6 +54,12 @@ export interface PtyHandle {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
+  /**
+   * The row is letting go of this PTY: what a renderer types into it from here
+   * on is dropped, as it was when every keystroke crossed main and found the
+   * row's handle nulled. Main's own writes (the exit sequence) still reach it.
+   */
+  sealUserInput(): void;
 }
 
 export interface PtyHostLifecycleListener {
@@ -77,6 +85,9 @@ export interface PtyHostRequestOptions<Result> {
 export interface PtyHostTransport {
   /** Send a command. Commands and requests keep their order. */
   post(command: PtyHostCommand): void;
+  /** Hand the host a renderer's direct port, in order with the commands
+   *  around it (`attachRendererPort` in the core). */
+  attachRendererPort(rendererId: number, port: RendererPort): void;
   request<M extends PtyHostMethod>(
     method: M,
     params: PtyHostRequestMap[M]['params'],
@@ -167,6 +178,11 @@ export class RemotePty implements PtyHandle {
       throw error;
     }
     this.transport.post({ type: 'kill', ptyId: this.ptyId });
+  }
+
+  sealUserInput(): void {
+    if (this.exited) return;
+    this.transport.post({ type: 'sealUserInput', ptyId: this.ptyId });
   }
 }
 
@@ -461,6 +477,20 @@ export class PtyHostClient {
     return this.transport.request('getScrollback', { sessionId, settle });
   }
 
+  /** A renderer's replay, answered on its port (`getScrollbackForRenderer` in the core). */
+  getScrollbackForRenderer(sessionId: string, settle: boolean, rendererId: number, requestId: number): Promise<ScrollbackInvokeResult> {
+    return this.transport.request('getScrollbackForRenderer', { sessionId, settle, rendererId, requestId });
+  }
+
+  /** Resolve once the PTY's write queue has written everything queued so far. */
+  drainWrites(ptyId: number): Promise<true> {
+    return this.transport.request('drainWrites', { ptyId });
+  }
+
+  attachRendererPort(rendererId: number, port: RendererPort): void {
+    this.transport.attachRendererPort(rendererId, port);
+  }
+
   getSerializedFrame(sessionId: string, settle: boolean): Promise<string> {
     return this.transport.request('getSerializedFrame', { sessionId, settle });
   }
@@ -653,6 +683,12 @@ export class InProcessPtyHostTransport implements PtyHostTransport {
 
   post(command: PtyHostCommand): void {
     this.core.handleCommand(command);
+  }
+
+  /** In this process the port is main's own end, so typing runs on main's loop:
+   *  the fallback after repeated host crashes, and the unit tests' host. */
+  attachRendererPort(rendererId: number, port: RendererPort): void {
+    this.core.attachRendererPort(rendererId, port);
   }
 
   request<M extends PtyHostMethod>(method: M, params: PtyHostRequestMap[M]['params']): Promise<PtyHostRequestMap[M]['result']> {

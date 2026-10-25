@@ -129,6 +129,11 @@ describe('host-exec', () => {
     expect(spawnSpanLabel('cli', '', 'linux')).toBe('cli:spawn');
   });
 
+  it('adds the main-side caller to the label when the request names one', () => {
+    expect(spawnSpanLabel('exec', '/usr/bin/git', 'linux', 'getBranchSummary<summarizeBranch')).toBe('exec:spawn:git:getBranchSummary<summarizeBranch');
+    expect(spawnSpanLabel('cli', 'git.exe', 'win32', undefined)).toBe('cli:spawn:git');
+  });
+
   describe('the spawn is timed as a span named for the program', () => {
     // The sink hears a span's label as it opens and null as it closes (nothing
     // encloses it here), so the call into node:child_process sits between the two.

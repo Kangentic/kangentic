@@ -9,6 +9,7 @@ import { reportSyncWriteFailure } from './write-failure-notice';
 import { migrateLegacyGitKeys } from './legacy-git-keys';
 import { migrateLegacyIdleTimeout } from './legacy-idle-timeout';
 import { migrateLegacyMemoryKeys } from './legacy-memory-keys';
+import { timeSyncWork } from '../diagnostics/event-loop-lag';
 
 /** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
  *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
@@ -126,8 +127,38 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
   return result as Partial<AppConfig>;
 }
 
+/**
+ * How often `getEffectiveConfig` re-reads a project's `.kangentic/config.json`
+ * in the background, at most. A change Kangentic writes is seen at once (see
+ * `saveProjectOverrides`); a hand edit or another writer's change is seen once
+ * a re-read after it lands, so within about this long of the next call.
+ */
+const PROJECT_OVERRIDES_REFRESH_MS = 1000;
+
+/** A project's overrides as `getEffectiveConfig` serves them. */
+interface CachedProjectOverrides {
+  /** Never handed out: every read gets its own copy. */
+  overrides: Partial<AppConfig> | null;
+  /** The file text they were parsed from, or null when unknown (a save, a migration rewrite, no file). */
+  raw: string | null;
+  /** An asynchronous re-read is out. */
+  refreshing: boolean;
+  /** When the last asynchronous re-read started (epoch ms). */
+  refreshedAt: number;
+}
+
 export class ConfigManager {
   private config: AppConfig | null = null;
+  /**
+   * Each project's overrides, so `getEffectiveConfig` reads the file
+   * synchronously only the first time. That read sits on main's thread, and
+   * spawns, moves and PR sweeps read the file 14 times for one task start: idle it
+   * takes under a millisecond, under a disk load (a Done move deleting a
+   * node_modules) one took 176 ms. The global config is never re-read after
+   * `load()` at all; a project's is re-read in the background instead, since
+   * `ImportSourceStore` and a hand edit write the same file.
+   */
+  private readonly projectOverridesCache = new Map<string, CachedProjectOverrides>();
 
   load(): AppConfig {
     if (this.config) return this.config;
@@ -353,16 +384,41 @@ export class ConfigManager {
     return safeWriteJson(PATHS.configFile, this.config, 'config');
   }
 
+  /**
+   * Read a project's overrides from disk, now. Every read-modify-write of the
+   * file starts here, so it never reads the cache; it refreshes it instead.
+   */
   loadProjectOverrides(projectPath: string): Partial<AppConfig> | null {
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
-    let overrides: Record<string, unknown> | null;
+    let raw: string;
     try {
-      const raw = fs.readFileSync(configPath, 'utf-8');
-      overrides = JSON.parse(raw);
+      raw = timeSyncWork('config:project-read', () => fs.readFileSync(configPath, 'utf-8'));
     } catch {
+      this.cacheProjectOverrides(projectPath, null, null);
       return null;
     }
-    if (!overrides) return null;
+    const parsed = this.parseProjectOverrides(projectPath, raw);
+    const overrides = parsed === undefined ? null : parsed.overrides;
+    this.cacheProjectOverrides(projectPath, overrides, parsed?.rewritten ? null : raw);
+    return overrides;
+  }
+
+  /**
+   * Parse a project's config.json text and run the one-time migrations, which
+   * rewrite the file when they change it. Undefined when the text is not JSON.
+   */
+  private parseProjectOverrides(
+    projectPath: string,
+    raw: string,
+  ): { overrides: Partial<AppConfig> | null; rewritten: boolean } | undefined {
+    let overrides: Record<string, unknown> | null;
+    try {
+      overrides = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+    if (!overrides) return { overrides: null, rewritten: false };
+    let rewritten = false;
 
     // One-time migration: claude.* -> agent.* in project overrides
     if ('claude' in overrides && !('agent' in overrides)) {
@@ -373,6 +429,7 @@ export class ConfigManager {
       delete (overrides.agent as Record<string, unknown>).queueOverflow;
       delete overrides.claude;
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+      rewritten = true;
     }
 
     // One-time migration: terminal.{shell,fontFamily,fontSize,scrollbackLines,
@@ -395,12 +452,14 @@ export class ConfigManager {
           delete overrides.terminal;
         }
         this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+        rewritten = true;
       }
     }
 
     // One-time migration: the product pair's retired ids -> clay / rust.
     if (renameRetiredThemeIds(overrides)) {
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+      rewritten = true;
     }
 
     // One-time migration: the git refresh intervals became switches, and
@@ -408,16 +467,71 @@ export class ConfigManager {
     const overrideGit = overrides.git as Record<string, unknown> | undefined;
     if (overrideGit && typeof overrideGit === 'object' && migrateLegacyGitKeys(overrideGit)) {
       this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+      rewritten = true;
     }
 
-    return overrides as Partial<AppConfig>;
+    return { overrides: overrides as Partial<AppConfig>, rewritten };
   }
 
   /** Same non-throwing contract as `save()`, for the per-project `.kangentic/config.json`.
-   *  Returns whether the write reached disk. */
+   *  Returns whether the write reached disk. When it did, `getEffectiveConfig`
+   *  serves the new overrides at once; when it did not, the next read goes back
+   *  to the unchanged file, so the change is lost rather than served unsaved. */
   saveProjectOverrides(projectPath: string, overrides: Partial<AppConfig>): boolean {
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
-    return safeWriteJson(configPath, overrides, 'config_project_override');
+    const persisted = safeWriteJson(configPath, overrides, 'config_project_override');
+    if (persisted) {
+      this.cacheProjectOverrides(projectPath, overrides, null);
+    } else {
+      this.projectOverridesCache.delete(projectPath);
+    }
+    return persisted;
+  }
+
+  /** Replace a project's cached overrides. A re-read still out finds its entry replaced and is dropped. */
+  private cacheProjectOverrides(projectPath: string, overrides: Partial<AppConfig> | null, raw: string | null): void {
+    this.projectOverridesCache.set(projectPath, {
+      overrides: overrides === null ? null : structuredClone(overrides),
+      raw,
+      refreshing: false,
+      refreshedAt: Date.now(),
+    });
+  }
+
+  /**
+   * A project's overrides for `getEffectiveConfig`: read from disk the first
+   * time, then served from the cache as a copy while a background re-read
+   * picks up a change another writer made.
+   */
+  private projectOverridesFor(projectPath: string): Partial<AppConfig> | null {
+    const cached = this.projectOverridesCache.get(projectPath);
+    if (!cached) return this.loadProjectOverrides(projectPath);
+    this.refreshProjectOverrides(projectPath, cached);
+    return cached.overrides === null ? null : structuredClone(cached.overrides);
+  }
+
+  /** Re-read a cached project's config.json off main's thread, at most once per PROJECT_OVERRIDES_REFRESH_MS. */
+  private refreshProjectOverrides(projectPath: string, entry: CachedProjectOverrides): void {
+    if (entry.refreshing || Date.now() - entry.refreshedAt < PROJECT_OVERRIDES_REFRESH_MS) return;
+    entry.refreshing = true;
+    entry.refreshedAt = Date.now();
+    const configPath = path.join(projectPath, '.kangentic', 'config.json');
+    void fs.promises.readFile(configPath, 'utf-8').then((raw) => {
+      // A save or a fresh read replaced the entry while this one was out.
+      if (this.projectOverridesCache.get(projectPath) !== entry || raw === entry.raw) return;
+      const parsed = this.parseProjectOverrides(projectPath, raw);
+      // Text that does not parse (a writer mid-edit) keeps the last good overrides.
+      if (parsed === undefined || this.projectOverridesCache.get(projectPath) !== entry) return;
+      this.cacheProjectOverrides(projectPath, parsed.overrides, parsed.rewritten ? null : raw);
+    }, (error: unknown) => {
+      // Only a missing file means no overrides; a read the disk refused keeps them.
+      const missing = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+      if (missing && this.projectOverridesCache.get(projectPath) === entry) {
+        this.cacheProjectOverrides(projectPath, null, null);
+      }
+    }).finally(() => {
+      entry.refreshing = false;
+    });
   }
 
   /** Extract the project-overridable subset of the current global config.
@@ -433,7 +547,7 @@ export class ConfigManager {
     const global = this.load();
     if (!projectPath) return global;
 
-    const overrides = this.loadProjectOverrides(projectPath);
+    const overrides = this.projectOverridesFor(projectPath);
     if (!overrides) return global;
 
     return deepMergeConfig(global, overrides);

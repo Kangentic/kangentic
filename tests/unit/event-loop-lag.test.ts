@@ -346,6 +346,51 @@ describe('timeSyncWork attribution ring', () => {
     expect(counted['graph:vectors'].atLeastMs['16']).toBe(1);
   });
 
+  it('keeps relayed spans in their own ring, so they never evict this process\'s', async () => {
+    const {
+      startEventLoopLagMonitor, stopEventLoopLagMonitor, timeSyncWork, recordRelayedSyncSpan, getEventLoopLagReport,
+    } = await loadMonitor();
+    stepClock(20);
+    startEventLoopLagMonitor();
+    timeSyncWork('db:transaction', () => undefined);
+    for (let index = 0; index < 250; index++) recordRelayedSyncSpan(`pty-host:exec:spawn:git-${index}`, 20);
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.recentSlowSyncWork.map((span) => span.label)).toEqual(['db:transaction']);
+    expect(report.recentRelayedSlowSyncWork).toHaveLength(200);
+    expect(report.recentRelayedSlowSyncWork[199].label).toBe('pty-host:exec:spawn:git-249');
+    expect(report.syncWorkByLabel['pty-host:exec:spawn:git-0']).toMatchObject({ count: 1, maxMs: 20 });
+  });
+
+  it('keeps a long span from either source after the 16 ms ones rotate it out', async () => {
+    const {
+      startEventLoopLagMonitor, stopEventLoopLagMonitor, recordSyncSpan, recordRelayedSyncSpan, getEventLoopLagReport,
+    } = await loadMonitor();
+    startEventLoopLagMonitor();
+    recordRelayedSyncSpan('pty-host:exec:spawn:git', 6944);
+    recordSyncSpan('db:transaction', 1319);
+    for (let index = 0; index < 300; index++) {
+      recordSyncSpan(`own-${index}`, 20);
+      recordRelayedSyncSpan(`pty-host:span-${index}`, 20);
+    }
+    recordSyncSpan('just-under', 99);
+    const report = getEventLoopLagReport();
+    stopEventLoopLagMonitor();
+    expect(report.longSyncThresholdMs).toBe(100);
+    expect(report.recentLongSyncWork.map((span) => [span.label, span.ms])).toEqual([
+      ['pty-host:exec:spawn:git', 6944],
+      ['db:transaction', 1319],
+    ]);
+    expect(report.recentSlowSyncWork.some((span) => span.label === 'db:transaction')).toBe(false);
+  });
+
+  it('drops a relayed span while this process runs no monitor', async () => {
+    const { recordRelayedSyncSpan, getEventLoopLagReport, getSyncWorkByLabel } = await loadMonitor();
+    recordRelayedSyncSpan('worker:db:checkpoint', 40);
+    expect(getEventLoopLagReport().recentRelayedSlowSyncWork).toHaveLength(0);
+    expect(getSyncWorkByLabel()).toEqual({});
+  });
+
   it('counts nothing while neither monitoring nor relaying', async () => {
     const { timeSyncWork, getSyncWorkByLabel } = await loadMonitor();
     stepClock(20);

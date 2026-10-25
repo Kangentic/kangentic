@@ -1115,26 +1115,28 @@ export function useTerminal(options: UseTerminalOptions) {
    * session at the bottom panel's 14 rows replayed the correct 48-row repaint,
    * then repainted the 14-row frame over it from the held queue.
    *
-   * Everything main flushed to this renderer before the getScrollback REPLY is
-   * by construction inside `scrollback`, whichever shape the sample takes. A
-   * byte replay: main appends to its ring and its pending buffer from the same
-   * bytes, clears the pending buffer at sample time, and IPC replies are
-   * ordered against the flush stream. A parsed-grid frame (an alt-screen or
-   * geometry-gated session's sample, PtyBufferManager.getReplaySnapshot):
-   * every byte fed before the sample is baked into the frame (the serialize
-   * is atomic with the parser's flush barrier), bytes racing the sample ride
-   * the reply as an appended tail, and main holds the session's flush ticks
-   * for the sample's duration so none of those bytes can arrive here ahead of
-   * the reply. Main's
-   * half of the double-delivery guard has always been there; this is the
-   * renderer's half, for the bytes main can no longer recall.
+   * Everything the pty host flushed to this renderer before the getScrollback
+   * ANSWER is by construction inside `scrollback`, whichever shape the sample
+   * takes. The answer comes back on the same port as the session's output
+   * (the preload's PtyPortClient), sent in the turn the sample ends. A byte
+   * replay: the host appends to its ring and its pending buffer from the same
+   * bytes and clears the pending buffer at sample time. A parsed-grid frame
+   * (an alt-screen or geometry-gated session's sample,
+   * PtyBufferManager.getReplaySnapshot): every byte fed before the sample is
+   * baked into the frame (the serialize is atomic with the parser's flush
+   * barrier), bytes racing the sample ride the answer as an appended tail,
+   * and the host holds the session's flush ticks for the sample's duration so
+   * none of those bytes can arrive here ahead of the answer. The host's half
+   * of the double-delivery guard has always been there; this is the
+   * renderer's half, for the bytes the host can no longer recall.
    *
-   * Called in the same microtask as the resolve, so no post-sample flush (a
-   * separate macrotask) can be caught by it. That rests on the resize reply
-   * settling FIRST: it is invoked first and handled synchronously on main (or
-   * pre-resolved under skipResize), so Promise.all resolves off the scrollback
-   * reply. If that ever inverted, Promise.all would resolve a macrotask later
-   * and this could discard a genuine post-sample flush.
+   * Called in the same task as the answer's port message, so no post-sample
+   * flush (a later message on that port) can be caught by it. That rests on
+   * the replay resolving off the scrollback answer ALONE: the sample is asked
+   * for only once the grid request has resolved (`requestGrid(...).then`), so
+   * nothing else can settle after it. Waiting on a second promise beside it
+   * (the resize's reply comes back through main, a different channel) could
+   * resolve a task late and discard a genuine post-sample flush.
    *
    * Skipped when there is nothing to replay - a suppressed or failed read
    * leaves the held bytes as the only copy. A resolve with no terminal needs no
@@ -1473,25 +1475,25 @@ export function useTerminal(options: UseTerminalOptions) {
       traceTerminalRenderer(options.sessionId, 'fit', () =>
         describeFit(terminal, 'initial', colsBeforeFit, fitOutcome));
 
-      // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
-      // pure in-memory read. Firing them together is safe because main
-      // preserves per-renderer IPC order and the resize handler is synchronous,
-      // so main records the geometry change before getScrollback runs. When the
-      // geometry (cols or rows) changed, main's getScrollback waits for the
-      // agent TUI's async SIGWINCH repaint to land before sampling
+      // The grid first, then the sample. Resize forwards SIGWINCH on main;
+      // the sample is asked for once the grid request has resolved, so main
+      // applied the geometry before it asks the host to sample, and the
+      // replay resolves off the sample's answer alone, which arrives on the
+      // same port as the session's output (see dropHeldBytesSupersededBySample).
+      // When the geometry (cols or rows) changed, the host waits for the agent
+      // TUI's async SIGWINCH repaint to land before sampling
       // (PtyBufferManager.waitForResizeRepaint), so the replay is at the fitted
       // geometry - no stale frame, no compensating resize needed here. The
       // colsChanged field of the resize result is therefore intentionally
       // unused by the renderer. A `held` answer is acted on inside requestGrid
       // before this promise resolves, so the replay below lands on the held
       // grid (see conformToHeldGrid).
-      const resizePromise = requestGrid(sid, cols, rows, 'mount');
-      const scrollbackPromise = suppressScrollback
-        ? Promise.resolve<string | null>(null)
-        : window.electronAPI.sessions.getScrollback(sid);
+      const scrollbackPromise = requestGrid(sid, cols, rows, 'mount').then(() => (suppressScrollback
+        ? null
+        : window.electronAPI.sessions.getScrollback(sid)));
 
-      Promise.all([resizePromise, scrollbackPromise])
-        .then(([, scrollback]) => {
+      scrollbackPromise
+        .then((scrollback) => {
           // A newer scrollback operation has started; it owns clearing pending
           // (and the watchdog it armed), so this stale resolve must not touch
           // either - clearing them here would open the drop/hold gate early
@@ -2182,20 +2184,21 @@ export function useTerminal(options: UseTerminalOptions) {
     traceTerminalRenderer(sessionId, 'fit', () =>
       describeFit(xtermRef.current, 'reload-initial', colsBeforeFit, fitOutcome));
 
-    // Parallel IPCs: same shape as initTerminal's mount-time path. Resize
-    // forwards SIGWINCH on main; getScrollback is an in-memory read. When the
-    // geometry (cols or rows) changed, main waits for the agent TUI's repaint to
+    // The grid first, then the sample: same shape as initTerminal's mount-time
+    // path, and for the same reason (the replay resolves off the sample's
+    // answer alone; see dropHeldBytesSupersededBySample). When the geometry
+    // (cols or rows) changed, the host waits for the agent TUI's repaint to
     // settle before sampling (see the initTerminal note), so the reload lands
     // the frame drawn at the fitted geometry.
     // skipResize sends no SIGWINCH: the window manager calls it once resizing
     // has already settled, so there is nothing to wait for.
-    const resizePromise = skipResize
+    const gridPromise = skipResize
       ? Promise.resolve(undefined)
       : requestGrid(sessionId, cols, rows, 'reload');
-    const scrollbackPromise = window.electronAPI.sessions.getScrollback(sessionId);
+    const scrollbackPromise = gridPromise.then(() => window.electronAPI.sessions.getScrollback(sessionId));
 
-    Promise.all([resizePromise, scrollbackPromise])
-      .then(([, scrollback]) => {
+    scrollbackPromise
+      .then((scrollback) => {
         // A newer scrollback operation has started; it owns clearing pending
         // (and the watchdog it armed), so this stale resolve must not touch
         // either - clearing them here would open the drop/hold gate early

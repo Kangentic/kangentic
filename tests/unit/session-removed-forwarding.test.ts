@@ -192,7 +192,6 @@ function createMockContext() {
       getSessionProjectId: vi.fn(() => 'proj-1' as string | null | undefined),
       getSessionAgentName: vi.fn(() => 'claude'),
       getFocusedSessions: vi.fn(() => new Set<string>()),
-      getRenderersFocusedOn: vi.fn(() => [] as number[]),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
         const handlers = capturedSessionEventHandlers.get(event) ?? [];
         handlers.push(handler);
@@ -387,8 +386,8 @@ describe('sessions.ts session-removed listener', () => {
  * renderer the per-renderer focus map says is looking at the session. The old
  * handler routed through the focus-routed sender, so a window that was not
  * focused on the session when its agent came up kept the overlay until a
- * resync. `getRenderersFocusedOn` is varied below to prove the push no longer
- * consults it.
+ * resync. That sender is gone with the renderer ports: a terminal's bytes go
+ * from the pty host to the ports that show it, and this push is a broadcast.
  *
  * Like the forwarder above, this asserts against the mocked broadcast():
  * broadcast() re-checks isDestroyed() itself, so the real one would hide a
@@ -409,13 +408,7 @@ describe('sessions.ts first-output listener', () => {
     vi.useRealTimers();
   });
 
-  it.each([
-    { focusLayout: 'no renderer focused on the session', focusedRendererIds: [] as number[] },
-    { focusLayout: 'only a different renderer focused on the session', focusedRendererIds: [42] },
-    { focusLayout: 'several renderers focused on the session', focusedRendererIds: [7, 9] },
-  ])('broadcasts SESSION_FIRST_OUTPUT with the sessionId and projectId when $focusLayout', ({ focusedRendererIds }) => {
-    context.sessionManager.getRenderersFocusedOn.mockReturnValue(focusedRendererIds);
-
+  it('broadcasts SESSION_FIRST_OUTPUT with the sessionId and projectId whichever renderer shows the session', () => {
     fireFirstOutput('sess-1');
 
     expect(mockBroadcast).toHaveBeenCalledTimes(1);

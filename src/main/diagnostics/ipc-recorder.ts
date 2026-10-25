@@ -270,10 +270,10 @@ function writeEntry(projectRoot: string | null, entry: IpcLogEntry): void {
   }
   // Async-buffered + size-capped rotation: queueAppendWithRotation returns
   // immediately. The previous appendFileSync ran inside the IPC handler's
-  // `finally`, blocking the main event loop on every IPC call (incl.
-  // IPC.SESSION_WRITE per terminal keystroke). On Windows that costs 5-50 ms
-  // per call and was the dominant source of typing-stutter when
-  // recordIpcTraffic is on. Rotation bounds each day's file at 2x the cap so
+  // `finally`, blocking the main event loop on every IPC call (then including
+  // every terminal keystroke, which crossed main until each renderer got its
+  // own port to the pty host). On Windows that costs 5-50 ms per call and was
+  // the dominant source of typing-stutter when recordIpcTraffic is on. Rotation bounds each day's file at 2x the cap so
   // `.kangentic/logs/` stops accumulating unbounded gigabytes.
   const maxBytes = recorderOptions?.maxLogFileBytes ?? IPC_LOG_MAX_FILE_BYTES;
   queueAppendWithRotation(file, line + '\n', maxBytes);

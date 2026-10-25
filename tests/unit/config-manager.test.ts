@@ -1613,3 +1613,150 @@ describe('Config Manager -- monitor deep-merge (NOT a CONFIG_DICTIONARY_PATHS en
     expect(config.monitor.textFilter).toBe('');
   });
 });
+
+describe('Config Manager - project overrides served from memory', () => {
+  // Spawns and moves read a project's config 14 times per task start and 9 times
+  // per Done move, on main's thread. getEffectiveConfig reads its config.json only
+  // the first time, then serves a copy while a background re-read picks up
+  // another writer's change.
+  function projectConfigPath(projectDir: string): string {
+    return path.join(projectDir, '.kangentic', 'config.json');
+  }
+
+  function writeProjectConfig(projectDir: string, contents: string): void {
+    fs.mkdirSync(path.join(projectDir, '.kangentic'), { recursive: true });
+    fs.writeFileSync(projectConfigPath(projectDir), contents);
+  }
+
+  /** Watch the background re-reads, so a test awaits the one it started. */
+  function watchProjectRereads(): { settled: () => Promise<void>; restore: () => void } {
+    const readFile = vi.spyOn(fs.promises, 'readFile');
+    return {
+      settled: async () => {
+        await Promise.all(readFile.mock.results.map((result) => Promise.resolve(result.value).then(() => undefined, () => undefined)));
+        // The reader's own handler is attached first, so one more turn lets it run.
+        await new Promise((resolve) => setImmediate(resolve));
+      },
+      restore: () => readFile.mockRestore(),
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('reads the file synchronously only the first time', async () => {
+    const projectDir = path.join(tmpDir, 'proj-cached');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    const configManager = await createConfigManager();
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+    const projectReads = (): number => readFileSync.mock.calls.filter((call) => call[0] === projectConfigPath(projectDir)).length;
+
+    for (let call = 0; call < 5; call++) {
+      expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    }
+
+    expect(projectReads()).toBe(1);
+  });
+
+  it('serves a saved override at once', async () => {
+    const projectDir = path.join(tmpDir, 'proj-saved');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+
+    configManager.saveProjectOverrides(projectDir, { theme: 'ember' });
+
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+
+  it('does not serve a save that did not reach disk', async () => {
+    const projectDir = path.join(tmpDir, 'proj-unwritable');
+    fs.mkdirSync(projectDir, { recursive: true });
+    // A file where the .kangentic directory belongs: no write can land.
+    fs.writeFileSync(path.join(projectDir, '.kangentic'), '');
+    const configManager = await createConfigManager();
+    const globalTheme = configManager.getEffectiveConfig(projectDir).theme;
+
+    expect(configManager.saveProjectOverrides(projectDir, { theme: globalTheme === 'ember' ? 'forest' : 'ember' })).toBe(false);
+
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe(globalTheme);
+  });
+
+  it('keeps two projects apart', async () => {
+    const firstProject = path.join(tmpDir, 'proj-first');
+    const secondProject = path.join(tmpDir, 'proj-second');
+    writeProjectConfig(firstProject, JSON.stringify({ theme: 'forest' }));
+    writeProjectConfig(secondProject, JSON.stringify({ theme: 'ember' }));
+    const configManager = await createConfigManager();
+
+    expect(configManager.getEffectiveConfig(firstProject).theme).toBe('forest');
+    expect(configManager.getEffectiveConfig(secondProject).theme).toBe('ember');
+    expect(configManager.getEffectiveConfig(firstProject).theme).toBe('forest');
+  });
+
+  it('hands every caller its own copy, so a mutation does not reach the next read', async () => {
+    const projectDir = path.join(tmpDir, 'proj-copy');
+    writeProjectConfig(projectDir, JSON.stringify({ git: { copyFiles: ['.env'] } }));
+    const configManager = await createConfigManager();
+    configManager.getEffectiveConfig(projectDir);
+
+    configManager.getEffectiveConfig(projectDir).git.copyFiles.push('.npmrc');
+
+    expect(configManager.getEffectiveConfig(projectDir).git.copyFiles).toEqual(['.env']);
+  });
+
+  it('picks up a hand edit once a background re-read lands', async () => {
+    const projectDir = path.join(tmpDir, 'proj-hand-edit');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const rereads = watchProjectRereads();
+
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'ember' }));
+    // Inside the refresh interval the cache answers and nothing is re-read.
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    vi.setSystemTime(Date.now() + 1001);
+    // Past it, this call still answers from the cache and starts the re-read.
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    await rereads.settled();
+
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+
+  it('keeps the last good overrides while the file does not parse, and drops them once it is deleted', async () => {
+    const projectDir = path.join(tmpDir, 'proj-mid-edit');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    const globalTheme = configManager.load().theme;
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const rereads = watchProjectRereads();
+
+    writeProjectConfig(projectDir, '{ "theme": "emb');
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    await rereads.settled();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+
+    fs.unlinkSync(projectConfigPath(projectDir));
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    await rereads.settled();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe(globalTheme);
+  });
+
+  it('loadProjectOverrides still reads the file, and what it reads is what getEffectiveConfig serves', async () => {
+    const projectDir = path.join(tmpDir, 'proj-fresh-read');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'ember' }));
+
+    expect(configManager.loadProjectOverrides(projectDir)?.theme).toBe('ember');
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+});

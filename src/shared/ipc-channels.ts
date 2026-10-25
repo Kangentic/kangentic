@@ -130,12 +130,20 @@ export const IPC = {
   // Sessions
   SESSION_SPAWN: 'session:spawn',
   SESSION_KILL: 'session:kill',
-  SESSION_WRITE: 'session:write',
   SESSION_RESIZE: 'session:resize',
   SESSION_LIST: 'session:list',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
-  SESSION_DATA: 'session:data',
-  SESSION_DRAIN_ACK: 'session:drainAck',
+  /**
+   * Renderer -> main (send): a renderer asks for its direct port to the pty
+   * host, at preload start. Main brokers a `MessageChannelMain`, hands one end
+   * to the host and posts the other back on PTY_PORT. A terminal's keystrokes,
+   * output and acks travel on that port and never through main
+   * (`src/shared/pty-port-protocol.ts`). Preload-internal: no ElectronAPI method.
+   */
+  PTY_PORT_REQUEST: 'pty:portRequest',
+  /** Main -> renderer (`webContents.postMessage`, the port in `event.ports`): the
+   *  renderer's port to the pty host, again after a host restart. */
+  PTY_PORT: 'pty:port',
   SESSION_PTY_RESIZED: 'session:ptyResized',
   SESSION_FIRST_OUTPUT: 'session:firstOutput',
   SESSION_GET_FIRST_OUTPUT: 'session:getFirstOutput',

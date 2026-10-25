@@ -48,6 +48,8 @@
  * agent. That has not been observed on a real PTY in this repo.
  */
 
+import { timeSyncWork } from '../../diagnostics/event-loop-lag';
+
 /** One process as the listing names it. */
 export interface OrphanProcessRow {
   pid: number;
@@ -181,7 +183,9 @@ export async function endDeadRootOrphans(
   params: DeadRootOrphanParams,
   steps: DeadRootOrphanSteps,
 ): Promise<DeadRootOrphanResult> {
-  const targets = planDeadRootOrphans(await api.listProcesses(), params, (pid) => api.identityOf(pid));
+  const listing = await api.listProcesses();
+  // Synchronous native reads on the host's terminal thread, labelled for the lag report.
+  const targets = timeSyncWork('orphans:plan', () => planDeadRootOrphans(listing, params, (pid) => api.identityOf(pid)));
   const result: DeadRootOrphanResult = {
     found: targets.map((target) => target.image),
     asked: false,
@@ -197,7 +201,7 @@ export async function endDeadRootOrphans(
   let remaining = targets;
   while (remaining.length > 0 && steps.now() < deadline && !steps.isStopping()) {
     await steps.sleep(DEAD_ROOT_ORPHAN_POLL_MS);
-    remaining = remaining.filter(stillAlive);
+    remaining = timeSyncWork('orphans:poll', () => remaining.filter(stillAlive));
   }
   const remainingPids = new Set(remaining.map((target) => target.pid));
   result.exitedByThemselves = targets.filter((target) => !remainingPids.has(target.pid)).map((target) => target.image);

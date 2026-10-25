@@ -230,7 +230,7 @@ page file, and fewer agents at once. Where commit goes per agent, and the page-f
 | `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`, falling back to the app's own config directory when no project is open (a crash must never be silently dropped for that reason). Always-on - no toggle. |
 
 ## Dictation (14 channels)
-By-session-id, not task-scoped (no `projectId`), in the same category as `session:write`.
+By-session-id, not task-scoped (no `projectId`), in the same category as `session:resize`.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload, sentenceCaseFinal }`; `sentenceCaseFinal` is true when the live model writes all caps (the Zipformer), since the committed text can be its own (no refinement, or a refinement that fell back to the live text); the renderer then sentence-cases a final in that all-caps shape, and with any other live model types the final as written |

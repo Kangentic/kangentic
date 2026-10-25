@@ -46,7 +46,7 @@ describe('killAllSessions', () => {
     return {
       id: 'sess-1',
       taskId: 'task-1',
-      pty: { write: vi.fn(), kill: vi.fn() } as unknown as pty.IPty,
+      pty: { write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn() } as unknown as pty.IPty,
       status: 'running',
       startedAt: new Date(Date.now() - 120_000).toISOString(),
       exitSequence: [],
@@ -123,7 +123,7 @@ describe('killAllSessions', () => {
   // half that ARMS the drain; pids is only what it can probe.
   describe('the returned PtyKillReport', () => {
     function makePty(pid: number | undefined): pty.IPty {
-      return { write: vi.fn(), kill: vi.fn(), pid } as unknown as pty.IPty;
+      return { write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn(), pid } as unknown as pty.IPty;
     }
 
     it('returns the child pid of every PTY it killed, read before the reference is nulled', () => {
@@ -203,7 +203,7 @@ describe('killAllSessions', () => {
     function makeYoungSession(pid: number, overrides: Partial<ShutdownSession> = {}): ShutdownSession {
       return makeSession({
         id: `young-${pid}`,
-        pty: { write: vi.fn(), kill: vi.fn(), pid } as unknown as pty.IPty,
+        pty: { write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn(), pid } as unknown as pty.IPty,
         startedAt: new Date().toISOString(),
         exitSequence: ['\x03', '/exit\r'],
         ...overrides,
@@ -278,7 +278,7 @@ describe('killAllSessions', () => {
     });
 
     it('a mature session is killed at once even with allowGrace', () => {
-      const session = makeSession({ pty: { write: vi.fn(), kill: vi.fn(), pid: 4242 } as unknown as pty.IPty });
+      const session = makeSession({ pty: { write: vi.fn(), kill: vi.fn(), sealUserInput: vi.fn(), pid: 4242 } as unknown as pty.IPty });
       const { context, killPty } = makeContext([session]);
 
       expect(killAllSessions(context, { allowGrace: true, deferredKills: new DeferredKillRegistry({ killPty }) }))

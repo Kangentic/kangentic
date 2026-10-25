@@ -5,6 +5,7 @@ const {
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
+  verifySpawnWorkerLoads,
   DICTATION_WORKER_EXTERNALS,
   DICTATION_WORKER_PROBE_DEPENDENCIES,
   RETRIEVAL_WORKER_EXTERNALS,
@@ -227,6 +228,9 @@ module.exports = async function afterPack(context) {
     probeDependencies: PTY_HOST_PROBE_DEPENDENCIES,
   });
   verifyPtyHostLoads({ unpackedRoot, electronBinaryPath });
+  // The host starts every child process on its spawn worker thread, off the
+  // thread that carries terminal I/O: start it the same way and run one child.
+  verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath });
 
   // strictlyRequireAllFuses makes flipFuses throw when the binary carries a fuse
   // this config does not set, so an Electron upgrade that adds one fails the

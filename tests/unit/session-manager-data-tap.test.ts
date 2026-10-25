@@ -9,7 +9,9 @@
  * 16ms flush, and the replay-drain report for bytes a desktop replay consumed
  * out of the pending buffer before they could flush. It must not feed the
  * renderer's backpressure accounting, since that protocol exists only for the
- * focused-tab drain handshake a tap subscriber never participates in.
+ * focused-tab drain handshake a tap subscriber never participates in. A
+ * renderer's own output goes from the host to its port, which these tests
+ * attach as a fake.
  *
  * 'output-seen' carries no bytes and fires for every session's output, for
  * consumers that only need to know output happened (the monitor peek, turn
@@ -46,8 +48,9 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import * as pty from 'node-pty';
-import { SessionManager } from '../../src/main/pty/session-manager';
+import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
 import type { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
+import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
 
 let tmpDir: string;
 
@@ -121,16 +124,22 @@ describe('SessionManager data-tap', () => {
     return { session, ...mock };
   }
 
-  it('fires for a subscribed unfocused session, where "data" does not', async () => {
+  /** The renderer's own port to the host, as the shared renderer `setFocusedSessions` defaults to. */
+  function attachRenderer() {
+    const rendererPort = createFakeRendererPort();
+    manager.attachRendererPort(SHARED_RENDERER_ID, rendererPort.port);
+    return rendererPort;
+  }
+
+  it('fires for a subscribed unfocused session, where the renderer gets nothing', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-unfocused');
+    const rendererPort = attachRenderer();
     // Focus a DIFFERENT session, so this one is explicitly excluded.
     manager.setFocusedSessions(['some-other-session-id']);
     manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
-    const dataListener = vi.fn();
     manager.on('data-tap', dataTapListener);
-    manager.on('data', dataListener);
 
     const output = 'hello from a background session';
     feedData(output);
@@ -139,7 +148,7 @@ describe('SessionManager data-tap', () => {
     // The third argument is the parser offset just past the chunk (here the
     // first and only output, so its length).
     expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
-    expect(dataListener).not.toHaveBeenCalled();
+    expect(receivedOutput(rendererPort)).toEqual([]);
   });
 
   it('forwards the host\'s parser end offset as the third "data-tap" argument', async () => {
@@ -230,55 +239,51 @@ describe('SessionManager data-tap', () => {
     expect(stats?.inFlightBytes).toBe(0);
   });
 
-  it('still fires alongside "data" for a focused session (a tap is in addition to, not instead of)', async () => {
+  it('still fires alongside the renderer\'s output for a focused session (a tap is in addition to, not instead of)', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-focused');
+    const rendererPort = attachRenderer();
     manager.setFocusedSessions([session.id]);
     manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
-    const dataListener = vi.fn();
     manager.on('data-tap', dataTapListener);
-    manager.on('data', dataListener);
 
     const output = 'hello from a focused session';
     feedData(output);
     await waitForFlush();
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
-    expect(dataListener).toHaveBeenCalledWith(session.id, output);
+    expect(receivedOutput(rendererPort)).toEqual([{ sessionId: session.id, data: output }]);
   });
 
-  it('default-closed: with no setFocusedSessions call, "data" never fires while a tap does', async () => {
+  it('default-closed: with no setFocusedSessions call, the renderer gets nothing while a tap does', async () => {
     // Before the renderer's first SESSION_SET_FOCUSED push, NO session's
-    // output goes over IPC (the empty set used to mean "all focused" and
-    // fanned every session out). Red-green: fails if the size===0 escape
-    // is ever restored in session-manager.ts's gate.
+    // output goes to it (the empty set used to mean "all focused" and fanned
+    // every session out). Red-green: fails if the size===0 escape is ever
+    // restored in the host's gate.
     const { session, feedData } = await spawnSession('task-data-tap-default');
+    const rendererPort = attachRenderer();
     manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
-    const dataListener = vi.fn();
     manager.on('data-tap', dataTapListener);
-    manager.on('data', dataListener);
 
     const output = 'output before any focus sync';
     feedData(output);
     await waitForFlush();
 
     expect(dataTapListener).toHaveBeenCalledWith(session.id, output, output.length);
-    expect(dataListener).not.toHaveBeenCalled();
+    expect(receivedOutput(rendererPort)).toEqual([]);
   });
 
-  it('an explicitly empty focused set stops "data" again (Backlog view / hidden panel)', async () => {
+  it('an explicitly empty focused set stops the renderer\'s output again (Backlog view / hidden panel)', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-empty-set');
+    const rendererPort = attachRenderer();
     manager.setFocusedSessions([session.id]);
-
-    const dataListener = vi.fn();
-    manager.on('data', dataListener);
 
     feedData('while focused');
     await waitForFlush();
-    expect(dataListener).toHaveBeenCalledTimes(1);
+    expect(receivedOutput(rendererPort)).toHaveLength(1);
 
     // The renderer derives [] when no terminal is visible; that must close
     // the gate, not open the floodgates for every session.
@@ -286,20 +291,19 @@ describe('SessionManager data-tap', () => {
     feedData('after focus cleared');
     await waitForFlush();
 
-    expect(dataListener).toHaveBeenCalledTimes(1);
+    expect(receivedOutput(rendererPort)).toHaveLength(1);
   });
 
-  it('forwards replay-drained bytes to a tap without emitting "data" or feeding backpressure', async () => {
+  it('forwards replay-drained bytes to a tap without sending them to the renderer or feeding backpressure', async () => {
     const { session, feedData } = await spawnSession('task-data-tap-replay-drain');
-    // Focused is the strong case: 'data' WOULD fire here if the drain report
-    // were ever miswired into the renderer emit.
+    const rendererPort = attachRenderer();
+    // Focused is the strong case: the renderer WOULD get them here if the
+    // drain report were ever miswired into its output.
     manager.setFocusedSessions([session.id]);
     manager.subscribeDataTap(session.id);
 
     const dataTapListener = vi.fn();
-    const dataListener = vi.fn();
     manager.on('data-tap', dataTapListener);
-    manager.on('data', dataListener);
 
     const drainedOutput = 'drained before flush';
     feedData(drainedOutput);
@@ -311,17 +315,17 @@ describe('SessionManager data-tap', () => {
 
     // The drain report carries its parser end offset like a flush does.
     expect(dataTapListener).toHaveBeenCalledWith(session.id, drainedOutput, drainedOutput.length);
-    // The renderer emit stays suppressed: the desktop gets these bytes inside
-    // the replay payload it just requested, and a second 'data' delivery is
+    // The renderer's output stays suppressed: the desktop gets these bytes
+    // inside the replay payload it just requested, and a second delivery is
     // exactly the duplicate the drain exists to prevent.
-    expect(dataListener).not.toHaveBeenCalled();
+    expect(receivedOutput(rendererPort)).toEqual([]);
 
     // The emptied flush stays silent - no second tap delivery either.
     await waitForFlush();
     expect(dataTapListener).toHaveBeenCalledTimes(1);
-    expect(dataListener).not.toHaveBeenCalled();
+    expect(receivedOutput(rendererPort)).toEqual([]);
 
-    // Drained bytes never ride the renderer's 'data' channel, so they must
+    // Drained bytes never ride the renderer's port as output, so they must
     // not enter its backpressure accounting.
     const stats = (await manager.getPipelineStats()).find((entry) => entry.sessionId === session.id);
     expect(stats?.inFlightBytes).toBe(0);

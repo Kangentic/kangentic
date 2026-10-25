@@ -297,6 +297,61 @@ function verifyPtyHostLoads({ unpackedRoot, electronBinaryPath, spawn = execFile
   log(`[afterPack] pty host: ${String(stdout).trim()}`);
 }
 
+/**
+ * The script the spawn worker probe runs under the packaged Electron binary:
+ * it starts the pty host's spawn worker (`.vite/build/pty-host-spawn-worker.js`,
+ * a worker thread, unpacked because Node's own loader reads its file) the way
+ * the host does, asks it for one one-shot run, and reads the run's output back.
+ * Every git, gh and agent CLI run the host makes for main starts in it.
+ */
+function buildSpawnWorkerLoadScript(unpackedRoot) {
+  return [
+    "const path = require('path');",
+    "const fs = require('fs');",
+    "const { Worker } = require('worker_threads');",
+    `const root = fs.realpathSync(${JSON.stringify(unpackedRoot)});`,
+    "const workerPath = path.join(root, '.vite', 'build', 'pty-host-spawn-worker.js');",
+    "const marker = 'spawn-worker-probe';",
+    'const worker = new Worker(workerPath, { workerData: { relaySlowSpans: false } });',
+    "const timer = setTimeout(() => { process.stderr.write('the spawn worker started but never answered its run'); process.exit(1); }, 20000);",
+    "worker.on('error', (error) => { process.stderr.write('the spawn worker failed: ' + (error && error.stack ? error.stack : String(error))); process.exit(1); });",
+    "worker.on('message', (message) => {",
+    "  if (!message || message.type !== 'execResult') return;",
+    '  clearTimeout(timer);',
+    "  if (!message.result.ok || !message.result.stdout.includes(marker)) { process.stderr.write('the spawn worker ran no child: ' + JSON.stringify(message.result)); process.exit(1); }",
+    "  process.stdout.write('the spawn worker started and ran a child\\n');",
+    '  process.exit(0);',
+    '});',
+    "worker.postMessage({ type: 'exec', id: 1, request: { kind: 'exec', command: 'echo ' + marker, options: {} } });",
+  ].join('\n');
+}
+
+/**
+ * Run the spawn worker probe with the packaged Electron binary as Node, before
+ * `flipFuses` turns `ELECTRON_RUN_AS_NODE` off. Throws with the child's stderr
+ * on failure; logs the verified branch on success.
+ */
+function verifySpawnWorkerLoads({ unpackedRoot, electronBinaryPath, spawn = execFileSync, log = console.log }) {
+  let stdout;
+  try {
+    stdout = spawn(electronBinaryPath, ['-e', buildSpawnWorkerLoadScript(unpackedRoot)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 60_000,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    });
+  } catch (error) {
+    const stderr = error && typeof error.stderr === 'string' ? error.stderr.trim() : '';
+    throw new Error(
+      `[afterPack] the pty host's spawn worker cannot run a child from ${unpackedRoot} under ${electronBinaryPath}. ` +
+        'The packaged host would fall back to starting every git and agent CLI run on its terminal thread. ' +
+        'Check .vite/build/pty-host-spawn-worker.js in `asarUnpack` in electron-builder.yml.\n' +
+        (stderr || String(error)),
+    );
+  }
+  log(`[afterPack] pty host spawn worker: ${String(stdout).trim()}`);
+}
+
 module.exports = {
   EMBED_WORKER_EXTERNALS,
   EMBED_WORKER_PROBE_DEPENDENCIES,
@@ -309,7 +364,9 @@ module.exports = {
   buildProbeScript,
   buildRetrievalLoadScript,
   buildPtyHostLoadScript,
+  buildSpawnWorkerLoadScript,
   verifyUnpackedWorkerModules,
   verifyRetrievalWorkerLoads,
   verifyPtyHostLoads,
+  verifySpawnWorkerLoads,
 };

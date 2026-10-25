@@ -62,6 +62,8 @@ interface FakeVerifyUnpackedWorkerCall {
   loadProbeBinary?: string;
   /** Set on the pty host load probe's call: the Electron binary it runs. */
   ptyHostProbeBinary?: string;
+  /** Set on the host spawn worker probe's call: the Electron binary it runs. */
+  spawnWorkerProbeBinary?: string;
 }
 
 /** electron-builder's AfterPackContext, narrowed to the fields afterPack.js
@@ -163,6 +165,9 @@ function installFakeVerifyUnpackedWorker(
     },
     verifyPtyHostLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
       calls.push({ unpackedRoot, ptyHostProbeBinary: electronBinaryPath });
+    },
+    verifySpawnWorkerLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
+      calls.push({ unpackedRoot, spawnWorkerProbeBinary: electronBinaryPath });
     },
     // afterPack.js destructures these alongside verifyUnpackedWorkerModules
     // for its dictation and retrieval calls; a fake missing them would
@@ -334,6 +339,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, loadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
+        { unpackedRoot, spawnWorkerProbeBinary: binary },
       ]);
       expect(fakeFuses.calls).toEqual([{ electronBinaryPath: binary }]);
       // The spawn-helper replacement targets the same tree on the same platform.
@@ -364,6 +370,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, loadProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
+        { unpackedRoot, spawnWorkerProbeBinary: path.join(appOutDir, 'Kangentic.exe') },
       ]);
       // Called on every platform so it can log that it does not apply; the
       // platform it receives is what makes it a no-op off darwin.
@@ -464,6 +471,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, loadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
+        { unpackedRoot, spawnWorkerProbeBinary: binary },
       ]);
       expect(logSpy).toHaveBeenCalledWith(expect.stringMatching(/embed worker: onnxruntime-node ships no darwin-x64 binding.*Skipping the embed worker probe only/));
       expect(fakeFuses.calls).toHaveLength(1);
@@ -504,6 +512,7 @@ describe('afterPack: computing unpackedRoot for verifyUnpackedWorkerModules', ()
         { unpackedRoot, loadProbeBinary: binary },
         { unpackedRoot, moduleNames: ['node-pty'] },
         { unpackedRoot, ptyHostProbeBinary: binary },
+        { unpackedRoot, spawnWorkerProbeBinary: binary },
       ]);
       expect(logSpy).not.toHaveBeenCalledWith(expect.stringMatching(/Skipping the embed worker probe/));
       expect(fakeFuses.calls).toHaveLength(1);

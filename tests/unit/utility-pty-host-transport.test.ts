@@ -15,11 +15,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 class FakeChild extends EventEmitter {
   readonly posted: unknown[] = [];
+  /** The ports each message transferred, by the message's index in `posted`. */
+  readonly transfers = new Map<number, unknown[]>();
   readonly kill = vi.fn();
   constructor(readonly pid: number) {
     super();
   }
-  postMessage(message: unknown): void {
+  postMessage(message: unknown, transfer?: unknown[]): void {
+    if (transfer) this.transfers.set(this.posted.length, transfer);
     this.posted.push(message);
   }
   /** Messages after the init handshake, by type. */
@@ -50,10 +53,11 @@ vi.mock('../../src/main/utility-process/stderr-tail', () => ({
 vi.mock('../../src/main/utility-process/paths', () => ({ unpacked: (target: string) => target.replace('app.asar', 'app.asar.unpacked') }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError: vi.fn() }));
-vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordSyncSpan: vi.fn() }));
+vi.mock('../../src/main/diagnostics/event-loop-lag', () => ({ recordRelayedSyncSpan: vi.fn() }));
 
-import { UtilityPtyHostTransport, ptyHostEntryPath } from '../../src/main/pty/host/utility-pty-host-transport';
+import { UtilityPtyHostTransport, ptyHostEntryPath, ptyHostSpawnWorkerPath } from '../../src/main/pty/host/utility-pty-host-transport';
 import type { PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
+import type { MessagePortMain } from 'electron';
 import { UtilityRestartPolicy, resetUtilityCrashTelemetryForTests } from '../../src/main/utility-process/restart-policy';
 import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
@@ -109,7 +113,7 @@ describe('UtilityPtyHostTransport', () => {
 
   it('forks once as kangentic-pty-host with the shared stdio, and sends init before anything else', () => {
     const { transport } = makeTransport();
-    transport.post({ type: 'setFocused', sessionIds: ['a'] });
+    transport.post({ type: 'setRendererFocus', rendererId: 1, sessionIds: ['a'] });
     transport.start();
 
     expect(forkMock).toHaveBeenCalledTimes(1);
@@ -119,9 +123,15 @@ describe('UtilityPtyHostTransport', () => {
       expect.objectContaining({ serviceName: 'kangentic-pty-host', stdio: ['ignore', 'pipe', 'pipe'] }),
     );
     // Main's executable rides the init, so the host refuses to launch it too
-    // (on macOS the host's own execPath is the Helper bundle's).
-    expect(latestChild().posted[0]).toEqual({ type: 'init', projectsDir: '/mock/projects', mainExecutable: process.execPath });
-    expect(latestChild().postedTypes()).toEqual(['init', 'setFocused']);
+    // (on macOS the host's own execPath is the Helper bundle's), and so does
+    // the spawn worker's bundle, which the host cannot resolve itself.
+    expect(latestChild().posted[0]).toEqual({
+      type: 'init',
+      projectsDir: '/mock/projects',
+      mainExecutable: process.execPath,
+      spawnWorkerPath: expect.stringMatching(/pty-host-spawn-worker\.js$/),
+    });
+    expect(latestChild().postedTypes()).toEqual(['init', 'setRendererFocus']);
     expect(transport.hostPid).toBe(1000);
   });
 
@@ -246,6 +256,7 @@ describe('UtilityPtyHostTransport', () => {
       post: fallbackPost,
       request: vi.fn(async () => 'pong') as unknown as PtyHostTransport['request'],
       setEventListener: vi.fn(),
+      attachRendererPort: vi.fn(),
       hostPid: null,
       shutdown: vi.fn(),
     };
@@ -259,10 +270,67 @@ describe('UtilityPtyHostTransport', () => {
     expect(forks).toHaveLength(5);
     expect(lifecycle.onHostUp).toHaveBeenLastCalledWith(true);
     expect(fallback.setEventListener).toHaveBeenCalled();
-    transport.post({ type: 'setFocused', sessionIds: [] });
-    expect(fallbackPost).toHaveBeenCalledWith({ type: 'setFocused', sessionIds: [] });
+    transport.post({ type: 'setRendererFocus', rendererId: 1, sessionIds: [] });
+    expect(fallbackPost).toHaveBeenCalledWith({ type: 'setRendererFocus', rendererId: 1, sessionIds: [] });
     await expect(transport.request('ping', {})).resolves.toBe('pong');
     expect(transport.hostPid).toBeNull();
+  });
+
+  describe('a renderer\'s port', () => {
+    const fakePort = (label: string) => ({ label }) as unknown as MessagePortMain;
+
+    it('is transferred with its attach message, in order with the commands around it', () => {
+      const { transport } = makeTransport();
+      transport.start();
+      const port = fakePort('renderer-7');
+      transport.post({ type: 'setTapped', sessionIds: [] });
+      transport.attachRendererPort(7, port);
+      transport.post({ type: 'setRendererFocus', rendererId: 7, sessionIds: ['a'] });
+
+      const child = latestChild();
+      expect(child.postedTypes()).toEqual(['init', 'setTapped', 'attachRendererPort', 'setRendererFocus']);
+      expect(child.posted[2]).toEqual({ type: 'attachRendererPort', rendererId: 7 });
+      expect(child.transfers.get(2)).toEqual([port]);
+      expect(child.transfers.size).toBe(1);
+    });
+
+    it('keeps its port while the host is down and hands both to the replacement', async () => {
+      const { transport } = makeTransport();
+      transport.start();
+      latestChild().emit('message', { type: 'ready' });
+      latestChild().emit('exit', 1);
+      const port = fakePort('renderer-8');
+      transport.attachRendererPort(8, port);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      const replacement = latestChild();
+      const attachIndex = replacement.posted.findIndex((message) => (message as { type: string }).type === 'attachRendererPort');
+      expect(attachIndex).toBeGreaterThan(0);
+      expect(replacement.transfers.get(attachIndex)).toEqual([port]);
+    });
+
+    it('goes to the in-process fallback once the host has given up', async () => {
+      const { transport } = makeTransport();
+      const fallbackAttach = vi.fn();
+      const fallback: PtyHostTransport = {
+        post: vi.fn(),
+        request: vi.fn(async () => 'pong') as unknown as PtyHostTransport['request'],
+        setEventListener: vi.fn(),
+        attachRendererPort: fallbackAttach,
+        hostPid: null,
+        shutdown: vi.fn(),
+      };
+      transport.setFallbackFactory(() => fallback);
+      transport.start();
+      for (let crash = 0; crash < 5; crash++) {
+        latestChild().emit('exit', 1);
+        await vi.advanceTimersByTimeAsync(16_000);
+      }
+      const port = fakePort('renderer-9');
+      transport.attachRendererPort(9, port);
+
+      expect(fallbackAttach).toHaveBeenCalledWith(9, port);
+    });
   });
 
   it('logs a host that stops answering heartbeats', async () => {
@@ -281,6 +349,14 @@ describe('UtilityPtyHostTransport', () => {
     for (const platform of ['win32', 'linux'] as const) {
       expect(ptyHostEntryPath(bundleDirectory, platform)).toContain('app.asar.unpacked');
     }
+  });
+
+  it('starts the spawn worker from the unpacked tree on every platform', () => {
+    // A worker thread loads its file with Node's own loader, which reads no asar.
+    const bundleDirectory = '/mock/Kangentic.app/Contents/Resources/app.asar/.vite/build';
+    expect(ptyHostSpawnWorkerPath(bundleDirectory)).toBe(
+      path.join('/mock/Kangentic.app/Contents/Resources/app.asar.unpacked/.vite/build', 'pty-host-spawn-worker.js'),
+    );
   });
 
   it('reports a fork that threw as fork_failed, not as an exit, and retries on the next restart poll', async () => {

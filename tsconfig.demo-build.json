@@ -6,5 +6,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["demo/vite.config.mts", "vite.config.mts"]
+  "include": ["demo/vite.config.mts", "vite.config.mts", "src/types/devtools-flag.d.ts"]
 }

@@ -1,4 +1,4 @@
-import { ipcMain, webContents } from 'electron';
+import { ipcMain, MessageChannelMain, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { supersedeMessageDeliveries } from '../../automations/turn-end/turn-end-passes';
@@ -60,16 +60,10 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!taskId) return context.sessionManager.kill(id);
     return withTaskLock(taskId, async () => context.sessionManager.kill(id));
   });
-  // Renderer keystrokes are the primary source of user-typed prompt text, so
-  // they are tagged 'user' for the prompt-draft ledger that keeps an injected
-  // auto_command from concatenating onto a half-written message.
-  ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data, 'user'));
-  // Renderer drain acknowledgement for per-session output backpressure. One-way
-  // (send, not invoke): the renderer reports bytes it has consumed so main can
-  // pause/resume the session's PTY. Keyed by sessionId only - not project-scoped.
-  ipcMain.on(IPC.SESSION_DRAIN_ACK, (_, id: string, bytes: number) => {
-    context.sessionManager.acknowledgeDrain(id, bytes);
-  });
+  // A renderer's keystrokes, output and drain acks do not come through here:
+  // each renderer has its own port to the pty host (PTY_PORT_REQUEST below),
+  // so typing never waits on this process's event loop. The host tags those
+  // keystrokes 'user' for the prompt-draft ledger.
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
   // Targeted self-heal probe: returns the live registry session for a task
@@ -85,7 +79,14 @@ export function registerSessionHandlers(context: IpcContext): void {
     const { liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
     return liveSession;
   });
-  ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => context.sessionManager.getScrollback(id));
+  // A renderer names a request id: the host answers on that renderer's port,
+  // after the output flushed before the sample (getScrollbackForRenderer).
+  // The request itself still comes through here, behind the resize the same
+  // renderer sent first, which this process applies before it asks the host.
+  ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (event, id: string, requestId?: number) =>
+    typeof requestId === 'number'
+      ? context.sessionManager.getScrollbackForRenderer(id, event.sender.id, requestId)
+      : context.sessionManager.getScrollback(id));
   // Unscoped map of sessionId -> true for sessions that have emitted first
   // output. Lets syncSessions rebuild `sessionFirstOutput` after an HMR reload
   // (renderer state resets to {}) so a running session isn't flashed back to
@@ -215,13 +216,41 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   const watchRendererTeardown = (sender: Electron.WebContents): void => {
     if (focusTeardownWatched.has(sender.id)) return;
     focusTeardownWatched.add(sender.id);
+    // The id is read now: a destroyed webContents no longer answers for it.
+    const rendererId = sender.id;
     const forget = (): void => {
-      context.sessionManager.clearFocusedSessionsFor(sender.id);
-      focusTeardownWatched.delete(sender.id);
+      context.sessionManager.clearFocusedSessionsFor(rendererId);
+      context.sessionManager.detachRendererPort(rendererId);
+      focusTeardownWatched.delete(rendererId);
     };
     sender.once('destroyed', forget);
     sender.once('render-process-gone', forget);
   };
+
+  /**
+   * Give a renderer its own port to the pty host: one end of a
+   * `MessageChannelMain` to the host, the other to the renderer's preload. Its
+   * keystrokes go to the host and its terminals' output comes back on it, so
+   * typing never waits on this process's event loop (a git start, a database
+   * write, a burst of IPC). This process brokers the pair and never relays.
+   */
+  const issueRendererPort = (target: Electron.WebContents): void => {
+    if (target.isDestroyed()) return;
+    const { port1, port2 } = new MessageChannelMain();
+    context.sessionManager.attachRendererPort(target.id, port1);
+    target.postMessage(IPC.PTY_PORT, null, [port2]);
+    watchRendererTeardown(target);
+  };
+  // A preload asks once per page load (a reload asks again).
+  ipcMain.on(IPC.PTY_PORT_REQUEST, (event) => issueRendererPort(event.sender));
+  // A restarted host has none of the old ports: every renderer gets a new one,
+  // before the manager replays what each renderer shows.
+  context.sessionManager.on('renderer-ports-lost', (rendererIds: number[]) => {
+    for (const rendererId of rendererIds) {
+      const target = webContents.fromId(rendererId);
+      if (target) issueRendererPort(target);
+    }
+  });
 
   ipcMain.handle(IPC.SESSION_SET_FOCUSED, (event, sessionIds: string[]) => {
     // Keyed by the SENDING renderer: the detached Agent Monitor publishes its own
@@ -290,37 +319,8 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
 
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
   // Each event includes the session's projectId so the renderer can filter by project.
-  /**
-   * Send to exactly the renderers that have this session VISIBLE, using the
-   * per-renderer focus map as a routing table.
-   *
-   * Previously this was a blanket send to the main window, which is wrong once a
-   * second renderer (the detached Agent Monitor) can host a terminal: its bytes
-   * would go to a window that is not showing them. Routing is also strictly less
-   * IPC than before - the main window no longer receives data for sessions it has
-   * no terminal for.
-   *
-   * Falls back to the main window when the map is empty, which is the pre-focus
-   * boot window and any headless caller that never published a set.
-   */
-  const sendToFocusedRenderers = (channel: string, sessionId: string, ...args: unknown[]): void => {
-    const rendererIds = context.sessionManager.getRenderersFocusedOn(sessionId);
-    if (rendererIds.length === 0) {
-      if (!context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(channel, sessionId, ...args);
-      }
-      return;
-    }
-    for (const rendererId of rendererIds) {
-      const target = webContents.fromId(rendererId);
-      if (target && !target.isDestroyed()) target.send(channel, sessionId, ...args);
-    }
-  };
-
-  context.sessionManager.on('data', (sessionId: string, data: string) => {
-    const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    sendToFocusedRenderers(IPC.SESSION_DATA, sessionId, data, projectId);
-  });
+  // A terminal's output is not among them: the pty host sends it to each
+  // renderer that shows the session, on that renderer's own port.
 
   // Fires only when the PTY's dims actually changed (SessionManager.resize
   // short-circuits no-ops before the emit). Broadcast rather than focus-routed:

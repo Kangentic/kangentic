@@ -3,8 +3,11 @@
  * (pty-host-client.ts), driven directly over a mocked node-pty.
  *
  * The host owns every PTY and the per-chunk work on its output, so these pin
- * what main relies on it for: output reaches main only for a focused or tapped
- * session, the utility process merges its "output happened" events instead of
+ * what main and the renderers rely on it for: output reaches a renderer's port
+ * only for a session that renderer shows and main only for a tapped one, a
+ * renderer's keystrokes share the PTY's write queue with main's writes, the
+ * scrollback answer leaves on the asking renderer's port after the output
+ * before it, the utility process merges its "output happened" events instead of
  * sending one per chunk, a spawn failure hands back the carry-over, a PTY whose
  * program is the app's own executable is refused as a failed spawn, and a
  * RemotePty behaves like a dead node-pty once the host reports the exit.
@@ -21,6 +24,14 @@ import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransp
 import type { PtyHostCommand, PtyHostEvent, PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import { HostUnavailableError } from '../../src/main/utility-process/off-main-pty';
 import type { AgentParser } from '../../src/shared/types';
+import type { FromPtyHostPortMessage } from '../../src/shared/pty-port-protocol';
+import { createFakeRendererPort, type FakeRendererPort } from './helpers/fake-renderer-port';
+
+/** The renderer every core here has a port for. */
+const TEST_RENDERER = 1;
+
+/** What main heard (host events) and the test renderer got (its port's messages), in one ordered list. */
+type HostOutput = PtyHostEvent | FromPtyHostPortMessage;
 
 interface FakePty {
   pty: nodePty.IPty;
@@ -104,7 +115,7 @@ function rawSpawnParams(overrides: Partial<PtyHostRawSpawnParams> = {}): PtyHost
 }
 
 function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: FakePty; platform?: NodeJS.Platform } = {}) {
-  const events: PtyHostEvent[] = [];
+  const events: HostOutput[] = [];
   const fake = options.fake ?? createFakePty();
   const appended: Array<{ sessionId: string; chunk: string }> = [];
   const spawnPty = vi.fn((_file: string, _args: string[], _options: object) => fake.pty);
@@ -118,7 +129,10 @@ function makeCore(options: { coalesceMs?: number; agent?: AgentParser; fake?: Fa
     // release) run the same on a Windows machine as on CI.
     platform: options.platform ?? 'linux',
   });
-  return { core, events, fake, appended, spawnPty };
+  // The renderer's own port: its output lands in `events` beside main's.
+  const port: FakeRendererPort = createFakeRendererPort((message) => events.push(message));
+  core.attachRendererPort(TEST_RENDERER, port.port);
+  return { core, events, fake, appended, spawnPty, port };
 }
 
 /** Let the 16ms flush run. */
@@ -130,7 +144,7 @@ describe('PtyHostCore', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('sends a session\'s output to main only while it is focused or tapped', async () => {
+  it('sends a session\'s output to the renderer only while it shows it, and to main only while tapped', async () => {
     const { core, events, fake } = makeCore();
     core.spawn(spawnParams());
 
@@ -138,12 +152,12 @@ describe('PtyHostCore', () => {
     await flush();
     expect(events.filter((event) => event.type === 'data' || event.type === 'tap')).toEqual([]);
 
-    core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+    core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
     fake.feed('focused');
     await flush();
     expect(events).toContainEqual({ type: 'data', sessionId: 'session-1', data: 'focused' });
 
-    core.handleCommand({ type: 'setFocused', sessionIds: [] });
+    core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: [] });
     core.handleCommand({ type: 'setTapped', sessionIds: ['session-1'] });
     fake.feed('tapped');
     await flush();
@@ -168,15 +182,15 @@ describe('PtyHostCore', () => {
     }
 
     it('pauses a watched PTY past the high water and resumes it once the slices are drained and acknowledged', async () => {
-      const { core, events, fake } = makeCore();
+      const { core, events, fake, port } = makeCore();
       core.spawn(spawnParams());
-      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
       // The renderer acknowledges every slice it gets, as a fast one does, so
       // in-flight never pauses it: only the pending buffer can.
       let acknowledged = 0;
       const acknowledgeDelivered = (): void => {
         const delivered = events.reduce((total, event) => total + (event.type === 'data' ? event.data.length : 0), 0);
-        core.handleCommand({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
+        port.send({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
         acknowledged = delivered;
       };
 
@@ -231,15 +245,15 @@ describe('PtyHostCore', () => {
     });
 
     it('resumes a PTY the backlog paused as soon as a replay sample drains the pending buffer', async () => {
-      const { core, events, fake } = makeCore();
+      const { core, events, fake, port } = makeCore();
       core.spawn(spawnParams());
-      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
       // The renderer acknowledges every slice it gets, so in-flight stays low and
       // only the pending buffer can have paused the PTY.
       let acknowledged = 0;
       const acknowledgeDelivered = (): void => {
         const delivered = events.reduce((total, event) => total + (event.type === 'data' ? event.data.length : 0), 0);
-        core.handleCommand({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
+        port.send({ type: 'ack', sessionId: 'session-1', bytes: delivered - acknowledged });
         acknowledged = delivered;
       };
       for (let tick = 0; tick < TICKS_PAST_HIGH_WATER && !vi.mocked(fake.pty.pause).mock.calls.length; tick++) {
@@ -273,13 +287,13 @@ describe('PtyHostCore', () => {
     // the answer someone waits on, and flushes on the next loop turn instead of
     // the 16 ms timer. PtyBufferManager pins the timing; these pin that the
     // host core's `write` command is what stamps the input.
-    const dataEvents = (events: PtyHostEvent[]) => events.filter((event): event is Extract<PtyHostEvent, { type: 'data' }> => event.type === 'data');
+    const dataEvents = (events: HostOutput[]) => events.filter((event): event is Extract<FromPtyHostPortMessage, { type: 'data' }> => event.type === 'data');
 
     /** A focused session already in the alt screen, as a fullscreen agent's is, with the enter flushed. */
     async function altScreenSession() {
       const created = makeCore();
       created.core.spawn(spawnParams());
-      created.core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      created.core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
       created.fake.feed('\x1b[?1049h');
       await flush();
       created.events.length = 0;
@@ -320,7 +334,7 @@ describe('PtyHostCore', () => {
       core.spawn(spawnParams({ ptyId: 2, sessionId: 'session-2' }));
       spawnPty.mockReturnValueOnce(raw.pty);
       core.spawnRaw(rawSpawnParams({ ptyId: 9 }));
-      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1', 'session-2'] });
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1', 'session-2'] });
       first.feed('\x1b[?1049h');
       second.feed('\x1b[?1049h');
       await flush();
@@ -338,6 +352,154 @@ describe('PtyHostCore', () => {
       expect(dataEvents(events)).toEqual([{ type: 'data', sessionId: 'session-2', data: 'output of the session that got the keystroke' }]);
       await flush();
       expect(dataEvents(events).map((event) => event.sessionId)).toEqual(['session-2', 'session-1']);
+    });
+  });
+
+  describe('a renderer\'s own port (keystrokes and echo never cross main)', () => {
+    it('writes a keystroke from the port to the session\'s live PTY at once, and stamps it as input', async () => {
+      const { core, events, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed('\x1b[?1049h');
+      await flush();
+      events.length = 0;
+      port.received.length = 0;
+
+      port.send({ type: 'write', sessionId: 'session-1', data: 'x' });
+      expect(fake.write).toHaveBeenCalledWith('x');
+      fake.feed('echo of x');
+      await vi.advanceTimersByTimeAsync(1);
+      // The echo came back on the port on the next loop turn. Main heard only
+      // what carries no bytes: the draft changed and output happened.
+      expect(port.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'echo of x' }]);
+      expect(events.filter((event) => !port.received.includes(event as FromPtyHostPortMessage)).map((event) => event.type))
+        .toEqual(['promptDraft', 'outputSeen']);
+    });
+
+    it('sends each session\'s output only to the renderers that show it', async () => {
+      const first = createFakePty(4242);
+      const second = createFakePty(4343);
+      const { core, fake: firstFake, spawnPty, port: firstPort } = makeCore({ fake: first });
+      core.spawn(spawnParams({ ptyId: 1, sessionId: 'session-1' }));
+      spawnPty.mockReturnValueOnce(second.pty);
+      core.spawn(spawnParams({ ptyId: 2, sessionId: 'session-2' }));
+      const secondPort = createFakeRendererPort();
+      core.attachRendererPort(2, secondPort.port);
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      core.handleCommand({ type: 'setRendererFocus', rendererId: 2, sessionIds: ['session-1', 'session-2'] });
+
+      firstFake.feed('one');
+      second.feed('two');
+      await flush();
+      expect(firstPort.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'one' }]);
+      expect(secondPort.received).toEqual(expect.arrayContaining([
+        { type: 'data', sessionId: 'session-1', data: 'one' },
+        { type: 'data', sessionId: 'session-2', data: 'two' },
+      ]));
+
+      // A renderer that went away gets nothing more, and its sessions stop flushing to it.
+      core.handleCommand({ type: 'forgetRenderer', rendererId: 2 });
+      expect(secondPort.closed).toBe(true);
+      second.feed('after');
+      await flush();
+      expect(secondPort.received.filter((message) => message.type === 'data')).toHaveLength(2);
+    });
+
+    it('keeps a keystroke out of a paste main is still writing: one queue per PTY, in arrival order', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      // Over the atomic cap, so the queue writes it in 4 KB chunks across loop turns.
+      const paste = `\x1b[200~${'p'.repeat(20 * 1024)}\x1b[201~`;
+      core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: paste, origin: 'system' });
+      expect(fake.write.mock.calls.length).toBe(1);
+      port.send({ type: 'write', sessionId: 'session-1', data: 'k' });
+      await vi.runAllTimersAsync();
+
+      // In chunks, and the key only after the paste's close marker.
+      const written = fake.write.mock.calls.map((call) => call[0] as string);
+      expect(written.length).toBeGreaterThan(2);
+      expect(written.join('')).toBe(`${paste}k`);
+      await expect(core.handleRequest('drainWrites', { ptyId: 1 })).resolves.toBe(true);
+    });
+
+    it('drops a renderer\'s keystrokes once main sealed the PTY, while main\'s direct writes still reach it', () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'sealUserInput', ptyId: 1 });
+
+      port.send({ type: 'write', sessionId: 'session-1', data: 'typed during the exit grace' });
+      core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: 'queued after the seal', origin: 'system' });
+      core.handleCommand({ type: 'write', ptyId: 1, data: '\x1b' });
+
+      expect(fake.write.mock.calls.map((call) => call[0])).toEqual(['\x1b']);
+    });
+
+    it('drops a malformed port message instead of throwing on it', () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      const send = port.send as (message: unknown) => void;
+      expect(() => send({ type: 'write', sessionId: 'session-1' })).not.toThrow();
+      expect(() => send('not an object')).not.toThrow();
+      expect(() => send({ type: 'ack', sessionId: 'session-1', bytes: 'many' })).not.toThrow();
+      expect(fake.write).not.toHaveBeenCalled();
+    });
+
+    it('answers a renderer\'s scrollback on its port, after the output flushed before the sample and before what follows it', async () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed('flushed before ');
+      await flush();
+      // Pending, not flushed, when the sample is taken: it goes into the answer only.
+      fake.feed('pending at the sample');
+      const answer = await core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: false, rendererId: TEST_RENDERER, requestId: 7 });
+      fake.feed('after the sample');
+      await flush();
+
+      expect(answer).toEqual({ sentToPort: true });
+      const portMessages = events.filter((event) => event.type === 'data' || event.type === 'scrollback');
+      expect(portMessages.map((message) => message.type)).toEqual(['data', 'scrollback', 'data']);
+      const scrollback = portMessages[1] as Extract<FromPtyHostPortMessage, { type: 'scrollback' }>;
+      expect(scrollback.requestId).toBe(7);
+      expect(scrollback.data).toContain('pending at the sample');
+      expect(portMessages[2]).toEqual({ type: 'data', sessionId: 'session-1', data: 'after the sample' });
+    });
+
+    it('answers main with the sample when it holds no port for that renderer', async () => {
+      const { core, fake } = makeCore();
+      core.spawn(spawnParams());
+      fake.feed('some output');
+      const answer = await core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: false, rendererId: 99, requestId: 1 });
+      expect(answer).toMatchObject({ sentToPort: false });
+      expect((answer as { data: string }).data).toContain('some output');
+    });
+
+    it('keeps the prompt draft in the order the PTY gets the bytes, and tells main each change', () => {
+      const { core, events, port } = makeCore();
+      core.spawn(spawnParams());
+      const drafts = () => events.filter((event) => event.type === 'promptDraft').map((event) => (event as { draft: string | null }).draft);
+
+      port.send({ type: 'write', sessionId: 'session-1', data: 'instead' });
+      port.send({ type: 'write', sessionId: 'session-1', data: ' can' });
+      // An injected command's text is not the user's, but its Enter submits what was typed.
+      core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: '/pull-request', origin: 'system' });
+      core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: '\r', origin: 'system' });
+
+      expect(drafts()).toEqual(['instead', 'instead can', null]);
+    });
+
+    it('forgets a renderer\'s port when its end disconnects, but not a newer port for the same renderer', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      // A reload: the new page's port arrives, then the old page's end closes.
+      const reloaded = createFakeRendererPort();
+      core.attachRendererPort(TEST_RENDERER, reloaded.port);
+      port.disconnect();
+
+      fake.feed('to the reloaded page');
+      await flush();
+      expect(reloaded.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'to the reloaded page' }]);
     });
   });
 
@@ -768,7 +930,7 @@ describe('PtyHostCore', () => {
     it('sends main no event for the PTY before the answer, then everything held, in order', async () => {
       const fake = latePidFake();
       const { core, events } = makeCore({ fake });
-      core.handleCommand({ type: 'setFocused', sessionIds: ['session-1'] });
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
       let eventsAtAnswer: PtyHostEvent[] | null = null;
       const answer = Promise.resolve(core.handleRequest('spawn', spawnParams())).then((result) => {
         eventsAtAnswer = [...events];

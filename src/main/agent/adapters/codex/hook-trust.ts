@@ -153,10 +153,14 @@ export async function readCodexHookTrust(
  * Windows refuses to remove a directory a live process works in, so the
  * removal waits for the exit, bounded, then tries anyway. The read's answer
  * never waits for it. A folder that still cannot go stays in the OS temp folder.
+ * The removal runs off main's thread: synchronous, it held main 102 ms at a
+ * launch's agent detection.
  */
 function removeScratchAfterExit(child: CliChildProcess | null, scratch: string): void {
   const remove = (): void => {
-    try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* a held file; it stays in the OS temp folder */ }
+    fs.promises.rm(scratch, { recursive: true, force: true }).catch(() => {
+      // A held file; it stays in the OS temp folder.
+    });
   };
   if (!child || child.exitCode !== null || child.signalCode !== null) {
     remove();

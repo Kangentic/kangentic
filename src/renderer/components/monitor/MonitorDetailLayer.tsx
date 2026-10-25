@@ -293,9 +293,8 @@ function MonitorDetailBridge(): null {
 
   /**
    * Publish this layer's visible sessions, which is what makes its terminals
-   * receive PTY data at all: main gates emitting on the union of every renderer's
-   * focused set and routes each session's bytes to the renderers that declared it
-   * (see SessionManager.setFocusedSessions / getRenderersFocusedOn).
+   * receive PTY data at all: the pty host sends each session's bytes only to the
+   * ports of the renderers that declared it (see SessionManager.setFocusedSessions).
    *
    * ONLY in a pop-out window. `SESSION_SET_FOCUSED` is a whole-set REPLACE keyed
    * on the sender's webContents id, so two publishers inside one renderer fight:

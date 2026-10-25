@@ -123,11 +123,12 @@ describe('SessionManager agent-absence wiring', () => {
     callback(sessionId, { ts: Date.now(), type });
   }
 
-  /** A fake IPty: only `pid` and `kill` are reached by kill(). */
+  /** A fake PTY handle: only `pid`, `kill` and `sealUserInput` are reached by kill(). */
   function fakePty(pid: number): ManagedSession['pty'] {
     return {
       pid,
       kill: () => { killedPtys.push(pid); },
+      sealUserInput: () => {},
     } as unknown as ManagedSession['pty'];
   }
 

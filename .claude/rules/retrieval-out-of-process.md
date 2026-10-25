@@ -83,7 +83,8 @@ connection.
 - **Test:** `tests/unit/event-loop-watchdog.test.ts` runs the watchdog on a real thread, holds the
   loop, and reads the line it wrote while the loop was still held. It also fails when the thread
   requires anything but a `node:` built-in, or when `worker_threads` is imported anywhere else in
-  `src/main`.
+  `src/main` but the pty host's spawn worker, the one other thread, which loads no native module
+  either ([[pty-host-out-of-process]]).
 - **Review:** a new main-side caller of a retrieval-store method compiles (types are erased), so
   the boundary test catches it only when it pulls a declaration into main's bundle. `/code-review`
   flags a direct `getProjectDb` read of a `memory_*` table from main.

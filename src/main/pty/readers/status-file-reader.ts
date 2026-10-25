@@ -53,13 +53,43 @@ export interface StatusFileAttachOptions {
   /**
    * Adapter-supplied hook (from `runtime.statusFile`) used to decode
    * status.json and events.jsonl content. Optional: when null, the
-   * reader still performs startup file cleanup (truncate stale
-   * status.json, truncate stale events.jsonl) but skips watcher setup
-   * since there's nothing to parse. This is used by sessions whose
+   * reader skips the status watcher since there's nothing to parse (the
+   * events watcher still runs, see attach). This is used by sessions whose
    * adapter does not opt into the hook telemetry pipeline (Codex,
    * Gemini, Aider) and by test fixtures.
    */
   statusFileHook: StatusFileHook | null;
+}
+
+/**
+ * Empty a session's status.json and events.jsonl before its agent starts, so
+ * the reader neither emits a previous run's data nor erases this run's first
+ * lines. `performSpawn` awaits this before it asks the host for the PTY, and
+ * `StatusFileReader.attach` writes nothing, so bytes the agent writes before
+ * the watchers arm are read, not lost.
+ *
+ * Asynchronous, so the write waits off main's thread: done synchronously in
+ * attach() it once held main 108 ms under a disk load.
+ *
+ * TRUNCATE, not unlink, and that distinction is load-bearing. Unlinking left
+ * the file absent when FileWatcher was constructed, so `fs.watch(filePath)`
+ * always threw and the watcher fell back to watching the SESSION DIRECTORY for
+ * the whole life of the session. On Windows a directory watch whose target is
+ * deleted then spins a CPU core forever (see readers/file-watcher.ts). An empty
+ * file puts the watcher on the file itself, which does not have that failure
+ * mode.
+ *
+ * Every adapter's parseStatus returns null for '' (Claude's JSON.parse is
+ * wrapped in try/catch; the rest return null unconditionally), so an empty
+ * status file emits nothing and cannot satisfy the firstStatusDelivered
+ * handoff. A path whose directory is missing is skipped; the bridge or a hook
+ * creates the file later.
+ */
+export async function resetStatusFiles(statusOutputPath: string | null, eventsOutputPath: string | null): Promise<void> {
+  const paths = [statusOutputPath, eventsOutputPath].filter((filePath): filePath is string => !!filePath);
+  await Promise.all(paths.map((filePath) => fsPromises.writeFile(filePath, '').catch(() => {
+    // The directory may not exist yet.
+  })));
 }
 
 interface AttachedState {
@@ -109,10 +139,8 @@ export class StatusFileReader {
    * paths are optional - a session with neither is a no-op (the
    * adapter isn't using Kangentic's statusline/hook pipeline).
    *
-   * Truncates any stale status.json and events.jsonl from a prior run
-   * with the same path, so the watcher doesn't emit cached data from
-   * the previous session. Truncated rather than unlinked so the watcher
-   * arms on the FILE - see the inline note on the truncate below.
+   * Writes nothing: `resetStatusFiles` emptied both files before the agent
+   * started, so whatever they hold now is this run's.
    */
   attach(options: StatusFileAttachOptions): void {
     const { sessionId, statusOutputPath, eventsOutputPath, statusFileHook } = options;
@@ -131,30 +159,14 @@ export class StatusFileReader {
       eventsChain: Promise.resolve(),
       eventsGeneration: 0,
     };
+    // Registered before the first read below, which looks the state up: an
+    // agent that wrote its status before this attach is read now, not at its
+    // next write.
+    this.states.set(sessionId, state);
 
-    // Truncate stale status.json so the watcher doesn't emit cached data
-    // from a previous session run. Runs regardless of whether a parser
-    // is provided - file cleanup is not parser-dependent.
-    //
-    // TRUNCATE, not unlink, and that distinction is load-bearing. Unlinking
-    // left the file absent at the moment FileWatcher was constructed a line
-    // later, so `fs.watch(statusOutputPath)` always threw and the watcher
-    // always fell back to watching the SESSION DIRECTORY, for the whole life of
-    // the session. On Windows a directory watch whose target is deleted then
-    // spins a CPU core forever (see readers/file-watcher.ts). Creating the file
-    // empty puts the watcher on the file itself, which does not have that
-    // failure mode - and matches what the events file below already does.
-    //
-    // Every adapter's parseStatus returns null for '' (Claude's JSON.parse is
-    // wrapped in try/catch; the rest return null unconditionally), so an empty
-    // file emits nothing and cannot satisfy the firstStatusDelivered handoff.
     if (statusOutputPath) {
-      // sync-write-ok: once per attach, and it must land before the agent's first status write.
-      try { fs.writeFileSync(statusOutputPath, ''); } catch { /* dir may not exist */ }
-
       // Only install the watcher when we have a status-file hook to
-      // decode changes. Sessions without a hook still need the file
-      // deleted but don't need change notifications.
+      // decode changes.
       if (statusFileHook) {
         // Both change handlers read asynchronously, once per file change per
         // running session; the dev lag monitor times what they do with the
@@ -169,9 +181,6 @@ export class StatusFileReader {
       }
     }
 
-    // Truncate stale events.jsonl. Historical events from a prior run
-    // aren't needed - the new session starts with an empty event log.
-    //
     // The watcher is installed whenever `eventsOutputPath` is set,
     // regardless of whether the adapter declares a `statusFile` hook.
     // Claude uses the hook to parse events into SessionEvent objects,
@@ -181,9 +190,6 @@ export class StatusFileReader {
     // field on a `session_start` line. Gating this on `statusFileHook`
     // made the fromHook capture path dead code for Codex/Gemini.
     if (eventsOutputPath) {
-      // sync-write-ok: once per attach, and it must land before the agent's first event.
-      try { fs.writeFileSync(eventsOutputPath, ''); } catch { /* bridge may create it */ }
-
       state.eventsWatcher = new FileWatcher({
         filePath: eventsOutputPath,
         onChange: () => this.handleEventsChange(sessionId),
@@ -205,8 +211,6 @@ export class StatusFileReader {
         },
       });
     }
-
-    this.states.set(sessionId, state);
   }
 
   /**

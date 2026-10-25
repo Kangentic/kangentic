@@ -102,7 +102,7 @@ User drags task between columns
   → Main: TransitionEngine runs the TARGET column's On enter automations
   → Main: the agent starts before the first automation that needs it
   → SessionManager spawns PTY (or queues it)
-  → PTY streams output → 16ms batched flush → IPC session:data → xterm render
+  → PTY streams output → 16ms batched flush → the renderer's own port to the pty host → xterm render
   → Bridge scripts write status/activity/events files → fs.watch → IPC → Zustand stores
 ```
 
@@ -240,7 +240,7 @@ Template variables available: `{{title}}`, `{{description}}`, `{{task_xml}}`, `{
 All of it runs in the pty host; main relays what a renderer or a phone needs.
 
 - **Buffer:** PTY `onData` accumulates into per-session buffer
-- **Flush:** 16ms interval (~60fps). The host sends a flush to main as `data` only for a session a renderer shows (the focused union), and as `tap` only for a session a phone streams (`subscribeDataTap`, reference counted). Main forwards `data` via IPC `session:data`. Every other session sends only a coalesced `outputSeen` (no bytes), which the activity engine and the Monitor read.
+- **Flush:** 16ms interval (~60fps). The host sends a flush straight to each renderer that shows the session, on that renderer's own port, and to main as `tap` only for a session a phone streams (`subscribeDataTap`, reference counted). Keystrokes reach the host on the same port, so neither crosses main's event loop (see [Output streaming](sessions/output-streaming.md#input-and-echo-path)). Every other session sends only a coalesced `outputSeen` (no bytes), which the activity engine and the Monitor read.
 - **Scrollback:** 512KB ring buffer per session, used to restore terminal content when switching views. Alt-screen sessions and sessions whose ring spans a geometry change restore from the parsed grid instead - see [Output streaming](sessions/output-streaming.md#scrollback-replay). Main reads it by request.
 
 ### File Watchers

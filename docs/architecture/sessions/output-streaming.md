@@ -1,12 +1,15 @@
 ---
 type: Reference
 title: Output streaming
-description: "How PTY output reaches xterm and a phone (16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
+description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
 tags: [terminal, output, scrollback, replay, geometry]
 sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
   - resource: src/main/pty/buffer/backpressure-controller.ts
   - resource: src/main/pty/host/pty-host-core.ts
+  - resource: src/preload/pty-port-client.ts
+  - resource: src/shared/pty-port-protocol.ts
+  - resource: src/main/pty/host/spawn-worker/spawn-worker-entry.ts
   - resource: src/devtools/main/scroll-latency-report.ts
   - resource: src/main/pty/buffer/headless-frame.ts
   - resource: src/main/pty/buffer/transcript-writer.ts
@@ -34,14 +37,113 @@ Agents read it back through the `kangentic_get_transcript` MCP tool's `raw` form
 
 ## Output pipeline
 
-Everything in this section runs in the [pty host](crash-recovery.md#pty-host); main relays what a renderer or a
-phone needs and reads the rest by request.
+Everything in this section runs in the [pty host](crash-recovery.md#pty-host). The host sends a
+renderer's output on that renderer's own port, relays a phone's through main, and main reads the
+rest by request.
+
+### Input and echo path
+
+A keystroke used to cross main twice. The renderer invoked `session:write`, main ran the draft
+ledger and the write queue and posted the bytes to the host, and the echo came back as a host event
+that main forwarded on `session:data`. Anything that held main's event loop held every terminal's
+echo, and anything that held the host's held them all as well. Every process the host started ran
+CreateProcess synchronously on its one thread, and under a disk load a single git start took
+hundreds of milliseconds (measured below on Windows 11, 2026-10-25, with
+`kangentic_devtools_scroll_latency` typing into the mock agent).
+
+Now each renderer holds its own port to the host and main never relays a keystroke or an echo:
+
+- **The port.** At load the preload asks for one (`PTY_PORT_REQUEST`). `sessions.ts` creates a
+  `MessageChannelMain`, gives the host one end (`attachRendererPort`, keyed by the renderer's
+  webContents id) and posts the other to the preload (`PTY_PORT`), which keeps it in
+  `PtyPortClient` (`src/preload/pty-port-client.ts`, web APIs only). `sessions.write`, `onData`,
+  `ackData` and `getScrollback` keep their `ElectronAPI` shape. A reload asks again and the host
+  replaces that renderer's port. A host restart issues every renderer a new one, then replays each
+  renderer's focus set. Under the in-process fallback main holds the host's end, so typing crosses
+  main only there.
+- **Output goes only where it is shown.** The host keeps each renderer's focus set
+  (`setRendererFocus`) and sends a flush to the ports whose set holds the session. Acks come back on
+  the same port.
+- **One write queue, in the host.** A renderer's keystrokes and main's writes (an injected command,
+  a paste, dictation) share the PTY's queue (`write-queue.ts`), so a key never lands inside a large
+  paste. The prompt-draft ledger records each write in queue order and the host reports changes
+  (`promptDraft`), which main mirrors for `getPendingDraft`. `drain()` is a host request. Every
+  place main drops a session's PTY handle calls `sealUserInput()` first, so the host stops writing a
+  renderer's keystrokes into an agent that is exiting, while main's own exit sequence still goes
+  through.
+- **The replay stays ordered.** `getScrollback` still goes through main, behind that renderer's
+  resizes on main's ordered channel to the host. The host answers on the asking renderer's port, so
+  the answer follows the output it flushed before the sample. `useTerminal` asks for the scrollback
+  only once its grid request has resolved, and resolves the replay off the scrollback alone.
+- **No process starts on the host's I/O thread.** Every one-shot child, CLI run and process-table
+  tool starts on the host's spawn worker (`src/main/pty/host/spawn-worker/`), a `worker_threads`
+  Worker that loads only `node:` built-ins and pure modules. node-pty cannot move, since a PTY's
+  handle belongs to the thread that spawned it, so `pty:spawn` stays on the I/O thread at 5 to 38 ms
+  under load.
+
+Both builds, run back to back on one machine the same afternoon, two to four runs of each load per
+build (ranges across runs):
+
+| Load | Echo p99 / max, before | Echo p99 / max, after | Kangentic's share max, before / after | Neighbour's longest gap, before / after |
+|---|---|---|---|---|
+| idle | 3.7-21.5 / 4.7-22.1 ms | 7.9-10.0 / 9.3-11.5 ms | 8.9-9.4 / 14.0-19.8 ms | 139-170 / 79-83 ms |
+| `npm ci` with an agent started 8 s in | 3.2-7.7 / 8.5-8.9 ms | 7.9-27.2 / 8.4-38.9 ms | 14.0-15.9 / 13.6-19.2 ms | 94 / 84-92 ms |
+| main held 0.8 to 1.3 s, three times | 913-920 / 914-920 ms | 8.4-9.0 / 9.1-10.9 ms | 917-924 / 9.6-10.4 ms | 1,040 / 79 ms |
+| Done move of a full `node_modules` | 37.1-52.0 / 221-266 ms | 7.8-9.1 / 8.7-22.7 ms | 228-270 / 14.0-25.6 ms | 296-321 / 80-86 ms |
+| worktree create with an `npm ci` init script | 6.0-13.5 / 24.0-28.4 ms | 8.3-9.5 / 8.4-41.8 ms | 24.7-30.1 / 14.0-14.3 ms | 153-156 / 84-85 ms |
+
+Echo is the keystroke leaving the renderer to its first output arriving, so it includes the mock
+agent's own answer, which varied from 1 to 41.5 ms between runs under the disk load (the idle 21.5
+before and the 27.2 and 41.8 after are that). Kangentic's share is input-to-paint minus that
+answer, the number to compare. The neighbour is a second mock repainting at 20 Hz, so 79 ms is its
+own cadence. The trade reads straight off the share column: idle and the `npm ci` load cost about
+one frame (idle input-to-paint p50 5.0 to 9.3 ms, explained below), and the loads that stall main or
+the host's thread go from hundreds of milliseconds to under 26. The main row holds main with a synchronous
+SQLite query through the devtools bridge and types from inside the renderer, since the tool's key
+drive runs through main itself. Before, each held keystroke waited the whole stall in main. In the
+before build's Done moves, git starts held the host's thread for 250 to 304 ms and froze both
+terminals together; in the after build the same starts took 96 to 198 ms on the spawn worker and
+neither terminal moved. Main also stalled for 177 ms in one after-build Done move, and that run's
+echo peaked at 15.5 ms. The `npm ci` load did not slow CreateProcess in these before runs (git
+starts of 22 to 28 ms), so it shows no gain here; the case for the spawn worker rests on the Done
+move and on real use, where a dogfooding instance recorded single git starts of up to 6.9 s on the
+host's thread. An earlier
+before run of the init-script create, under a heavier disk load, reached p99 293 ms and max 454 ms,
+with CreateProcess taking 190 to 454 ms per git start on the host's thread.
+
+The Done move's `node_modules` deletion does not hold main's thread: a cheap IPC round trip every
+50 ms measured p99 1.3 to 2.7 ms through most moves. What main felt was its own small synchronous
+file calls slowed by that disk load. The 177 ms stall above was the probe's own round trip:
+`config:get` read the project's `config.json` with `readFileSync` in `getEffectiveConfig`, which
+spawns and moves also called, reading the file 14 times for one task start and 9 times for a Done
+move. An agent
+start under the same load once held main 108 ms truncating the session's status files
+(`StatusFileReader.attach`). Both now wait off main's thread: `getEffectiveConfig` serves cached
+overrides (see `docs/settings/cascade.md`) and the spawn empties the status files asynchronously
+before the agent starts. Across three agent starts and two Done moves after that, main read the
+config file synchronously zero times, no stall was attributed to either, and a round trip to main
+that touches no file measured p99 1.6 to 2.2 ms. One synchronous write remains on an agent start:
+Claude's adapter writes its merged `settings.json` inside `buildCommand`, which every adapter
+implements synchronously, and under the load it once held main 124 ms. None of these reach typing.
+
+**Why an idle echo paints one frame later than before.** Chromium's `DeferRendererTasksAfterInput`
+holds a posted message, and a timer, until the frame after an input event has painted. The old
+echo arrived as an IPC message, which the feature does not hold. A port message is held, so the
+echo misses the keystroke's own frame. A renderer-local `MessageChannel` probe on real keydowns
+measured key to frame at 3.4 ms and key to message at 4.2 ms (p50), with the message after the frame
+in 60 of 60. `transportLegs` on the latency tool shows it as the host-to-renderer hop: 2.7 ms at
+p50 and 7.9 ms at most, one 120 Hz frame, against 0.1 ms for the keystroke's hop to the host. Idle
+input-to-paint went from 5.3 ms to 9.4 ms at the median. Turning the feature off brought the echo
+back to 0.8 ms and input-to-paint to 4.7 ms, but React's scheduler posts its work the same way, and
+six reorder drags then painted their drop 15 to 62 ms after release with seven long frames, against
+29 to 40 ms and none with the feature on. The feature stays on. VS Code's terminal also receives
+its output over a MessagePort.
 
 ### Buffering and the scrollback ring
 
 - PTY `onData` accumulates into a per-session buffer.
-- A 16ms flush interval (~60fps) sends buffered data to main for a session in the focused union,
-  which main forwards via IPC `session:data`. A phone's stream gets every flushed byte as `tap`, for
+- A 16ms flush interval (~60fps) sends buffered data on the port of each renderer that shows the
+  session (see Input and echo path above). A phone's stream gets every flushed byte as `tap`, for
   as long as it holds a `subscribeDataTap` subscription.
 - **In the alt screen, output that answers input flushes on the next loop turn.** For 250 ms after
   input is written to a session's PTY (`PtyBufferManager.noteInput`, from the host's `write`
@@ -597,8 +699,8 @@ phone needs and reads the rest by request.
 
 ### Focus catch-up, input pacing and repaint
 
-- **Focus-edge catch-up, the wider sibling of park/reveal.** Main gates PTY emission on its focused
-  union, but the only catch-up repaint used to be `onTerminalReveal`, which fires on the PARKED
+- **Focus-edge catch-up, the wider sibling of park/reveal.** The host sends a renderer only the
+  sessions in its focused set, but the only catch-up repaint used to be `onTerminalReveal`, which fires on the PARKED
   edge. Parking implies unfocus, not the reverse, so every session that left the union WITHOUT
   being parked had no path back to a correct grid: a detail window a detached monitor owns
   (`remotelyOwnedSessionIds`), a hidden bottom panel, a closed command bar over a transient.
@@ -610,7 +712,7 @@ phone needs and reads the rest by request.
   incoming queue ack-and-discard, so neither subsumes the other.
 - **Mouse reports are paced, never batched.** Outgoing terminal input rides a microtask write
   batcher (`src/renderer/utils/write-batcher.ts`) that coalesces synchronous onData bursts into
-  one IPC write - byte-safe, but not semantics-safe for a fullscreen TUI, which treats a chunk
+  one port write - byte-safe, but not semantics-safe for a fullscreen TUI, which treats a chunk
   as one input batch: a run of wheel reports delivered together becomes one multi-line jump, and
   the TUI's differential frame for a multi-line jump intermittently mis-assembles, splicing
   rows so entries go missing from the frame. Verified by controlled injection (2026-08-23): ten spaced

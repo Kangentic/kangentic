@@ -108,6 +108,8 @@ export interface AgentDetectorConfig {
 export class AgentDetector {
   private cached: AgentInfo | null = null;
   private inflight: Promise<AgentInfo> | null = null;
+  /** Bumped by `invalidateCache`, so a detection that was running then caches nothing. */
+  private generation = 0;
 
   constructor(private readonly config: AgentDetectorConfig) {}
 
@@ -116,16 +118,25 @@ export class AgentDetector {
    * instance; call `invalidateCache()` to force a re-check. Concurrent
    * calls during an in-flight detection share the same promise so
    * the CLI is only inspected once.
+   *
+   * A detection still running when the cache is invalidated answers its own
+   * callers but never fills the cache: it was asked about the old override.
+   * Before this, a CLI path saved while startup detection ran was overwritten
+   * by the old path, and every spawn after it started the old CLI.
    */
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     if (this.cached) return this.cached;
     if (this.inflight) return this.inflight;
 
-    this.inflight = this.performDetection(overridePath);
+    const generation = this.generation;
+    const detection = this.performDetection(overridePath);
+    this.inflight = detection;
     try {
-      return await this.inflight;
+      const result = await detection;
+      if (generation === this.generation) this.cached = result;
+      return result;
     } finally {
-      this.inflight = null;
+      if (this.inflight === detection) this.inflight = null;
     }
   }
 
@@ -140,6 +151,7 @@ export class AgentDetector {
 
   /** Clear cached detection results so the next `detect()` call re-runs. */
   invalidateCache(): void {
+    this.generation += 1;
     this.cached = null;
     this.inflight = null;
   }
@@ -154,12 +166,10 @@ export class AgentDetector {
       const probe = await this.probeVersion(overridePath);
       if (probe.ok) {
         console.log(`[agent-detect] ${name}: found via override ${overridePath} (${probe.version})`);
-        this.cached = { found: true, path: overridePath, version: probe.version };
-        return this.cached;
+        return { found: true, path: overridePath, version: probe.version };
       }
       console.warn(`[agent-detect] ${name}: override ${overridePath} did not produce a version (${probe.detail})`);
-      this.cached = { found: false, path: overridePath, version: null };
-      return this.cached;
+      return { found: false, path: overridePath, version: null };
     }
 
     // 2. PATH-based discovery via `which()`. Works when Electron is
@@ -204,8 +214,7 @@ export class AgentDetector {
         const probe = await this.probeVersion(matchPath);
         if (probe.ok) {
           console.log(`[agent-detect] ${name}: found via PATH at ${matchPath} (${probe.version})`);
-          this.cached = { found: true, path: matchPath, version: probe.version };
-          return this.cached;
+          return { found: true, path: matchPath, version: probe.version };
         }
         console.warn(
           `[agent-detect] ${name}: "${candidate}" resolved to ${matchPath} but ${describeProbeFailure(probe)}; `
@@ -233,8 +242,7 @@ export class AgentDetector {
       const probe = await this.probeVersion(fallbackPath);
       if (probe.ok) {
         console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${probe.version})`);
-        this.cached = { found: true, path: fallbackPath, version: probe.version };
-        return this.cached;
+        return { found: true, path: fallbackPath, version: probe.version };
       }
     }
 
@@ -251,8 +259,7 @@ export class AgentDetector {
       `${existingFallbacks.length}/${fallbackPaths.length} fallback paths existed but failed version probe; ` +
       `${missingCount} did not exist on disk. Configure cliPath in Settings if installed elsewhere.`,
     );
-    this.cached = { found: false, path: null, version: null };
-    return this.cached;
+    return { found: false, path: null, version: null };
   }
 
   /**

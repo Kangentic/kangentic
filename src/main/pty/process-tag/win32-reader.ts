@@ -66,6 +66,7 @@
  * no address or port leaves this file.
  */
 
+import { recordSyncSpan, timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { TASK_PROCESS_TAG_ENV } from './task-process-tag';
 import { isFileFrom, labelProcess, splitWindowsCommandLine } from './process-label';
 import { ipv4FromBytes, ipv6FromBytes, listeningPidsOf, pairLocalConnections, type SocketRow } from './local-connections';
@@ -706,11 +707,19 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     if (ownSid === null) throw new Error('the Windows reader could not read its own user');
 
     const rows = await enumerateProcesses(api);
-    const windowPids = userVisibleWindowPids(api.visibleWindows());
+    // Synchronous native calls on the host's terminal thread, so each is a
+    // labelled span: the lag report names the reap step a stall came from.
+    const windowPids = timeSyncWork('reap:visible-windows', () => userVisibleWindowPids(api.visibleWindows()));
     const processes: ScannedProcess[] = [];
     let unreadableCount = 0;
+    // Each run of reads between two yields holds the thread as one block.
+    let batchStartedAt = performance.now();
     for (let index = 0; index < rows.length; index += 1) {
-      if (index > 0 && index % YIELD_EVERY_PROCESSES === 0) await yieldToEventLoop();
+      if (index > 0 && index % YIELD_EVERY_PROCESSES === 0) {
+        recordSyncSpan('reap:read-processes', performance.now() - batchStartedAt);
+        await yieldToEventLoop();
+        batchStartedAt = performance.now();
+      }
       const row = rows[index];
       const scanned: ScannedProcess = { pid: row.pid, ppid: row.ppid, startKey: '', startedAtMs: null, tagValue: null };
       if (CONSOLE_HOST_IMAGES.has(row.image.toLowerCase())) scanned.role = 'console-host';
@@ -753,6 +762,7 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
       scanned.tagValue = tagValue;
       scanned.workingDirectory = workingDirectory;
     }
+    recordSyncSpan('reap:read-processes', performance.now() - batchStartedAt);
     // A window makes a visible app only of a tagged process or one below it,
     // as on Linux and macOS, never of an ancestor: Windows Terminal owns a real
     // window and every tab's shell is its child, so reading it would protect
@@ -885,7 +895,7 @@ export class Win32TaggedProcessReader implements TaggedProcessReader {
     try {
       // The whole table, one call per family: it names every socket's owner,
       // so there is nothing to narrow by reading fewer processes.
-      rows = [...readTcpTable(api, 'ipv4'), ...readTcpTable(api, 'ipv6')];
+      rows = timeSyncWork('reap:tcp-table', () => [...readTcpTable(api, 'ipv4'), ...readTcpTable(api, 'ipv6')]);
     } catch (error) {
       throw new ScanStepError('connection_list', error instanceof Error ? error.message : String(error));
     }

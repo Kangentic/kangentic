@@ -12,6 +12,7 @@
  */
 
 import { format } from 'node:util';
+import { Worker } from 'node:worker_threads';
 import type Database from 'better-sqlite3';
 import { closeProjectDb, configureProjectDbAccess, getProjectDb, setWalAutoCheckpoint } from '../../db/database';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
@@ -20,10 +21,13 @@ import { relaySlowSyncSpans, startEventLoopLagMonitor } from '../../diagnostics/
 import { setTerminalTraceRelay } from '../terminal-trace';
 import { skipConsoleListHelper } from '../spawn/conpty-console-list';
 import { loadWin32OrphanApi } from '../process-tag/win32-reader';
+import { createTaggedProcessReader } from '../process-tag/reader-factory';
 import type { TranscriptSink } from '../buffer/transcript-writer';
 import { PtyHostCore } from './pty-host-core';
 import { HostProcessTable } from './host-process-table';
 import { setMainExecutable } from './host-exec';
+import { runToolThrough, type SpawnServiceHooks } from './host-spawn-service';
+import { WorkerSpawnService, relayWorkerSpan, type SpawnWorkerHandle } from './worker-spawn-service';
 import { toPtyHostError, type FromPtyHostMessage, type PtyHostInitMessage, type PtyHostRequest, type ToPtyHostMessage } from './protocol';
 
 // This process forks node-pty's Windows kill helper too, under the same
@@ -88,8 +92,26 @@ function transcriptSinkFor(projectId: string): TranscriptSink | null {
 }
 
 let core: PtyHostCore | null = null;
-/** `ps` per call on POSIX (no child kept); unused on Windows. */
-const preKillProcessTable = new HostProcessTable();
+
+/**
+ * Every child process this host starts runs on the spawn worker's thread, never
+ * on this one, which carries every terminal's input and output: on Windows a
+ * process start holds its thread for the whole CreateProcess, 190 to 454 ms a
+ * git start under heavy disk IO (2026-10-25).
+ */
+function createSpawnService(message: PtyHostInitMessage, hooks: SpawnServiceHooks): WorkerSpawnService {
+  return new WorkerSpawnService({
+    ...hooks,
+    mainExecutable: message.mainExecutable,
+    createWorker: (data): SpawnWorkerHandle => {
+      if (!message.spawnWorkerPath) throw new Error('main named no spawn worker');
+      return new Worker(message.spawnWorkerPath, { workerData: data });
+    },
+    onSlowSpan: __KANGENTIC_DEV__
+      ? relayWorkerSpan((label, ms) => post({ type: 'slow-span', label, ms: Math.round(ms) }))
+      : undefined,
+  });
+}
 
 function initialize(message: PtyHostInitMessage): void {
   configureProjectDbAccess({ projectsDir: message.projectsDir, migrate: false });
@@ -97,12 +119,25 @@ function initialize(message: PtyHostInitMessage): void {
   // The retrieval worker runs the PASSIVE checkpoints for every process; a
   // commit here must not run one on this thread.
   setWalAutoCheckpoint(0);
+  let spawnService: WorkerSpawnService | null = null;
+  const spawnServiceOf = (): WorkerSpawnService => {
+    if (!spawnService) throw new Error('The pty host spawn service is not created yet');
+    return spawnService;
+  };
+  /** POSIX: `ps` per call on the spawn worker (no child kept); unused on Windows. */
+  const preKillProcessTable = new HostProcessTable({ createFallbackProbe: () => spawnServiceOf().processTableProbe() });
   core = new PtyHostCore({
     emit: post,
     resolveAgent: (_sessionId, agentName) => (agentName ? agentRegistry.get(agentName) : undefined),
     transcriptSinkFor,
     closeProject: (projectId) => closeProjectDb(projectId),
     coalesceMs: COALESCE_MS,
+    createSpawnService: (hooks) => {
+      spawnService = createSpawnService(message, hooks);
+      return spawnService;
+    },
+    // macOS runs `lsappinfo` during a reap; it starts on the spawn worker too.
+    createTaggedProcessReader: () => createTaggedProcessReader(process.platform, { runTool: runToolThrough(spawnServiceOf()) }),
     loadOrphanApi: () => loadWin32OrphanApi(),
     // POSIX only (the core ignores it on Windows): the shell's descendants
     // before a kill, for a reap's agent-exit wait (`exited-root-wait.ts`).
@@ -170,6 +205,12 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
     case 'shutdown':
       shutdown(message.exitWaitMs);
       return;
+    case 'attachRendererPort': {
+      // A renderer's own port: its keystrokes and output skip main entirely.
+      const port = event.ports[0];
+      if (port) core?.attachRendererPort(message.rendererId, port);
+      return;
+    }
     default:
       core?.handleCommand(message);
   }

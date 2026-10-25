@@ -5,10 +5,10 @@
  * The renderer ring (`src/renderer/utils/scroll-latency-probe.ts`) and the
  * host ring (`src/main/diagnostics/pty-round-trip-probe.ts`) run on different
  * clocks, so every interval here is taken inside one ring. The one figure that
- * spans both, IPC plus main, comes from pairing the k-th report the renderer
+ * spans both, the transport, comes from pairing the k-th report the renderer
  * sent with the k-th mouse report the host wrote, which holds because both
  * directions are ordered channels: the renderer's round trip minus the host's
- * write-to-flush is what the two hops through main cost.
+ * write-to-flush is what the two hops between the renderer and the host cost.
  *
  * "First output after a report" is the answer to it. That is exact when the
  * agent is otherwise quiet, and when reports are spaced further apart than the
@@ -26,6 +26,7 @@ export interface LatencyStats {
   count: number;
   p50Ms: number | null;
   p95Ms: number | null;
+  p99Ms: number | null;
   maxMs: number | null;
   meanMs: number | null;
 }
@@ -89,8 +90,17 @@ export interface SessionScrollLatency {
     answerLargestGap: LatencyStats;
     answerFlushes: LatencyStats;
   } | null;
-  /** Both hops through main, input and output, per paired report. */
-  ipcAndMain: LatencyStats | null;
+  /** Both hops between the renderer and the host, input and output, per paired report. */
+  transport: LatencyStats | null;
+  /**
+   * The two hops apart: the input's from the renderer's send to the host's
+   * write, and the answer's from the host's flush to its arrival. The rings
+   * are lined up by each process's `performance.timeOrigin`, so each hop
+   * carries that alignment's error, around a millisecond either way, which
+   * moves time from one hop to the other; their sum is `transport` exactly.
+   * Null when a reading carries no origin.
+   */
+  transportLegs: { toHost: LatencyStats; toRenderer: LatencyStats } | null;
   /** Per paired report: report-to-paint minus that report's agent answer. */
   kangenticShare: LatencyStats | null;
   /** `paired` when both sides saw the same number of reports; otherwise why not. */
@@ -98,7 +108,7 @@ export interface SessionScrollLatency {
   /** Medians of each leg, in round-trip order, and the end-to-end median they should add up to. */
   breakdownMs: {
     pacedQueue: number | null;
-    ipcAndMain: number | null;
+    transport: number | null;
     agent: number | null;
     hostFlushWait: number | null;
     rendererParse: number | null;
@@ -118,6 +128,12 @@ export interface SessionOutputStream {
   hostPauses: number;
   rendererArrivals: number;
   rendererChars: number;
+  /** The longest wait between two of the session's flushes in the host, and
+   *  between two of its arrivals in the renderer. A session that streams
+   *  steadily (a repainting agent) shows a freeze as one long gap, so these
+   *  say which terminals stopped and on which side. Null under two events. */
+  hostMaxFlushGapMs: number | null;
+  rendererMaxArrivalGapMs: number | null;
 }
 
 export interface ScrollLatencyReport {
@@ -146,7 +162,7 @@ function round(value: number): number {
 }
 
 export function latencyStats(values: readonly number[]): LatencyStats {
-  if (values.length === 0) return { count: 0, p50Ms: null, p95Ms: null, maxMs: null, meanMs: null };
+  if (values.length === 0) return { count: 0, p50Ms: null, p95Ms: null, p99Ms: null, maxMs: null, meanMs: null };
   const sorted = [...values].sort((left, right) => left - right);
   const percentile = (fraction: number): number => sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))];
   const total = sorted.reduce((sum, value) => sum + value, 0);
@@ -154,6 +170,7 @@ export function latencyStats(values: readonly number[]): LatencyStats {
     count: sorted.length,
     p50Ms: round(percentile(0.5)),
     p95Ms: round(percentile(0.95)),
+    p99Ms: round(percentile(0.99)),
     maxMs: round(sorted[sorted.length - 1]),
     meanMs: round(total / sorted.length),
   };
@@ -193,6 +210,8 @@ interface RendererLegs {
 }
 
 interface RendererRoundTrip {
+  sendAt: number;
+  firstArrivalAt: number;
   sendToFirstArrival: number;
   isolated: boolean;
   arrivalToParsed: number | null;
@@ -304,6 +323,8 @@ function rendererRoundTrips(legs: RendererLegs): Array<RendererRoundTrip | null>
     const painted = paintedIndex === -1 ? null : legs.painted[paintedIndex];
     const reportedAt = send.at - (send.queuedMs ?? 0);
     return {
+      sendAt: send.at,
+      firstArrivalAt: firstArrival.at,
       sendToFirstArrival: firstArrival.at - send.at,
       isolated: nextSend === undefined || nextSend.at > firstArrival.at,
       arrivalToParsed: parsed === null ? null : parsed - frame.at,
@@ -317,6 +338,8 @@ function rendererRoundTrips(legs: RendererLegs): Array<RendererRoundTrip | null>
 }
 
 interface HostRoundTrip {
+  writtenAt: number;
+  flushedAt: number | null;
   agentResponse: number;
   isolated: boolean;
   firstOutputToFlush: number | null;
@@ -361,6 +384,8 @@ function hostRoundTrips(events: readonly HostRoundTripEvent[], sessionId: string
     }
     const lastFlushIndex = firstIndexFrom(flushes, lastChunk, false);
     return {
+      writtenAt,
+      flushedAt,
       answerFlushes: flushIndex === -1 || lastFlushIndex === -1 ? null : lastFlushIndex - flushIndex + 1,
       agentResponse: firstOutput - writtenAt,
       isolated: nextWrite === undefined || nextWrite > firstOutput,
@@ -374,22 +399,45 @@ function hostRoundTrips(events: readonly HostRoundTripEvent[], sessionId: string
   return { inputWrites: inputWrites.length, outputChunks: output.length, flushes: flushes.length, trips };
 }
 
+/** The longest step between consecutive times, or null under two. */
+function maxGap(times: readonly number[]): number | null {
+  if (times.length < 2) return null;
+  const sorted = [...times].sort((left, right) => left - right);
+  let largest = 0;
+  for (let index = 1; index < sorted.length; index++) largest = Math.max(largest, sorted[index] - sorted[index - 1]);
+  return round(largest);
+}
+
 /** Every session's output totals over the window, sorted by flush count. */
 function outputStreams(renderer: RendererRoundTripReading, host: HostRoundTripReading | null): SessionOutputStream[] {
   const streams = new Map<string, SessionOutputStream>();
+  const flushTimes = new Map<string, number[]>();
+  const arrivalTimes = new Map<string, number[]>();
   const streamFor = (sessionId: string): SessionOutputStream => {
     let stream = streams.get(sessionId);
     if (!stream) {
-      stream = { sessionId, hostFlushes: 0, hostFlushChars: 0, hostPauses: 0, rendererArrivals: 0, rendererChars: 0 };
+      stream = {
+        sessionId, hostFlushes: 0, hostFlushChars: 0, hostPauses: 0, rendererArrivals: 0, rendererChars: 0,
+        hostMaxFlushGapMs: null, rendererMaxArrivalGapMs: null,
+      };
       streams.set(sessionId, stream);
     }
     return stream;
+  };
+  const timesFor = (timesBySession: Map<string, number[]>, sessionId: string): number[] => {
+    let times = timesBySession.get(sessionId);
+    if (!times) {
+      times = [];
+      timesBySession.set(sessionId, times);
+    }
+    return times;
   };
   for (const event of host?.events ?? []) {
     if (event.stage === 'flush') {
       const stream = streamFor(event.sessionId);
       stream.hostFlushes += 1;
       stream.hostFlushChars += event.chars;
+      timesFor(flushTimes, event.sessionId).push(event.at);
     } else if (event.stage === 'pause') {
       streamFor(event.sessionId).hostPauses += 1;
     }
@@ -399,6 +447,11 @@ function outputStreams(renderer: RendererRoundTripReading, host: HostRoundTripRe
     const stream = streamFor(event.sessionId);
     stream.rendererArrivals += 1;
     stream.rendererChars += event.chars ?? 0;
+    timesFor(arrivalTimes, event.sessionId).push(event.at);
+  }
+  for (const stream of streams.values()) {
+    stream.hostMaxFlushGapMs = maxGap(flushTimes.get(stream.sessionId) ?? []);
+    stream.rendererMaxArrivalGapMs = maxGap(arrivalTimes.get(stream.sessionId) ?? []);
   }
   return [...streams.values()].sort((left, right) => right.hostFlushes - left.hostFlushes);
 }
@@ -423,7 +476,7 @@ function describe(
   if (total === null) return `${sessionId.slice(0, 8)}: no input was answered and painted in the window.`;
   const legs: Array<[string, number | null]> = [
     ['paced queue', breakdown.pacedQueue],
-    ['IPC and main', breakdown.ipcAndMain],
+    ['transport', breakdown.transport],
     ['host flush wait', breakdown.hostFlushWait],
     ['parse', breakdown.rendererParse],
     ['paint wait', breakdown.paintWait],
@@ -432,7 +485,7 @@ function describe(
   const agent = breakdown.agent === null ? 'agent unmeasured' : `agent ${breakdown.agent} ms`;
   const kangentic = kangenticShare === null || kangenticShare.p50Ms === null
     ? 'Kangentic unmeasured (no host pairing)'
-    : `Kangentic ${kangenticShare.p50Ms} ms (p95 ${kangenticShare.p95Ms})`;
+    : `Kangentic ${kangenticShare.p50Ms} ms (p95 ${kangenticShare.p95Ms}, p99 ${kangenticShare.p99Ms})`;
   return `${sessionId.slice(0, 8)}: median input-to-paint ${total} ms; ${agent}; ${kangentic}, taken per input as input-to-paint minus that input's agent answer. Leg medians: ${parts}.`;
 }
 
@@ -464,27 +517,39 @@ export function buildScrollLatencyReport(
     const hostTrips = hostSide ? present(hostSide.trips) : [];
 
     let pairing = 'no host reading';
-    let ipcAndMain: LatencyStats | null = null;
+    let transport: LatencyStats | null = null;
+    let transportLegs: SessionScrollLatency['transportLegs'] = null;
     let kangenticShare: LatencyStats | null = null;
-    if (hostSide) {
+    if (hostSide && host) {
       if (hostSide.inputWrites !== legs.sends.length) {
         pairing = `unpaired: the renderer sent ${legs.sends.length} inputs and the host wrote ${hostSide.inputWrites}`;
       } else {
+        // Host time on the renderer's clock, when both rings say where they start.
+        const hostToRendererClock = host.timeOrigin !== undefined && renderer.timeOrigin !== undefined
+          ? host.timeOrigin - renderer.timeOrigin
+          : null;
         const differences: number[] = [];
+        const toHost: number[] = [];
+        const toRenderer: number[] = [];
         const shares: number[] = [];
         let inconsistent = 0;
         rendererTrips.forEach((rendererTrip, index) => {
           const hostTrip = hostSide.trips[index];
-          if (!rendererTrip || !hostTrip || hostTrip.writeToFlush === null) return;
+          if (!rendererTrip || !hostTrip || hostTrip.writeToFlush === null || hostTrip.flushedAt === null) return;
           const difference = rendererTrip.sendToFirstArrival - hostTrip.writeToFlush;
           if (difference < 0) {
             inconsistent += 1;
             return;
           }
           differences.push(difference);
+          if (hostToRendererClock !== null) {
+            toHost.push(hostTrip.writtenAt + hostToRendererClock - rendererTrip.sendAt);
+            toRenderer.push(rendererTrip.firstArrivalAt - (hostTrip.flushedAt + hostToRendererClock));
+          }
           if (rendererTrip.reportToPainted !== null) shares.push(rendererTrip.reportToPainted - hostTrip.agentResponse);
         });
-        ipcAndMain = latencyStats(differences);
+        transport = latencyStats(differences);
+        if (toHost.length > 0) transportLegs = { toHost: latencyStats(toHost), toRenderer: latencyStats(toRenderer) };
         kangenticShare = latencyStats(shares);
         pairing = inconsistent > 0 ? `paired, ${inconsistent} pairs answered by different output dropped` : 'paired';
       }
@@ -527,7 +592,7 @@ export function buildScrollLatencyReport(
       : null;
     const breakdownMs = {
       pacedQueue: rendererStats.pacedQueue.p50Ms,
-      ipcAndMain: ipcAndMain?.p50Ms ?? null,
+      transport: transport?.p50Ms ?? null,
       agent: agentMedian,
       hostFlushWait: hostStats?.firstOutputToFlush.p50Ms ?? null,
       rendererParse: rendererStats.arrivalToParsed.p50Ms,
@@ -548,7 +613,8 @@ export function buildScrollLatencyReport(
       },
       renderer: rendererStats,
       host: hostStats,
-      ipcAndMain,
+      transport,
+      transportLegs,
       kangenticShare,
       pairing,
       breakdownMs,

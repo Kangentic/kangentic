@@ -13,6 +13,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { SpawnFlowContext } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import type { SpawnSessionInput } from '../../src/shared/types';
 import type { AgentParser } from '../../src/shared/types';
@@ -1912,5 +1915,49 @@ describe('performSpawn - shutdown begins during the host round trip', () => {
     expect(session.id).toBe(input.id);
     expect(safeKillPty).not.toHaveBeenCalled();
     expect(context.registry.get(input.id!)).toBeDefined();
+  });
+});
+
+describe('performSpawn - the status and events files are emptied before the agent starts', () => {
+  let sessionDirectory: string;
+
+  beforeEach(() => {
+    sessionDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'spawn-status-reset-'));
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    fs.rmSync(sessionDirectory, { recursive: true, force: true });
+  });
+
+  it('empties both files before it asks the host for the PTY', async () => {
+    const context = makeContext();
+    const statusOutputPath = path.join(sessionDirectory, 'status.json');
+    const eventsOutputPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(statusOutputPath, '{"stale":"previous run"}');
+    fs.writeFileSync(eventsOutputPath, '{"type":"previous-run"}\n');
+    const contentsAtSpawn: string[] = [];
+    vi.mocked(context.host.spawn).mockImplementation((params) => {
+      contentsAtSpawn.push(fs.readFileSync(statusOutputPath, 'utf-8'), fs.readFileSync(eventsOutputPath, 'utf-8'));
+      return PtyHostClient.prototype.spawn.call(context.host, params);
+    });
+
+    await performSpawn(makeInput({ statusOutputPath, eventsOutputPath }), context);
+
+    expect(contentsAtSpawn).toEqual(['', '']);
+    // The reader attaches after the spawn and writes nothing itself.
+    expect(context.statusFileReader.attach).toHaveBeenCalledOnce();
+  });
+
+  it('starts no PTY when a teardown lands while the files are emptied', async () => {
+    const context = makeContext();
+    // Clear at the first check (before the reset), cancelled by the next one.
+    context.isSpawnCancelled = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const statusOutputPath = path.join(sessionDirectory, 'status.json');
+
+    await expect(performSpawn(makeInput({ statusOutputPath }), context)).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(context.host.spawn).not.toHaveBeenCalled();
+    expect(context.registry.get(makeInput().id!)).toBeUndefined();
   });
 });
