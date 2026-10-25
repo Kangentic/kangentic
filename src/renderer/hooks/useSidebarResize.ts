@@ -32,7 +32,7 @@ export interface SidebarResizeState {
  * view's fold snap, since the view switch is not the user moving the sidebar;
  * the toggle and the drag keep their slide.
  */
-export function useSidebarResize(config: AppConfig, viewCollapse = false): SidebarResizeState {
+export function useSidebarResize(config: Pick<AppConfig, 'sidebarVisible' | 'sidebar'>, viewCollapse = false): SidebarResizeState {
   const [preferredOpen, setOpen] = useState(config.sidebarVisible !== false);
   const [width, setWidth] = useState(config.sidebar?.width ?? DEFAULT_WIDTH);
   const [isResizing, setIsResizing] = useState(false);

@@ -194,7 +194,15 @@ function WindowManagerSurface({
   return createPortal(
     <>
       {bridges}
-      <div ref={overlayRef} data-testid={overlayTestId} className={overlayClassName}>
+      {/* A layout change in this layer freezes the overlay until its terminals
+          repaint (`terminal-layout-transition.ts`). A host-arranged layer (the
+          Command Terminal) freezes its host instead, which holds its rail too. */}
+      <div
+        ref={overlayRef}
+        data-testid={overlayTestId}
+        className={overlayClassName}
+        data-terminal-layout-scope={layer.hostArranged ? undefined : ''}
+      >
         {backdrop}
         {renderedWindows.map((managedWindow) => (
           <WindowFrame

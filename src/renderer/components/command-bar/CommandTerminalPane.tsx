@@ -26,15 +26,13 @@
  * part of the terminal.
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
-import { resolveTerminalBackground, useTerminal } from '../../hooks/useTerminal';
+import { useTerminal } from '../../hooks/useTerminal';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
-import { msUntilResizeVeilLifts, RESIZE_VEIL_FADE_MS, TERMINAL_JUMP_EVENT } from './resize-veil';
-import { forgetHeldTerminalPicture, takeHeldTerminalPicture } from './held-terminal-picture';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -47,10 +45,6 @@ export type TerminalGridGetter = () => { cols: number; rows: number } | null;
 interface CommandTerminalPaneProps {
   sessionId: string;
   isMaximized: boolean;
-  /** One of the layer's terminals fills the panel over the others (Expand).
-   *  While it does, every terminal is sized to the whole panel, so flipping
-   *  this jumps each one between its tile and the panel. */
-  layoutExpanded: boolean;
   /** The agent is on screen, or something else says the terminal may show
    *  (an exit, a reattach). Until then the launch overlay covers the pane and
    *  PTY output is dropped; the false-to-true edge replays the scrollback. */
@@ -62,7 +56,7 @@ interface CommandTerminalPaneProps {
   gridGetterRef: RefObject<TerminalGridGetter | null>;
 }
 
-export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, ready, launchLabel, gridGetterRef }: CommandTerminalPaneProps) {
+export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel, gridGetterRef }: CommandTerminalPaneProps) {
   const config = useConfigStore((s) => s.config);
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
   // Adapter-declared image-paste capability (which extensions this agent attaches
@@ -85,13 +79,6 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
     (site: ArrivalFocusSite, terminalElement: HTMLElement | null) => mayTakeArrivalFocus(sessionId, site, terminalElement),
     [sessionId],
   );
-
-  // Up while the terminal settles after a jump in size (below). Raised and
-  // lowered through `data-veiled`, which React never sets, so it goes up in the
-  // same layout pass as the jump, before a paint.
-  const paneRef = useRef<HTMLDivElement>(null);
-  const resizeVeilRef = useRef<HTMLDivElement>(null);
-  const liftResizeVeilRef = useRef<(() => void) | null>(null);
 
   const { terminalRef, initTerminal, fit, flushResize, focus, paste, getDimensions, reloadScrollback, suppressDataRef } = useTerminal({
     sessionId,
@@ -171,95 +158,6 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
     immediatePanelResize: true,
   });
 
-  // Expand, Restore and the swap drag's preview jump this terminal between
-  // sizes in one step (a switch between expanded terminals jumps nothing:
-  // behind an expanded one every terminal is already the panel's size). Until
-  // the agent repaints at the new size, the terminal shows the old frame on the
-  // new grid: the footer mid-panel, then dropped to the bottom. The veil covers
-  // that and comes down on the rule in `resize-veil.ts`, which watches this
-  // terminal's output, since main's repaint settle fires on ConPTY's redraw of
-  // the old screen. The live bytes land under the veil, so nothing is replayed.
-  // It holds the terminal's picture from just before the jump when the jump
-  // took one (`held-terminal-picture.ts`), so the terminal does not go black,
-  // and fades out as it comes down. Not while the launch overlay still covers
-  // the pane (`suppressDataRef` is set until the agent is on screen).
-  const raiseResizeVeil = useCallback((): void => {
-    const veil = resizeVeilRef.current;
-    if (suppressDataRef.current || !initialized.current || !veil) return;
-    liftResizeVeilRef.current?.();
-    const jumpAt = performance.now();
-    let lastOutputAt = jumpAt;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let listening = true;
-    const unsubscribe = window.electronAPI.sessions.onData((outputSessionId) => {
-      if (outputSessionId === sessionId) lastOutputAt = performance.now();
-    });
-    const stopListening = (): void => {
-      if (!listening) return;
-      listening = false;
-      unsubscribe();
-    };
-    // Down at once: a new jump over this one, the pane going away, or the end of the fade.
-    const drop = (): void => {
-      if (timer) clearTimeout(timer);
-      stopListening();
-      veil.removeAttribute('data-veiled');
-      veil.style.removeProperty('background-image');
-      veil.style.removeProperty('opacity');
-      veil.style.removeProperty('transition');
-      liftResizeVeilRef.current = null;
-    };
-    const fadeOut = (): void => {
-      stopListening();
-      if (document.documentElement.classList.contains('no-motion')) {
-        drop();
-        return;
-      }
-      veil.style.transition = `opacity ${RESIZE_VEIL_FADE_MS}ms ease-out`;
-      veil.style.opacity = '0';
-      timer = setTimeout(drop, RESIZE_VEIL_FADE_MS);
-    };
-    const liftWhenSettled = (): void => {
-      const wait = msUntilResizeVeilLifts(performance.now(), jumpAt, lastOutputAt);
-      if (wait === 0) fadeOut();
-      else timer = setTimeout(liftWhenSettled, wait);
-    };
-    const picture = takeHeldTerminalPicture(sessionId);
-    if (picture) {
-      // The pane's own part of the area picture, at its real size, from its top-left.
-      veil.style.backgroundImage = `url("${picture.url}")`;
-      veil.style.backgroundSize = `${picture.areaWidth}px ${picture.areaHeight}px`;
-      veil.style.backgroundPosition = `${-picture.offsetX}px ${-picture.offsetY}px`;
-      veil.style.backgroundRepeat = 'no-repeat';
-    }
-    veil.style.transition = 'none';
-    veil.style.opacity = '1';
-    veil.setAttribute('data-veiled', '');
-    liftResizeVeilRef.current = drop;
-    liftWhenSettled();
-    // `initialized` and `suppressDataRef` are stable refs - listed for
-    // exhaustive-deps (which cannot see through the hooks), never re-run triggers.
-  }, [sessionId, initialized, suppressDataRef]);
-
-  // Expand and Restore: the layout going in or out of expanded resizes every
-  // terminal in it. A layout effect, so the veil is up before the jump paints.
-  const wasLayoutExpandedRef = useRef(layoutExpanded);
-  useLayoutEffect(() => {
-    if (wasLayoutExpandedRef.current === layoutExpanded) return;
-    wasLayoutExpandedRef.current = layoutExpanded;
-    raiseResizeVeil();
-  }, [layoutExpanded, raiseResizeVeil]);
-
-  // The swap drag's preview, which moves this terminal into another tile.
-  useEffect(() => {
-    const pane = paneRef.current;
-    if (!pane) return;
-    pane.addEventListener(TERMINAL_JUMP_EVENT, raiseResizeVeil);
-    return () => pane.removeEventListener(TERMINAL_JUMP_EVENT, raiseResizeVeil);
-  }, [raiseResizeVeil]);
-  useEffect(() => () => liftResizeVeilRef.current?.(), []);
-  useEffect(() => () => forgetHeldTerminalPicture(sessionId), [sessionId]);
-
   // Restore terminal focus after a maximize/restore toggle (the button, Ctrl+Shift+M,
   // and the header double-click all flip `isMaximized`), so the next keystroke lands
   // in the terminal instead of the maximize button. The command terminal OWNS the
@@ -280,19 +178,15 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
 
   return (
     // `data-terminal-host`: the pane the arrival-focus visibility check measures against.
-    <div ref={paneRef} className="relative h-full" data-testid="command-bar-terminal-pane" data-terminal-host data-session-id={sessionId}>
+    // A jump in size (Expand, Restore, the panel maximized) runs under a frozen
+    // panel that shows the terminal once its agent has repainted at the new size
+    // (`terminal-layout-transition.ts`).
+    <div className="relative h-full" data-testid="command-bar-terminal-pane" data-terminal-host data-session-id={sessionId}>
       <FileDropOverlay {...fileDrop} />
       <div
         ref={terminalRef}
         className="h-full"
         data-testid="command-bar-terminal"
-      />
-      <div
-        ref={resizeVeilRef}
-        data-testid="command-terminal-resize-veil"
-        className="pointer-events-none absolute inset-0 z-10 hidden data-[veiled]:block"
-        style={{ backgroundColor: resolveTerminalBackground(config.terminal.colors) }}
-        aria-hidden
       />
       {!ready && <LaunchOverlay label={launchLabel} />}
     </div>

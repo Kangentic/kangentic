@@ -23,7 +23,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite } from './helpers';
+import { waitForViteReady, gotoVite, recordLayoutTransition, expectOneSwap } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -146,6 +146,317 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await browser?.close();
+});
+
+test.describe('Task Detail: the terminal through a maximize', () => {
+  test('maximize shows the terminal once, finished: one frozen picture, then one swap', async () => {
+    // Its own browser plus a screencast whose frames are decoded in the page:
+    // measured at 9 to 14 s locally, too close to the 15 s default for CI.
+    test.setTimeout(45000);
+    // Its own browser: the shared page above carries other tests' window state.
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      // The agent on screen, so its launch overlay lifts.
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+        }).__zustandStores.session.getState().markFirstOutput(sessionId);
+      }, SESSION_ID);
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+      // A line of text, the cursor hidden (it blinks) and motion off: only the
+      // maximize can move a pixel in the layer.
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData(sessionId, 'frame text line\r\n\x1b[?25l');
+        document.documentElement.classList.add('no-motion');
+      }, SESSION_ID);
+      await ownPage.waitForTimeout(800);
+
+      const resizeCount = () => ownPage.evaluate((sessionId) => (
+        window as unknown as { electronAPI: { sessions: { __resizeCalls: Array<{ sessionId: string }> } } }
+      ).electronAPI.sessions.__resizeCalls.filter((call) => call.sessionId === sessionId).length, SESSION_ID);
+      const resizesBefore = await resizeCount();
+      const recording = await recordLayoutTransition(ownPage, '[data-testid="window-overlay"]', () =>
+        ownPage.locator('[data-testid="task-detail-maximize"]').click());
+      expectOneSwap(recording);
+      // The PTY was resized under the freeze, and the window is maximized.
+      expect(await resizeCount()).toBeGreaterThan(resizesBefore);
+      await expect(ownPage.locator('[data-testid^="window-frame-"]').filter({
+        has: ownPage.locator('[data-testid="task-detail-dialog"]'),
+      })).toHaveClass(/rounded-none/);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('an agent whose finished frame lands 130 ms after the resize is shown at once, drawn: one swap, no floor', async () => {
+    // The repaint wait ends 20 ms after the agent's first finished frame (a
+    // synchronized update) instead of waiting out its 190 ms floor. Cutting that
+    // soon is only right if xterm has drawn the frame by the swap, which only the
+    // compositor's own frames can show.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+        }).__zustandStores.session.getState().markFirstOutput(sessionId);
+      }, SESSION_ID);
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+      // The agent: every PTY resize is answered 130 ms later by a whole frame at
+      // the new grid inside a synchronized update, the way it arrives through
+      // ConPTY. The frame's text depends on the grid, so a frame drawn at the old
+      // size reads as a different picture.
+      await ownPage.evaluate((sessionId) => {
+        const holder = window as unknown as {
+          electronAPI: { sessions: { resize: (id: string, cols: number, rows: number) => Promise<unknown> } };
+          __mockFireSessionData: (id: string, data: string) => void;
+          __agentResizeSentAt: number[];
+        };
+        holder.__agentResizeSentAt = [];
+        const original = holder.electronAPI.sessions.resize;
+        holder.electronAPI.sessions.resize = (id, cols, rows) => {
+          if (id === sessionId) {
+            holder.__agentResizeSentAt.push(Date.now() / 1000);
+            setTimeout(() => {
+              let screen = '';
+              for (let row = 0; row < rows - 1; row += 1) screen += `${cols}x${rows} row ${row} `.padEnd(cols - 2, '.') + '\r\n';
+              holder.__mockFireSessionData(id, `\x1b[?2026h\x1b[H\x1b[2J${screen}\x1b[?25l\x1b[?2026l`);
+            }, 130);
+          }
+          return original(id, cols, rows);
+        };
+        document.documentElement.classList.add('no-motion');
+        holder.__mockFireSessionData(sessionId, 'frame text line\r\n\x1b[?25l');
+      }, SESSION_ID);
+      await ownPage.waitForTimeout(800);
+
+      const recording = await recordLayoutTransition(ownPage, '[data-testid="window-overlay"]', () =>
+        ownPage.locator('[data-testid="task-detail-maximize"]').click());
+      expectOneSwap(recording);
+      // The fast path decided it: the wait settled on the agent's frame, not on
+      // the floor or the quiet beat. Asserted on the decision rather than the
+      // clock: headless software GL takes a third of a second to draw a full
+      // screen, and a loaded runner fires the fake agent's own timer late.
+      const settled = await ownPage.evaluate(() => (window as unknown as {
+        __kangenticTerminalTrace: () => Array<{ event: string; detail?: { reason?: string } }>;
+      }).__kangenticTerminalTrace().filter((event) => event.event === 'repaint-wait-settled').at(-1)?.detail);
+      expect(settled?.reason).toBe('frame');
+      // And the terminal holds the agent's frame at the maximized grid.
+      const rows = await ownPage.evaluate((sessionId) => (window as unknown as {
+        __kangenticTerminalGridRows: (id: string) => Array<{ cols: number; viewportRows: string[] }>;
+      }).__kangenticTerminalGridRows(sessionId)[0], SESSION_ID);
+      expect(rows?.viewportRows.some((row) => row.startsWith(`${rows.cols}x`))).toBe(true);
+    } finally {
+      await own.browser.close();
+    }
+  });
+});
+
+
+test.describe('Task Detail: the terminal through a drag of the OS window edge', () => {
+  // The page sees no pointer for that drag, only a resize event a frame, and
+  // every one used to reach the PTY: measured, 40 resizes for a 40-step drag, each
+  // a SIGWINCH and a full agent redraw. The gate holds a run of window resizes as
+  // one gesture (manager-resize-gate.ts), so the terminal resizes once more when
+  // the size holds. Asking for a refit afterwards sends nothing: the grid is final.
+  const resizeCount = (target: Page) => target.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+  const clearResizes = (target: Page) => target.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+  /** 40 steps, one a frame, as an OS drag delivers them: steps sharing a frame would coalesce on their own. */
+  async function dragWindowEdge(target: Page, from: { width: number; height: number }, direction: 1 | -1): Promise<void> {
+    for (let step = 1; step <= 40; step += 1) {
+      await target.setViewportSize({ width: from.width + direction * step * 8, height: from.height + direction * step * 4 });
+      await target.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    }
+  }
+  async function expectGridFinal(target: Page): Promise<void> {
+    await clearResizes(target);
+    await target.evaluate(() => window.dispatchEvent(new Event('terminal-panel-resize')));
+    await target.waitForTimeout(500);
+    expect(await resizeCount(target)).toBe(0);
+  }
+
+  test('a maximized task window terminal resizes a few times, not once a step, and ends on the final grid', async () => {
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.setViewportSize({ width: 1400, height: 900 });
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+        }).__zustandStores.session.getState().markFirstOutput(sessionId);
+      }, SESSION_ID);
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      await ownPage.waitForTimeout(1500);
+      await clearResizes(ownPage);
+      // The resizes as the page saw them. A step that arrives more than
+      // WINDOW_RESIZE_SETTLE_MS (150 ms) after the last starts a new run, which a
+      // loaded runner can do, and each run may send twice (its first step at once,
+      // its last when the size holds). Bounded by runs, a slow runner stays green
+      // while a gate that holds nothing (one send a step) still fails.
+      await ownPage.evaluate(() => {
+        const holder = window as unknown as { __windowResizes: number[] };
+        holder.__windowResizes = [];
+        window.addEventListener('resize', () => holder.__windowResizes.push(performance.now()));
+      });
+      await dragWindowEdge(ownPage, { width: 1400, height: 900 }, 1);
+      await ownPage.waitForTimeout(1000);
+      const sent = await resizeCount(ownPage);
+      const runs = await ownPage.evaluate(() => {
+        const times = (window as unknown as { __windowResizes: number[] }).__windowResizes;
+        let count = times.length > 0 ? 1 : 0;
+        for (let index = 1; index < times.length; index += 1) if (times[index] - times[index - 1] >= 150) count += 1;
+        return count;
+      });
+      expect(sent).toBeGreaterThan(0);
+      expect(sent, `${runs} run(s) of window resizes`).toBeLessThanOrEqual(2 * runs);
+      await expectGridFinal(ownPage);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('the bottom panel terminal, which the gate holds too, still refits once the drag ends', async () => {
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.setViewportSize({ width: 1720, height: 1060 });
+      await ownPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"]')).toHaveCount(0);
+      await expect(ownPage.locator('.xterm-screen')).toHaveCount(1, { timeout: 10000 });
+      await ownPage.waitForTimeout(1500);
+      await clearResizes(ownPage);
+      await dragWindowEdge(ownPage, { width: 1720, height: 1060 }, -1);
+      await ownPage.waitForTimeout(1000);
+      expect(await resizeCount(ownPage)).toBeGreaterThan(0);
+      await expectGridFinal(ownPage);
+    } finally {
+      await own.browser.close();
+    }
+  });
+});
+
+test.describe('Task Detail: window shortcuts with the Command Terminal open over it', () => {
+  test('Ctrl+Shift+M maximizes the Command Terminal panel, and Ctrl+Shift+W hides it, never the task window under it', async () => {
+    // Both register the same capture-phase shortcuts on the window; the focused
+    // task window behind the panel must not act on them as well.
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible', timeout: 5000 });
+      const taskFrame = ownPage.locator('[data-testid^="window-frame-"]').filter({
+        has: ownPage.locator('[data-testid="task-detail-dialog"]'),
+      });
+      await expect(taskFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+P');
+      const panel = ownPage.getByTestId('command-terminal-panel');
+      await expect(panel).toBeVisible();
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(panel).toHaveAttribute('data-maximized', 'true');
+      await expect(ownPage.locator('[data-testid="command-terminal-panel-area"]')).not.toHaveAttribute('data-terminal-layout-transition', 'open', { timeout: 3000 });
+      await expect(taskFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+W');
+      await expect(panel).toBeHidden();
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
+    } finally {
+      await own.browser.close();
+    }
+  });
+});
+
+test.describe('Task Detail: a resize whose release went unseen', () => {
+  test('the next maximize still refits the terminal: the drag closes once the pointer shows its button up', async () => {
+    // The reported break: an edge drag's release never reached the window frame,
+    // the manager-resize gate stayed open, and every later refit waited on it.
+    // The window maximized while its terminal kept the grid it had.
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+        }).__zustandStores.session.getState().markFirstOutput(sessionId);
+      }, SESSION_ID);
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+
+      type ResizeCall = { sessionId: string; cols: number; rows: number };
+      const resizeCalls = () => ownPage.evaluate(() => (
+        window as unknown as { electronAPI: { sessions: { __resizeCalls: ResizeCall[] } } }
+      ).electronAPI.sessions.__resizeCalls.slice());
+      // The terminal settled: no resize for a beat. Its last grid is the one to beat.
+      let previousCount = -1;
+      await expect.poll(async () => {
+        const count = (await resizeCalls()).length;
+        const settled = count === previousCount && count > 0;
+        previousCount = count;
+        return settled;
+      }, { intervals: [300], timeout: 10000 }).toBe(true);
+      const settledCols = (await resizeCalls()).filter((call) => call.sessionId === SESSION_ID).at(-1)?.cols ?? 0;
+      expect(settledCols).toBeGreaterThan(0);
+
+      const windowId = ((await ownPage.locator('[data-testid^="window-frame-"]')
+        .filter({ has: ownPage.locator('[data-testid="task-detail-dialog"]') })
+        .getAttribute('data-testid')) ?? '').replace('window-frame-', '');
+      // Press the east edge and drag it in, then lose the frame's capture: the
+      // release never reaches the frame.
+      await ownPage.evaluate((id) => {
+        const handle = document.querySelector<HTMLElement>(`[data-testid="window-resize-${id}-e"]`);
+        const frame = document.querySelector<HTMLElement>(`[data-testid="window-frame-${id}"]`);
+        if (!handle || !frame) throw new Error('no edge handle');
+        const box = handle.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        const init = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+        handle.dispatchEvent(new PointerEvent('pointerdown', { ...init, button: 0, buttons: 1, clientX: x, clientY: y }));
+        frame.dispatchEvent(new PointerEvent('pointermove', { ...init, button: -1, buttons: 1, clientX: x - 40, clientY: y }));
+        if (frame.hasPointerCapture(1)) frame.releasePointerCapture(1);
+      }, windowId);
+      const gateOpen = () => ownPage.evaluate(async () => {
+        const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
+          isManagerResizeInProgress: () => boolean;
+        };
+        return gate.isManagerResizeInProgress();
+      });
+      expect(await gateOpen()).toBe(true);
+
+      // The pointer moves on with no button held: the drag is over.
+      await ownPage.mouse.move(20, 20);
+      await expect.poll(gateOpen).toBe(false);
+
+      // The user resizes again, the way the report went. Before the gate closed
+      // drags itself, this press replaced the open drag without ending it.
+      const edge = await ownPage.locator(`[data-testid="window-resize-${windowId}-e"]`).boundingBox();
+      if (!edge) throw new Error('no edge handle box');
+      const edgeX = edge.x + edge.width / 2;
+      const edgeY = edge.y + edge.height / 2;
+      await ownPage.mouse.move(edgeX, edgeY);
+      await ownPage.mouse.down();
+      await ownPage.mouse.move(edgeX - 30, edgeY, { steps: 3 });
+      await ownPage.mouse.up();
+
+      const callsBeforeMaximize = (await resizeCalls()).length;
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      await expect.poll(async () => Math.max(0, ...(await resizeCalls())
+        .slice(callsBeforeMaximize)
+        .filter((call) => call.sessionId === SESSION_ID)
+        .map((call) => call.cols)), { timeout: 5000 }).toBeGreaterThan(settledCols);
+    } finally {
+      await own.browser.close();
+    }
+  });
 });
 
 test.describe('Task Detail: maximize / restore', () => {

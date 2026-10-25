@@ -19,6 +19,7 @@ import { useLayerStore, useWindowManager } from '../context';
 import { useWindowDrag } from '../dnd/useWindowDrag';
 import { useWindowResize } from '../dnd/useWindowResize';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { WindowContent } from './WindowContent';
 import { WindowResizeHandles } from './WindowResizeHandles';
 
@@ -66,8 +67,14 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   const finishClose = useCallback(() => {
     const current = layerStore.getState().windows[managedWindow.id];
     if (!current || current.parked) return;
-    if (layer.shouldParkOnClose?.(current)) parkWindow(current.id);
-    else closeWindow(current.id);
+    const parkOrDrop = (): void => {
+      if (layer.shouldParkOnClose?.(current)) parkWindow(current.id);
+      else closeWindow(current.id);
+    };
+    // A tiled window's partners take its space: the layer holds still until
+    // their terminals have repainted at their new size.
+    if (current.state === 'tiled') runTerminalLayoutChange(terminalLayoutScopeOf(frameRef.current), parkOrDrop);
+    else parkOrDrop();
   }, [layerStore, layer, parkWindow, closeWindow, managedWindow.id]);
 
   const { requestClose, contentClassName, onAnimationEnd, markVisible } = useOverlayPhase(

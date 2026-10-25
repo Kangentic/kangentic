@@ -1052,6 +1052,12 @@ export interface MouseEventOptions {
   x: number;
   y: number;
   button?: MouseButton;
+  /**
+   * The buttons held during the event (left = 1), as `PointerEvent.buttons`
+   * reports them. Chromium does not track a press across CDP events, so a move
+   * that leaves this out reports no button held, even mid-drag.
+   */
+  buttons?: number;
   clickCount?: number;
   /** `mouseWheel` only: the scroll delta in CSS pixels. Ignored otherwise. */
   deltaX?: number;
@@ -1072,6 +1078,7 @@ export async function dispatchMouseEvent(
     x: options.x,
     y: options.y,
     button: options.button ?? (pressless ? 'none' : 'left'),
+    ...(options.buttons !== undefined ? { buttons: options.buttons } : {}),
     clickCount: options.clickCount ?? (pressless ? 0 : 1),
     ...(options.type === 'mouseWheel'
       ? { deltaX: options.deltaX ?? 0, deltaY: options.deltaY ?? 0 }
@@ -1101,11 +1108,19 @@ export async function dispatchMouseEvent(
  */
 const MOUSE_MOVE_ACK_TIMEOUT_MS = 100;
 
-async function dispatchMouseMoveBounded(webContents: WebContents, x: number, y: number): Promise<void> {
+/** A drag's moves hold the left button, the way a real drag reports it. */
+const LEFT_HELD: Pick<MouseEventOptions, 'button' | 'buttons'> = { button: 'left', buttons: 1 };
+
+async function dispatchMouseMoveBounded(
+  webContents: WebContents,
+  x: number,
+  y: number,
+  held: Pick<MouseEventOptions, 'button' | 'buttons'> = {},
+): Promise<void> {
   // The catch is required: a move whose acknowledgement outlives the bound
   // can still reject later (the window closing mid-sequence), and by then
   // nothing awaits it, so it would surface as an unhandled rejection in main.
-  const acknowledged = dispatchMouseEvent(webContents, { type: 'mouseMoved', x, y }).catch(() => {});
+  const acknowledged = dispatchMouseEvent(webContents, { type: 'mouseMoved', x, y, ...held }).catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
   const bounded = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, MOUSE_MOVE_ACK_TIMEOUT_MS);
@@ -1342,7 +1357,10 @@ export async function dragFromTo(
   const targetY = target.y;
   const steps = Math.max(2, options.steps ?? 10);
 
-  await dispatchMouseEvent(webContents, { type: 'mousePressed', x: sourceX, y: sourceY });
+  // Every event names the buttons held through it. Without that the moves
+  // report no button down, and a page that ends a drag on a buttonless move
+  // (Kangentic's own resize gate does) sees the drag end at its first step.
+  await dispatchMouseEvent(webContents, { type: 'mousePressed', x: sourceX, y: sourceY, buttons: 1 });
   for (let stepIndex = 1; stepIndex <= steps; stepIndex++) {
     const fraction = stepIndex / steps;
     // Bounded per step (see MOUSE_MOVE_ACK_TIMEOUT_MS): a ten-step drag in a
@@ -1351,9 +1369,10 @@ export async function dragFromTo(
       webContents,
       sourceX + (targetX - sourceX) * fraction,
       sourceY + (targetY - sourceY) * fraction,
+      LEFT_HELD,
     );
   }
-  await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY });
+  await dispatchMouseEvent(webContents, { type: 'mouseReleased', x: targetX, y: targetY, buttons: 0 });
   return true;
 }
 

@@ -17,6 +17,7 @@ import { useBoardStore } from '../../../stores/board-store';
 import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
+import { useSessionStore } from '../../../stores/session-store';
 import { TaskDetailHostProvider } from './task-detail-host';
 import type { TaskDetailHostValue } from './task-detail-host';
 
@@ -36,10 +37,13 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
   const loadBoard = useBoardStore((state) => state.loadBoard);
 
   // Surfaces that stack ABOVE the board's windows and take the keyboard. The
-  // edit form's Advanced section can open either one from inside a window, so a
-  // single Escape meant for it must not also close the window underneath.
+  // edit form's Advanced section can open the first two from inside a window, so
+  // a single Escape meant for one must not also close the window underneath. The
+  // Command Terminal panel binds Mod+Shift+M and Mod+Shift+W itself, so while it
+  // is up the focused window under it must not act on them too.
   const boardManagerOpen = useBoardStore((state) => state.boardManagerOpen);
   const settingsOpen = useConfigStore((state) => state.settingsOpen);
+  const commandTerminalOpen = useSessionStore((state) => state.commandBarVisible);
 
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
@@ -84,12 +88,12 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     updateAttachmentCount,
     refresh: loadBoard,
     isMoveConfirmPending: () => useBoardStore.getState().pendingMoveConfirm !== null,
-    shortcutsSuppressed: boardManagerOpen || settingsOpen,
+    shortcutsSuppressed: boardManagerOpen || settingsOpen || commandTerminalOpen,
     canOpenConversation: true,
   }), [
     projectId, projectPath, defaultAgent, swimlanes, shortcuts, config,
     updateTask, deleteTask, moveTask, unarchiveTask, archiveTask, updateAttachmentCount, loadBoard,
-    boardManagerOpen, settingsOpen,
+    boardManagerOpen, settingsOpen, commandTerminalOpen,
   ]);
 
   return <TaskDetailHostProvider value={value}>{children}</TaskDetailHostProvider>;

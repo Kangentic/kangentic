@@ -204,7 +204,9 @@ Enter carries `\r`, so it submits a form or starts a textarea line the way a rea
 
 ## kangentic_browser_drag
 
-Drag from one element to another: mouse press, move in steps, release. Capability tier: `interact`.
+Drag from one element to another: mouse press, move in steps, release. Every move holds the left
+button (`buttons: 1`), as a real drag reports it, so a page that ends a drag on a buttonless move
+sees the whole drag. Capability tier: `interact`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

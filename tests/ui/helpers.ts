@@ -597,6 +597,196 @@ export async function settleFrames(page: Page, frames = 2): Promise<void> {
   }), frames);
 }
 
+/** What the screen showed of a layout transition's scope, frame by frame. */
+export interface LayoutTransitionRecording {
+  /** Every frame the compositor produced: when, and the scope's pixels as a small grayscale image. */
+  frames: Array<{ at: number; picture: Uint8Array }>;
+  /** Wall-clock seconds the scope's transition opened and closed (null if it never did). */
+  openedAt: number | null;
+  closedAt: number | null;
+}
+
+/** The width the scope is reduced to for comparing pictures: text antialiasing averages out, layout does not. */
+const PICTURE_WIDTH = 240;
+
+/**
+ * Record what the screen shows of `scopeSelector` while `action` runs a
+ * layout change (`terminal-layout-transition.ts`). Frames come from CDP's
+ * screencast, which reports the compositor's own frames: a screenshot forces a
+ * fresh one and would not see the freeze. Each frame is cut to the scope's box,
+ * so whatever draws outside it does not count, and reduced to a small grayscale
+ * picture. The reduction matters: the browser draws the frozen picture as a
+ * texture whose text antialiasing differs from the live page by a few edge
+ * pixels, which an exact comparison would call a change.
+ *
+ * Callers hide the terminal cursor (DECTCEM) and set `.no-motion` first, so the
+ * only thing that can change the scope is the change itself.
+ */
+export async function recordLayoutTransition(
+  page: Page,
+  scopeSelector: string,
+  action: () => Promise<void>,
+): Promise<LayoutTransitionRecording> {
+  const box = await page.locator(scopeSelector).boundingBox();
+  if (!box) throw new Error(`no box for ${scopeSelector}`);
+  await page.evaluate((selector) => {
+    const scope = document.querySelector(selector);
+    if (!scope) throw new Error(`no ${selector}`);
+    // A frame pump outside every scope: a 4px dot in the title bar's corner that
+    // never stops changing, so the compositor keeps producing frames (a still
+    // page produces none) and the freeze has frames to be seen in. Script-driven,
+    // so `.no-motion` does not stop it.
+    const pump = document.createElement('div');
+    pump.dataset.testid = 'layout-transition-frame-pump';
+    pump.style.cssText = 'position:fixed;left:0;top:0;width:4px;height:4px;z-index:2147483647;pointer-events:none;background:#fff';
+    document.body.appendChild(pump);
+    let lit = false;
+    const pumpFrame = () => {
+      if (!pump.isConnected) return;
+      lit = !lit;
+      pump.style.background = lit ? '#fff' : '#000';
+      requestAnimationFrame(pumpFrame);
+    };
+    requestAnimationFrame(pumpFrame);
+    const times: { opened: number | null; closed: number | null } = { opened: null, closed: null };
+    (window as unknown as { __layoutTransitionTimes: typeof times }).__layoutTransitionTimes = times;
+    const observer = new MutationObserver(() => {
+      // Frozen while `open`; `shown` is the cut to the new state.
+      const open = scope.getAttribute('data-terminal-layout-transition') === 'open';
+      if (open && times.opened === null) times.opened = Date.now() / 1000;
+      if (!open && times.opened !== null && times.closed === null) {
+        times.closed = Date.now() / 1000;
+        observer.disconnect();
+      }
+    });
+    observer.observe(scope, { attributes: true, attributeFilter: ['data-terminal-layout-transition'] });
+  }, scopeSelector);
+  const readTimes = () => page.evaluate(() =>
+    (window as unknown as { __layoutTransitionTimes: { opened: number | null; closed: number | null } }).__layoutTransitionTimes);
+
+  const cdp = await page.context().newCDPSession(page);
+  const captured: Array<{ at: number; data: string }> = [];
+  cdp.on('Page.screencastFrame', (frame: { data: string; sessionId: number; metadata: { timestamp?: number } }) => {
+    captured.push({ at: frame.metadata.timestamp ?? 0, data: frame.data });
+    cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
+  });
+  // Small JPEG frames: the comparison shrinks the scope to PICTURE_WIDTH anyway,
+  // and full-size PNGs made one recording take most of a test's time budget.
+  await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 960, maxHeight: 960, everyNthFrame: 1 });
+  await page.waitForTimeout(250);
+  await action();
+  await expect.poll(async () => (await readTimes()).closed, { timeout: 5000 }).not.toBeNull();
+  await page.waitForTimeout(400);
+  await cdp.send('Page.stopScreencast');
+  await cdp.detach();
+  await page.evaluate(() => document.querySelector('[data-testid="layout-transition-frame-pump"]')?.remove());
+
+  const area = { x: box.x, y: box.y, width: box.width, height: box.height };
+  const pictures = await page.evaluate(async ({ images, region, pictureWidth }) => {
+    const width = pictureWidth;
+    const height = Math.max(1, Math.round(region.height * (pictureWidth / region.width)));
+    const results: string[] = [];
+    for (const image of images) {
+      const blob = await (await fetch(`data:image/jpeg;base64,${image}`)).blob();
+      const bitmap = await createImageBitmap(blob);
+      // The screencast scaled the page down to fit its frame size.
+      const scale = bitmap.width / window.innerWidth;
+      const canvas = new OffscreenCanvas(width, height);
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('no 2d context');
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(bitmap, region.x * scale, region.y * scale, region.width * scale, region.height * scale, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      // Grayscale bytes, sent back as base64: an array of numbers this size
+      // costs seconds per recording to serialize.
+      let binary = '';
+      for (let index = 0; index < pixels.length; index += 4) {
+        binary += String.fromCharCode(Math.round(pixels[index] * 0.299 + pixels[index + 1] * 0.587 + pixels[index + 2] * 0.114));
+      }
+      results.push(btoa(binary));
+    }
+    return results;
+  }, { images: captured.map((frame) => frame.data), region: area, pictureWidth: PICTURE_WIDTH });
+  const times = await readTimes();
+  return {
+    frames: captured.map((frame, index) => ({ at: frame.at, picture: new Uint8Array(Buffer.from(pictures[index], 'base64')) })),
+    openedAt: times.opened,
+    closedAt: times.closed,
+  };
+}
+
+/** The share of a picture's pixels that differ visibly (by more than 24 of 255) between two pictures. */
+export function pictureChange(first: Uint8Array, second: Uint8Array): number {
+  let changed = 0;
+  for (let index = 0; index < first.length; index += 1) {
+    if (Math.abs(first[index] - (second[index] ?? 0)) > 24) changed += 1;
+  }
+  return changed / Math.max(1, first.length);
+}
+
+/** The mean difference between two pictures, in gray levels (0 to 255). */
+export function pictureDistance(first: Uint8Array, second: Uint8Array): number {
+  let total = 0;
+  for (let index = 0; index < first.length; index += 1) total += Math.abs(first[index] - (second[index] ?? 0));
+  return total / Math.max(1, first.length);
+}
+
+/**
+ * Below this mean difference two pictures are the same. The frozen picture is a
+ * texture whose text antialiasing differs from the live page by about 0.1 gray
+ * levels on average (measured on Expand, panel maximize and window maximize).
+ */
+const PICTURE_NOISE_MEAN = 0.5;
+
+/**
+ * Which of the two pictures around a change a frame shows: `before`, `settled`,
+ * or `between` when it is near neither. Near means near on BOTH measures, each
+ * taken relative to the size of the change itself. The pixel count sees a small
+ * change in high contrast (an Expand moves a few lines of text); the mean sees a
+ * blend, which moves most pixels by less than the count's threshold (measured: a
+ * crossfade frame of the panel maximize counted 0.09 of the change but sat a
+ * whole change away on the mean).
+ */
+export function classifyFrame(picture: Uint8Array, before: Uint8Array, settled: Uint8Array): 'before' | 'settled' | 'between' {
+  const changeCount = pictureChange(before, settled);
+  const changeMean = pictureDistance(before, settled);
+  const near = (reference: Uint8Array) => pictureChange(reference, picture) < changeCount / 4
+    && pictureDistance(reference, picture) < Math.max(PICTURE_NOISE_MEAN, changeMean / 4);
+  if (near(before)) return 'before';
+  if (near(settled)) return 'settled';
+  return 'between';
+}
+
+/**
+ * The checks every layout transition must pass on screen. While it is open the
+ * scope shows the picture from before the change (the freeze). Then it shows
+ * the settled picture (the swap), and nothing else ever again: no frame matches
+ * neither (a crossfade, or an in-between layout such as the terminals still at
+ * the old size in a grown panel), and none goes back.
+ */
+export function expectOneSwap(recording: LayoutTransitionRecording): void {
+  const { frames, openedAt, closedAt } = recording;
+  if (openedAt === null || closedAt === null) throw new Error('the layout transition never opened and closed');
+  const before = frames.filter((frame) => frame.at < openedAt).at(-1);
+  const settled = frames.at(-1);
+  if (!before || !settled) throw new Error('no frames around the layout transition');
+  // The change shows at all.
+  expect(pictureChange(before.picture, settled.picture)).toBeGreaterThan(0.001);
+  const shown = frames.map((frame) => ({
+    at: Math.round((frame.at - openedAt) * 1000),
+    shows: classifyFrame(frame.picture, before.picture, settled.picture),
+  }));
+  const summary = shown.map((frame) => `${frame.at}ms:${frame.shows}`).join(' ');
+  // Frozen while open, so the freeze has frames to be seen in.
+  const during = frames.filter((frame) => frame.at > openedAt && frame.at < closedAt - 0.02);
+  expect(during.length, summary).toBeGreaterThan(0);
+  for (const frame of during) expect(classifyFrame(frame.picture, before.picture, settled.picture), summary).toBe('before');
+  expect(shown.filter((frame) => frame.shows === 'between'), summary).toEqual([]);
+  const firstSettled = shown.findIndex((frame) => frame.shows === 'settled');
+  expect(firstSettled, summary).toBeGreaterThan(0);
+  expect(shown.slice(firstSettled).every((frame) => frame.shows === 'settled'), summary).toBe(true);
+}
+
 /**
  * A CSS color as the page computes it, so a token (`var(--color-edge)`), a hex
  * and an element's own computed style compare as one string, in every theme.

@@ -22,7 +22,8 @@ import { clamp } from '../store/geometry';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import type { FractionalRect, TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
-import { beginManagerResize, endManagerResize } from '../terminal/manager-resize-gate';
+import { beginManagerResize, type ManagerResizeGesture } from '../terminal/manager-resize-gate';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 
 export type FootprintEdge = 'left' | 'right' | 'top' | 'bottom';
 
@@ -51,6 +52,7 @@ interface FootprintDrag {
   /** Min footprint fraction along the resize axis (so the narrowest pane stays at
    *  or above the layer min-size). Computed once at grab time. */
   minFootprint: number;
+  gesture: ManagerResizeGesture;
 }
 
 function applyRect(node: HTMLElement, rect: PixelRect): void {
@@ -91,15 +93,26 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
   const dragRef = useRef<FootprintDrag | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  // Balance the manager-resize gate if this resizer unmounts mid-drag (the overlay
-  // is torn down while a pointer is held - e.g. a keyboard shortcut hides the layer
+  // Close the drag's gesture if this resizer unmounts mid-drag (the overlay is
+  // torn down while a pointer is held - e.g. a keyboard shortcut hides the layer
   // or closes the dialog). React removes the pointer handlers on unmount, so
-  // onPointerUp's endManagerResize() would never fire; without this the module-level
-  // gate stays open and suppresses refits in terminals on OTHER layers (the bottom
-  // panel, the command bar) until a reload.
+  // onPointerUp never runs; the gate would close it on the next released-button
+  // event anyway, but the resizer knows first.
   useEffect(() => () => {
-    if (dragRef.current) { endManagerResize(); dragRef.current = null; }
+    dragRef.current?.gesture.end();
+    dragRef.current = null;
   }, []);
+
+  /** End the drag: commit the footprint it reached and close its gesture, under a frozen layer. */
+  const finishDrag = (drag: FootprintDrag): void => {
+    if (dragRef.current !== drag) return;
+    dragRef.current = null;
+    setDragging(false);
+    runTerminalLayoutChange(terminalLayoutScopeOf(overlayRef.current), () => {
+      setTileTreeRect(drag.footprint);
+      drag.gesture.end();
+    });
+  };
 
   const isVerticalBar = edge === 'left' || edge === 'right';
   const origin = { left: tileTreeRect.x * containerSize.width, top: tileTreeRect.y * containerSize.height };
@@ -109,8 +122,9 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
   const onPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0) return;
     // Re-entry guard: a second pointer-down while a drag is live would overwrite
-    // dragRef (abandoning the first gesture's capture) and open the gate a second
-    // time, which a single matching pointer-up cannot fully close. Ignore it.
+    // dragRef (abandoning the first gesture's capture). Ignore it. A drag whose
+    // release went unseen is not live: the gate abandons it in this press's
+    // capture phase, before this handler runs.
     if (dragRef.current) return;
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -142,21 +156,24 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
     const minFootprint = smallestPaneShare > 0 && containerExtentPx > 0
       ? Math.min(1, Math.max(MIN_FOOTPRINT, (minPanePx / smallestPaneShare) / containerExtentPx))
       : MIN_FOOTPRINT;
-    dragRef.current = {
+    const selfNode = event.currentTarget as HTMLElement;
+    selfNode.setPointerCapture(event.pointerId);
+    // Open a gesture on the manager-resize gate so window terminals suppress
+    // per-frame refits (one SIGWINCH on commit instead of one per drag frame).
+    // Closed on release, or by the gate if the release never reaches this edge.
+    const drag: FootprintDrag = {
       pointerId: event.pointerId,
       overlayLeft: overlayRect.left,
       overlayTop: overlayRect.top,
       frameNodes,
       seamNodes,
-      selfNode: event.currentTarget as HTMLElement,
+      selfNode,
       footprint: tileTreeRect,
       minFootprint,
+      gesture: beginManagerResize('footprint-edge', event.pointerId, () => finishDrag(drag)),
     };
+    dragRef.current = drag;
     setDragging(true);
-    // Open the manager-resize gate so window terminals suppress per-frame refits
-    // (one SIGWINCH on commit instead of one per drag frame). Closed in onPointerUp.
-    beginManagerResize();
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     event.stopPropagation();
   };
 
@@ -196,17 +213,11 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
   };
 
   const onPointerUp = (event: React.PointerEvent) => {
-    setDragging(false);
     const drag = dragRef.current;
-    dragRef.current = null;
-    // Close the gate this gesture opened (balanced on `drag`, nulled above so a
-    // second up/cancel cannot double-close). Runs before the pointerId guard so
-    // the gate is never left stuck open.
-    if (drag) endManagerResize();
     if (!drag || event.pointerId !== drag.pointerId) return;
     const element = event.currentTarget as HTMLElement;
     if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
-    setTileTreeRect(drag.footprint);
+    finishDrag(drag);
   };
 
   return (

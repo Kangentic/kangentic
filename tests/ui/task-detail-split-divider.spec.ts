@@ -183,6 +183,16 @@ async function getStoredDividerRatio(page: Page, taskId: string): Promise<number
 }
 
 /**
+ * A panel toggle resizes the terminal under a frozen window layer
+ * (`terminal-layout-transition.ts`), and a press during that freeze lands on
+ * its shield by design: it aims at a picture that is no longer the layout. Wait
+ * for the layer to show the new layout before pressing the divider.
+ */
+async function layoutShown(page: Page): Promise<void> {
+  await expect(page.locator('[data-terminal-layout-transition="open"]')).toHaveCount(0, { timeout: 3000 });
+}
+
+/**
  * Set the divider ratio for a task via the Zustand session store.
  *
  * This drives the hook's re-sync path (the useEffect that reads storedRatio
@@ -342,6 +352,7 @@ test.describe('Task Detail split divider: drag to resize', () => {
     await page.locator('[data-testid="changes-toggle"]').click();
     const divider = page.locator('[data-testid="task-detail-split-divider"]');
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     // Establish a known starting ratio of 50% via the store so this test
     // is not affected by any ratio left over from a prior run or test.
@@ -389,6 +400,7 @@ test.describe('Task Detail split divider: drag to resize', () => {
     if (!(await divider.isVisible().catch(() => false))) {
       await page.locator('[data-testid="changes-toggle"]').click();
       await divider.waitFor({ state: 'visible', timeout: 3000 });
+      await layoutShown(page);
     }
 
     // Pre-set the ratio to 50% so we have a known, unambiguous starting point.
@@ -426,6 +438,7 @@ test.describe('Task Detail split divider: drag to resize', () => {
     if (!(await divider.isVisible().catch(() => false))) {
       await page.locator('[data-testid="changes-toggle"]').click();
       await divider.waitFor({ state: 'visible', timeout: 3000 });
+      await layoutShown(page);
     }
 
     // Pre-set to 50% for a clean, predictable starting position.
@@ -459,6 +472,7 @@ test.describe('Task Detail split divider: drag to resize', () => {
     if (!(await divider.isVisible().catch(() => false))) {
       await page.locator('[data-testid="changes-toggle"]').click();
       await divider.waitFor({ state: 'visible', timeout: 3000 });
+      await layoutShown(page);
     }
 
     // Pre-set to 50% for a clean, predictable starting position.
@@ -512,6 +526,7 @@ test.describe('Task Detail split divider: persistence', () => {
     await page.locator('[data-testid="changes-toggle"]').click();
     const divider = page.locator('[data-testid="task-detail-split-divider"]');
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     // Drag the divider 150px to the right.
     const dividerBox = await divider.boundingBox();
@@ -554,6 +569,7 @@ test.describe('Task Detail split divider: persistence', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     // The flex-basis must reflect the previously stored ratio.
     const basisAfterReopen = await getTerminalPaneFlexBasisPercent(page);
@@ -594,6 +610,7 @@ test.describe('Task Detail split divider: shared ratio across panel views', () =
     await page.locator('[data-testid="changes-toggle"]').click();
     const divider = page.locator('[data-testid="task-detail-split-divider"]');
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     const dividerBox = await divider.boundingBox();
     expect(dividerBox).not.toBeNull();
@@ -623,6 +640,7 @@ test.describe('Task Detail split divider: shared ratio across panel views', () =
     await expect(browserToggle).toBeVisible();
     await browserToggle.click();
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     const basisWithBrowser = await getTerminalPaneFlexBasisPercent(page);
     expect(basisWithBrowser).toBeCloseTo(basisWithChanges, 0);
@@ -661,6 +679,7 @@ test.describe('Task Detail split divider: resize overlay visibility', () => {
     await page.locator('[data-testid="changes-toggle"]').click();
     const divider = page.locator('[data-testid="task-detail-split-divider"]');
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     // Before dragging: the fixed inset-0 drag overlay must NOT be in the DOM.
     // The overlay is a sibling of the split container children; it is rendered
@@ -728,6 +747,7 @@ test.describe('Task Detail split divider: terminal-panel-resize event', () => {
     await page.locator('[data-testid="changes-toggle"]').click();
     const divider = page.locator('[data-testid="task-detail-split-divider"]');
     await divider.waitFor({ state: 'visible', timeout: 3000 });
+    await layoutShown(page);
 
     // Install a listener on the page that records whether the event fired.
     // The flag is written to window.__terminalPanelResizeCount so we can

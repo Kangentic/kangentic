@@ -25,6 +25,7 @@ import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { Tooltip } from '../../components/Tooltip';
 import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { useSessionStore } from '../../stores/session-store';
 import { useIsAgentDrivingSession } from '../../stores/agent-drive-store';
 import { closeBrowserForTask } from '../../components/browser/close-browser';
@@ -446,7 +447,17 @@ export function TaskDetailWindow({
     requestCloseFrozen();
   }, [requestCloseFrozen]);
 
-  const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
+  // The user's own layout changes resize this window's terminal: each runs under
+  // a frozen layer that shows the result once the agent has repainted at the new
+  // size (`terminal-layout-transition.ts`).
+  const changeLayout = useCallback((change: () => void) => {
+    runTerminalLayoutChange(terminalLayoutScopeOf(document.querySelector(`[data-testid="window-frame-${windowId}"]`)), change);
+  }, [windowId]);
+
+  const handleToggleMaximized = useCallback(
+    () => changeLayout(() => toggleMaximizeWindow(windowId)),
+    [changeLayout, toggleMaximizeWindow, windowId],
+  );
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
   // Pop the window back to floating from whatever docked state it is in
   // (maximized / snapped / tiled) - the "down" restore step.
@@ -480,16 +491,19 @@ export function TaskDetailWindow({
     // A tiled (paired) pane cannot slide within its pair horizontally.
     if (target.state === 'tiled' && (direction === 'left' || direction === 'right')) return;
     const action = nextSnap(zone, direction);
-    if (action.kind === 'maximize') maximizeWindow(windowId);
-    else if (action.kind === 'restore') popToFloat();
-    else if (action.kind === 'dock') {
-      if (target.state === 'tiled') untileWindow(windowId);
-      dockWindow(windowId, action.edge);
-    } else if (action.kind === 'snap') {
-      if (target.state === 'tiled') untileWindow(windowId);
-      snapWindow(windowId, action.geometry);
-    }
-  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, layerStore]);
+    // Both writes of an untile-then-dock run inside the one change.
+    changeLayout(() => {
+      if (action.kind === 'maximize') maximizeWindow(windowId);
+      else if (action.kind === 'restore') popToFloat();
+      else if (action.kind === 'dock') {
+        if (target.state === 'tiled') untileWindow(windowId);
+        dockWindow(windowId, action.edge);
+      } else if (action.kind === 'snap') {
+        if (target.state === 'tiled') untileWindow(windowId);
+        snapWindow(windowId, action.geometry);
+      }
+    });
+  }, [windowId, changeLayout, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, layerStore]);
 
   // The three right-panel views (Browser / Changes / Description peek) are
   // mutually exclusive and share the terminal split: opening one closes the
@@ -497,7 +511,7 @@ export function TaskDetailWindow({
   // updater, which React can double-invoke in StrictMode). The commit graph is
   // NOT a fourth view here - it lives inside the Changes panel's commit-history
   // browser region, above the file-tree + diff detail pane.
-  const handleToggleDescription = useCallback(() => {
+  const handleToggleDescription = useCallback(() => changeLayout(() => {
     const opening = !descriptionPeekOpen;
     if (opening) {
       if (browserOpen) toggleBrowserOpen(task.id);
@@ -505,29 +519,29 @@ export function TaskDetailWindow({
       setWorkflowPanelOpen(false);
     }
     setDescriptionPeekOpen(opening);
-  }, [descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+  }), [changeLayout, descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
-  const handleToggleBrowser = useCallback(() => {
+  const handleToggleBrowser = useCallback(() => changeLayout(() => {
     if (!browserOpen) {
       if (changesOpen) toggleChangesOpen(task.id);
       if (descriptionPeekOpen) setDescriptionPeekOpen(false);
       setWorkflowPanelOpen(false);
     }
     toggleBrowserOpen(task.id);
-  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+  }), [changeLayout, browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
-  const handleToggleChanges = useCallback(() => {
+  const handleToggleChanges = useCallback(() => changeLayout(() => {
     if (!changesOpen) {
       if (browserOpen) toggleBrowserOpen(task.id);
       if (descriptionPeekOpen) setDescriptionPeekOpen(false);
       setWorkflowPanelOpen(false);
     }
     toggleChangesOpen(task.id);
-  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+  }), [changeLayout, browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
   // The workflow panel is the fourth right-hand view, and as exclusive as the
   // other three: opening it puts the others away.
-  const handleToggleWorkflow = useCallback(() => {
+  const handleToggleWorkflow = useCallback(() => changeLayout(() => {
     const opening = !workflowPanelOpen;
     if (opening) {
       if (browserOpen) toggleBrowserOpen(task.id);
@@ -535,7 +549,7 @@ export function TaskDetailWindow({
       if (descriptionPeekOpen) setDescriptionPeekOpen(false);
     }
     setWorkflowPanelOpen(opening);
-  }, [workflowPanelOpen, browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
+  }), [changeLayout, workflowPanelOpen, browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, setWorkflowPanelOpen, task.id]);
 
   // Opening or closing the panel moves the terminal's right edge: refit before
   // paint, as the body does for its own panels.
@@ -652,22 +666,25 @@ export function TaskDetailWindow({
 
   // Task-detail hotkeys (capture phase so they intercept before the embedded
   // xterm consumes the Ctrl-letter control chars). Gated on `isFocused` so only
-  // the focused window reacts when several are open.
-  useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
-  // `!shortcutsSuppressed`: the edit form's Advanced section can open the Board
-  // Manager (profile pencil) or Settings (agent pencil) over this window, and a
-  // single Escape meant for that surface must not also close the window (or raise
-  // its discard confirm) underneath. WHICH surfaces those are is the host's
-  // knowledge, so it answers the question. Gates the bubble-phase Escape listener
-  // below too.
-  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused && !shortcutsSuppressed });
+  // the focused window reacts when several are open, and on `!shortcutsSuppressed`
+  // so none reacts while a surface over the window owns the keyboard: the edit
+  // form's Advanced section can open the Board Manager (profile pencil) or
+  // Settings (agent pencil) over it, and the Command Terminal panel can open over
+  // any window. Each binds some of the same combos itself (the Board Manager and
+  // the panel both maximize on Mod+Shift+M), and capture listeners on one target
+  // all run, so one press used to act on both. WHICH surfaces those are is the
+  // host's knowledge, so it answers the question. Gates the bubble-phase Escape
+  // listener below too.
+  const windowOwnsKeys = isFocused && !shortcutsSuppressed;
+  useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: windowOwnsKeys });
+  useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: windowOwnsKeys });
   // Close on a header click with the bound mouse button (default middle). Routed
   // through `closeWithGuard` so an unsaved edit still prompts to discard. The
   // `when` scopes the mouse path to THIS window's title bar; a keyboard rebind
   // (no `button`) fires for the focused window regardless of pointer position.
   useKeybinding('panel.closeViaHeaderClick', closeWithGuard, {
     capture: true,
-    enabled: isFocused,
+    enabled: windowOwnsKeys,
     when: (event) =>
       !('button' in event) || (titleBarRef.current?.contains(event.target as Node) ?? false),
   });
@@ -675,22 +692,22 @@ export function TaskDetailWindow({
   // edit form (not TaskDetailBody) and a kebab-less title bar, so firing one
   // would silently flip hidden state and, being capture-phase, swallow the
   // keystroke with no visible effect until edit is left.
-  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser && !isEditing });
-  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges && !isEditing });
-  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription && !isEditing });
+  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: windowOwnsKeys && canShowBrowser && !isEditing });
+  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: windowOwnsKeys && sessionState.canShowChanges && !isEditing });
+  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: windowOwnsKeys && canShowDescription && !isEditing });
   // Gated on `!isArchived`: `handleMoveTo`'s archived branch closes the window
   // before unarchiving, which fights keeping it open, and an archived task is
   // off the board anyway. `when` refuses a text field OTHER than xterm's
   // helper textarea, so the field keeps the key (macOS Option+Shift+Arrow is
   // word selection in the Browser URL bar / Changes search / note input).
-  const columnStepEnabled = isFocused && !shortcutsSuppressed && !isEditing && !isArchived;
+  const columnStepEnabled = windowOwnsKeys && !isEditing && !isArchived;
   const columnStepAllowed = (event: KeyboardEvent | PointerEvent) => !isTextFieldTarget(event.target);
   useKeybinding('taskDetail.moveColumnLeft', (event) => void stepColumn(event, 'left'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
   useKeybinding('taskDetail.moveColumnRight', (event) => void stepColumn(event, 'right'), { capture: true, enabled: columnStepEnabled, when: columnStepAllowed });
-  useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
-  useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
-  useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
-  useKeybinding('window.snapDown', () => handleSnapDirection('down'), { capture: true, enabled: isFocused });
+  useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: windowOwnsKeys });
+  useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: windowOwnsKeys });
+  useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: windowOwnsKeys });
+  useKeybinding('window.snapDown', () => handleSnapDirection('down'), { capture: true, enabled: windowOwnsKeys });
 
   // Escape closes the focused window through the discard guard. Structural
   // dialog Escape (keybindings-registry exception, like BaseDialog): a
