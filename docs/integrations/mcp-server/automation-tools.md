@@ -36,8 +36,11 @@ Every row also takes guards, a Condition of one kind or the other and a Frequenc
   `"PR: *"`). The pattern must cover the whole line. `turn_end` rows only, and a row gives this or
   `condition`, not both. A miss is not a run, like a no.
 - **`maxRuns`**: Frequency, the most times the row may run on one task across every visit (a review
-  loop's round-trip limit). The count starts over when the task leaves Done. Omit or `null` for no
-  limit.
+  loop's round-trip limit). The count starts over when a person moves the task to another column (a
+  drag on the board, a move from the phone) and when the task leaves Done. A move an agent makes
+  keeps the count, `kangentic_move_task` included, so an agent cannot reset its own limit. That
+  holds when a person asked the agent to make the move. Moves by an automation or a workflow keep
+  it too. Omit or `null` for no limit.
 
 A `turn_end` row runs when the column's agent finishes a turn on its own (not an interrupt or a
 failed turn), at most once per visit, top to bottom. `{{agentReply}}` resolves to that agent's final
@@ -95,7 +98,7 @@ The text lists each row on one line: its name, its type, and the sentence the Co
 parentheses. The action's own options come first, then the Condition and the Frequency:
 
 ```
-Moves the task to Executing (with a message; only if the review is clean; at most 3 times for each task)
+Moves the task to Executing (with a message; only if the review is clean; at most 3 times until you move the task)
 Moves the task to Testing (only if the last line reads "Verdict: Ready")
 ```
 

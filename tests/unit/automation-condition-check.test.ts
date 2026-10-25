@@ -241,19 +241,19 @@ describe('parseConditionReply', () => {
 describe('describeAutomationGuards', () => {
   it('reads the condition, then the limit, as the rule runs', () => {
     expect(describeAutomationGuards({ trigger: 'enter', condition: 'The review is clean', final_line: null, max_runs: 3 }))
-      .toBe('Only if the review is clean. At most 3 times for each task.');
+      .toBe('Only if the review is clean. At most 3 times until you move the task.');
     expect(describeAutomationGuards({ trigger: 'turn_end', condition: 'CI is green.', final_line: null, max_runs: 1 }))
-      .toBe('Only if CI is green. At most once for each task.');
+      .toBe('Only if CI is green. At most once until you move the task.');
   });
 
   it('reads a Text match in place of the prose, then the limit', () => {
     expect(describeAutomationGuards({ trigger: 'turn_end', condition: null, final_line: 'Verdict: Ready', max_runs: 1 }))
-      .toBe('Only if the last line reads "Verdict: Ready". At most once for each task.');
+      .toBe('Only if the last line reads "Verdict: Ready". At most once until you move the task.');
   });
 
   it('reads no Text match off a turn end, as the row marks do, since none is checked there', () => {
     expect(describeAutomationGuards({ trigger: 'enter', condition: null, final_line: 'Verdict: Ready', max_runs: 1 }))
-      .toBe('At most once for each task.');
+      .toBe('At most once until you move the task.');
   });
 
   it('is null for a row with no guards', () => {

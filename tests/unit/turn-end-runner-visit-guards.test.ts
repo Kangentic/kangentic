@@ -942,7 +942,9 @@ describe('a turn end and the rows it may run', () => {
   // left in place: "On to Testing" had spent its one run on the first pass, and
   // the turn end dropped it with no record, so the log showed only the revisions
   // row's "Condition not met". A spent row now says so, once per visit, and a
-  // task that left Done counts its Frequency from there.
+  // task that left Done counts its Frequency from there. Each visit here opens
+  // with the board's own move (Back for revisions), which keeps the count: a
+  // person's move would start it over (`automation-run-frequency-boundary.test.ts`).
   describe('a row whose Frequency is spent', () => {
     const SPENT_REASON = 'Already ran once on this task, its limit.';
 
@@ -966,7 +968,7 @@ describe('a turn end and the rows it may run', () => {
       const spentRow = row({ max_runs: 1, condition: 'The verdict reads Ready' });
       hoisted.rows = [spentRow];
       ranAt(spentRow, secondsAgo(120));
-      enterColumnAt(secondsAgo(60));
+      enterColumnAt(secondsAgo(60), 'automation');
 
       await endTurn();
       await endTurn();
@@ -987,7 +989,7 @@ describe('a turn end and the rows it may run', () => {
       const spentRow = row({ max_runs: 1 });
       hoisted.rows = [spentRow];
       ranAt(spentRow, secondsAgo(120));
-      enterColumnAt(secondsAgo(60));
+      enterColumnAt(secondsAgo(60), 'automation');
 
       await endTurn();
 
@@ -1000,11 +1002,11 @@ describe('a turn end and the rows it may run', () => {
       const spentRow = row({ max_runs: 1 });
       hoisted.rows = [spentRow];
       ranAt(spentRow, secondsAgo(120));
-      enterColumnAt(secondsAgo(60));
+      enterColumnAt(secondsAgo(60), 'automation');
       await endTurn();
       // Age the first visit's skip to before the second visit began.
       database.prepare('UPDATE automation_runs SET started_at = ? WHERE status = ?').run(secondsAgo(30), 'skipped');
-      enterColumnAt(secondsAgo(10));
+      enterColumnAt(secondsAgo(10), 'automation');
 
       await endTurn();
 
@@ -1018,7 +1020,7 @@ describe('a turn end and the rows it may run', () => {
       // The first life: the row ran, then the task finished and was reopened.
       ranAt(spentRow, secondsAgo(300));
       leaveDoneAt(secondsAgo(200));
-      enterColumnAt(secondsAgo(60));
+      enterColumnAt(secondsAgo(60), 'automation');
 
       await endTurn();
 
@@ -1035,7 +1037,7 @@ describe('a turn end and the rows it may run', () => {
       const runnableRow = row({ id: 'row-after-the-spent-one', name: 'Move on after review', position: 1 });
       hoisted.rows = [spentRow, runnableRow];
       ranAt(spentRow, secondsAgo(120));
-      enterColumnAt(secondsAgo(60));
+      enterColumnAt(secondsAgo(60), 'automation');
 
       await endTurn();
 
@@ -1059,7 +1061,7 @@ describe('a turn end and the rows it may run', () => {
       // The run that spent the limit is from before this visit: one inside it would drop the row with no record.
       ranAt(spentRow, secondsAgo(120));
       const enteredAt = secondsAgo(60);
-      enterColumnAt(enteredAt);
+      enterColumnAt(enteredAt, 'automation');
       const carriedInStart = Date.parse(enteredAt) - 1_000;
 
       await endTurn(carriedInStart);

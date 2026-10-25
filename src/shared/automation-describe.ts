@@ -164,7 +164,7 @@ export function describeAutomationMarks(row: {
 
 /**
  * A row's marks as words after its sentence, or null when it has none: "with a
- * message; only if the review is clean; at most 3 times for each task". The
+ * message; only if the review is clean; at most 3 times until you move the task". The
  * MCP list prints this, since an agent reads text and cannot hover a mark.
  *
  * The action's own options lead, unlike the marks' card order, because they
@@ -273,17 +273,19 @@ export function describeAutomationTextMatch(finalLine: string | null): string | 
 
 /**
  * A row's Frequency as one sentence, or null when it has none: "At most 3 times
- * for each task." The tooltip of the Frequency mark, whose visible part is the
- * bare count.
+ * until you move the task." The tooltip of the Frequency mark, whose visible
+ * part is the bare count. "You" is the rule: a person's move starts the count
+ * over, and the board's own moves do not, except a move out of Done, which
+ * starts it over whoever makes it (`AutomationRunRepository.countRuns`).
  */
 export function describeAutomationFrequency(maxRuns: number | null): string | null {
   if (maxRuns === null) return null;
-  return maxRuns === 1 ? 'At most once for each task.' : `At most ${maxRuns} times for each task.`;
+  return maxRuns === 1 ? 'At most once until you move the task.' : `At most ${maxRuns} times until you move the task.`;
 }
 
 /**
  * A row's guards as one string, or null when it has none, read in the order
- * the rule runs: "Only if the review is clean. At most 3 times for each task."
+ * the rule runs: "Only if the review is clean. At most 3 times until you move the task."
  * A row holds one Condition kind, so a Text match stands in for the prose, on
  * a turn end only, as `describeAutomationMarks` reads it. Built from the
  * sentences above, so the wording lives in one place.

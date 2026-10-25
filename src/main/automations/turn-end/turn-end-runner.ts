@@ -80,8 +80,9 @@ import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
  * - **Rows run top to bottom, each at most once per visit, and only a row that
  *   executes counts.** A Condition that answers no has not run, so the next
  *   turn end checks it again. A Move to column row that runs ends the group:
- *   the task has left. A row whose Frequency is spent (counted since the task
- *   last left Done) is skipped with its limit, recorded once per visit.
+ *   the task has left. A row whose Frequency is spent (counted since a person
+ *   last moved the task, or it last left Done) is skipped with its limit,
+ *   recorded once per visit.
  * - **Outside the task lock.** A row can take minutes, and a Move to column
  *   row's own move takes that lock (`withTaskLock` is not reentrant). A move
  *   made meanwhile supersedes the group instead (`supersedeTurnEndWork`).
@@ -785,7 +786,11 @@ function turnSettled(
   return idle ? 'go' : 'busy';
 }
 
-/** Who moves a task by hand: a drag, a phone, or the agent moving its own task. */
+/**
+ * Who moves a task by hand: a drag, a phone, or the agent moving its own task.
+ * Wider than a person's move (`isMoveByAPerson`) on purpose, since the agent
+ * that planned is the one implementing.
+ */
 const PLAN_EXIT_MOVE_ORIGINS: ReadonlySet<TaskMoveRecordOrigin> = new Set<TaskMoveRecordOrigin>(['renderer', 'mobile', 'agent']);
 
 /**

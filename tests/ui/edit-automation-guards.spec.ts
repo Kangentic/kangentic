@@ -282,7 +282,7 @@ async function expectTwoLines(name: string, sentence?: string): Promise<void> {
   }
   await expect(row(name).locator('[data-testid="column-automation-guards"]')).toHaveCount(0);
   await expect(row(name)).not.toContainText('Only if');
-  await expect(row(name)).not.toContainText('for each task');
+  await expect(row(name)).not.toContainText('until you move the task');
 }
 
 test.describe('Edit automation: guards, turn end and Move to column', () => {
@@ -401,7 +401,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     // The draft carries it out of the dialog: the row's Frequency mark says 8.
     await editDialog().locator('[data-testid="edit-automation-done"]').click();
     await expect(editDialog()).toBeHidden();
-    await expect(frequencyMark('Ping')).toHaveAttribute('aria-label', 'Frequency: at most 8 times for each task.');
+    await expect(frequencyMark('Ping')).toHaveAttribute('aria-label', 'Frequency: at most 8 times until you move the task.');
   });
 
   test('ArrowDown in Maximum runs steps from what is typed and commits it, so the blur keeps the step', async () => {
@@ -446,7 +446,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
 
     // Marks beside the name, not words under the sentence.
     await expectMarkSays(conditionMark('Ping'), 'Condition: only if CI is green.');
-    await expectMarkSays(frequencyMark('Ping'), 'Frequency: at most 3 times for each task.');
+    await expectMarkSays(frequencyMark('Ping'), 'Frequency: at most 3 times until you move the task.');
     await expect(frequencyMark('Ping').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
     await expectTwoLines('Ping');
 
@@ -593,7 +593,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expectMarkSays(conditionMark('Hand off'), 'Condition: only if the review is clean.');
     // An Agent evaluation's mark is its kind's icon, the same one the kind control shows.
     await expect(conditionMark('Hand off').locator('svg.lucide-bot')).toHaveCount(1);
-    await expectMarkSays(frequencyMark('Hand off'), 'Frequency: at most 3 times for each task.');
+    await expectMarkSays(frequencyMark('Hand off'), 'Frequency: at most 3 times until you move the task.');
     await expect(frequencyMark('Hand off').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('3');
     expect(await titleLine('Hand off').evaluate((node) =>
       Array.from(node.children).map((child) => child.getAttribute('data-testid')).filter((id) => id !== null)))
@@ -622,7 +622,7 @@ test.describe('Edit automation: guards, turn end and Move to column', () => {
     await expectTwoLines('Only condition', 'Notifies "a"');
 
     // One run reads "once" in the label, and the mark shows the bare count.
-    await expectMarkSays(frequencyMark('Only once'), 'Frequency: at most once for each task.');
+    await expectMarkSays(frequencyMark('Only once'), 'Frequency: at most once until you move the task.');
     await expect(frequencyMark('Only once').locator('[data-testid="column-automation-frequency-count"]')).toHaveText('1');
     await expect(conditionMark('Only once')).toHaveCount(0);
     await expectTwoLines('Only once', 'Notifies "b"');

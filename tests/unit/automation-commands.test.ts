@@ -492,7 +492,7 @@ describe('automation MCP commands', () => {
       const lines = (handleListAutomations({ column: 'Executing' }, context).message ?? '').split('\n');
       expect(lines).toContain('    1. Review (send_message) Sends "/code-review" (waits for the current turn to end)');
       expect(lines).toContain('    1. Back for revisions (move_to_column) Moves the task to Planning'
-        + ' (with a message; only if the review is clean; at most 3 times for each task)');
+        + ' (with a message; only if the review is clean; at most 3 times until you move the task)');
       // At a turn end the turn is already over, so a waiting Send message sends at once.
       expect(lines).toContain('    2. Summarize (send_message) Sends "Summarize"');
     });

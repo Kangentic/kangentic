@@ -200,7 +200,7 @@ const PREVIEW_AUTOMATIONS_BY_COLUMN: Record<string, {
     // with a Frequency, so the list shows every guard mark beside a name: the
     // robot for an Agent evaluation, the text search for a Text match (both
     // "Condition: only if ..."), and Repeat with its count ("Frequency: at most
-    // 2 times for each task.").
+    // 2 times until you move the task.").
     onTurnEnd: [
       { name: 'Back to planning', type: 'move_to_column', enabled: false, condition: 'The plan needs revising', maxRuns: 2, targetColumn: 'Planning', message: '{{agentReply}}' },
       { name: 'On to review', type: 'move_to_column', enabled: false, finalLine: 'Ready for review', maxRuns: 1 },
