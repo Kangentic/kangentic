@@ -138,4 +138,27 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(saved.draft?.tasks.find((task) => task.key === 'api')?.project_id).toBeNull();
     });
   });
+
+  describe('a task the workflow stalled on', () => {
+    const WHY = 'the agent stopped before its step was done.';
+
+    it('ends its line with why it stalled, and gives a task that did not stall no suffix', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+      // Nothing stalled yet: no line carries the suffix, so the one below can only gain it from `stalled`.
+      expect(formatWorkflow(view)).not.toContain('Stalled');
+
+      // The run log's reading is set on the view row itself, so this pins the text alone.
+      const stalledView = {
+        ...view,
+        tasks: view.tasks.map((task) => (task.title === 'Budgets API' ? { ...task, stalled: WHY } : task)),
+      };
+      const text = formatWorkflow(stalledView);
+
+      expect(lineOf(text, 'Budgets API').endsWith(` Stalled: ${WHY}`)).toBe(true);
+      expect(lineOf(text, 'Budgets UI')).not.toContain('Stalled');
+      expect(lineOf(text, 'Budgets on the phone')).not.toContain('Stalled');
+    });
+  });
 });

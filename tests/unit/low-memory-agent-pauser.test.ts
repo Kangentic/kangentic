@@ -11,8 +11,10 @@ const mocks = vi.hoisted(() => ({
   pauseTaskSession: vi.fn(),
   getProjectRepos: vi.fn(),
   hasPendingMessageDelivery: vi.fn((_taskId: string) => false),
+  noteWorkflowTaskPaused: vi.fn(),
 }));
 
+vi.mock('../../src/main/workflows/workflow-recovery', () => ({ noteWorkflowTaskPaused: mocks.noteWorkflowTaskPaused }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: mocks.pauseTaskSession }));
 vi.mock('../../src/main/ipc/helpers', () => ({ getProjectRepos: mocks.getProjectRepos }));
 vi.mock('../../src/main/automations/turn-end/turn-end-passes', () => ({
@@ -177,6 +179,51 @@ describe('createLowMemoryAgentPauser', () => {
     expect(stillEligible({ id: 'sess-other' } as Session)).toBe(false);
     // A declined pause tells the renderer nothing.
     expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  // A running workflow task under recovery has nobody left to nudge it once its
+  // agent is paused, so its recovery stops and the user is told. That notice is
+  // main's own (a desktop notification and the phone), so it does not wait on
+  // the renderer window, which may already be destroyed.
+  describe('a pause that lands on a workflow task', () => {
+    it('stops the task\'s recovery and tells the renderer, with the window open', async () => {
+      const context = makeContext();
+      mocks.pauseTaskSession.mockResolvedValue('paused');
+      mocks.getProjectRepos.mockReturnValue({ tasks: { getById: vi.fn(() => ({ id: 'task-1', title: 'Fix login redirect' })) } });
+
+      createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+      await settle();
+
+      expect(mocks.noteWorkflowTaskPaused).toHaveBeenCalledTimes(1);
+      expect(mocks.noteWorkflowTaskPaused).toHaveBeenCalledWith(context, 'task-1');
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.HOST_MEMORY_AGENT_PAUSED, expect.anything());
+    });
+
+    it('stops the task\'s recovery with the window destroyed, and sends the renderer nothing', async () => {
+      const context = makeContext();
+      context.mainWindow.isDestroyed.mockReturnValue(true);
+      mocks.pauseTaskSession.mockResolvedValue('paused');
+      mocks.getProjectRepos.mockReturnValue({ tasks: { getById: vi.fn(() => ({ id: 'task-1', title: 'Fix login redirect' })) } });
+
+      createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+      await settle();
+
+      expect(mocks.pauseTaskSession).toHaveBeenCalledTimes(1);
+      expect(mocks.noteWorkflowTaskPaused).toHaveBeenCalledTimes(1);
+      expect(mocks.noteWorkflowTaskPaused).toHaveBeenCalledWith(context, 'task-1');
+      expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('leaves the task\'s recovery alone when the pause was declined', async () => {
+      const context = makeContext();
+      mocks.pauseTaskSession.mockResolvedValue('declined');
+
+      createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+      await settle();
+
+      expect(mocks.pauseTaskSession).toHaveBeenCalledTimes(1);
+      expect(mocks.noteWorkflowTaskPaused).not.toHaveBeenCalled();
+    });
   });
 
   it('pauses nothing with the setting off', async () => {
