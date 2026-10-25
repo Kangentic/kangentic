@@ -8000,6 +8000,10 @@ export interface ElectronAPI {
     close: () => void;
     flashFrame: (flash: boolean) => void;
     isFocused: () => Promise<boolean>;
+    /** A JPEG data URL of what the sending window shows inside `rect` (CSS
+     *  pixels, from `getBoundingClientRect`), or null when nothing could be
+     *  captured. The Command Terminal's swap drag floats it under the pointer. */
+    captureRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string | null>;
   };
 
   // Pop-out windows: detach a registered surface (stats, changes, browser, a single

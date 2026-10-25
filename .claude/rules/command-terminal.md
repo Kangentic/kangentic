@@ -51,18 +51,39 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `COMMAND_LAYER_OPTIONS.minSize` (320 x 200): what four terminals keep beside the 248px rail at
   the 900 x 600 window floor. There is no per-terminal pop-out, float or maximize. The panel's
   own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
-  the status bar), it moves by its header and resizes from its edges with a preview committed on
-  release, and it maximizes. A layout saved before the panel (floating windows) is re-tiled on
+  the status bar), it moves by its header and resizes live from its edges, and it maximizes. Its
+  box is snapped to whole pixels (`toWholePixels`): the tiles are cut from the terminal area's
+  whole-pixel client size, so a fractional panel left each tile a fraction of a pixel past the
+  panel's clip, which cut off the bottom border that marks the focused terminal. A
+  resize holds the manager-resize gate for the whole gesture, so its terminals keep their grids
+  and refit once on release: the gate also holds every `scheduleWindowTerminalResize` and sends it
+  when the gesture ends, without which a live resize sends a SIGWINCH per pointer frame (measured
+  at 12 for one drag). A layout saved before the panel (floating windows) is re-tiled on
   load. Never bump the shared `WORKSPACE_SCHEMA_VERSION` for it: board layouts use it too.
 - **Expand and swap move the real terminals, never a copy.** Expand fills the panel with one
-  terminal (`expandedWindowId`, transient, never saved); the others stay mounted at their tile
-  rects, hidden and `inert` like a dormant window, with no PTY resize, and list in the rail's
-  Running section, whose Stop ends one. A header drag swaps two terminals (`swap-drag.ts`): the
-  real frame moves by saved-and-restored inline styles, a ghost marks the landing tile, PTY
-  resizes are held by the manager-resize gate until the drop, and the drop commits
-  `swapWindows`. A second xterm on a live PTY is the bug class terminal ownership exists to
-  prevent, so a `DragOverlay` copy is never the answer. The kebab's "Swap with" is the keyboard
-  path. Escape cancels a drag in flight in the capture phase (`keybindings-registry.md`).
+  terminal (`expandedWindowId`, transient, never saved); the others stay mounted behind it at the
+  SAME rect, hidden and `inert` like a dormant window, and list in the rail's Running section,
+  whose Stop ends one. Being the panel's size already, a switch through a Running row resizes
+  nothing. Expand and Restore do jump sizes, and until the agent repaints the terminal shows its
+  old frame on the new grid (the footer mid-panel, then dropped), so `CommandTerminalPane` veils
+  every terminal when the layout goes in or out of expanded and lifts on its own output going
+  quiet (`resize-veil.ts`). Never lift it on main's repaint settle: on Windows that fires on
+  ConPTY's redraw of the old screen, under 45 ms, while the agent's frame lands 98 to 181 ms
+  after the resize. A header drag swaps
+  two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
+  taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
+  around the grab point at the picture's own scale, and the real frames preview the swap in each
+  other's tiles by saved-and-restored inline styles. The preview refits both terminals to the
+  tiles they show in, veiled while they repaint (`TERMINAL_JUMP_EVENT`), so it looks the way the
+  drop will, and the landing tile is held as an empty terminal (the terminal background inside an
+  accent ring) by an element of its own above the frame, so the dragged terminal is not on screen
+  twice; the drop removes the picture and commits `swapWindows` at once, resizing nothing more,
+  and a cancel refits them
+  back. Never hold the preview's resizes to the drop: the terminals then show at the wrong size,
+  the input box mid-tile in the taller one and cut off in the shorter. A second xterm on a live PTY is the bug
+  class terminal ownership exists to prevent, so the thing under the pointer is a picture, never
+  a `DragOverlay` copy. The header drag is the only way to swap. Escape cancels a drag in flight
+  in the capture phase (`keybindings-registry.md`).
 - **A terminal ENDS when its agent exits, and every end goes through
   `SessionManager.endCommandTerminal`.** It kills, removes the row (whose `session-removed`
   stamps the conversation's history row ended), and deletes the session directory only after the
@@ -206,6 +227,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
 - **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
+  `tests/unit/command-terminal-resize-veil.test.ts` replays the four measured runs through the
+  veil's lift rule, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
+  the end of a gesture.
 - **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
   touched filter, the owned-id skip, pruning, the resume claim),
   `tests/unit/transient-session-resume.test.ts` (the resume start, `conversation-gone` and

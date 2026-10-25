@@ -519,6 +519,7 @@ const api: ElectronAPI = {
     close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
     flashFrame: (flash: boolean) => ipcRenderer.send(IPC.WINDOW_FLASH_FRAME, flash),
     isFocused: () => ipcRenderer.invoke(IPC.WINDOW_IS_FOCUSED),
+    captureRegion: (rect: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WINDOW_CAPTURE_REGION, rect),
   },
 
   popOut: {

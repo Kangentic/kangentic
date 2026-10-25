@@ -11,8 +11,13 @@
  * A resizer marks "a manager drag is in progress" for the duration of its gesture.
  * While the gate is open the terminal suppresses its per-frame ResizeObserver
  * refit (see `TerminalTab`); the PTY is then resized exactly once, from the single
- * `terminal-panel-resize` the store commit already dispatches on release. The gate
- * does NOT itself dispatch - the existing commit path owns the one settle-resize.
+ * `terminal-panel-resize` the store commit already dispatches on release.
+ *
+ * A gesture that resizes a frame's CONTAINER live (the Command Terminal panel's
+ * edges) re-renders every frame inside it, and each frame asks for a terminal
+ * resize. `scheduleWindowTerminalResize` holds those asks while the gate is open
+ * (`deferUntilManagerResizeEnds`), and the last `endManagerResize()` sends the
+ * held one, so that gesture also ends in one resize.
  *
  * Balance invariant: every `beginManagerResize()` is matched by exactly one
  * `endManagerResize()`. The counter is floored at 0, and each resizer's end runs
@@ -24,6 +29,8 @@
 // A transient gesture counter: how many imperative manager-resize drags are open.
 // hmr-safe: a reset on HMR can only drop an in-flight drag's gate, which the next pointerdown re-establishes.
 let activeGestureCount = 0;
+// hmr-safe: a reset on HMR drops a held resize, and the next size change asks for another.
+let deferredUntilEnd: (() => void) | null = null;
 
 export function beginManagerResize(): void {
   activeGestureCount += 1;
@@ -31,8 +38,17 @@ export function beginManagerResize(): void {
 
 export function endManagerResize(): void {
   activeGestureCount = Math.max(0, activeGestureCount - 1);
+  if (activeGestureCount > 0 || !deferredUntilEnd) return;
+  const deferred = deferredUntilEnd;
+  deferredUntilEnd = null;
+  deferred();
 }
 
 export function isManagerResizeInProgress(): boolean {
   return activeGestureCount > 0;
+}
+
+/** Run `callback` once the last open gesture ends. A later call replaces an earlier one. */
+export function deferUntilManagerResizeEnds(callback: () => void): void {
+  deferredUntilEnd = callback;
 }

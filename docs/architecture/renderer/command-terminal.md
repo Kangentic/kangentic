@@ -35,9 +35,15 @@ with Open in new window, Maximize and Hide; a 248px rail (`CommandTerminalRail`)
 list, a Running list while a terminal is expanded, and New terminal at its foot; and up to four
 terminals in the rest. The panel moves by its header, resizes from its outer edges, and maximizes
 to the area between the title bar and the status bar. A move translates the real panel and a
-resize draws a dashed preview, and both commit once on release, so the terminals inside refit
-once instead of on every pointer frame. Its place is `AppConfig.commandTerminalPanel`, fractions
-of that area, so it rescales with the window.
+resize changes its box live, and both are saved once, on release. The first build drew a dashed
+outline during a resize and changed nothing until the release, which no other resizable surface
+in the app does and which made shrinking the panel hard to judge. A resize holds the
+manager-resize gate (`window-manager/terminal/manager-resize-gate.ts`) for the whole gesture: the
+terminals re-tile with the panel but keep their grids, and the gate holds every
+`scheduleWindowTerminalResize` the re-tiling asks for and sends one when the gesture ends, so each
+terminal refits once on release instead of sending its agent a SIGWINCH per pointer frame (12 for
+one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, fractions of that
+area, so it rescales with the window.
 
 Each terminal is a window of a second window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail
@@ -226,21 +232,70 @@ whose window closed first is dropped with it. At the cap the rows are off and sa
 
 **Expand** fills the panel with one terminal. `expandedWindowId` lives in the layer's store and is
 transient: never saved, cleared by a restore, and moved to a new terminal opened while one is
-expanded. The other terminals stay mounted at their tile rects, hidden exactly like a dormant
-window (opacity 0, no pointer events, `aria-hidden`, `inert`), so nothing behind the expanded one
-refits or resizes its PTY. The rail then lists them under Running; a row's title expands that
-terminal, and its Stop, the same `StopButtonIcon` as the header's, ends it.
+expanded. The other terminals stay mounted behind it at the same rect, hidden exactly like a
+dormant window (opacity 0, no pointer events, `aria-hidden`, `inert`). The rail then lists them
+under Running; a row's title expands that terminal, and its Stop, the same `StopButtonIcon` as the
+header's, ends it.
 
-**Swap** drags a terminal by its header onto another's tile, the way a board card moves
-(`swap-drag.ts`). The REAL frame follows the pointer, tilted and slightly see-through, never a
-copy: a second xterm attached to a live PTY is the bug class terminal ownership exists to
-prevent, so a dnd-kit `DragOverlay` was never an option. The frames are moved with inline styles
-saved first and put back exactly, a ghost marks the landing tile, and the terminal there previews
-in the dragged one's old tile. PTY resizes are held for the gesture by the manager-resize gate
-(the displaced terminal changes size under the preview), and the drop commits `swapWindows`, a
-pure `swapWindowsInTree` plus the two windows' `leafId`s, so every terminal resizes once, on the
-drop. Escape, a pointer cancel or the window losing focus puts everything back. The kebab's
-"Swap with" is the keyboard path.
+A terminal that changes size shows its old frame on the new grid until the agent repaints.
+Measured on Claude Code 2.1.310 on Windows by resizing a live PTY and timestamping its output, in
+four runs: ConPTY redraws the old screen within 45 ms, and the agent's own frame lands 98 to 181
+ms after the resize, its tail within about 35 ms of it. That was the reported flicker on a switch
+between expanded terminals: the footer drawn mid-panel, then dropped to the bottom.
+
+So the terminals behind an expanded one are sized to the expanded rect, not their tiles
+(`WindowFrame`): they take the new size while nobody can see them, at Expand, and a switch through
+a Running row then changes no size and sends no resize. The first build kept them at their tile
+rects so they would not refit at all; that is what made every switch a visible jump.
+
+Expand and Restore still jump sizes, Restore every terminal at once. `CommandTerminalPane` raises
+a veil in the terminal's own background when the layout goes in or out of expanded, in the same
+layout pass as the jump, and lifts it on the terminal's own output (`resize-veil.ts`): no sooner
+than 190 ms after the jump, then once the output has been quiet for 40 ms, and by 500 ms whatever
+the output does. Against the four runs that lifts between 212 and 253 ms. Main's repaint settle
+was tried first as the signal and is wrong here: it settles on the first screen clear after the
+resize, which on Windows is ConPTY's redraw of the old screen, so the veil came down at about 25 ms
+and the jump showed anyway. Holding the outgoing terminal on screen until the new one settled was
+rejected too, since a click that does nothing for 200 ms reads as missed.
+
+**Swap** drags a terminal by its header onto another's tile (`swap-drag.ts`). A picture of the
+pressed terminal follows the pointer, upright: main captures the window's pixels inside the
+terminal's rect on the press, before anything moves (`window:captureRegion`,
+`webContents.capturePage`), and until it arrives, or in the web build where there is nothing to
+capture, the float shows the terminal's title. The float is the smallest tile's width and height,
+cut from the picture around the grab point with the picture kept at its own scale, so a small
+terminal floats whole, a tall one floats as its top with its header, the text stays sharp, and
+nothing moves when the drag starts. The whole terminal at its own size covered the drop area, and
+a tall terminal's picture swamped a short landing tile; the header alone, tried next, read as too
+little of a window to be the thing being moved. The
+terminals themselves stay live in the panel. Over another tile, the dragged one moves into that
+tile and the terminal there moves into the dragged one's, so the panel previews the swap with the
+real terminals, by inline styles saved first and put back exactly. The thing under the pointer is
+a picture because a second xterm attached to a live PTY is the bug class terminal ownership
+exists to prevent, so a dnd-kit `DragOverlay` was never an option. The first build floated the
+real frame, tilted 1.5 degrees, over a grey stand-in card in the landing tile; the tilt blurred
+every glyph and the grey read as unrelated to the black terminals, so both went.
+
+The preview refits both terminals to the tiles they show in, each veiled while its agent repaints
+(the pane listens for `TERMINAL_JUMP_EVENT` and uses Expand's lift rule), so the panel looks the
+way the drop will. The second build held those resizes to the drop under the manager-resize gate,
+and the preview then showed each terminal at its old size: the input box mid-tile in the taller
+one and cut off in the shorter. A preview changes sizes in single steps, never per pointer frame,
+so it needs no gate. The landing tile is held as an empty terminal: the terminals' own background
+inside a 2px accent ring. The picture under the pointer already shows what lands, so the live
+terminal refitting in that tile stays covered and the dragged terminal is not on screen twice;
+the displaced terminal stays live in its new tile, which is what shows how the others move. A
+first cut drew only the ring and an 8% accent wash over the live terminal, and with the picture
+over it and the other terminals at full detail the drag read as too busy. The cover is an element
+of its own over the tile, above the live terminal and below the picture, so it never reaches
+inside a frame and takes no pointer. On release the picture goes at once. While the float was the
+whole terminal at its own size, a 250 ms settle grew it into the landing tile and faded it over
+the live terminal, because without one the swap read as cut off. Once the float became the
+smallest tile's size, that settle mostly stretched a small picture over a big tile, and the live
+terminals already sit where the preview put them, so it was dropped. The drop commits `swapWindows`, a pure `swapWindowsInTree` plus the two
+windows' `leafId`s, which puts each frame where the preview already had it, so it resizes
+nothing. Escape, a pointer cancel or the window losing focus puts everything back and refits it.
+The kebab's "Swap with" was removed: the header drag is the one way to swap.
 
 ## In a window of its own
 

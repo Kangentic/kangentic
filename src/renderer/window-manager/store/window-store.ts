@@ -315,8 +315,8 @@ export interface WindowStoreState {
   arrangeTiles: (windowIds: readonly string[]) => void;
   /** Expand one window over the others (and focus it), or show the tiles again (null). */
   setExpandedWindow: (id: string | null) => void;
-  /** Swap two tiled windows' places (the Command Terminal panel's drag and its
-   *  "Swap with"). The tiles keep their sizes; each window takes the other's. */
+  /** Swap two tiled windows' places (the Command Terminal panel's header drag).
+   *  The tiles keep their sizes; each window takes the other's. */
   swapWindows: (firstId: string, secondId: string) => void;
   toggleMaximizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;

@@ -224,11 +224,13 @@ export function CommandTerminalRail({
             type="button"
             onClick={onNewTerminal}
             disabled={atCap}
-            className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg bg-accent-emphasis px-3 text-[13px] font-semibold text-accent-on transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent-emphasis"
+            className="flex h-[38px] w-full items-center justify-center gap-2 rounded-lg border border-accent/30 bg-accent/15 px-3 text-[13px] font-medium text-accent-fg transition-colors hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent/15"
             data-testid="command-terminal-new"
           >
             <SquarePlus size={16} strokeWidth={2.25} />
-            New terminal
+            {/* Trimmed to its cap height so it centers on the plus, as Pill's
+                text does: the line box sits the system font's letters low. */}
+            <span className="[text-box:trim-both_cap_alphabetic]">New terminal</span>
           </button>
         </Tooltip>
       </div>

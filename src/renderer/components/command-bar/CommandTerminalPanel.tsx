@@ -7,8 +7,9 @@
  *
  * Its place is GLOBAL (`AppConfig.commandTerminalPanel`), like the terminals'
  * layout: fractions of the area it sits in, so it rescales with the window. A
- * move or a resize is previewed and committed once, on release, so the
- * terminals inside refit once rather than on every pointer frame.
+ * move or a resize follows the pointer live and is saved once, on release. A
+ * resize holds the manager-resize gate for the whole gesture, so the terminals
+ * inside keep their grid while the panel changes size and refit once, after.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -18,6 +19,7 @@ import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { beginManagerResize, endManagerResize } from '../../window-manager/terminal/manager-resize-gate';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
 
 /** Where the panel opens before it was ever moved: centered, with a margin of board around it. */
@@ -40,15 +42,33 @@ const RESIZE_EDGES: Array<{ edge: ResizeEdge; className: string }> = [
   { edge: 'sw', className: 'left-0 bottom-0 h-2.5 w-2.5 cursor-nesw-resize' },
 ];
 
+/**
+ * `rect` on whole pixels, still inside the area. The terminals are tiled from
+ * the terminal area's whole-pixel `clientWidth` and `clientHeight`, so a panel
+ * on a fractional box (fractions of the area land anywhere) left each tile up
+ * to a pixel bigger than the area it sits in, and the panel's clip cut the
+ * tile's bottom border, the edge that turns accent when the terminal has focus.
+ */
+function toWholePixels(rect: PixelRect, size: PanelSize): PixelRect {
+  const left = Math.round(rect.left);
+  const top = Math.round(rect.top);
+  return {
+    left,
+    top,
+    width: Math.min(Math.round(rect.width), Math.floor(size.width) - left),
+    height: Math.min(Math.round(rect.height), Math.floor(size.height) - top),
+  };
+}
+
 /** The panel's pixel rect in an area of `size`, kept inside it and above the
  *  floor (which itself gives way to an area smaller than it). */
 function toPixels(geometry: CommandTerminalPanelGeometry, size: PanelSize, minSize: PanelSize): PixelRect {
-  if (geometry.maximized) return { left: 0, top: 0, width: size.width, height: size.height };
+  if (geometry.maximized) return toWholePixels({ left: 0, top: 0, width: size.width, height: size.height }, size);
   const width = Math.min(size.width, Math.max(minSize.width, geometry.w * size.width));
   const height = Math.min(size.height, Math.max(minSize.height, geometry.h * size.height));
   const left = Math.min(Math.max(0, geometry.x * size.width), Math.max(0, size.width - width));
   const top = Math.min(Math.max(0, geometry.y * size.height), Math.max(0, size.height - height));
-  return { left, top, width, height };
+  return toWholePixels({ left, top, width, height }, size);
 }
 
 function toGeometry(rect: PixelRect, size: PanelSize): CommandTerminalPanelGeometry {
@@ -74,7 +94,37 @@ function resizeRect(start: PixelRect, edge: ResizeEdge, deltaX: number, deltaY: 
     height = start.height + (start.top - nextTop);
     top = nextTop;
   }
-  return { left, top, width, height };
+  return toWholePixels({ left, top, width, height }, size);
+}
+
+/** A move or a resize in flight, with the geometry it started from and the call that stops listening for it. */
+interface PanelGesture {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  edge: ResizeEdge | null;
+  startRect: PixelRect;
+  area: PanelSize;
+  floor: PanelSize;
+  /** True once a resize moved and opened the manager-resize gate. */
+  resizing: boolean;
+  stopListening: () => void;
+}
+
+function applyBox(panel: HTMLElement | null, box: PixelRect): void {
+  if (!panel) return;
+  panel.style.left = `${box.left}px`;
+  panel.style.top = `${box.top}px`;
+  panel.style.width = `${box.width}px`;
+  panel.style.height = `${box.height}px`;
+}
+
+/** Stop following a gesture and put the panel back where it started. A save that follows re-renders it. */
+function releaseGesture(gesture: PanelGesture, panel: HTMLElement | null): void {
+  gesture.stopListening();
+  if (panel) panel.style.transform = '';
+  if (gesture.edge !== null) applyBox(panel, gesture.startRect);
+  if (gesture.resizing) endManagerResize();
 }
 
 interface CommandTerminalPanelProps {
@@ -101,21 +151,9 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
   const geometry = savedGeometry ?? DEFAULT_PANEL_GEOMETRY;
   const rect = toPixels(geometry, areaSize, minSize);
 
-  // A resize is previewed as an outline and committed on release, so the
-  // terminals refit once. A move translates the real panel, which costs no refit.
-  const [resizePreview, setResizePreview] = useState<PixelRect | null>(null);
-  // The gesture in flight, with the geometry it started from, and the call that
-  // stops listening for it.
-  const gestureRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    edge: ResizeEdge | null;
-    startRect: PixelRect;
-    area: PanelSize;
-    floor: PanelSize;
-    stopListening: () => void;
-  } | null>(null);
+  // The gesture in flight. A move translates the panel; a resize writes its box
+  // straight to the element, and React takes it back over on the save.
+  const gestureRef = useRef<PanelGesture | null>(null);
 
   useLayoutEffect(() => {
     const area = areaRef.current;
@@ -151,18 +189,25 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
     const gesture = gestureRef.current;
     if (!gesture) return;
     gestureRef.current = null;
-    gesture.stopListening();
-    if (panelRef.current) panelRef.current.style.transform = '';
-    setResizePreview(null);
     const deltaX = clientX - gesture.startX;
     const deltaY = clientY - gesture.startY;
-    if (!commit || (deltaX === 0 && deltaY === 0)) return;
+    if (!commit || (deltaX === 0 && deltaY === 0)) {
+      releaseGesture(gesture, panelRef.current);
+      return;
+    }
     if (gesture.edge === null) {
+      releaseGesture(gesture, panelRef.current);
       const offset = movedBy(gesture, deltaX, deltaY);
       saveGeometry(toGeometry({ ...gesture.startRect, left: gesture.startRect.left + offset.x, top: gesture.startRect.top + offset.y }, gesture.area));
-    } else {
-      saveGeometry(toGeometry(resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor), gesture.area));
+      return;
     }
+    // The panel already has its final box, so the save changes nothing the
+    // terminals can see: closing the gate is what sends their one refit.
+    const box = resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor);
+    gesture.stopListening();
+    applyBox(panelRef.current, box);
+    saveGeometry(toGeometry(box, gesture.area));
+    if (gesture.resizing) endManagerResize();
   };
 
   /**
@@ -180,9 +225,13 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
       if (gesture.edge === null) {
         const offset = movedBy(gesture, deltaX, deltaY);
         if (panelRef.current) panelRef.current.style.transform = `translate3d(${offset.x}px, ${offset.y}px, 0)`;
-      } else {
-        setResizePreview(resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor));
+        return;
       }
+      if (!gesture.resizing) {
+        gesture.resizing = true;
+        beginManagerResize();
+      }
+      applyBox(panelRef.current, resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor));
     };
     const onUp = (upEvent: PointerEvent): void => {
       if (upEvent.pointerId === pointerId) endGesture(true, upEvent.clientX, upEvent.clientY);
@@ -203,6 +252,7 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
       startRect: rect,
       area: areaSize,
       floor: minSize,
+      resizing: false,
       stopListening: () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
@@ -210,7 +260,6 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
         window.removeEventListener('blur', onBlur);
       },
     };
-    if (edge !== null) setResizePreview(rect);
   };
 
   const handleHeaderPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -227,22 +276,23 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
   };
 
   // Escape cancels a gesture in flight, before anything under it sees the key.
-  // An unmount mid-gesture stops listening for it.
+  // An unmount mid-gesture stops listening for it and closes the gate it held,
+  // which would otherwise hold every terminal's refit in the app.
   useEffect(() => {
+    const panel = panelRef;
     const cancelOnEscape = (event: KeyboardEvent) => {
       const gesture = gestureRef.current;
       if (event.key !== 'Escape' || !gesture) return;
       event.stopImmediatePropagation();
       gestureRef.current = null;
-      gesture.stopListening();
-      if (panelRef.current) panelRef.current.style.transform = '';
-      setResizePreview(null);
+      releaseGesture(gesture, panel.current);
     };
     document.addEventListener('keydown', cancelOnEscape, true);
     return () => {
       document.removeEventListener('keydown', cancelOnEscape, true);
-      gestureRef.current?.stopListening();
+      const gesture = gestureRef.current;
       gestureRef.current = null;
+      if (gesture) releaseGesture(gesture, panel.current);
     };
   }, []);
 
@@ -329,14 +379,6 @@ export function CommandTerminalPanel({ onHide, rail, onTerminalAreaReady, minSiz
             />
           ))}
         </div>
-      )}
-      {resizePreview && (
-        <div
-          className="absolute rounded-lg border-2 border-dashed border-accent/70 pointer-events-none"
-          style={{ left: resizePreview.left, top: resizePreview.top, width: resizePreview.width, height: resizePreview.height }}
-          data-testid="command-terminal-panel-resize-preview"
-          aria-hidden
-        />
       )}
     </div>
   );
