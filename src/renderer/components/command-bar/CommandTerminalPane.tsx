@@ -33,7 +33,8 @@ import { useTerminalRefit } from '../../hooks/useTerminalRefit';
 import { useDeferredTerminalInit } from '../../hooks/useDeferredTerminalInit';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
-import { msUntilResizeVeilLifts, TERMINAL_JUMP_EVENT } from './resize-veil';
+import { msUntilResizeVeilLifts, RESIZE_VEIL_FADE_MS, TERMINAL_JUMP_EVENT } from './resize-veil';
+import { forgetHeldTerminalPicture, takeHeldTerminalPicture } from './held-terminal-picture';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -178,8 +179,10 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
   // that and comes down on the rule in `resize-veil.ts`, which watches this
   // terminal's output, since main's repaint settle fires on ConPTY's redraw of
   // the old screen. The live bytes land under the veil, so nothing is replayed.
-  // Not while the launch overlay still covers the pane (`suppressDataRef` is
-  // set until the agent is on screen).
+  // It holds the terminal's picture from just before the jump when the jump
+  // took one (`held-terminal-picture.ts`), so the terminal does not go black,
+  // and fades out as it comes down. Not while the launch overlay still covers
+  // the pane (`suppressDataRef` is set until the agent is on screen).
   const raiseResizeVeil = useCallback((): void => {
     const veil = resizeVeilRef.current;
     if (suppressDataRef.current || !initialized.current || !veil) return;
@@ -187,22 +190,52 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
     const jumpAt = performance.now();
     let lastOutputAt = jumpAt;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const stopListening = window.electronAPI.sessions.onData((outputSessionId) => {
+    let listening = true;
+    const unsubscribe = window.electronAPI.sessions.onData((outputSessionId) => {
       if (outputSessionId === sessionId) lastOutputAt = performance.now();
     });
-    const lift = (): void => {
+    const stopListening = (): void => {
+      if (!listening) return;
+      listening = false;
+      unsubscribe();
+    };
+    // Down at once: a new jump over this one, the pane going away, or the end of the fade.
+    const drop = (): void => {
       if (timer) clearTimeout(timer);
       stopListening();
       veil.removeAttribute('data-veiled');
+      veil.style.removeProperty('background-image');
+      veil.style.removeProperty('opacity');
+      veil.style.removeProperty('transition');
       liftResizeVeilRef.current = null;
+    };
+    const fadeOut = (): void => {
+      stopListening();
+      if (document.documentElement.classList.contains('no-motion')) {
+        drop();
+        return;
+      }
+      veil.style.transition = `opacity ${RESIZE_VEIL_FADE_MS}ms ease-out`;
+      veil.style.opacity = '0';
+      timer = setTimeout(drop, RESIZE_VEIL_FADE_MS);
     };
     const liftWhenSettled = (): void => {
       const wait = msUntilResizeVeilLifts(performance.now(), jumpAt, lastOutputAt);
-      if (wait === 0) lift();
+      if (wait === 0) fadeOut();
       else timer = setTimeout(liftWhenSettled, wait);
     };
+    const picture = takeHeldTerminalPicture(sessionId);
+    if (picture) {
+      // The pane's own part of the area picture, at its real size, from its top-left.
+      veil.style.backgroundImage = `url("${picture.url}")`;
+      veil.style.backgroundSize = `${picture.areaWidth}px ${picture.areaHeight}px`;
+      veil.style.backgroundPosition = `${-picture.offsetX}px ${-picture.offsetY}px`;
+      veil.style.backgroundRepeat = 'no-repeat';
+    }
+    veil.style.transition = 'none';
+    veil.style.opacity = '1';
     veil.setAttribute('data-veiled', '');
-    liftResizeVeilRef.current = lift;
+    liftResizeVeilRef.current = drop;
     liftWhenSettled();
     // `initialized` and `suppressDataRef` are stable refs - listed for
     // exhaustive-deps (which cannot see through the hooks), never re-run triggers.
@@ -225,6 +258,7 @@ export function CommandTerminalPane({ sessionId, isMaximized, layoutExpanded, re
     return () => pane.removeEventListener(TERMINAL_JUMP_EVENT, raiseResizeVeil);
   }, [raiseResizeVeil]);
   useEffect(() => () => liftResizeVeilRef.current?.(), []);
+  useEffect(() => () => forgetHeldTerminalPicture(sessionId), [sessionId]);
 
   // Restore terminal focus after a maximize/restore toggle (the button, Ctrl+Shift+M,
   // and the header double-click all flip `isMaximized`), so the next keystroke lands

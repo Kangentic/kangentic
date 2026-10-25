@@ -290,6 +290,23 @@ resize, which on Windows is ConPTY's redraw of the old screen, so the veil came 
 and the jump showed anyway. Holding the outgoing terminal on screen until the new one settled was
 rejected too, since a click that does nothing for 200 ms reads as missed.
 
+### Decision: the veil holds a picture, not a black box (2026-10-25)
+
+A veil in the terminal's background showed every terminal black for those 212 to 253 ms, which
+read as a flicker on every Expand and Restore. Now the switch first takes one picture of the
+terminal area (`holdTerminalPicturesThen` in `held-terminal-picture.ts`, `window:captureRegion`,
+51 ms when the swap drag measured it, bounded at 300), then changes the layout. Each terminal's
+veil shows its own part of the picture at its real size from its top-left, so the text stays
+where it was and only a strip the terminal grew into shows background, and the veil fades out
+over 120 ms (`RESIZE_VEIL_FADE_MS`; none with Animations off) when the lift rule above fires.
+A terminal hidden behind an expanded one is not in the capture, so on Restore it shows the last
+picture taken of it, the frame it had when it was hidden. A terminal that was on screen when the
+capture failed gets the plain veil rather than an older picture of itself, and a jump that took
+no picture (the swap drag's preview, which has its own) never borrows one: a switch's pictures
+live for 250 ms. The 650px fallback's own switch takes a picture the same way. Showing the old
+frame scaled to the new size was the other choice; scaled terminal text blurs, which reads worse
+than a crop.
+
 **Swap** drags a terminal by its header onto another's tile (`swap-drag.ts`). A picture of the
 pressed terminal follows the pointer, upright: main captures the window's pixels inside the
 terminal's rect on the press, before anything moves (`window:captureRegion`,

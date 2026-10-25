@@ -23,6 +23,7 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
+import { holdTerminalPicturesThen } from './held-terminal-picture';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
@@ -112,10 +113,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const canExpand = layerStore((state) => Object.keys(state.windows).length > 1);
   const isExpanded = layerStore((state) => state.expandedWindowId === windowId);
   const layoutExpanded = layerStore((state) => state.expandedWindowId !== null);
-  const handleToggleExpanded = useCallback(
-    () => setExpandedWindow(isExpanded ? null : windowId),
-    [setExpandedWindow, isExpanded, windowId],
-  );
+  // Every terminal changes size, so each one's veil holds a picture of it from
+  // just before the switch rather than going black (`held-terminal-picture.ts`).
+  const handleToggleExpanded = useCallback(() => {
+    void holdTerminalPicturesThen(() => setExpandedWindow(isExpanded ? null : windowId));
+  }, [setExpandedWindow, isExpanded, windowId]);
   // The other terminals in the order they tile, for the swap drag. None while
   // one is expanded: only one tile is on screen then.
   const swapTargetIds = layerStore(useShallow((state) =>

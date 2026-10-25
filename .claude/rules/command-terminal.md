@@ -74,7 +74,13 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   every terminal when the layout goes in or out of expanded and lifts on its own output going
   quiet (`resize-veil.ts`). Never lift it on main's repaint settle: on Windows that fires on
   ConPTY's redraw of the old screen, under 45 ms, while the agent's frame lands 98 to 181 ms
-  after the resize. A header drag swaps
+  after the resize. The veil is never a black box: a switch first takes one picture of the
+  terminal area (`holdTerminalPicturesThen`, `window:captureRegion`), each veil shows its own
+  terminal's part of it at its real size from its top-left (`held-terminal-picture.ts`), and it
+  fades out over `RESIZE_VEIL_FADE_MS` as the live terminal takes over. A terminal hidden behind
+  an expanded one is not in a capture, so it shows the last picture taken of it; one that was on
+  screen when the capture failed gets the plain veil, never an older picture of itself, and so
+  does any jump that did not take a picture (the swap drag's). A header drag swaps
   two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
   taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
   around the grab point at the picture's own scale, and the real frames preview the swap in each
@@ -244,7 +250,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
   `tests/unit/command-terminal-resize-veil.test.ts` replays the four measured runs through the
-  veil's lift rule, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
+  veil's lift rule, `command-terminal.spec.ts`'s Held picture tests pin the picture each veil
+  holds, the stale-picture refusal and the fade, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
   the end of a gesture.
 - **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
   touched filter, the owned-id skip, pruning, the resume claim),
