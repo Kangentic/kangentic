@@ -400,7 +400,6 @@
       panelHeight: 280,
       cursorStyle: 'block',
       colors: {},
-      backspaceSendsCtrlH: false,
     },
     // Wide enough that every project name in the sample install shows in full at the site
     // frame (the longest clips below 270px, measured), narrow enough to leave the board room.

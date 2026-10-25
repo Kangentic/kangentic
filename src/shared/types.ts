@@ -4072,7 +4072,6 @@ export interface AppConfig {
     panelCollapsed: boolean; // persisted collapsed state
     cursorStyle: 'block' | 'underline' | 'bar'; // global-only: applies across every project
     colors: TerminalColorOverrides; // global-only: applies across every project
-    backspaceSendsCtrlH: boolean; // send Ctrl+H (0x08) instead of DEL (0x7f) on plain Backspace; opt-in, default false, all platforms
   };
 
   agent: {
@@ -4810,7 +4809,6 @@ export const DEFAULT_CONFIG: AppConfig = {
     panelCollapsed: false,
     cursorStyle: 'block',
     colors: {},
-    backspaceSendsCtrlH: false,
   },
   agent: {
     permissionMode: 'acceptEdits',

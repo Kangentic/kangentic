@@ -88,7 +88,6 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
     colors: config.terminal.colors,
     shellName: commandTerminalShell ?? undefined,
     pasteImageCapability,
-    backspaceSendsCtrlH: config.terminal.backspaceSendsCtrlH,
     mayTakeArrivalFocus: mayFocusOnArrival,
   });
 

@@ -606,17 +606,6 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     hidden: true,
   },
   {
-    id: 'terminal.backspaceCtrlH',
-    label: 'Backspace (Ctrl+H)',
-    description: 'Send Ctrl+H instead of Delete on Backspace, when enabled in Terminal settings. Handled by the terminal.',
-    group: 'Terminal',
-    scope: 'terminal',
-    defaultCombo: 'Backspace',
-    rebindable: false,
-    terminalUnsafe: true,
-    hidden: true,
-  },
-  {
     id: 'terminal.interrupt',
     label: 'Interrupt (cancel)',
     description: 'Cancel the running command (sends SIGINT). Native terminal behavior.',

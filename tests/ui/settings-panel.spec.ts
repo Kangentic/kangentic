@@ -293,7 +293,7 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Terminal tab with shell, font size, font family, cursor style, and backspace behavior', async () => {
+  test('shows Terminal tab with shell, font size, font family, and cursor style', async () => {
     // Terminal is a SYSTEM (global-only) tab: these fields no longer save to
     // the project override, they save to global config.
     await openSettings();
@@ -303,10 +303,9 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Font size', { exact: true })).toBeVisible();
     await expect(page.getByText('Font family', { exact: true })).toBeVisible();
     await expect(page.getByText('Cursor style', { exact: true })).toBeVisible();
-    // Word delete on Backspace (terminal.backspaceSendsCtrlH) - goes RED if the
-    // CardToggleRow is removed from TerminalTab.tsx, while leaving all other
-    // assertions here green.
-    await expect(page.getByText('Word delete on Backspace')).toBeVisible();
+    // Word delete on Backspace was removed: Ctrl+Backspace already deletes the
+    // previous word. Pinned by label so a re-added row is caught.
+    await expect(page.getByText('Word delete on Backspace')).toHaveCount(0);
     // Scrollback Lines was removed (the live xterm scrollback cap is now a
     // fixed internal constant, TERMINAL_SCROLLBACK_LINES in useTerminal.ts,
     // not a user setting). Pin the row's absence by testid so a re-added
@@ -1088,40 +1087,6 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('toggling Word delete on Backspace persists terminal.backspaceSendsCtrlH to global config, not the project override', async () => {
-    // DEFAULT_CONFIG.terminal.backspaceSendsCtrlH is false on all platforms
-    // (src/shared/types.ts) - opt-in, so existing users never feel a Backspace
-    // behavior change they didn't ask for - so the switch starts unchecked
-    // with no prior setup. Terminal is a SYSTEM (global-only) tab, so this
-    // pins the actual write path, not just the UI copy.
-    await openSettings();
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
-
-    const toggle = page.getByRole('switch', { name: 'Word delete on Backspace' });
-    await expect(toggle).toHaveAttribute('aria-checked', 'false');
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'true');
-    await expect.poll(async () => {
-      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
-      return (globalConfig as { terminal: { backspaceSendsCtrlH: boolean } }).terminal.backspaceSendsCtrlH;
-    }, { timeout: 3000 }).toBe(true);
-
-    const projectOverrides = await page.evaluate(() => window.electronAPI.config.getProjectOverrides());
-    expect((projectOverrides as { terminal?: { backspaceSendsCtrlH?: boolean } } | null)?.terminal?.backspaceSendsCtrlH).toBeUndefined();
-
-    // Toggle back off, restoring the default state so later tests in this
-    // shared-page file are unaffected.
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-checked', 'false');
-    await expect.poll(async () => {
-      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
-      return (globalConfig as { terminal: { backspaceSendsCtrlH: boolean } }).terminal.backspaceSendsCtrlH;
-    }, { timeout: 3000 }).toBe(false);
-
-    await closeSettings();
-  });
-
   test('shows Git tab with worktree and branch settings', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git' }).click();
@@ -1806,6 +1771,17 @@ test.describe('Settings Search', () => {
     await searchInput.fill('xyznonexistent');
 
     await expect(page.getByText('No settings found')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching "backspace" finds no setting now that Word delete on Backspace is removed', async () => {
+    await openSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('backspace');
+
+    await expect(page.getByText('No settings found')).toBeVisible();
+    await expect(page.getByText('Word delete on Backspace')).toHaveCount(0);
 
     await closeSettings();
   });

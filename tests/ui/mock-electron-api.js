@@ -325,7 +325,6 @@
       panelHeight: 250,
       cursorStyle: 'block',
       colors: {},
-      backspaceSendsCtrlH: false,
     },
     sidebar: {
       width: 224,
@@ -632,9 +631,8 @@
     if (source.themeFollowsSystem !== undefined) result.themeFollowsSystem = source.themeFollowsSystem;
     if (source.themeLight !== undefined) result.themeLight = source.themeLight;
     if (source.themeDark !== undefined) result.themeDark = source.themeDark;
-    // terminal.* (shell, fontSize, fontFamily, cursorStyle,
-    // backspaceSendsCtrlH) is global-only now - see the comment on
-    // pickOverridableSubset() in src/main/config/config-manager.ts.
+    // terminal.* (shell, fontSize, fontFamily, cursorStyle) is global-only now -
+    // see the comment on pickOverridableSubset() in src/main/config/config-manager.ts.
     // agent.execution is deliberately excluded - see the comment on
     // pickOverridableSubset() in src/main/config/config-manager.ts.
     if (agent.permissionMode !== undefined) result.agent = { permissionMode: agent.permissionMode };

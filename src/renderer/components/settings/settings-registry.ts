@@ -85,7 +85,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'terminal.fontSize', tabId: 'terminal', label: 'Font size', description: 'Terminal text size in pixels', scope: 'global', keywords: ['px', 'text size'] },
   { id: 'terminal.fontFamily', tabId: 'terminal', label: 'Font family', description: 'CSS font-family for the terminal', scope: 'global', keywords: ['monospace', 'typeface'] },
   { id: 'terminal.cursorStyle', tabId: 'terminal', label: 'Cursor style', description: 'Terminal cursor appearance', scope: 'global', keywords: ['block', 'underline', 'bar'] },
-  { id: 'terminal.backspaceSendsCtrlH', tabId: 'terminal', label: 'Word delete on Backspace', description: 'Backspace deletes the whole previous word instead of one character.', scope: 'global', keywords: ['ctrl+h', 'delete word', 'backspace', 'putty', 'windows'] },
 
   // ── Terminal > Colors ──
   { id: 'terminal.colors', tabId: 'terminal', label: 'Colors', description: 'Customize the terminal background, foreground, and cursor color', scope: 'global', section: 'Terminal', keywords: ['colors', 'background', 'foreground', 'cursor', 'custom', 'terminal', 'appearance'] },

@@ -83,10 +83,9 @@ describe('pickOverridableSubset', () => {
 
   it('drops the entire terminal block - every terminal.* field is documented global-only', () => {
     // Every field under AppConfig['terminal'] (shell, fontSize, fontFamily,
-    // cursorStyle, colors, backspaceSendsCtrlH) is
-    // global-only (see the doc comments in shared/types.ts); none may be
-    // cloned into a new project's overrides or snapshotted as a project
-    // default.
+    // cursorStyle, colors) is global-only (see the doc comments in
+    // shared/types.ts); none may be cloned into a new project's overrides or
+    // snapshotted as a project default.
     const source = {
       terminal: {
         shell: 'bash',
@@ -116,7 +115,6 @@ describe('pickOverridableSubset', () => {
         fontSize: 13,
         fontFamily: 'Consolas',
         cursorStyle: 'block',
-        backspaceSendsCtrlH: true,
       },
       agent: { permissionMode: 'plan' },
       git: {

@@ -270,11 +270,6 @@ interface UseTerminalOptions {
    *  live via a ref (not captured at attach time) since the agent list loads asynchronously
    *  and can resolve after `enableTerminalClipboard` has already attached its key handler. */
   pasteImageCapability?: PastedImageCapability;
-  /** When true, plain Backspace sends Ctrl+H (0x08) instead of xterm's default
-   *  DEL (0x7f), matching native Windows conhost so Claude Code's TUI deletes
-   *  the previous word. Read live via a ref (same pattern as
-   *  pasteImageCapability) so a settings toggle applies without remount. */
-  backspaceSendsCtrlH?: boolean;
   /** Fired every time a scrollback operation (mount replay, reload, watchdog
    *  force-recovery, or IPC-rejection recovery) settles, i.e. whenever
    *  scrollbackPendingRef flips back to false. TerminalTab uses the first
@@ -703,9 +698,6 @@ export function useTerminal(options: UseTerminalOptions) {
    *  though the agent list resolves asynchronously after the terminal has
    *  already initialized. */
   const pasteImageCapabilityRef = useRef(options.pasteImageCapability);
-  /** Updated on every commit (same pattern as pasteImageCapabilityRef) so the key
-   *  handler attached once by initTerminal always reads the current setting. */
-  const backspaceSendsCtrlHRef = useRef(options.backspaceSendsCtrlH);
   /** The grid main is holding this session at (SessionResizeResult.held), or
    *  null while the terminal runs its own container fit. See conformToHeldGrid. */
   const heldGridRef = useRef<{ cols: number; rows: number } | null>(null);
@@ -731,7 +723,6 @@ export function useTerminal(options: UseTerminalOptions) {
   // its hosts reads them from a layout effect, so the ordering is safe.
   useLayoutEffect(() => {
     pasteImageCapabilityRef.current = options.pasteImageCapability;
-    backspaceSendsCtrlHRef.current = options.backspaceSendsCtrlH;
     configuredFontRef.current = configuredFontSize;
     sessionIdRef.current = options.sessionId ?? null;
   });
@@ -1355,7 +1346,6 @@ export function useTerminal(options: UseTerminalOptions) {
       options.sessionId ?? undefined,
       options.releaseEscapeWhenPointerOutside,
       () => pasteImageCapabilityRef.current,
-      () => backspaceSendsCtrlHRef.current ?? false,
     );
 
     terminal.onScroll(() => {
