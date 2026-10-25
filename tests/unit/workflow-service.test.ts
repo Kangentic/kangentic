@@ -45,6 +45,12 @@ const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake
 
 import { openTestDatabase } from './helpers/test-database';
 import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
+import {
+  getRecoveryEntry,
+  isUnderWorkflowRecovery,
+  resetWorkflowRecoveryForTests,
+  setRecoveryEntry,
+} from '../../src/main/workflows/workflow-recovery-state';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 describe('workflow operations', () => {
@@ -794,5 +800,82 @@ describe('workflow operations', () => {
     await service.startWorkflow(context, 'home', second.id);
 
     expect(tasksOf('home').getById(shipped.id)?.workflow_id).toBe(second.id);
+  });
+
+  // A running workflow task whose step is not done is nudged on a timer
+  // (workflow-recovery.ts). The timer must not outlive the thing that justifies
+  // it: a pause, a removal from the workflow, a delete. Each case asserts the
+  // moment the operation returns, with real timers and no advance, so only the
+  // operation's own call can have cleared the entry.
+  describe('a task under recovery when its workflow changes', () => {
+    const OTHER_WORKFLOW_ID = 'workflow-elsewhere';
+
+    afterEach(() => {
+      resetWorkflowRecoveryForTests();
+    });
+
+    /** A recovery waiting on its timer, as one is between two attempts. */
+    function armRecovery(taskId: string, workflowId: string): void {
+      setRecoveryEntry({
+        projectId: 'home', taskId, workflowId, columnId: 'lane-doing', sessionId: `session-${taskId}`,
+        attemptIndex: 0, countedNudges: 0, countedSinceNotice: 0, noticeSent: false, startedAt: Date.now(),
+        workingWait: false, holdUntil: null, verdict: null, pendingNudge: null, lastTurnFromNudge: false,
+        timer: setTimeout(() => undefined, 60 * 60_000), inFlight: false,
+      });
+      // The seed is live, so a later "not under recovery" can only come from the operation.
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+    }
+
+    /** A started workflow of three tasks, two of them on the home board. */
+    async function startedWorkflow() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      await service.startWorkflow(context, 'home', workflow.id);
+      const homeTasks = tasksOf('home').listByWorkflow(workflow.id);
+      return {
+        workflow,
+        api: homeTasks.find((task) => task.title === 'Budgets API')!,
+        ui: homeTasks.find((task) => task.title === 'Budgets UI')!,
+      };
+    }
+
+    it('stops the recovery of a workflow\'s task when the workflow is paused, and leaves another workflow\'s alone', async () => {
+      const { workflow, api } = await startedWorkflow();
+      armRecovery(api.id, workflow.id);
+      armRecovery('task-elsewhere', OTHER_WORKFLOW_ID);
+
+      await service.pauseWorkflow(context, 'home', workflow.id);
+
+      expect(isUnderWorkflowRecovery(api.id)).toBe(false);
+      expect(getRecoveryEntry(api.id)).toBeUndefined();
+      expect(isUnderWorkflowRecovery('task-elsewhere')).toBe(true);
+    });
+
+    it('stops the recovery of a task taken out of its workflow, and only that task\'s', async () => {
+      const { workflow, api, ui } = await startedWorkflow();
+      armRecovery(ui.id, workflow.id);
+      armRecovery(api.id, workflow.id);
+
+      service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) });
+
+      expect(isUnderWorkflowRecovery(ui.id)).toBe(false);
+      expect(getRecoveryEntry(ui.id)).toBeUndefined();
+      // A task still in the workflow keeps its recovery: this forgets one task, it does not cancel the workflow's.
+      expect(isUnderWorkflowRecovery(api.id)).toBe(true);
+    });
+
+    it('stops the recovery of a workflow\'s task when the workflow is deleted, and leaves another workflow\'s alone', async () => {
+      // The delete ends the workflow agent's session in the background; this context has none to end.
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { workflow, api } = await startedWorkflow();
+      armRecovery(api.id, workflow.id);
+      armRecovery('task-elsewhere', OTHER_WORKFLOW_ID);
+
+      service.deleteWorkflow(context, 'home', workflow.id);
+
+      expect(isUnderWorkflowRecovery(api.id)).toBe(false);
+      expect(getRecoveryEntry(api.id)).toBeUndefined();
+      expect(isUnderWorkflowRecovery('task-elsewhere')).toBe(true);
+    });
   });
 });

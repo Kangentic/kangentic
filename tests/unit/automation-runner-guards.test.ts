@@ -247,7 +247,7 @@ describe('Condition', () => {
       runs: repository,
       signal: new AbortController().signal,
       registry: registryOf(adapter('webhook', executed)),
-      checkConditions: async () => ({ ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.' }),
+      checkConditions: async () => ({ ok: false, reason: 'Set up an Automation agent in Settings > Workflows to check this condition.', cause: 'unavailable' }),
     });
     expect(executed).toHaveBeenCalledTimes(1);
     expect(rows.find((row) => row.automationId === 'guarded')).toMatchObject({

@@ -402,6 +402,7 @@ describe('a Condition check is recorded against the task and column it judges', 
     const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
       ok: false,
       reason: TIMED_OUT,
+      cause: 'failed',
       callId: 'c1',
     }));
     const { engine, runs } = makeEngine({ automations: [conditionedRow(trigger)], checkConditions });
@@ -416,6 +417,7 @@ describe('a Condition check is recorded against the task and column it judges', 
     const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
       ok: false,
       reason: 'Set up an Automation agent in Settings > Workflows to check this condition.',
+      cause: 'unavailable',
     }));
     const { engine, runs } = makeEngine({ automations: [conditionedRow('enter')], checkConditions });
 
@@ -465,6 +467,7 @@ describe('a Condition check is recorded against the task and column it judges', 
     const checkConditions = vi.fn<NonNullable<TransitionEngineServices['checkConditions']>>(async () => ({
       ok: false,
       reason: TIMED_OUT,
+      cause: 'failed',
       callId: 'c1',
     }));
     const { engine } = makeEngine({ automations: [], checkConditions });
@@ -479,7 +482,7 @@ describe('a Condition check is recorded against the task and column it judges', 
     expect(checkConditions.mock.calls[0][1]).toBe(limits);
     expect(checkConditions.mock.calls[0][2]).toBe(call);
     // And the outcome comes back whole, with the call the turn-end pass reads.
-    expect(outcome).toEqual({ ok: false, reason: TIMED_OUT, callId: 'c1' });
+    expect(outcome).toEqual({ ok: false, reason: TIMED_OUT, cause: 'failed', callId: 'c1' });
   });
 });
 
