@@ -478,6 +478,30 @@ describe('input payloads', () => {
     detachDebugger(guest);
   });
 
+  it('dragFromTo holds the left button through every move, as a real drag reports it', async () => {
+    // Chromium does not carry a CDP press into later events: a move without
+    // `buttons` reports none held, so a page that ends a drag on a buttonless
+    // move (Kangentic's own manager-resize gate does) saw the drag end at its
+    // first step.
+    const { guest, sent } = fakeGuest(resolvableNode([10, 20, 110, 20, 110, 40, 10, 40]));
+    attachDebugger(guest);
+
+    const ok = await dragFromTo(guest, '#from', '#to', { steps: 2 });
+
+    expect(ok).toBe(true);
+    const mouse = sent
+      .filter((entry) => entry.method === 'Input.dispatchMouseEvent')
+      .map((entry) => entry.params as { type: string; button?: string; buttons?: number });
+    expect(mouse.map((entry) => [entry.type, entry.buttons])).toEqual([
+      ['mousePressed', 1],
+      ['mouseMoved', 1],
+      ['mouseMoved', 1],
+      ['mouseReleased', 0],
+    ]);
+    expect(mouse[1].button).toBe('left');
+    detachDebugger(guest);
+  });
+
   it('dispatchKeypress TYPES a shifted letter instead of silently doing nothing', async () => {
     // `Shift+a` used to send a keyDown/keyUp pair with no `text` at all, so it
     // typed nothing while reporting success - contradicting this function's own

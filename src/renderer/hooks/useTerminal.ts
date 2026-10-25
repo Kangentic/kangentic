@@ -2,6 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
+import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
+import { terminalLayoutTransitionFor } from '../utils/terminal-layout-transition';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
@@ -684,6 +686,8 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
+  /** When the agent has repainted after a grid change, for a layout transition to wait on (`terminal-repaint-wait.ts`). */
+  const repaintWaitRef = useRef<TerminalRepaintWait | null>(null);
   const unregisterDevtoolsTerminalRef = useRef<(() => void) | null>(null);
   /** Drops this session from the renderer's MOUNTED set (terminal-mount-registry),
    *  which is what lets main park an unheld PTY at the resting grid. */
@@ -907,8 +911,12 @@ export function useTerminal(options: UseTerminalOptions) {
   const requestGrid = useCallback((sessionId: string, cols: number, rows: number, origin: string): Promise<SessionResizeResult | undefined> => {
     traceTerminalRenderer(sessionId, 'resize-request', { cols, rows, origin });
     const generation = ++gridRequestGenerationRef.current;
+    // The agent's repaint, which a layout transition waits on, is timed from this send.
+    repaintWaitRef.current?.notePtyResize();
     return window.electronAPI.sessions.resize(sessionId, cols, rows).then((result) => {
       if (sessionIdRef.current !== sessionId || !xtermRef.current) return result;
+      // Main kept another grid: no repaint at this one is coming to wait for.
+      if (result?.refused || result?.held) repaintWaitRef.current?.release();
       // A later request has already been sent, so this answer describes a grid
       // question that is no longer the one being asked. Acting on it would
       // re-conform to a hold a newer answer released.
@@ -952,6 +960,23 @@ export function useTerminal(options: UseTerminalOptions) {
     if (!fitAddon || !terminal) return { applied: false, reason: 'no-element' };
     const held = heldGridRef.current;
     if (!held) {
+      // The container fit is the one every host's refit goes through. Inside a
+      // layout transition (a maximize, Expand, a released drag: the scope stays
+      // frozen while it runs), a grid change holds the transition until the
+      // agent has repainted at the new grid. Never during the mount or a replay
+      // (their own veil covers those), under the launch overlay, or for a
+      // terminal nobody can see. Outside a transition this costs nothing.
+      if (origin === 'fit' && !scrollbackPendingRef.current && !suppressDataRef.current) {
+        const element = terminal.element;
+        const transition = terminalLayoutTransitionFor(element ?? null);
+        const repaintWait = repaintWaitRef.current;
+        if (transition && repaintWait && element && element.offsetWidth > 0 && !element.closest('[aria-hidden="true"]')) {
+          const proposed = fitAddon.proposeDimensions();
+          if (proposed && (proposed.cols !== terminal.cols || proposed.rows !== terminal.rows)) {
+            transition.awaitRepaint(repaintWait.begin());
+          }
+        }
+      }
       const outcome = fitAddon.fit();
       if (outcome.applied && terminal.options.fontSize === configuredFontRef.current) {
         naturalCellRef.current = fitAddon.measureCell();
@@ -1378,6 +1403,7 @@ export function useTerminal(options: UseTerminalOptions) {
     disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey, { onRendererChange: handleRendererChange });
     webglElapsedMs = readClock() - webglStartedAt;
     rendererKeyRef.current = rendererKey;
+    if (options.sessionId) repaintWaitRef.current = createTerminalRepaintWait();
 
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -1705,6 +1731,7 @@ export function useTerminal(options: UseTerminalOptions) {
       if (incomingSessionId !== sessionId) return;
       if (__KANGENTIC_DEV__) noteScrollLatencyStage(sessionId, 'arrive', { chars: data.length });
       repaintNudge.noteOutput();
+      repaintWaitRef.current?.noteOutput(data);
       queue.push(data);
     });
     cleanupRef.current = cleanup;
@@ -1940,6 +1967,8 @@ export function useTerminal(options: UseTerminalOptions) {
       } else if (options.sessionId) {
         savedScrollPositions.delete(options.sessionId);
       }
+      repaintWaitRef.current?.dispose();
+      repaintWaitRef.current = null;
       // Tear down WebGL (cancel any pending re-init retry, drop the report entry)
       // before disposing the terminal it is attached to.
       disposeWebglRef.current?.();

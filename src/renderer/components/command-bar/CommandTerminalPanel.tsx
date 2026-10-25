@@ -19,7 +19,8 @@ import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
-import { beginManagerResize, endManagerResize } from '../../window-manager/terminal/manager-resize-gate';
+import { beginManagerResize, type ManagerResizeGesture } from '../../window-manager/terminal/manager-resize-gate';
+import { runTerminalLayoutChange } from '../../utils/terminal-layout-transition';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
 
 interface PixelRect { left: number; top: number; width: number; height: number }
@@ -134,8 +135,11 @@ interface PanelGesture {
   startRect: PixelRect;
   area: PanelSize;
   floor: PanelSize;
-  /** True once a resize moved and opened the manager-resize gate. */
-  resizing: boolean;
+  /** The resize's hold on the manager-resize gate, opened by its first move; null for a move or before one. */
+  resizeGesture: ManagerResizeGesture | null;
+  /** The last pointer position the gesture followed, which an abandoned resize commits. */
+  lastX: number;
+  lastY: number;
   stopListening: () => void;
 }
 
@@ -152,7 +156,7 @@ function releaseGesture(gesture: PanelGesture, panel: HTMLElement | null): void 
   gesture.stopListening();
   if (panel) panel.style.transform = '';
   if (gesture.edge !== null) applyBox(panel, gesture.startRect);
-  if (gesture.resizing) endManagerResize();
+  gesture.resizeGesture?.end();
 }
 
 interface CommandTerminalPanelProps {
@@ -210,8 +214,10 @@ export function CommandTerminalPanel({
     return () => observer.disconnect();
   }, []);
 
+  // Every terminal in the panel resizes: the panel holds still until their agents
+  // have repainted, then shows the new layout in one paint.
   const toggleMaximized = useCallback(() => {
-    saveGeometry({ ...geometry, maximized: !geometry.maximized });
+    runTerminalLayoutChange(areaRef.current, () => saveGeometry({ ...geometry, maximized: !geometry.maximized }));
   }, [geometry, saveGeometry]);
 
   useKeybinding('panel.maximize', toggleMaximized, { capture: true });
@@ -240,12 +246,15 @@ export function CommandTerminalPanel({
       return;
     }
     // The panel already has its final box, so the save changes nothing the
-    // terminals can see: closing the gate is what sends their one refit.
+    // terminals can see: closing the gate is what sends their one refit. Both
+    // run under a frozen panel, so the terminals show their new frames at once.
     const box = resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor);
     gesture.stopListening();
-    applyBox(panelRef.current, box);
-    saveGeometry(toGeometry(box, gesture.area));
-    if (gesture.resizing) endManagerResize();
+    runTerminalLayoutChange(areaRef.current, () => {
+      applyBox(panelRef.current, box);
+      saveGeometry(toGeometry(box, gesture.area));
+      gesture.resizeGesture?.end();
+    });
   };
 
   /**
@@ -258,6 +267,8 @@ export function CommandTerminalPanel({
     const onMove = (moveEvent: PointerEvent): void => {
       const gesture = gestureRef.current;
       if (!gesture || moveEvent.pointerId !== pointerId) return;
+      gesture.lastX = moveEvent.clientX;
+      gesture.lastY = moveEvent.clientY;
       const deltaX = moveEvent.clientX - gesture.startX;
       const deltaY = moveEvent.clientY - gesture.startY;
       if (gesture.edge === null) {
@@ -265,9 +276,11 @@ export function CommandTerminalPanel({
         if (panelRef.current) panelRef.current.style.transform = `translate3d(${offset.x}px, ${offset.y}px, 0)`;
         return;
       }
-      if (!gesture.resizing) {
-        gesture.resizing = true;
-        beginManagerResize();
+      if (!gesture.resizeGesture) {
+        // Closed when the gesture ends, or by the gate if the release never reaches this window's listeners.
+        gesture.resizeGesture = beginManagerResize('command-terminal-panel', pointerId, () => {
+          if (gestureRef.current === gesture) endGesture(true, gesture.lastX, gesture.lastY);
+        });
       }
       applyBox(panelRef.current, resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor));
     };
@@ -290,7 +303,9 @@ export function CommandTerminalPanel({
       startRect: rect,
       area: areaSize,
       floor: minSize,
-      resizing: false,
+      resizeGesture: null,
+      lastX: event.clientX,
+      lastY: event.clientY,
       stopListening: () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
@@ -335,7 +350,13 @@ export function CommandTerminalPanel({
   }, []);
 
   return (
-    <div ref={areaRef} className="absolute inset-0 pointer-events-none" data-testid="command-terminal-panel-area">
+    <div
+      ref={areaRef}
+      className="absolute inset-0 pointer-events-none"
+      data-testid="command-terminal-panel-area"
+      // The panel's layout changes freeze here, rail and header included.
+      data-terminal-layout-scope=""
+    >
       {areaSize.width > 0 && (
         <div
           ref={panelRef}

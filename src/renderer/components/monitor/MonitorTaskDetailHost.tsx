@@ -26,6 +26,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
+import { useSessionStore } from '../../stores/session-store';
 import { TaskDetailHostProvider } from '../dialogs/task-detail';
 import type { TaskDetailHostValue } from '../dialogs/task-detail';
 import type { Task, TaskDetailBundle } from '../../../shared/types';
@@ -55,7 +56,10 @@ export function MonitorTaskDetailHost({
   // long as a detail was open. The generation only moves when the DB-resident
   // half of some row actually changed.
   const snapshotGeneration = useMonitorStore((state) => state.snapshotGeneration);
+  // Surfaces over this overlay that take the keyboard: Settings, and the
+  // Command Terminal panel, which binds Mod+Shift+M and Mod+Shift+W itself.
   const settingsOpen = useConfigStore((state) => state.settingsOpen);
+  const commandTerminalOpen = useSessionStore((state) => state.commandBarVisible);
 
   /** Bumped per fetch so a slow response cannot overwrite a newer one: a
    *  snapshot push can re-fire the effect below while an earlier fetch is
@@ -115,7 +119,7 @@ export function MonitorTaskDetailHost({
 
   if (!bundle) return null;
   return (
-    <MonitorTaskDetailHostValue bundle={bundle} refresh={refreshAfterWrite} settingsOpen={settingsOpen}>
+    <MonitorTaskDetailHostValue bundle={bundle} refresh={refreshAfterWrite} shortcutsSuppressed={settingsOpen || commandTerminalOpen}>
       {children}
     </MonitorTaskDetailHostValue>
   );
@@ -131,12 +135,12 @@ export function MonitorTaskDetailHost({
 function MonitorTaskDetailHostValue({
   bundle,
   refresh,
-  settingsOpen,
+  shortcutsSuppressed,
   children,
 }: {
   bundle: TaskDetailBundle;
   refresh: () => Promise<void>;
-  settingsOpen: boolean;
+  shortcutsSuppressed: boolean;
   children: (task: Task) => ReactNode;
 }) {
   const value = useMemo<TaskDetailHostValue>(() => {
@@ -198,12 +202,13 @@ function MonitorTaskDetailHostValue({
       refresh,
       // Only the board owns a move-confirmation dialog.
       isMoveConfirmPending: () => false,
-      // The Board Manager cannot open over the monitor; Settings can.
-      shortcutsSuppressed: settingsOpen,
+      // The Board Manager cannot open over the monitor; Settings and the
+      // Command Terminal panel can.
+      shortcutsSuppressed,
       // The conversation viewer opens on the board layer, under this overlay.
       canOpenConversation: false,
     };
-  }, [bundle, refresh, settingsOpen]);
+  }, [bundle, refresh, shortcutsSuppressed]);
 
   return <TaskDetailHostProvider value={value}>{children(bundle.task)}</TaskDetailHostProvider>;
 }

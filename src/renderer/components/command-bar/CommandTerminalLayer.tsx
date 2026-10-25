@@ -46,9 +46,9 @@ import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { commandTerminalGridFits } from './command-terminal-grid-fit';
-import { holdTerminalPicturesThen } from './held-terminal-picture';
 import type { AreaSize } from './command-terminal-grid-fit';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
 import { DEFAULT_MIN_WIDTH_PX } from '../../window-manager/dnd/useWindowResize';
@@ -558,44 +558,25 @@ function useElementSize(element: HTMLElement | null): AreaSize {
  */
 function useExpandWhileGridDoesNotFit(gridFits: boolean, terminalCount: number): void {
   const expandedHere = useRef(false);
-  const fit = useRef({ gridFits, terminalCount });
-  const switching = useRef(false);
   const expandedWindowId = commandWindowManager.store((state) => state.expandedWindowId);
   const focusedWindowId = commandWindowManager.store((state) => state.focusedWindowId);
   useEffect(() => {
-    fit.current = { gridFits, terminalCount };
     const state = commandWindowManager.store.getState();
     if (!gridFits && terminalCount > 1) {
       const focused = focusedWindowId !== null && state.windows[focusedWindowId] ? focusedWindowId : null;
       if (state.expandedWindowId === null) {
-        if (switching.current) return;
-        switching.current = true;
-        // Every terminal changes size, so each veil holds a picture rather than going black.
-        void holdTerminalPicturesThen(() => {
-          switching.current = false;
-          const latest = commandWindowManager.store.getState();
-          if (fit.current.gridFits || fit.current.terminalCount <= 1 || latest.expandedWindowId !== null) return;
-          const latestFocused = latest.focusedWindowId !== null && latest.windows[latest.focusedWindowId] ? latest.focusedWindowId : null;
-          const target = latestFocused ?? windowIdsInReadingOrder(latest.tileTree)[0] ?? null;
-          if (target === null) return;
-          expandedHere.current = true;
-          latest.setExpandedWindow(target);
-        });
+        const target = focused ?? windowIdsInReadingOrder(state.tileTree)[0] ?? null;
+        if (target === null) return;
+        expandedHere.current = true;
+        state.setExpandedWindow(target);
       } else if (expandedHere.current && focused !== null && focused !== state.expandedWindowId) {
-        // Already the panel's size behind the expanded one: nothing jumps, so no picture.
         state.setExpandedWindow(focused);
       }
       return;
     }
-    if (expandedHere.current && !switching.current) {
-      switching.current = true;
-      void holdTerminalPicturesThen(() => {
-        switching.current = false;
-        if (!fit.current.gridFits && fit.current.terminalCount > 1) return;
-        expandedHere.current = false;
-        const latest = commandWindowManager.store.getState();
-        if (latest.expandedWindowId !== null) latest.setExpandedWindow(null);
-      });
+    if (expandedHere.current) {
+      expandedHere.current = false;
+      if (state.expandedWindowId !== null) state.setExpandedWindow(null);
     }
   }, [gridFits, terminalCount, expandedWindowId, focusedWindowId]);
 }
@@ -624,10 +605,17 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   useExpandWhileGridDoesNotFit(gridFits, terminalCount);
   const atCap = useCommandTerminalAtCap(projectId);
   const terminalsStarting = useTerminalsStarting(projectId);
-  const handleNewTerminal = useCallback(() => { spawnAdditionalCommandTerminal(); }, []);
+  // A terminal added or stopped re-tiles the others: the panel holds still until
+  // they have repainted at their new size (`terminal-layout-transition.ts`).
+  const changeLayout = useCallback((change: () => void) => {
+    runTerminalLayoutChange(terminalLayoutScopeOf(terminalArea), change);
+  }, [terminalArea]);
+  const handleNewTerminal = useCallback(() => {
+    changeLayout(() => { spawnAdditionalCommandTerminal(); });
+  }, [changeLayout]);
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
-    resumeCommandTerminalConversation(entry.agentSessionId);
-  }, []);
+    changeLayout(() => resumeCommandTerminalConversation(entry.agentSessionId));
+  }, [changeLayout]);
   const running = useRunningBehindExpanded();
   const handleExpand = useCallback((windowId: string) => {
     commandWindowManager.store.getState().setExpandedWindow(windowId);
@@ -641,8 +629,8 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const handleStopRunning = useCallback(async (terminal: RunningCommandTerminal) => {
     await killCommandTerminalInSlot(terminal.slot);
     // The arrange bridge re-tiles the rest; with one left, nothing stays expanded.
-    commandWindowManager.store.getState().closeWindow(terminal.windowId);
-  }, []);
+    changeLayout(() => commandWindowManager.store.getState().closeWindow(terminal.windowId));
+  }, [changeLayout]);
   const handleOpenInNewWindow = useCallback(() => {
     if (!projectId) return;
     // Hide first: the terminals unmount here and the layout saves, so this

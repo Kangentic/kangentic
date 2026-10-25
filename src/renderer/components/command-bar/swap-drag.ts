@@ -14,11 +14,12 @@
  * inline styles saved first and put back exactly, since React keeps setting
  * only the style values that change. A preview changes sizes in single steps,
  * never per pointer frame, so each step refits at once (one resize per
- * terminal), veiled until the agent repaints (`TERMINAL_JUMP_EVENT`).
+ * terminal). The preview is part of a live gesture, so it does not freeze the
+ * panel the way a released layout change does (`terminal-layout-transition.ts`):
+ * a frozen panel would also hold the pointer the drag is following.
  */
 
 import { scheduleWindowTerminalResize } from '../../window-manager/terminal/resize-coalescer';
-import { TERMINAL_JUMP_EVENT } from './resize-veil';
 
 /** How far the pointer travels before a press on a header becomes a drag. */
 const DRAG_THRESHOLD_PX = 5;
@@ -102,17 +103,9 @@ function placeAt(element: HTMLElement, box: Box): void {
   element.style.height = `${box.height}px`;
 }
 
-/** Veil the terminals in `frames`, each until its agent repaints at the size it is about to take. */
-function veilTerminals(frames: readonly HTMLElement[]): void {
-  for (const frame of frames) {
-    frame.querySelector('[data-testid="command-bar-terminal-pane"]')?.dispatchEvent(new Event(TERMINAL_JUMP_EVENT));
-  }
-}
-
-/** Refit the terminals in `frames` to the boxes they now have, veiled until they repaint. */
+/** Refit the terminals in `frames` to the boxes they now have. */
 function refitTerminals(frames: readonly HTMLElement[]): void {
   if (frames.length === 0) return;
-  veilTerminals(frames);
   scheduleWindowTerminalResize();
 }
 
@@ -347,13 +340,11 @@ export function startCommandTerminalSwapDrag(event: React.PointerEvent, options:
     float?.element.remove();
     float = null;
     const dragged = activeTiles.get(options.windowId);
-    const landing = commit && landedOn ? activeTiles.get(landedOn) : undefined;
     if (commit && landedOn) {
       // The commit puts each frame where the preview had it, so a previewed
       // swap needs no refit: its terminals are already at their new sizes. A
       // release that beat the preview (the picture still on its way) is resized
-      // by the commit itself, so its pair is veiled for it.
-      if (landedOn !== previewed && dragged && landing) veilTerminals([dragged.frame, landing.frame]);
+      // by the commit itself, and each terminal's refit holds its own frame.
       options.swap(options.windowId, landedOn);
       return;
     }

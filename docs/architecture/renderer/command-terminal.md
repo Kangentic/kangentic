@@ -53,6 +53,24 @@ Every user meets that default on the first open after updating, because the pane
 setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
 it.
 
+### Decision: the resize gate closes a drag itself (2026-10-25)
+
+Holding `scheduleWindowTerminalResize` on the gate is what made a leaked gesture serious. Before
+that, a gesture left open only muted the per-frame refit, and a window's resize commit still refit
+its terminal. After it, every window terminal's refit waited on the gate, so one gesture whose
+release never reached its owner froze all of their grids until a reload. It was reported from a
+task window that grew to 1981px while its terminal kept the 1483px grid it mounted at, and the
+trace could not say which drag had leaked. The tests reproduce one way in: a window edge drag
+that lost its release was replaced by the next edge drag without being ended, since that handler
+had no re-entry guard. So the gate no longer counts begins against ends. Each drag holds a gesture
+it can end once, and the gate abandons a gesture on the first host pointer event that shows its
+button up, telling the owner to commit the drag as it stands (see
+[Output streaming](../sessions/output-streaming.md)). A seam pressed and released without moving
+had committed ratio 0, which clamps to the narrowest tile (594px lost in one test click); it now
+commits only once it has moved. The driver's drag (`dragFromTo`) holds the left button on its
+moves, since a CDP move without `buttons` reports none held and the gate would end the drag at its
+first step.
+
 Each terminal is a window of a second window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail
 layer: the same engine (`src/renderer/window-manager/`) instantiated twice via
@@ -280,32 +298,95 @@ So the terminals behind an expanded one are sized to the expanded rect, not thei
 a Running row then changes no size and sends no resize. The first build kept them at their tile
 rects so they would not refit at all; that is what made every switch a visible jump.
 
-Expand and Restore still jump sizes, Restore every terminal at once. `CommandTerminalPane` raises
-a veil in the terminal's own background when the layout goes in or out of expanded, in the same
-layout pass as the jump, and lifts it on the terminal's own output (`resize-veil.ts`): no sooner
-than 190 ms after the jump, then once the output has been quiet for 40 ms, and by 500 ms whatever
-the output does. Against the four runs that lifts between 212 and 253 ms. Main's repaint settle
-was tried first as the signal and is wrong here: it settles on the first screen clear after the
-resize, which on Windows is ConPTY's redraw of the old screen, so the veil came down at about 25 ms
-and the jump showed anyway. Holding the outgoing terminal on screen until the new one settled was
-rejected too, since a click that does nothing for 200 ms reads as missed.
+Expand and Restore still jump sizes, Restore every terminal at once. The panel no longer covers
+that itself: a user's Expand or Restore runs as a layout transition over the panel area (see
+[Output streaming](../sessions/output-streaming.md), the layout transition). The panel keeps its
+last frame on screen until every terminal the change resized has its agent's new frame drawn, then
+shows the result in one cut. Its repaint rule is the one first written for this panel: no sooner
+than 190 ms after the PTY resize, then once the output has been quiet for 40 ms, and by 500 ms
+whatever the output does, which against the four runs lifts between 212 and 253 ms. Main's repaint
+settle was tried first as the signal and is wrong here: it settles on the first screen clear after
+the resize, which on Windows is ConPTY's redraw of the old screen, so a cover came down at about
+25 ms and the jump showed anyway. An earlier build rejected holding the old picture until the new
+one settled, since a click that does nothing for 200 ms reads as missed. The covers that replaced
+it showed three things instead of one, and one change, a little later, read better.
 
-### Decision: the veil holds a picture, not a black box (2026-10-25)
+### Decision: freeze, draw, swap (2026-10-25)
 
-A veil in the terminal's background showed every terminal black for those 212 to 253 ms, which
-read as a flicker on every Expand and Restore. Now the switch first takes one picture of the
-terminal area (`holdTerminalPicturesThen` in `held-terminal-picture.ts`, `window:captureRegion`,
-51 ms when the swap drag measured it, bounded at 300), then changes the layout. Each terminal's
-veil shows its own part of the picture at its real size from its top-left, so the text stays
-where it was and only a strip the terminal grew into shows background, and the veil fades out
-over 120 ms (`RESIZE_VEIL_FADE_MS`; none with Animations off) when the lift rule above fires.
-A terminal hidden behind an expanded one is not in the capture, so on Restore it shows the last
-picture taken of it, the frame it had when it was hidden. A terminal that was on screen when the
-capture failed gets the plain veil rather than an older picture of itself, and a jump that took
-no picture (the swap drag's preview, which has its own) never borrows one: a switch's pictures
-live for 250 ms. The 650px fallback's own switch takes a picture the same way. Showing the old
-frame scaled to the new size was the other choice; scaled terminal text blurs, which reads worse
-than a crop.
+Three covers came first, and each read as a flicker in a different way:
+
+- The terminal's background color. Every Expand and Restore showed each terminal black for 212
+  to 253 ms.
+- A picture of the terminal area taken before the switch (`window:captureRegion`). It covered
+  Expand and Restore only, because every trigger had to call it before the layout changed, and
+  each jump paid the capture over IPC.
+- A copy of each terminal's own canvas taken in `useTerminal`'s fit. It reached every surface, but
+  the WebGL renderer had to keep its drawing buffer for it (`preserveDrawingBuffer`, a copy on
+  every frame every terminal draws), and it showed three stages: the old frame pinned to the
+  top left of a pane that had already grown, a crossfade, then the new frame.
+
+A user's layout change now runs inside an element-scoped View Transition
+(`terminal-layout-transition.ts`). The scope keeps its last frame on screen while the change
+commits, every terminal under it refits and sends its PTY resize, and the agents repaint; then the
+new state shows in one cut. Nothing is copied, and nothing runs outside a transition. Synchronized
+output markers (DEC 2026) were considered as the repaint signal and dropped, since ConPTY may wrap
+only its own screen clears in them. A permanent `contain: layout` on each scope was dropped too:
+it would confine the inline `BaseDialog` confirms to the overlay, so a scope with a dialog open
+skips the freeze instead.
+
+Measured against the committed picture hold, in the UI tier: headless Chromium on software GL at
+13 to 31 frames a second, the same emulated agent in both builds (a full redraw 98 to 181 ms after
+each PTY resize), and 10 changes each of a task window maximize and restore, Expand and Restore,
+and the panel's maximize and restore, every compositor frame classified as the old picture, the
+new one, or neither:
+
+| | Picture hold | Freeze, draw, swap |
+|---|---|---|
+| Changes showing a frame that is neither | 57 of 60 | 0 of 60 |
+| Time those frames were on screen, median per change | 117 to 542 ms | none |
+| Stages a change shows | 3 to 5 | 2 |
+| Main-thread time per change, median | 92 to 125 ms | 86 to 105 ms |
+| Main-thread time while terminals stream, per second | 22 to 30 ms | 22 to 25 ms |
+| `captureRegion` per Expand or Restore, median | 116 ms, 184 KB of PNG | none |
+
+The final picture lands 86 to 124 ms sooner for Expand and Restore, which no longer wait on the
+capture, at the same time for the panel's restore, and 57 to 178 ms later for a task window's
+maximize and restore and the panel's maximize, with nothing on screen changing before it. That cost is the price of showing only the finished frame: the repaint rule cannot lift sooner
+than 190 ms after the PTY send, because the agent's frame lands as late as 181 ms, and the
+transition itself adds about three frames, which this rig draws slowly.
+
+In the desktop app (Electron 45 on the GPU, a live Claude Code agent in each terminal, 10 changes
+each), the new state showed this long after the click, median and p95:
+
+| | Median | p95 |
+|---|---|---|
+| Task window maximize | 291 ms | 308 ms |
+| Task window restore | 281 ms | 292 ms |
+| Expand | 270 ms | 281 ms |
+| Restore | 278 ms | 285 ms |
+| Panel maximize | 319 ms | 326 ms |
+| Panel restore | 315 ms | 333 ms |
+
+No change raised a long task, and the page kept drawing through every freeze: its longest frame
+gap was 49 ms. A window minimized in the middle of a freeze came back with nothing frozen and the
+change applied.
+
+The user found even that wait laggy, so the repaint wait now ends on the agent's first finished
+frame rather than waiting out the near-identical frames after it (`terminal-repaint-wait.ts`). A
+task window's maximize then swapped at 242 ms (p95 267) and its restore at 243 ms (p95 278). Timed
+by phase over 10 maximizes: the freeze started 7 to 9 ms after the click, the window's own React
+commit for the maximize took 25 to 45 ms, the PTY resize went out 34 to 72 ms after the click,
+and the agent's first frame arrived 130 to 160 ms after that.
+
+That commit was the whole app. `AppLayout` called `useFocusedSessionsSync`, which keys on every
+window's state, so a maximize re-rendered `AppLayout` and everything under it (296 to 321
+components). `AppLayout` also subscribed to the whole `config` and `globalConfig` objects, which
+the store rebuilds on every write, so the window layout save half a second later re-rendered it
+all again (243 components, 16 ms). The sync now runs in a component of its own that renders
+nothing, and `AppLayout` selects only the values it reads (`app-layout-render-scope.test.ts` pins
+both). The maximize commit is now 93 components in 7 to 8 ms, the PTY resize goes out 17 to 19 ms
+after the click, the layout save re-renders 14 components in about 1 ms, and the swap lands 172 ms
+after the click (p95 183), against 291 ms at the start. What is left is the agent's own redraw.
 
 **Swap** drags a terminal by its header onto another's tile (`swap-drag.ts`). A picture of the
 pressed terminal follows the pointer, upright: main captures the window's pixels inside the
@@ -325,9 +406,10 @@ exists to prevent, so a dnd-kit `DragOverlay` was never an option. The first bui
 real frame, tilted 1.5 degrees, over a grey stand-in card in the landing tile; the tilt blurred
 every glyph and the grey read as unrelated to the black terminals, so both went.
 
-The preview refits both terminals to the tiles they show in, each veiled while its agent repaints
-(the pane listens for `TERMINAL_JUMP_EVENT` and uses Expand's lift rule), so the panel looks the
-way the drop will. The second build held those resizes to the drop under the manager-resize gate,
+The preview refits both terminals to the tiles they show in, so the panel looks the way the drop
+will once their agents repaint. It runs unfrozen: the preview is part of a live gesture, and a
+frozen panel would also hold the pointer the drag is following, so a terminal it refits shows its
+old frame on the new grid for the 100 to 180 ms its agent takes. The second build held those resizes to the drop under the manager-resize gate,
 and the preview then showed each terminal at its old size: the input box mid-tile in the taller
 one and cut off in the shorter. A preview changes sizes in single steps, never per pointer frame,
 so it needs no gate. The landing tile is held as an empty terminal: the terminals' own background

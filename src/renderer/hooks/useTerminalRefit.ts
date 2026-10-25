@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { RefObject } from 'react';
 import { isManagerResizeInProgress } from '../window-manager/terminal/manager-resize-gate';
+import { isTerminalLayoutTransitionOpenFor } from '../utils/terminal-layout-transition';
 
 /**
  * Shared container-refit logic for every xterm host (task-detail TerminalTab,
@@ -59,12 +60,16 @@ export type PanelResizeAction =
  * - deferContainerResize hosts fit on the next tick (0ms) and schedule the
  *   settle cleanup (scrollback reload) once resizing fully stops.
  * - Other surfaces keep the 50ms debounce to batch their own events.
+ * - Inside a layout transition (`terminal-layout-transition.ts`) every host
+ *   fits and sends at once: the scope is frozen until the agents repaint, and a
+ *   debounced send would only stretch that freeze.
  */
 export function resolvePanelResizeAction(
   deferContainerResize: boolean,
   immediatePanelResize: boolean,
+  inLayoutTransition = false,
 ): PanelResizeAction {
-  if (immediatePanelResize) return { kind: 'immediate-fit-flush' };
+  if (immediatePanelResize || inLayoutTransition) return { kind: 'immediate-fit-flush' };
   return {
     kind: 'debounced-fit',
     delayMs: deferContainerResize ? 0 : PANEL_EVENT_REFIT_DEBOUNCE_MS,
@@ -134,7 +139,23 @@ export function useTerminalRefit(options: TerminalRefitOptions): void {
 
     // Persistent: stays connected for the effect's lifetime so container-only
     // size changes keep refitting long after init.
+    // Inside a layout transition the container's new size is final (the change
+    // is committed under a frozen scope), so fit and send at once.
+    const fitAndFlushNow = () => {
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = null;
+      }
+      if (initializedRef.current && element.offsetWidth > 0 && element.offsetHeight > 0) {
+        fit();
+        flushResize();
+      }
+    };
     const observer = new ResizeObserver(() => {
+      if (isTerminalLayoutTransitionOpenFor(element)) {
+        fitAndFlushNow();
+        return;
+      }
       if (shouldObserverScheduleRefit(deferContainerResize, isManagerResizeInProgress())) {
         scheduleRefit(OBSERVER_REFIT_DEBOUNCE_MS);
       }
@@ -143,7 +164,7 @@ export function useTerminalRefit(options: TerminalRefitOptions): void {
 
     let cleanupTimer: ReturnType<typeof setTimeout> | null = null;
     const handlePanelResize = () => {
-      const action = resolvePanelResizeAction(deferContainerResize, immediatePanelResize);
+      const action = resolvePanelResizeAction(deferContainerResize, immediatePanelResize, isTerminalLayoutTransitionOpenFor(element));
       if (action.kind === 'immediate-fit-flush') {
         // Clear any pending debounced fit so it cannot run a redundant second
         // fit afterward. Fit synchronously, then flush the PTY resize

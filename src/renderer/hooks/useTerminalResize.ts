@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
 import { claimArrivalFocus } from '../utils/terminal-arrival-focus';
+import { runTerminalLayoutChange } from '../utils/terminal-layout-transition';
 import { derivePanelSessions } from '../utils/panel-sessions';
 import { derivePanelSessionId } from '../utils/focused-sessions';
 import { useSessionStore } from '../stores/session-store';
@@ -110,7 +111,7 @@ function panelArrivalSessionId(): string | null {
  *  object would make React's compiler rules read every field of that object as a ref
  *  access during render. */
 export function useTerminalResize(
-  config: AppConfig,
+  config: Pick<AppConfig, 'terminal'>,
   contentColRef: React.RefObject<HTMLDivElement | null>,
   panelContainerRef: React.RefObject<HTMLDivElement | null>,
   forceCollapsed = false,
@@ -331,10 +332,14 @@ export function useTerminalResize(
       onRelease: () => {
         // Only the height, for the same reason as the collapse toggle's write.
         window.electronAPI.config.set({ terminal: { panelHeight: latestHeightRef.current } });
-        setIsResizing(false);
-        // Explicit refit signal. The debounced ResizeObserver also handles this,
-        // but the explicit event gives a faster 50ms response.
-        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+        // The final refit runs under a frozen panel, which shows the terminal once
+        // its agent has repainted at the new height (`terminal-layout-transition.ts`).
+        runTerminalLayoutChange(document.querySelector<HTMLElement>('[data-testid="terminal-panel-container"]'), () => {
+          setIsResizing(false);
+          // Explicit refit signal. The debounced ResizeObserver also handles this,
+          // but the explicit event gives a faster response (at once in a transition).
+          window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+        });
       },
     });
   }, [height, clampHeight]);

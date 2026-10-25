@@ -163,9 +163,13 @@ export function ConversationWindow({
   // Task-detail parity keybindings (capture phase, gated on focus). No new
   // registry entries for maximize/close: reuse panel.maximize / panel.close.
   // conversation.find is registered inside ConversationView itself, which
-  // owns the always-visible search bar it focuses.
-  useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
-  useKeybinding('panel.close', requestClose, { capture: true, enabled: isFocused });
+  // owns the always-visible search bar it focuses. They stand down while the
+  // Command Terminal panel is over the board: it binds the same two combos, and
+  // capture listeners on one target all run, so one press acted on both.
+  const commandTerminalOpen = useSessionStore((state) => state.commandBarVisible);
+  const windowOwnsKeys = isFocused && !commandTerminalOpen;
+  useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: windowOwnsKeys });
+  useKeybinding('panel.close', requestClose, { capture: true, enabled: windowOwnsKeys });
 
   // Structural Escape (keybindings-registry exception, like BaseDialog /
   // TaskDetailWindow): bubble-phase, gated on focus. The search bar has no
@@ -173,14 +177,14 @@ export function ConversationWindow({
   // (the search input's own Escape handler stops propagation before this
   // listener sees it, so typing Escape while focused in search just blurs it).
   useEffect(() => {
-    if (!isFocused) return;
+    if (!windowOwnsKeys) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       requestClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isFocused, requestClose]);
+  }, [windowOwnsKeys, requestClose]);
 
   const onTitleBarPointerDown = useCallback((event: React.PointerEvent) => {
     if (event.button !== 0 || isInteractiveTarget(event)) return;

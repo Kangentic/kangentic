@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Output streaming
-description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
+description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, the layout transition, the manager-resize gate, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
 tags: [terminal, output, scrollback, replay, geometry]
 sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
@@ -18,6 +18,9 @@ sources:
   - resource: src/renderer/hooks/useTerminal.ts
   - resource: src/renderer/utils/focused-terminals.ts
   - resource: src/renderer/utils/repaint-nudge.ts
+  - resource: src/renderer/utils/terminal-layout-transition.ts
+  - resource: src/renderer/utils/terminal-repaint-wait.ts
+  - resource: src/renderer/window-manager/terminal/manager-resize-gate.ts
   - resource: src/renderer/utils/write-batcher.ts
   - resource: src/renderer/utils/scroll-latency-probe.ts
   - resource: src/renderer/utils/terminal-typing.ts
@@ -325,6 +328,66 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   so the text does not sit flush against the pane's edges. Gated by
   `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
+- **A user's layout change shows its terminals once, finished (the layout transition).** A grid
+  change shows the old frame on the new grid until the agent redraws: lines cut or wrapped and the
+  input box mid-pane, then dropped to the bottom (measured on Claude Code 2.1.310 on Windows: ConPTY
+  redraws the old screen within 45 ms, the agent's frame lands 98 to 181 ms after the resize). So a
+  user's gesture that resizes terminals goes through `runTerminalLayoutChange`
+  (`terminal-layout-transition.ts`): a maximize or restore, a keyboard snap, a drop that docks or
+  maximizes, a released edge, seam or footprint drag, closing a tiled window, a task window's panel
+  toggles, the Command Terminal panel's maximize and released resize, Expand and Restore, adding,
+  resuming or stopping a Command Terminal, and the bottom panel's released height drag. It freezes
+  the nearest `data-terminal-layout-scope` (a window layer's overlay, the Command Terminal panel
+  area, the bottom panel) in an element-scoped View Transition, so the scope keeps its last frame
+  on screen while everything outside it draws. Inside the update callback the change commits and
+  every terminal under the scope refits and sends its PTY resize at once (`useTerminalRefit` skips
+  its debounce). Each terminal whose grid changed opens a repaint wait (`terminal-repaint-wait.ts`).
+  It ends 20 ms after the first output chunk that finishes a synchronized update (DEC 2026) at least
+  90 ms after the send: measured with Claude Code in the desktop app, ConPTY's redraws of the old
+  screen (which carry the same markers) all came within 65 ms, the agent's first frame at the new
+  grid at 126 to 155 ms, and the one or two frames after it had identical text. Output with no such
+  frame (no ConPTY on macOS and Linux) keeps the first rule: no sooner than 190 ms after the send,
+  then 40 ms of quiet output. Either way it ends by 500 ms whatever the output does, a refused or
+  held answer releases it, and with no send within 600 ms it lifts anyway. The scope holds until those waits end and two frames pass with no terminal pane or grid
+  under it moving, capped at 700 ms. One still frame was not enough: a change reaches its
+  terminals in hops a frame apart, and the swap showed a maximized panel with its terminals still
+  at the old size. Then the browser shows the new state and the default crossfade is finished at
+  once, so the swap is a cut. A transparent shield over the scope takes the pointer until the cut,
+  because a click goes to the new layout the user cannot see yet (measured: a press on the old rail
+  stopped a terminal through the Running row's Stop that Expand had just laid there). Keys still
+  reach the focused terminal. A second change on a frozen scope joins it, and a watchdog takes the
+  shield and the scope's marker down 1700 ms after the start if the browser never reports the
+  transition finished. Nothing is copied and nothing runs outside a transition. The change runs at
+  once, unfrozen, while a dialog is open in the scope, while the window is hidden (a hidden page
+  draws no frames and runs its timers about once a second, which held a freeze open for up to
+  2.3 s), for a change an agent or main makes, and where the browser has no scoped View
+  Transitions. Gated by
+  `tests/unit/terminal-layout-transition.test.ts`, `tests/unit/terminal-repaint-wait.test.ts`, and
+  the screencast cases in `command-terminal.spec.ts` and `task-detail-maximize.spec.ts`, which
+  classify every compositor frame as before, between or settled and fail on a crossfade, an
+  in-between layout, or a click that reaches the unseen layout.
+- **A window drag holds every window terminal's refit, and closes itself (the manager-resize
+  gate).** The window manager's resizers (a window edge, a tile seam, a tiled group's outer edge,
+  the Command Terminal panel's edges) move frames imperatively per pointer frame, so each opens a
+  gesture on `manager-resize-gate.ts` for the drag. While one is open, `TerminalTab` skips its
+  per-frame ResizeObserver refit and `scheduleWindowTerminalResize` holds its ask, and the last
+  gesture to close sends one, so a drag ends in one SIGWINCH. Because every window terminal waits
+  on it, a gesture left open freezes all of their grids until a reload: measured once, a task
+  window grew to 1981px while its terminal kept the 1483px grid it mounted at. So the gate never
+  trusts an owner to close what it opened. While a gesture is open it listens on the window, and
+  the first host pointer event that shows the primary button up (a move, an enter, a new press of
+  the same pointer, a release no owner answered) or the window losing focus abandons it: the owner
+  commits its drag as it stands and forgets it, then the gesture closes. There is no timer, since
+  holding still mid-drag is a drag. A drag of the OS window's own edge shows the page no pointer,
+  only a resize event per frame, and each one reached the PTY: measured, a 40-step drag sent 40
+  resizes to a maximized task window's terminal, on this branch's base as well. So the gate watches
+  the window's resizes too. A second resize within `WINDOW_RESIZE_SETTLE_MS` (150 ms) of the last
+  opens a gesture of its own, which closes once the size has held that long, and then tells every
+  terminal to refit (the bottom panel included, whose observer the gate held meanwhile). The same
+  drag now sends 2 or 3. A lone resize opens nothing and refits at once; the OS maximizing or
+  restoring the window delivers one (measured in Electron 45). Gate opens and abandons go to the terminal trace with their owner. Gated by
+  `tests/unit/manager-resize-gate.test.ts`, the unseen-release and OS window drag cases in
+  `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts`.
 - **Fit only on the renderer the terminal keeps.** The container is not the fit's only input: the
   cell metric is, and that comes from whichever renderer is attached
   (`terminal.dimensions.css.cell.width`). Parking a terminal disposes its WebGL addon for the

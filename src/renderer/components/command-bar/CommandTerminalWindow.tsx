@@ -23,7 +23,6 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
-import { holdTerminalPicturesThen } from './held-terminal-picture';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
@@ -45,6 +44,7 @@ import { commandTerminalDisplayName } from '../../../shared/command-terminal-nam
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useLayerStore, windowIdsInReadingOrder } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { StopButtonIcon } from './StopButtonIcon';
@@ -112,12 +112,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const setExpandedWindow = layerStore((state) => state.setExpandedWindow);
   const canExpand = layerStore((state) => Object.keys(state.windows).length > 1);
   const isExpanded = layerStore((state) => state.expandedWindowId === windowId);
-  const layoutExpanded = layerStore((state) => state.expandedWindowId !== null);
-  // Every terminal changes size, so each one's veil holds a picture of it from
-  // just before the switch rather than going black (`held-terminal-picture.ts`).
-  const handleToggleExpanded = useCallback(() => {
-    void holdTerminalPicturesThen(() => setExpandedWindow(isExpanded ? null : windowId));
-  }, [setExpandedWindow, isExpanded, windowId]);
+  // Expand and Restore resize terminals: the panel holds still until they have
+  // repainted, then shows the new layout in one paint.
+  const changeLayout = useCallback((change: () => void) => {
+    runTerminalLayoutChange(terminalLayoutScopeOf(document.querySelector(`[data-testid="window-frame-${windowId}"]`)), change);
+  }, [windowId]);
+  const handleToggleExpanded = useCallback(
+    () => changeLayout(() => setExpandedWindow(isExpanded ? null : windowId)),
+    [changeLayout, setExpandedWindow, isExpanded, windowId],
+  );
   // The other terminals in the order they tile, for the swap drag. None while
   // one is expanded: only one tile is on screen then.
   const swapTargetIds = layerStore(useShallow((state) =>
@@ -181,7 +184,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const shortcuts = useBoardStore((s) => s.shortcuts);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(commandTerminalEntityId));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
-  const handleToggleChanges = useCallback(() => toggleChangesOpen(commandTerminalEntityId), [toggleChangesOpen, commandTerminalEntityId]);
+  const handleToggleChanges = useCallback(
+    () => changeLayout(() => toggleChangesOpen(commandTerminalEntityId)),
+    [changeLayout, toggleChangesOpen, commandTerminalEntityId],
+  );
 
   const spawnedRef = useRef(false);
   // The branch picker can fold into the kebab; this drives the kebab-anchored
@@ -502,15 +508,16 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     if (stopping) return;
     setStopping(true);
     await killCommandTerminalInSlot(slot);
-    closeWindow(windowId);
-    // This runs on essentially every Stop, not just the rare path: closeWindow is a
-    // plain Zustand set(), so React cannot commit the unmount between these two
-    // statements. Usually it is a harmless setState just ahead of that unmount. It
-    // is load-bearing only when the close is a no-op (an id the store no longer
-    // holds, which closeWindow returns early on), where no unmount ever follows and
-    // the button would otherwise be stranded disabled with a spinner and no way back.
+    // The rest re-tile into its space: the panel holds still until they repainted.
+    changeLayout(() => closeWindow(windowId));
+    // This runs on essentially every Stop, not just the rare path, ahead of the
+    // close (which the frozen panel applies a frame or two later). Usually it is a
+    // harmless setState just ahead of that unmount. It is load-bearing only when
+    // the close is a no-op (an id the store no longer holds, which closeWindow
+    // returns early on), where no unmount ever follows and the button would
+    // otherwise be stranded disabled with a spinner and no way back.
     if (mountedRef.current) setStopping(false);
-  }, [closeWindow, windowId, slot, stopping]);
+  }, [changeLayout, closeWindow, windowId, slot, stopping]);
 
   const handleCommandSelect = useCallback((command: AgentCommand) => {
     setShowCommandPalette(false);
@@ -780,7 +787,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               key={sessionId}
               sessionId={sessionId}
               isMaximized={isMaximized}
-              layoutExpanded={layoutExpanded}
               ready={terminalReady}
               launchLabel={launchLabel}
               gridGetterRef={gridGetterRef}

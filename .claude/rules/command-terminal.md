@@ -63,30 +63,29 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   resize holds the manager-resize gate for the whole gesture, so its terminals keep their grids
   and refit once on release: the gate also holds every `scheduleWindowTerminalResize` and sends it
   when the gesture ends, without which a live resize sends a SIGWINCH per pointer frame (measured
-  at 12 for one drag). A layout saved before the panel (floating windows) is re-tiled on
+  at 12 for one drag). Every window terminal's refit waits on that gate, so a gesture left open
+  freezes them all: the gate closes a drag itself on the first pointer event that shows its
+  button up, and the owner commits the drag as it stands. Never make a drag's end depend on its
+  own handler alone. A layout saved before the panel (floating windows) is re-tiled on
   load. Never bump the shared `WORKSPACE_SCHEMA_VERSION` for it: board layouts use it too.
 - **Expand and swap move the real terminals, never a copy.** Expand fills the panel with one
   terminal (`expandedWindowId`, transient, never saved); the others stay mounted behind it at the
   SAME rect, hidden and `inert` like a dormant window, and list in the rail's Running section,
   whose Stop ends one. Being the panel's size already, a switch through a Running row resizes
   nothing. Expand and Restore do jump sizes, and until the agent repaints the terminal shows its
-  old frame on the new grid (the footer mid-panel, then dropped), so `CommandTerminalPane` veils
-  every terminal when the layout goes in or out of expanded and lifts on its own output going
-  quiet (`resize-veil.ts`). Never lift it on main's repaint settle: on Windows that fires on
-  ConPTY's redraw of the old screen, under 45 ms, while the agent's frame lands 98 to 181 ms
-  after the resize. The veil is never a black box: a switch first takes one picture of the
-  terminal area (`holdTerminalPicturesThen`, `window:captureRegion`), each veil shows its own
-  terminal's part of it at its real size from its top-left (`held-terminal-picture.ts`), and it
-  fades out over `RESIZE_VEIL_FADE_MS` as the live terminal takes over. A terminal hidden behind
-  an expanded one is not in a capture, so it shows the last picture taken of it; one that was on
-  screen when the capture failed gets the plain veil, never an older picture of itself, and so
-  does any jump that did not take a picture (the swap drag's). A header drag swaps
+  old frame on the new grid (the footer mid-panel, then dropped). The panel adds nothing of its
+  own for that: a user's Expand or Restore runs as a layout transition over the panel area
+  (`runTerminalLayoutChange`, `terminal-layout-transition.ts`), which keeps the panel's last
+  frame on screen until every terminal it resized has its agent's new frame drawn and then shows
+  the result in one cut, here as for a maximize, a task window or the bottom panel. Only a user's
+  gesture freezes; a change main or an agent makes refits as it lands. Never add a
+  Command-Terminal-only veil beside it. A header drag swaps
   two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
   taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
   around the grab point at the picture's own scale, and the real frames preview the swap in each
   other's tiles by saved-and-restored inline styles. The preview refits both terminals to the
-  tiles they show in, veiled while they repaint (`TERMINAL_JUMP_EVENT`), so it looks the way the
-  drop will, and the landing tile is held as an empty terminal (the terminal background inside an
+  tiles they show in, unfrozen, since a frozen panel would also hold the pointer the drag
+  follows, so it looks the way the drop will once their agents repaint, and the landing tile is held as an empty terminal (the terminal background inside an
   accent ring) by an element of its own above the frame, so the dragged terminal is not on screen
   twice; the drop removes the picture and commits `swapWindows` at once, resizing nothing more,
   and a cancel refits them
@@ -249,10 +248,15 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
 - **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
-  `tests/unit/command-terminal-resize-veil.test.ts` replays the four measured runs through the
-  veil's lift rule, `command-terminal.spec.ts`'s Held picture tests pin the picture each veil
-  holds, the stale-picture refusal and the fade, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
-  the end of a gesture.
+  `tests/unit/terminal-repaint-wait.test.ts` replays the four measured runs through the repaint
+  wait's lift rule, `tests/unit/terminal-layout-transition.test.ts` pins the freeze (the change
+  run once, the join, the hold for a repaint and for a pane still moving, the cap, the shield and
+  the watchdog), `command-terminal.spec.ts` pins from the compositor's own frames that Expand,
+  Restore and the panel's maximize show one frozen picture and then one swap, and that a click
+  during the freeze reaches nothing, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
+  the end of a gesture and the gesture it closes when no owner saw the release. The unseen-release
+  case in `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts` drive it
+  in the real app.
 - **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
   touched filter, the owned-id skip, pruning, the resume claim),
   `tests/unit/transient-session-resume.test.ts` (the resume start, `conversation-gone` and

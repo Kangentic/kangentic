@@ -38,6 +38,7 @@ import { resolveTileLayout } from '../tiling/resolve-layout';
 import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
 import { useWindowManager } from '../context';
 import type { SnapEdge, FractionalRect } from '../store/types';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 
 /** Pointer travel (px) before a press becomes a drag, so a plain click/double
  *  click that only raises or maximizes the window does not nudge its geometry. */
@@ -154,6 +155,45 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     snap.hide();
     if (!drag || !frame) return;
     if (frame.hasPointerCapture(drag.pointerId)) frame.releasePointerCapture(drag.pointerId);
+
+    // After a dock, never leave a pane below the configured min-size: grow the
+    // group's footprint so the narrowest pane clears the floor (capped at the
+    // overlay). The min-width is the same `layer.minSize` the seam / footprint
+    // resizers honour, so the engine never docks a window below it.
+    const enforceMin = (): void =>
+      store.getState().enforceMinPaneSize(layer.minSize.width, layer.minSize.height, drag.overlay.width, drag.overlay.height);
+
+    // A drop that docks, snaps or maximizes resizes the window: the layer holds
+    // still (the window where the pointer left it) until its terminal has
+    // repainted at the new size, then shows the result in one paint. So the
+    // transform comes off inside that change, not before it.
+    if (drag.activated && !drag.groupMove && (drag.dropTarget !== null || drag.snapEdge !== null)) {
+      const dropTarget = drag.dropTarget;
+      const snapEdge = drag.snapEdge;
+      runTerminalLayoutChange(terminalLayoutScopeOf(frame), () => {
+        frame.style.transform = '';
+        const actions = store.getState();
+        if (dropTarget) {
+          // Drag-to-dock: tile this window onto a side of the pane under the cursor
+          // (insert into the tree if that pane is tiled, else seed a fresh pair).
+          actions.dockIntoWindow(windowId, dropTarget.targetWindowId, dropTarget.side);
+          enforceMin();
+        } else if (snapEdge === 'maximize') {
+          actions.maximizeWindow(windowId);
+        } else if (snapEdge === 'left' || snapEdge === 'right') {
+          // Half-dock. dockWindow joins an opposite-half snapped window into a tile
+          // pair (shared seam) if one exists, else a lone snap that remembers the
+          // pre-snap size so dragging away restores it.
+          actions.dockWindow(windowId, snapEdge);
+          enforceMin();
+        } else if (snapEdge === 'bottom') {
+          // A plain snap, not dockWindow: that only pairs opposite HORIZONTAL halves
+          // into a tile group, so a bottom half has no partner to seam with.
+          actions.snapWindow(windowId, snapEdgeToGeometry('bottom'));
+        }
+      });
+      return;
+    }
     // Clear the imperative transform; the committed geometry re-renders the
     // frame at its final position.
     frame.style.transform = '';
@@ -179,51 +219,20 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       return;
     }
 
-    const container = { width: drag.overlay.width, height: drag.overlay.height };
-    const actions = store.getState();
-
-    // After a dock, never leave a pane below the configured min-size: grow the
-    // group's footprint so the narrowest pane clears the floor (capped at the
-    // overlay). The min-width is the same `layer.minSize` the seam / footprint
-    // resizers honour, so the engine never docks a window below it.
-    const enforceMin = (): void =>
-      store.getState().enforceMinPaneSize(layer.minSize.width, layer.minSize.height, drag.overlay.width, drag.overlay.height);
-
-    if (drag.dropTarget) {
-      // Drag-to-dock: tile this window onto a side of the pane under the cursor
-      // (insert into the tree if that pane is tiled, else seed a fresh pair).
-      actions.dockIntoWindow(windowId, drag.dropTarget.targetWindowId, drag.dropTarget.side);
-      enforceMin();
-    } else if (drag.snapEdge === 'maximize') {
-      actions.maximizeWindow(windowId);
-    } else if (drag.snapEdge === 'left' || drag.snapEdge === 'right') {
-      // Half-dock. dockWindow joins an opposite-half snapped window into a tile
-      // pair (shared seam) if one exists, else a lone snap that remembers the
-      // pre-snap size so dragging away restores it.
-      actions.dockWindow(windowId, drag.snapEdge);
-      enforceMin();
-    } else if (drag.snapEdge === 'bottom') {
-      // A plain snap, not dockWindow: that only pairs opposite HORIZONTAL halves
-      // into a tile group, so a bottom half has no partner to seam with.
-      actions.snapWindow(windowId, snapEdgeToGeometry('bottom'));
-    } else {
-      // HARD clamp: snap the window fully back inside the frame.
-      const clamped = clampToOverlay(
-        drag.startRect.left + (drag.lastClientX - drag.startClientX),
-        drag.startRect.top + (drag.lastClientY - drag.startClientY),
-        drag,
-      );
-      actions.setGeometry(
-        windowId,
-        pixelsToFractional(
-          { left: clamped.left, top: clamped.top, width: drag.startRect.width, height: drag.startRect.height },
-          container,
-        ),
-      );
-    }
-    // A size change (snap/maximize) re-renders the frame; WindowFrame's size
-    // effect schedules the single coalesced terminal resize. A pure move does
-    // not change size, so no resize is needed.
+    // A pure move: HARD clamp the window fully back inside the frame. It changes
+    // no size, so no terminal resizes and nothing needs to hold.
+    const clamped = clampToOverlay(
+      drag.startRect.left + (drag.lastClientX - drag.startClientX),
+      drag.startRect.top + (drag.lastClientY - drag.startClientY),
+      drag,
+    );
+    store.getState().setGeometry(
+      windowId,
+      pixelsToFractional(
+        { left: clamped.left, top: clamped.top, width: drag.startRect.width, height: drag.startRect.height },
+        { width: drag.overlay.width, height: drag.overlay.height },
+      ),
+    );
   }, [windowId, frameRef, store, snap, layer.minSize.width, layer.minSize.height]);
 
   /** Abandon the active drag: drop every transform, commit NOTHING. The window

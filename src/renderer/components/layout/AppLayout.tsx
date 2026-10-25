@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -59,6 +60,19 @@ import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { usePopOut } from '../../pop-out/usePopOut';
 import type { OnboardingStepKey } from '../../../shared/types';
 
+/**
+ * Runs `useFocusedSessionsSync` in a component of its own that renders nothing,
+ * always mounted with the layout. The hook subscribes to every window's state
+ * and z-order, so a maximize, a snap or a focus change re-renders whatever
+ * calls it. Called from AppLayout itself, that was the whole app: measured, one
+ * task window's maximize re-rendered 296 components in 42 ms before its PTY
+ * resize could go out.
+ */
+function FocusedSessionsSync({ panelShowsTerminal }: { panelShowsTerminal: boolean }): null {
+  useFocusedSessionsSync(panelShowsTerminal);
+  return null;
+}
+
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const statsOpen = useUsageDashboardStore((s) => s.statsOpen);
@@ -69,14 +83,20 @@ export function AppLayout() {
   const knowledgeGraphPopOut = usePopOut('knowledge-graph', {});
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
-  const config = useConfigStore((s) => s.config);
+  // Only the values this layout reads, never the whole config. The store rebuilds
+  // the config object on every write, a window layout save included (half a second
+  // after each maximize, and on every task open), and a subscription to the object
+  // re-rendered the whole app for each one: measured, 243 components in 16 ms.
+  const terminalPanelVisible = useConfigStore((s) => s.config.terminalPanelVisible);
+  const statusBarVisible = useConfigStore((s) => s.config.statusBarVisible);
   // The resize hooks below read the panel and sidebar layout from the GLOBAL config.
   // Those settings are global-only, and the effective `config` is the copy a warm
   // project switch replaces with the snapshot it took when that project was left.
   // The drags write to main without updating the store, so a snapshot can hold a
   // size from before the last drag, and restoring it moved the panel back to that
   // size. `globalConfig` is only ever replaced by a fresh read from main.
-  const globalConfig = useConfigStore((s) => s.globalConfig);
+  const sidebarLayout = useConfigStore(useShallow((s) => ({ sidebarVisible: s.globalConfig.sidebarVisible, sidebar: s.globalConfig.sidebar })));
+  const terminalLayout = useConfigStore(useShallow((s) => ({ terminal: s.globalConfig.terminal })));
   const currentProject = useProjectStore((s) => s.currentProject);
   const projects = useProjectStore((s) => s.projects);
   const hydrated = useProjectStore((s) => s.hydrated);
@@ -117,7 +137,7 @@ export function AppLayout() {
   // terminal, and the user's own choice comes back on the way out. Both edges
   // land in one frame (`suppressTransition`): the view switch is not the user
   // moving the sidebar, so it does not slide.
-  const sidebar = useSidebarResize(globalConfig, activeView === 'workflows');
+  const sidebar = useSidebarResize(sidebarLayout, activeView === 'workflows');
   // The bottom panel drops a task's tab whenever its detail is open (a board window, the in-app
   // Agent Monitor, or the detached monitor), and collapses once no tab is left - see
   // `derivePanelSessions` / `resolveTerminalForceCollapse`. Derived inside ONE selector returning a
@@ -160,7 +180,7 @@ export function AppLayout() {
   // input a detached task window uses, so the user's own preference is never
   // overwritten and comes back on the way out.
   const terminal = useTerminalResize(
-    globalConfig,
+    terminalLayout,
     terminalContentColRef,
     terminalPanelContainerRef,
     terminalForceCollapse !== null || activeView === 'workflows',
@@ -209,12 +229,12 @@ export function AppLayout() {
   // Whether the bottom panel is on screen at all: the Board view, with the panel not
   // hidden in Settings. Backlog and Workflows render no panel. One flag for both the
   // render below and the focused-sessions sync, so the two cannot disagree.
-  const terminalPanelRendered = config.terminalPanelVisible !== false && activeView === 'board';
+  const terminalPanelRendered = terminalPanelVisible !== false && activeView === 'board';
   // TerminalPanel mounts a TerminalTab only while it is rendered AND `showContent`
   // holds, so that pair is the honest answer to "is there an xterm to receive bytes".
   // `showContent` alone stays true while the panel is not rendered, and the panel's
   // session then took the first WebGL slot ahead of every visible window.
-  useFocusedSessionsSync(terminal.showContent && terminalPanelRendered);
+  const panelShowsTerminal = terminal.showContent && terminalPanelRendered;
   useRemoteDetailOwnersSync();
   useMobileTerminalStreamsSync();
   // The monitor's ownership half, mounted here rather than in `MonitorDetailLayer`
@@ -464,6 +484,7 @@ export function AppLayout() {
 
   return (
     <div className="h-screen flex flex-col bg-surface">
+      <FocusedSessionsSync panelShowsTerminal={panelShowsTerminal} />
       <TitleBar
         onQuickSession={handleCommandTerminalButton}
         onOpenSearch={searchPalette.open}
@@ -567,6 +588,9 @@ export function AppLayout() {
                         ref={terminalPanelContainerRef}
                         data-testid="terminal-panel-container"
                         data-collapsed={terminal.collapsed ? 'true' : 'false'}
+                        // A released height drag freezes the panel until its terminal
+                        // repainted (`terminal-layout-transition.ts`).
+                        data-terminal-layout-scope=""
                         style={{ height: terminalPanelHeight }}
                         className={`flex-shrink-0 overflow-hidden ${
                           terminal.ready && !terminal.isResizing && !terminal.suppressTransition
@@ -606,7 +630,7 @@ export function AppLayout() {
         </div>
       </div>
 
-      {config.statusBarVisible !== false && <StatusBar />}
+      {statusBarVisible !== false && <StatusBar />}
       {statsOpen && !statsPopOut.isOpen && <StatsPage />}
       {monitorOpen && !monitorPopOut.isOpen && <MonitorPage />}
       {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
