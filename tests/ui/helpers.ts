@@ -867,6 +867,11 @@ export async function recordLayoutChange(
   await page.waitForTimeout(400);
   await cdp.send('Page.stopScreencast');
   await cdp.detach();
+  // The screencast does not deliver frames in the order it stamps them: on a loaded runner one to
+  // four of a recording's 60 arrive after a frame stamped later (14 of 20 recordings on two cores).
+  // Every consumer reads the frames as a timeline, so an old picture arriving late read as one that
+  // came back after the change. Array.prototype.sort is stable, so equal stamps keep arrival order.
+  captured.sort((first, second) => first.at - second.at);
   await page.evaluate(() => document.querySelector('[data-testid="layout-change-frame-pump"]')?.remove());
 
   const area = { x: box.x, y: box.y, width: box.width, height: box.height };
