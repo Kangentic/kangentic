@@ -99,6 +99,21 @@ export class CommandTerminalHistoryRepository {
     this.db.prepare('DELETE FROM command_terminal_history WHERE agent_session_id = ?').run(agentSessionId);
   }
 
+  /**
+   * Delete the rows nobody used and no live terminal holds. An ended unused
+   * row is deleted by `markEnded`, but a terminal open at a quit is never
+   * ended (a quit removes no row), so its unused row would stay for good.
+   */
+  deleteUnusedExcept(liveAgentSessionIds: ReadonlySet<string>): void {
+    const unused = this.db.prepare(
+      'SELECT agent_session_id FROM command_terminal_history WHERE touched_at IS NULL AND ended_at IS NULL',
+    ).all() as Array<{ agent_session_id: string }>;
+    const remove = this.db.prepare('DELETE FROM command_terminal_history WHERE agent_session_id = ?');
+    for (const row of unused) {
+      if (!liveAgentSessionIds.has(row.agent_session_id)) remove.run(row.agent_session_id);
+    }
+  }
+
   get(agentSessionId: string): CommandTerminalHistoryRow | null {
     const row = this.db.prepare(
       `SELECT ${COLUMNS} FROM command_terminal_history WHERE agent_session_id = ?`,

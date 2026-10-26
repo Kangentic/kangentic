@@ -21,11 +21,11 @@ import { useConfigStore } from '../../stores/config-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { beginManagerResize, type ManagerResizeGesture } from '../../window-manager/terminal/manager-resize-gate';
 import { runTerminalLayoutChange } from '../../utils/terminal-layout-transition';
+import type { ContainerSize as PanelSize, PixelRect } from '../../window-manager/store/geometry';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
 
-interface PixelRect { left: number; top: number; width: number; height: number }
-
-interface PanelSize { width: number; height: number }
+/** The panel header's height, which the terminals' area excludes. */
+export const COMMAND_PANEL_HEADER_HEIGHT_PX = 40;
 
 /**
  * The share of the area a Command Terminal opened at before the panel: a
@@ -53,9 +53,18 @@ const PANEL_CONTROL_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg
  */
 function defaultPanelGeometry(area: PanelSize, chrome: PanelSize): CommandTerminalPanelGeometry {
   if (area.width <= 0 || area.height <= 0) return { x: 0, y: 0, w: 1, h: 1, maximized: false };
-  const w = Math.min(1, (RELEASED_TERMINAL_SHARE.width * area.width + chrome.width) / area.width);
-  const h = Math.min(1, (RELEASED_TERMINAL_SHARE.height * area.height + chrome.height) / area.height);
-  return { x: (1 - w) / 2, y: (1 - h) / 2, w, h, maximized: false };
+  const widthShare = Math.min(1, (RELEASED_TERMINAL_SHARE.width * area.width + chrome.width) / area.width);
+  const heightShare = Math.min(1, (RELEASED_TERMINAL_SHARE.height * area.height + chrome.height) / area.height);
+  return { x: (1 - widthShare) / 2, y: (1 - heightShare) / 2, w: widthShare, h: heightShare, maximized: false };
+}
+
+/**
+ * A saved place whose numbers can be laid out. config.json is the user's to
+ * edit, and a place with a missing or non-numeric field would size the panel
+ * to NaN and leave it nowhere on screen.
+ */
+function isUsableGeometry(geometry: CommandTerminalPanelGeometry | null | undefined): geometry is CommandTerminalPanelGeometry {
+  return !!geometry && [geometry.x, geometry.y, geometry.w, geometry.h].every((value) => Number.isFinite(value));
 }
 
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -166,7 +175,7 @@ interface CommandTerminalPanelProps {
   rail: ReactNode;
   /** The terminal area's element, once mounted: the window layer renders into it. */
   onTerminalAreaReady: (element: HTMLElement | null) => void;
-  /** The smallest the panel may be, from how many terminals it holds. */
+  /** The smallest the panel may be: one terminal at the pane floor beside the rail, whatever the count. */
   minSize: PanelSize;
   /** What the panel adds around its terminals: the rail and the header, with the border. */
   chrome: PanelSize;
@@ -190,7 +199,7 @@ export function CommandTerminalPanel({
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
   const savedGeometry = useConfigStore((state) => state.globalConfig.commandTerminalPanel);
   const saveGeometry = useConfigStore((state) => state.saveCommandTerminalPanel);
-  const geometry = savedGeometry ?? defaultPanelGeometry(areaSize, chrome);
+  const geometry = isUsableGeometry(savedGeometry) ? savedGeometry : defaultPanelGeometry(areaSize, chrome);
   const rect = toPixels(geometry, areaSize, minSize);
 
   // The gesture in flight. A move translates the panel; a resize writes its box
@@ -368,9 +377,10 @@ export function CommandTerminalPanel({
           data-maximized={geometry.maximized ? 'true' : 'false'}
         >
           <div
-            className={`flex items-center gap-2.5 h-10 pl-3.5 pr-2 border-b border-edge flex-shrink-0 select-none ${
+            className={`flex items-center gap-2.5 pl-3.5 pr-2 border-b border-edge flex-shrink-0 select-none ${
               geometry.maximized ? '' : 'cursor-grab active:cursor-grabbing'
             }`}
+            style={{ height: COMMAND_PANEL_HEADER_HEIGHT_PX }}
             onPointerDown={handleHeaderPointerDown}
             // A press on the header (a move, Maximize) leaves keyboard focus in
             // the terminal the user was typing in, as a title bar does.

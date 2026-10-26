@@ -115,8 +115,8 @@ source file maps to.
 - **HMR / dev-mode parity** - The team dogfoods Kangentic from `npm start` daily, so dev mode
   must be visually and behaviourally indistinguishable from a production boot. Patterns A
   through D and their enforcement: `.claude/rules/hmr-patterns.md`.
-- **Command Terminal** - Ctrl+Shift+P opens one panel: a rail (Earlier conversations, New
-  terminal) beside up to four auto-tiled "transient" sessions, hosted in a SECOND window-manager
+- **Command Terminal** - Ctrl+Shift+P opens one panel: a rail (Add terminal, Earlier
+  conversations) beside up to four auto-tiled "transient" sessions, hosted in a SECOND window-manager
   layer (`components/command-bar/`) separate from the board task-detail layer. Windows are keyed
   by a durable SLOT, geometry is global but population is per-project (reconciled before the
   layer mounts), a reattach NEVER fetches or checks out, the branch is a per-project fact

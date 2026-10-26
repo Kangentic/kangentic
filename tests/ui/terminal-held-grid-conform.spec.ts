@@ -17,9 +17,12 @@
  * 4. A plain refusal without a held grid conforms nothing (the echo re-assert's contract).
  * 5. A SECOND held grid the pane cannot show at any font releases the hold instead of leaving
  *    the terminal silently claiming the first one (requestGrid's held-grid-changed branch).
+ * 6. A held grid whose conform walks FOUR OR MORE quarter-pixel steps below its proposal is still
+ *    taken, which is what raising CONFORM_MAX_STEPS from 4 to 12 bought. The walk length depends on
+ *    the host's monospace face, so that test measures the face and seeds the size that walks long.
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
@@ -33,11 +36,22 @@ const TASK_ID = 'task-held-grid';
 const SESSION_ID = 'sess-held-grid';
 const HELD = { cols: 154, rows: 37 };
 const CONFIGURED_FONT_PX = 14;
+// The long-walk test seeds its own face and size (see chooseWalkingFontSize). The family is the
+// mock's default, written out so the size is chosen and rendered against the same string.
+const WALK_FONT_FAMILY = 'Consolas, "Courier New", monospace';
+const WALK_FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20];
+// conformToHeldGrid tries CONFORM_MAX_STEPS sizes, the proposal and then each quarter pixel below
+// it, so a budget of N takes a grid that needs at most N - 1 steps down. The budget was 4 and is
+// 12: a grid that needs between 4 and 11 steps is the one the raise made reachable.
+const OLD_STEP_BUDGET = 4;
+const CURRENT_STEP_BUDGET = 12;
+const FONT_STEP_PX = 0.25;
 
-function preConfig(resizeResult: string): string {
+function preConfig(resizeResult: string, terminalOverrides?: { fontFamily: string; fontSize: number }): string {
   return `
   window.__mockResizeResult = ${resizeResult};
   window.__mockPreConfigure(function (state) {
+    ${terminalOverrides ? `Object.assign(state.config.terminal, ${JSON.stringify(terminalOverrides)});` : ''}
     var ts = new Date().toISOString();
     state.projects.push({
       id: '${PROJECT_ID}', name: 'Held Grid Test', path: '/mock/held-grid-test', github_url: null,
@@ -72,16 +86,26 @@ interface TestWindow {
   __kangenticTerminalGrids?: () => TerminalGridReport[];
 }
 
-async function launch(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+async function openBrowserContext(): Promise<{ browser: Browser; context: BrowserContext }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+  return { browser, context };
+}
+
+async function openPage(context: BrowserContext, preConfigScript: string): Promise<Page> {
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfigScript);
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+  return page;
+}
+
+async function launch(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
+  const { browser, context } = await openBrowserContext();
+  const page = await openPage(context, preConfigScript);
   return { browser, page };
 }
 
@@ -103,6 +127,110 @@ function readEvents(page: Page, event: string): Promise<RendererTraceEvent[]> {
 async function openTaskWindow(page: Page): Promise<void> {
   await page.locator(`[data-task-id="${TASK_ID}"]`).first().click();
   await page.locator('[data-testid="task-detail-terminal-dim"] .xterm').first().waitFor({ timeout: 15000 });
+}
+
+async function closeTaskWindow(page: Page): Promise<void> {
+  // Dispatched at document level: a focused xterm swallows a real Escape keypress.
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await page.locator('[data-testid="task-detail-terminal-dim"] .xterm').first().waitFor({ state: 'detached', timeout: 5000 });
+}
+
+/** The grid the terminal fits on its own once its pane stops moving: unchanged across three reads. */
+async function readSettledGrid(page: Page): Promise<{ cols: number; rows: number }> {
+  let previous = '';
+  let unchangedReads = 0;
+  await expect.poll(async () => {
+    const grid = await readGrid(page);
+    const current = grid ? `${grid.cols}x${grid.rows}` : '';
+    unchangedReads = current !== '' && current === previous ? unchangedReads + 1 : 0;
+    previous = current;
+    return unchangedReads;
+  }, { timeout: 10000, intervals: [100, 150, 200] }).toBeGreaterThanOrEqual(3);
+  const settled = await readGrid(page);
+  if (!settled) throw new Error('the terminal disappeared while its grid settled');
+  return { cols: settled.cols, rows: settled.rows };
+}
+
+interface PaneMeasurement {
+  /** The box a grid is fitted into: the fit addon's own arithmetic (parent box less padding and scrollbar gutter). */
+  availableWidth: number;
+  availableHeight: number;
+  /** One cell in CSS px at the terminal's current font, read off the rendered screen. */
+  cellWidth: number;
+  cellHeight: number;
+}
+
+function measurePane(page: Page): Promise<PaneMeasurement> {
+  return page.evaluate(() => {
+    const xterm = document.querySelector<HTMLElement>('[data-testid="task-detail-terminal-dim"] .xterm');
+    const parent = xterm?.parentElement;
+    const viewport = xterm?.querySelector<HTMLElement>('.xterm-viewport');
+    const screen = xterm?.querySelector<HTMLElement>('.xterm-screen');
+    const read = (window as unknown as TestWindow).__kangenticTerminalGrids;
+    const grid = read ? read()[0] : undefined;
+    if (!xterm || !parent || !viewport || !screen || !grid) throw new Error('no mounted terminal to measure');
+    const parentStyle = getComputedStyle(parent);
+    const elementStyle = getComputedStyle(xterm);
+    const screenBox = screen.getBoundingClientRect();
+    return {
+      availableWidth: parseInt(parentStyle.width, 10) - parseInt(elementStyle.paddingLeft, 10) - parseInt(elementStyle.paddingRight, 10)
+        - (viewport.offsetWidth - viewport.clientWidth),
+      availableHeight: parseInt(parentStyle.height, 10) - parseInt(elementStyle.paddingTop, 10) - parseInt(elementStyle.paddingBottom, 10),
+      cellWidth: screenBox.width / grid.cols,
+      cellHeight: screenBox.height / grid.rows,
+    };
+  });
+}
+
+/**
+ * The integer font size, from the range a user can set, at which the host's own monospace face makes
+ * a one-column-wider grid walk the longest sensible way down from the configured size.
+ *
+ * How many quarter-pixel steps a conform needs is a property of the face, not of the grid. The
+ * renderer floors a cell's width to whole device pixels, so a grid one column wider than the pane's
+ * natural fit needs the cell to lose one pixel, and the font has to drop until the face's advance
+ * crosses that line. Consolas at 14 px walks about five steps; a face with a 0.6 em advance walks
+ * about two at the same size, so the same test would pass at the old budget of four there. Measuring
+ * the face here, the same way the second test does, and seeding the size whose walk comes nearest
+ * `targetSteps` keeps the test discriminating on any host, instead of on this one machine's fonts.
+ */
+async function chooseWalkingFontSize(context: BrowserContext, targetSteps: number): Promise<number> {
+  const probePage = await context.newPage();
+  try {
+    return await probePage.evaluate(({ fontFamily, candidateSizes, target, configuredBaseline }) => {
+      const canvasContext = new OffscreenCanvas(16, 16).getContext('2d');
+      if (!canvasContext) throw new Error('no 2d context to measure a cell with');
+      const scale = window.devicePixelRatio;
+      const cellWidthAt = (size: number): number => {
+        canvasContext.font = `${size}px ${fontFamily}`;
+        return Math.floor(canvasContext.measureText('W').width * scale) / scale;
+      };
+      let bestSize = candidateSizes[0];
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (const candidate of candidateSizes) {
+        // The proposal for a grid one column past the natural fit lands within a quarter pixel below
+        // the configured size, so the walk starts there and ends at the first size whose cell is
+        // one device pixel narrower than the cell at the configured size.
+        const narrowerWidth = cellWidthAt(candidate) - 1 / scale;
+        let size = candidate - 0.25;
+        let steps = 0;
+        while (size >= 4 && cellWidthAt(size) > narrowerWidth) {
+          size -= 0.25;
+          steps += 1;
+        }
+        const distance = Math.abs(steps - target) * 100 + Math.abs(candidate - configuredBaseline);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestSize = candidate;
+        }
+      }
+      return bestSize;
+    }, { fontFamily: WALK_FONT_FAMILY, candidateSizes: WALK_FONT_SIZES, target: targetSteps, configuredBaseline: CONFIGURED_FONT_PX });
+  } finally {
+    await probePage.close();
+  }
 }
 
 test('a held answer conforms the terminal to the held grid at a smaller font', async () => {
@@ -273,6 +401,88 @@ test('a second held grid the pane cannot show releases the hold instead of keepi
     const declines = await readEvents(page, 'conform-declined');
     expect(declines.length).toBeGreaterThan(0);
     expect(declines[declines.length - 1].detail).toMatchObject({ cols: TOO_BIG.cols, rows: TOO_BIG.rows });
+  } finally {
+    await browser.close();
+  }
+});
+
+test('a held grid that walks past the old budget of four steps is still taken', async () => {
+  // Pins CONFORM_MAX_STEPS. The renderer floors a cell to device pixels, so the proposal (linear in
+  // the cell) can sit several quarter pixels above the largest size that fits, and the conform walks
+  // down to it. At a budget of four a walk of four steps or more was declined and the terminal kept
+  // its own fit, showing the PTY's frame wrapped inside a grid it was never laid out for. The walk is
+  // 4 to 11 steps here, so it passes at 12 and is declined at 4 (trace: conform-declined, reason steps).
+  //
+  // Two mounts of one window, plus a probe page, so this is the one test here that needs more than
+  // the ui tier's 15 s on a loaded runner.
+  test.slow();
+  const { browser, context } = await openBrowserContext();
+  try {
+    // About midway between the old budget (a walk of 4) and the new one (a walk of 11).
+    const fontSize = await chooseWalkingFontSize(context, 7);
+    const page = await openPage(
+      context,
+      preConfig(JSON.stringify({ colsChanged: false, refused: true }), { fontFamily: WALK_FONT_FAMILY, fontSize }),
+    );
+
+    // Mount one, nothing held: the grid the terminal fits into this pane by itself, and the cell
+    // it draws at the configured size, which is what the proposal for a held grid is scaled from.
+    await openTaskWindow(page);
+    const natural = await readSettledGrid(page);
+    const pristine = await measurePane(page);
+    expect((await readEvents(page, 'conform')).length).toBe(0);
+    await closeTaskWindow(page);
+
+    // Mount two: main keeps a grid one column wider than the pane's natural fit. Same rows, so the
+    // width alone sets the walk (a smaller font only ever shortens a cell).
+    const held = { cols: natural.cols + 1, rows: natural.rows };
+    const resizeCallsBefore = await page.evaluate(() => (
+      (window as unknown as { electronAPI: { sessions: { __resizeCalls: unknown[] } } }).electronAPI.sessions.__resizeCalls.length
+    ));
+    await page.evaluate((grid) => {
+      (window as unknown as TestWindow).__mockResizeResult = { colsChanged: false, refused: true, held: grid };
+    }, held);
+    await openTaskWindow(page);
+
+    // Either the hold is taken, or the conform declined it; the decline's own detail is the failure message.
+    await expect.poll(async () => {
+      const declines = await readEvents(page, 'conform-declined');
+      if (declines.length > 0) return `declined ${JSON.stringify(declines[0].detail)}`;
+      const grid = await readGrid(page);
+      return grid && grid.cols === held.cols && grid.rows === held.rows ? 'taken' : 'waiting';
+    }, { timeout: 10000 }).toBe('taken');
+
+    // The pane did not move between the mounts: the first grid the second terminal asked main for is
+    // the first one's natural fit, so "one column wider" still means one column past this pane's fit.
+    const firstRequest = await page.evaluate((skip) => (
+      (window as unknown as { electronAPI: { sessions: { __resizeCalls: Array<{ cols: number; rows: number }> } } })
+        .electronAPI.sessions.__resizeCalls[skip]
+    ), resizeCallsBefore);
+    expect(firstRequest).toMatchObject(natural);
+
+    // The walk's length, from what the page reports. The proposal is the documented one: the
+    // largest quarter-pixel size at which the held grid would fit if the cell scaled with the font,
+    // from the cell drawn at the configured size and the box left after padding and the gutter.
+    const pane = await measurePane(page);
+    const conforms = await readEvents(page, 'conform');
+    expect(conforms.length).toBeGreaterThan(0);
+    const conformedFontSize = conforms[0].detail?.fontSize as number;
+    const scaleToFit = Math.min(
+      pane.availableWidth / (held.cols * pristine.cellWidth),
+      pane.availableHeight / (held.rows * pristine.cellHeight),
+    );
+    const proposedFontSize = Math.min(Math.floor((fontSize * scaleToFit) / FONT_STEP_PX) * FONT_STEP_PX, fontSize);
+    const stepsBelowProposal = Math.round((proposedFontSize - conformedFontSize) / FONT_STEP_PX);
+    expect(
+      stepsBelowProposal,
+      `the walk from ${proposedFontSize}px down to ${conformedFontSize}px must be long enough to need the raised budget; the host's face walks ${stepsBelowProposal} steps at ${fontSize}px`,
+    ).toBeGreaterThanOrEqual(OLD_STEP_BUDGET);
+    expect(stepsBelowProposal).toBeLessThan(CURRENT_STEP_BUDGET);
+
+    // The hold stays taken: no later refit of the settled pane let it go.
+    expect((await readEvents(page, 'unhold')).length).toBe(0);
+    expect((await readEvents(page, 'conform-declined')).length).toBe(0);
+    expect(await readGrid(page)).toMatchObject(held);
   } finally {
     await browser.close();
   }

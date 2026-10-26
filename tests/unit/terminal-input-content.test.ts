@@ -45,6 +45,12 @@ describe('writeCarriesUserContent', () => {
     ['the Escape key', '\x1b'],
     ['a key after a focus report', '\x1b[Ix'],
     ['a slash command', '/model\r'],
+    // The bytes that open a reply string, with nothing ending them: xterm sends
+    // a reply whole, so these are keys.
+    ['Alt+]', '\x1b]'],
+    ['Alt+Shift+P', '\x1bP'],
+    ['Alt+Shift+X', '\x1bX'],
+    ['a key after a complete reply', '\x1b]11;rgb:0000/0000/0000\x07a'],
   ])('counts %s', (_name, data) => {
     expect(writeCarriesUserContent(data)).toBe(true);
   });

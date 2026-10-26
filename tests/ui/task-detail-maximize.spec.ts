@@ -23,7 +23,12 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery, pictureStages, brightPixelsIn } from './helpers';
+import {
+  waitForViteReady, gotoVite, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery,
+  pictureStages, brightPixelsIn, markSessionFirstOutput, readTerminalTrace, settleFrames, isManagerResizeGateOpen,
+  TERMINAL_FRAME_HOLD_ATTRIBUTE, TERMINAL_FRAME_HOLD_SELECTOR,
+} from './helpers';
+import { launch as launchMonitorSeed, openMonitor, byTestId, sessionIdOf } from './monitor-writes-seed';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -154,11 +159,7 @@ test.describe('Task Detail: the terminal through a maximize', () => {
     await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
     await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
     // The agent on screen, so its launch overlay lifts.
-    await ownPage.evaluate((sessionId) => {
-      (window as unknown as {
-        __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
-      }).__zustandStores.session.getState().markFirstOutput(sessionId);
-    }, SESSION_ID);
+    await markSessionFirstOutput(ownPage, SESSION_ID);
     await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
     await ownPage.evaluate((sessionId) => {
       let screen = '';
@@ -397,10 +398,10 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       await ownPage.evaluate(() => document.documentElement.classList.remove('no-motion'));
       // The animations on the terminal's screen the moment its hold ends, read
       // as the hold's mark comes off the host.
-      const animationsWhenHoldEnds = () => ownPage.evaluate(() => new Promise<Array<{ duration: number; opacity: boolean }>>((resolve) => {
+      const animationsWhenHoldEnds = () => ownPage.evaluate((hold) => new Promise<Array<{ duration: number; opacity: boolean }>>((resolve) => {
         let held = false;
         new MutationObserver((records, observer) => {
-          if (document.querySelector('[data-terminal-frame-hold]')) {
+          if (document.querySelector(hold.selector)) {
             held = true;
             return;
           }
@@ -411,8 +412,8 @@ test.describe('Task Detail: the terminal through a maximize', () => {
             const effect = animation.effect as KeyframeEffect;
             return { duration: Number(effect.getTiming().duration), opacity: Object.keys(effect.getKeyframes()[0] ?? {}).includes('opacity') };
           }));
-        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
-      }));
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [hold.attribute] });
+      }), { selector: TERMINAL_FRAME_HOLD_SELECTOR, attribute: TERMINAL_FRAME_HOLD_ATTRIBUTE });
 
       const onMaximize = animationsWhenHoldEnds();
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
@@ -494,15 +495,15 @@ test.describe('Task Detail: the terminal through a maximize', () => {
         }, 10);
       }, SESSION_ID);
       const streamSince = Date.now();
-      const heldFor = await ownPage.evaluate(() => new Promise<number>((resolve) => {
+      const heldFor = await ownPage.evaluate((hold) => new Promise<number>((resolve) => {
         let heldAt = 0;
         new MutationObserver(() => {
-          const holding = document.querySelector('[data-terminal-frame-hold]') !== null;
+          const holding = document.querySelector(hold.selector) !== null;
           if (holding && heldAt === 0) heldAt = performance.now();
           if (!holding && heldAt !== 0) resolve(performance.now() - heldAt);
-        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [hold.attribute] });
         document.querySelector<HTMLElement>('[data-testid="task-detail-maximize"]')?.click();
-      }));
+      }), { selector: TERMINAL_FRAME_HOLD_SELECTOR, attribute: TERMINAL_FRAME_HOLD_ATTRIBUTE });
       // Not before the wait's 500 ms cap, and ended well before a stuck hold
       // would show (the send waits a frame, and headless draws slowly).
       expect(heldFor).toBeGreaterThanOrEqual(450);
@@ -530,6 +531,225 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       await own.browser.close();
     }
   });
+
+  // main answers a hold's grid with one it keeps instead (a refusal, or the grid a phone holds the
+  // PTY at). No repaint at the grid the hold asked for is coming, so the repaint wait must not run
+  // out its floor (190 ms) or its cap (500 ms) for one.
+  for (const answer of [
+    { kept: 'refuses', result: { colsChanged: false, refused: true } },
+    { kept: 'keeps another grid for', result: { colsChanged: false, held: { cols: 60, rows: 20 } } },
+  ]) {
+    test(`when main ${answer.kept} the terminal, the repaint wait is released at the answer and the hold ends`, async () => {
+      test.setTimeout(45000);
+      const own = await launchWithState(preConfig);
+      try {
+        const ownPage = own.page;
+        await openStillTerminal(ownPage);
+        // Only from here: the terminal's own startup fits were answered plainly.
+        await ownPage.evaluate((result) => {
+          (window as unknown as { __mockResizeResult: unknown }).__mockResizeResult = result;
+        }, answer.result);
+        const since = Date.now();
+
+        await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+
+        // The wait settles because it was released, not because the agent went quiet or the cap came.
+        await expect.poll(async () => (await readTerminalTrace(ownPage, since, ['repaint-wait-settled'])).length, { timeout: 5000 }).toBeGreaterThan(0);
+        const [firstSettled] = await readTerminalTrace(ownPage, since, ['repaint-wait-settled']);
+        expect(firstSettled.detail?.reason).toBe('released');
+        await expectNoFrameHold(ownPage);
+        await expectNoFrameHoldRecovery(ownPage, since);
+      } finally {
+        await own.browser.close();
+      }
+    });
+  }
+
+  test('a pty-resized echo during a frame hold is skipped: the hold sends its grid once and nothing re-asserts', async () => {
+    // main announces every change to the PTY's grid, the hold's own included. An unheld terminal
+    // that disagrees with an echo re-asserts its own grid, which during a hold would send the old
+    // grid back to the PTY.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      // Fire a disagreeing echo from inside the hold's own resize, where the hold is open for certain.
+      await ownPage.evaluate(({ sessionId, holdSelector }) => {
+        const holder = window as unknown as {
+          electronAPI: { sessions: { resize: (id: string, cols: number, rows: number) => Promise<unknown> } };
+          __mockFirePtyResized: (id: string, cols: number, rows: number, origin: string) => void;
+          __echoFiredDuringHold: boolean | null;
+        };
+        holder.__echoFiredDuringHold = null;
+        const original = holder.electronAPI.sessions.resize;
+        holder.electronAPI.sessions.resize = (id, cols, rows) => {
+          if (id === sessionId && holder.__echoFiredDuringHold === null) {
+            holder.__echoFiredDuringHold = document.querySelector(holdSelector) !== null;
+            holder.__mockFirePtyResized(id, cols + 7, rows, 'desktop');
+          }
+          return original(id, cols, rows);
+        };
+      }, { sessionId: SESSION_ID, holdSelector: TERMINAL_FRAME_HOLD_SELECTOR });
+      const since = Date.now();
+
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      await expectNoFrameHold(ownPage);
+
+      // The echo did land inside an open hold, or the rest proves nothing.
+      expect(await ownPage.evaluate(() => (window as unknown as { __echoFiredDuringHold: boolean | null }).__echoFiredDuringHold)).toBe(true);
+      const echoes = (await readTerminalTrace(ownPage, since, ['pty-resize-echo'])).map((entry) => entry.detail);
+      expect(echoes).toHaveLength(1);
+      expect(echoes[0]).toMatchObject({ action: 'skip', reason: 'frame-hold' });
+      // Frames, not a timer: long enough for a re-assert (debounced 150 ms), were one scheduled, to send.
+      await settleFrames(ownPage, 30);
+      expect(await readTerminalTrace(ownPage, since, ['echo-reassert', 'echo-reassert-deferred'])).toEqual([]);
+      expect(await resizeOrigins(ownPage, since)).toEqual(['frame-hold']);
+      await expectNoFrameHoldRecovery(ownPage, since);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('dropping a window on the screen edge snaps it as a layout change: its terminal holds its frame until it repaints', async () => {
+    // The drop resizes the window, so useWindowDrag runs it through runTerminalLayoutChange. A
+    // snap that called the store directly would reflow the terminal's old frame onto the new grid.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      const frame = ownPage.locator('[data-testid^="window-frame-"]').filter({
+        has: ownPage.locator('[data-testid="task-detail-dialog"]'),
+      });
+      const windowId = ((await frame.getAttribute('data-testid')) ?? '').replace('window-frame-', '');
+      const windowState = () => ownPage.evaluate((id) => (window as unknown as {
+        __zustandStores: { window: { getState: () => { windows: Record<string, { state: string }> } } };
+      }).__zustandStores.window.getState().windows[id]?.state ?? 'gone', windowId);
+      expect(await windowState()).toBe('floating');
+
+      const overlay = await ownPage.locator('[data-testid="window-overlay"]').boundingBox();
+      const titleBar = await frame.locator('[data-testid="task-detail-titlebar"]').boundingBox();
+      if (!overlay || !titleBar) throw new Error('no overlay or title bar');
+      // Every hold from here: one that comes and goes is gone by a final read.
+      await ownPage.evaluate((hold) => {
+        const holder = window as unknown as { __frameHolds: Array<{ held: number; drawn: number | null }> };
+        holder.__frameHolds = [];
+        new MutationObserver(() => {
+          const holding = document.querySelector(hold.selector) !== null;
+          const last = holder.__frameHolds.at(-1);
+          if (holding && (!last || last.drawn !== null)) holder.__frameHolds.push({ held: performance.now(), drawn: null });
+          if (!holding && last && last.drawn === null) last.drawn = performance.now();
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [hold.attribute] });
+      }, { selector: TERMINAL_FRAME_HOLD_SELECTOR, attribute: TERMINAL_FRAME_HOLD_ATTRIBUTE });
+      const since = Date.now();
+
+      // Grab the title bar's middle and take the pointer into the overlay's left edge: a screen dock.
+      await ownPage.mouse.move(titleBar.x + titleBar.width / 2, titleBar.y + titleBar.height / 2);
+      await ownPage.mouse.down();
+      await ownPage.mouse.move(overlay.x + 2, overlay.y + overlay.height / 2, { steps: 14 });
+      await ownPage.mouse.up();
+
+      await expect.poll(windowState, { timeout: 5000 }).toBe('snapped');
+      expect((await readTerminalTrace(ownPage, since, ['layout-landing-begin'])).map((entry) => entry.detail))
+        .toContainEqual({ scope: 'window-overlay' });
+      // The terminal held its frame for the snap and drew the new one.
+      await expect.poll(() => ownPage.evaluate(() => (window as unknown as {
+        __frameHolds: Array<{ held: number; drawn: number | null }>;
+      }).__frameHolds.length), { timeout: 5000 }).toBeGreaterThan(0);
+      await expectNoFrameHold(ownPage);
+      expect(await ownPage.evaluate(() => (window as unknown as {
+        __frameHolds: Array<{ held: number; drawn: number | null }>;
+      }).__frameHolds.every((span) => span.drawn !== null))).toBe(true);
+      await expectNoFrameHoldRecovery(ownPage, since);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  /** Watch for any terminal holding its frame from now on; the returned function reports whether one has. */
+  async function watchForFrameHold(ownPage: Page): Promise<() => Promise<boolean>> {
+    await ownPage.evaluate((hold) => {
+      const holder = window as unknown as { __frameHoldSeen: boolean };
+      holder.__frameHoldSeen = false;
+      new MutationObserver(() => {
+        if (document.querySelector(hold.selector) !== null) holder.__frameHoldSeen = true;
+      }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [hold.attribute] });
+    }, { selector: TERMINAL_FRAME_HOLD_SELECTOR, attribute: TERMINAL_FRAME_HOLD_ATTRIBUTE });
+    return () => ownPage.evaluate(() => (window as unknown as { __frameHoldSeen: boolean }).__frameHoldSeen);
+  }
+
+  /** Wait until no PTY resize has been sent for a beat, then forget the ones that were. */
+  async function settleResizeLog(ownPage: Page): Promise<void> {
+    let previousCount = -1;
+    await expect.poll(async () => {
+      const count = await ownPage.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+      const settled = count === previousCount;
+      previousCount = count;
+      return settled;
+    }, { intervals: [300], timeout: 8000 }).toBe(true);
+    await ownPage.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+  }
+
+  /**
+   * A maximize that must not hold the frame: the window grows and the terminal refits as a plain
+   * terminal does. The PTY hears the larger grid (so the refit did happen), and no terminal ever
+   * marked itself held.
+   */
+  async function expectPlainRefitOnMaximize(ownPage: Page, since: number, holdSeen: () => Promise<boolean>): Promise<void> {
+    await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+    await expect.poll(() => ownPage.evaluate(() => window.electronAPI.sessions.__resizeCalls.length), { timeout: 5000 }).toBeGreaterThan(0);
+    // Frames, not a timer: a hold, were one to start, begins within a few frames of the refit.
+    await settleFrames(ownPage, 30);
+    expect(await holdSeen()).toBe(false);
+    expect(await readTerminalTrace(ownPage, since, ['frame-hold'])).toEqual([]);
+    await expect(ownPage.locator('[data-testid^="window-frame-"]').filter({
+      has: ownPage.locator('[data-testid="task-detail-dialog"]'),
+    })).toHaveClass(/rounded-none/);
+  }
+
+  test('a terminal still under its launch overlay does not hold a frame through a maximize', async () => {
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      // The agent is not on screen, so the overlay covers the terminal.
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toBeVisible();
+      await settleResizeLog(ownPage);
+      const holdSeen = await watchForFrameHold(ownPage);
+      await expectPlainRefitOnMaximize(ownPage, Date.now(), holdSeen);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('a terminal still replaying its scrollback does not hold a frame through a maximize', async () => {
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      // The terminal's replay waits on this until the test says otherwise (the watchdog is 5 s).
+      await ownPage.evaluate((sessionId) => {
+        const holder = window as unknown as { __mockScrollbackGate: Record<string, Promise<void>> };
+        holder.__mockScrollbackGate = { [sessionId]: new Promise<void>(() => { /* never released */ }) };
+      }, SESSION_ID);
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+      await markSessionFirstOutput(ownPage, SESSION_ID);
+      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+      // The replay the overlay's lift asks for is in flight and held by the gate.
+      await expect.poll(() => ownPage.evaluate(() => (
+        (window as unknown as { __mockScrollbackCalls?: Array<{ gated: boolean }> }).__mockScrollbackCalls ?? []
+      ).some((call) => call.gated)), { timeout: 5000 }).toBe(true);
+      await settleResizeLog(ownPage);
+      const holdSeen = await watchForFrameHold(ownPage);
+      await expectPlainRefitOnMaximize(ownPage, Date.now(), holdSeen);
+    } finally {
+      await own.browser.close();
+    }
+  });
 });
 
 
@@ -546,6 +766,15 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
     for (let step = 1; step <= 40; step += 1) {
       await target.setViewportSize({ width: from.width + direction * step * 8, height: from.height + direction * step * 4 });
       await target.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+      // An OS drag's first step is often the slow one, and a run of resizes only opens the gate on its
+      // second. Two more frames (about 33 ms, well under the gate's 150 ms) let the terminal's
+      // ResizeObserver see the first layout and arm its 200 ms refit before the gate is open, which is
+      // the race a slow first step opens. Frames, not a timer, so the gap is the same on any runner.
+      if (step === 1) {
+        for (let extraFrame = 0; extraFrame < 2; extraFrame += 1) {
+          await target.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+        }
+      }
     }
   }
   async function expectGridFinal(target: Page): Promise<void> {
@@ -562,11 +791,7 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
       await ownPage.setViewportSize({ width: 1400, height: 900 });
       await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
       await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
-      await ownPage.evaluate((sessionId) => {
-        (window as unknown as {
-          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
-        }).__zustandStores.session.getState().markFirstOutput(sessionId);
-      }, SESSION_ID);
+      await markSessionFirstOutput(ownPage, SESSION_ID);
       await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
       await ownPage.waitForTimeout(1500);
@@ -647,6 +872,90 @@ test.describe('Task Detail: window shortcuts with the Command Terminal open over
       await own.browser.close();
     }
   });
+
+  test('Ctrl+Shift+M and Ctrl+Shift+W act on a conversation window, but with the Command Terminal open over it only the panel reacts', async () => {
+    // The conversation window binds the same two capture-phase shortcuts as the panel
+    // (`windowOwnsKeys` in ConversationWindow), so one press used to act on both.
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { setConversationSessionId: (id: string) => void } } };
+        }).__zustandStores.session.getState().setConversationSessionId(sessionId);
+      }, SESSION_ID);
+      const conversation = ownPage.getByTestId('conversation-window');
+      await expect(conversation).toBeVisible({ timeout: 5000 });
+      const conversationFrame = ownPage.locator('[data-testid^="window-frame-"]').filter({ has: conversation });
+      await expect(conversationFrame).toHaveClass(/rounded-lg/);
+
+      // With no panel the window owns the keys: without this, a window that never took
+      // them would pass everything below.
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(conversationFrame).toHaveClass(/rounded-none/);
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(conversationFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+P');
+      const panel = ownPage.getByTestId('command-terminal-panel');
+      await expect(panel).toBeVisible();
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(panel).toHaveAttribute('data-maximized', 'true');
+      await expect(conversationFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+W');
+      await expect(panel).toBeHidden();
+      await expect(conversation).toBeVisible();
+
+      // The panel gone, the keys are the window's again: this press closes it.
+      await ownPage.keyboard.press('Control+Shift+W');
+      await expect(conversation).toHaveCount(0, { timeout: 5000 });
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('Ctrl+Shift+M and Ctrl+Shift+W act on the Agent Monitor\'s task window, but with the Command Terminal open over it only the panel reacts', async () => {
+    // The monitor's host folds the panel into `shortcutsSuppressed`, as the board's does.
+    const taskId = 'task-monitor-shortcuts';
+    const own = await launchMonitorSeed({
+      tasks: [{ id: taskId, displayId: 61, title: 'Monitor shortcuts task', lane: 'Executing', session: true }],
+    });
+    try {
+      const ownPage = own.page;
+      await openMonitor(ownPage);
+      await byTestId(ownPage, 'monitor-page')
+        .locator(`[data-session-id="${sessionIdOf(taskId)}"] [data-testid="monitor-card-title"]`)
+        .click();
+      const detailFrame = ownPage.locator('#monitor-detail-layer-root [data-testid^="window-frame-"]');
+      await expect(detailFrame).toHaveCount(1);
+      await expect(detailFrame).toHaveClass(/rounded-lg/);
+
+      // With no panel the task window owns the keys.
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(detailFrame).toHaveClass(/rounded-none/);
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(detailFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+P');
+      const panel = ownPage.getByTestId('command-terminal-panel');
+      await expect(panel).toBeVisible();
+      await ownPage.keyboard.press('Control+Shift+M');
+      await expect(panel).toHaveAttribute('data-maximized', 'true');
+      await expect(detailFrame).toHaveClass(/rounded-lg/);
+
+      await ownPage.keyboard.press('Control+Shift+W');
+      await expect(panel).toBeHidden();
+      await expect(detailFrame).toHaveCount(1);
+      await expect(byTestId(ownPage, 'monitor-page')).toBeVisible();
+
+      // The panel gone, the keys are the task window's again: this press closes it.
+      await ownPage.keyboard.press('Control+Shift+W');
+      await expect(detailFrame).toHaveCount(0, { timeout: 5000 });
+    } finally {
+      await own.browser.close();
+    }
+  });
 });
 
 test.describe('Task Detail: a resize whose release went unseen', () => {
@@ -659,11 +968,7 @@ test.describe('Task Detail: a resize whose release went unseen', () => {
       const ownPage = own.page;
       await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
       await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
-      await ownPage.evaluate((sessionId) => {
-        (window as unknown as {
-          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
-        }).__zustandStores.session.getState().markFirstOutput(sessionId);
-      }, SESSION_ID);
+      await markSessionFirstOutput(ownPage, SESSION_ID);
       await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
 
       type ResizeCall = { sessionId: string; cols: number; rows: number };
@@ -727,6 +1032,100 @@ test.describe('Task Detail: a resize whose release went unseen', () => {
         .slice(callsBeforeMaximize)
         .filter((call) => call.sessionId === SESSION_ID)
         .map((call) => call.cols)), { timeout: 5000 }).toBeGreaterThan(settledCols);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('a tiled group\'s outer edge drag ends where it stood once the pointer shows its button up, and the edge takes the next drag', async () => {
+    // The footprint resizer's release can miss the strip too. The gate abandons its drag, the
+    // resizer commits the footprint it reached (as a layout change), and its own re-entry guard
+    // lets go, or the next press on the edge would be ignored for good.
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+      const dialogs = ownPage.locator('[data-testid="task-detail-dialog"]');
+      await expect(dialogs).toHaveCount(1);
+      // The first window covers the board, so the second opens through the store, the entry point
+      // every card click funnels into; docking tiles the pair.
+      await ownPage.evaluate((taskId) => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { setDetailTaskId: (id: string) => void } } };
+        }).__zustandStores.session.getState().setDetailTaskId(taskId);
+      }, EDIT_TASK_ID);
+      await expect(dialogs).toHaveCount(2);
+      type Footprint = { x: number; y: number; w: number; h: number };
+      await ownPage.evaluate(() => {
+        const windowState = (window as unknown as {
+          __zustandStores: {
+            window: {
+              getState: () => {
+                windows: Record<string, unknown>;
+                dockIntoWindow: (draggedId: string, targetId: string, side: string) => void;
+                setTileTreeRect: (rect: { x: number; y: number; w: number; h: number }) => void;
+              };
+            };
+          };
+        }).__zustandStores.window.getState();
+        const [firstId, secondId] = Object.keys(windowState.windows);
+        windowState.dockIntoWindow(secondId, firstId, 'right');
+        // An inset footprint, so the right edge has board to grow into.
+        windowState.setTileTreeRect({ x: 0.1, y: 0.1, w: 0.7, h: 0.8 });
+      });
+      const footprint = () => ownPage.evaluate(() => (window as unknown as {
+        __zustandStores: { window: { getState: () => { tileTreeRect: { x: number; y: number; w: number; h: number } } } };
+      }).__zustandStores.window.getState().tileTreeRect);
+      await expect.poll(async () => Math.abs((await footprint()).w - 0.7) < 0.001).toBe(true);
+      const before: Footprint = await footprint();
+      const overlayWidth = (await ownPage.locator('[data-testid="window-overlay"]').boundingBox())?.width ?? 0;
+      expect(overlayWidth).toBeGreaterThan(0);
+
+      // The pointer is not known to the page until it has moved once.
+      const edgeBox = await ownPage.getByTestId('footprint-resizer-right').boundingBox();
+      if (!edgeBox) throw new Error('no right footprint edge');
+      await ownPage.mouse.move(edgeBox.x + edgeBox.width / 2, edgeBox.y + edgeBox.height / 2);
+      const since = Date.now();
+      // Press the right edge and drag it 120px out, then lose the strip's capture: the release
+      // never reaches the strip.
+      await ownPage.evaluate(() => {
+        const edge = document.querySelector<HTMLElement>('[data-testid="footprint-resizer-right"]');
+        if (!edge) throw new Error('no right footprint edge');
+        const box = edge.getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        const init = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+        edge.dispatchEvent(new PointerEvent('pointerdown', { ...init, button: 0, buttons: 1, clientX: x, clientY: y }));
+        edge.dispatchEvent(new PointerEvent('pointermove', { ...init, button: -1, buttons: 1, clientX: x + 120, clientY: y }));
+        if (edge.hasPointerCapture(1)) edge.releasePointerCapture(1);
+      });
+      await expect.poll(() => isManagerResizeGateOpen(ownPage)).toBe(true);
+      // Nothing is committed while the drag is live.
+      expect(Math.abs((await footprint()).w - before.w)).toBeLessThan(0.001);
+
+      // The pointer moves on with no button held: the drag is over.
+      await ownPage.mouse.move(20, 20);
+      await expect.poll(() => isManagerResizeGateOpen(ownPage)).toBe(false);
+      const abandoned = (await readTerminalTrace(ownPage, since, ['manager-resize-abandoned'])).map((entry) => entry.detail);
+      expect(abandoned).toHaveLength(1);
+      expect(abandoned[0]).toMatchObject({ owner: 'footprint-edge' });
+      // The footprint it reached is the one committed, and as a layout change of the board's overlay.
+      const dragged: Footprint = await footprint();
+      expect(Math.abs(dragged.w - (before.w + 120 / overlayWidth))).toBeLessThan(0.005);
+      expect(Math.abs(dragged.x - before.x)).toBeLessThan(0.001);
+      expect((await readTerminalTrace(ownPage, since, ['layout-landing-begin'])).map((entry) => entry.detail))
+        .toContainEqual({ scope: 'window-overlay' });
+
+      // The edge is not left holding the lost drag: the next one moves it.
+      const nextBox = await ownPage.getByTestId('footprint-resizer-right').boundingBox();
+      if (!nextBox) throw new Error('no right footprint edge after the drag');
+      const nextX = nextBox.x + nextBox.width / 2;
+      const nextY = nextBox.y + nextBox.height / 2;
+      await ownPage.mouse.move(nextX, nextY);
+      await ownPage.mouse.down();
+      await ownPage.mouse.move(nextX + 60, nextY, { steps: 3 });
+      await ownPage.mouse.up();
+      await expect.poll(async () => (await footprint()).w, { timeout: 5000 }).toBeGreaterThan(dragged.w + 0.02);
     } finally {
       await own.browser.close();
     }
@@ -1125,14 +1524,7 @@ test.describe('Task Detail: maximize focus restore', () => {
 
       // Inject sessionFirstOutput so TerminalTab's terminalReady flips to true
       // immediately, lifting the LaunchOverlay shimmer and triggering xterm.open().
-      await page.evaluate((sessionId) => {
-        const stores = (window as unknown as {
-          __zustandStores?: {
-            session?: { getState: () => { markFirstOutput: (id: string) => void } };
-          };
-        }).__zustandStores;
-        stores?.session?.getState().markFirstOutput(sessionId);
-      }, SESSION_ID);
+      await markSessionFirstOutput(page, SESSION_ID);
 
       // Wait for xterm to open: .xterm-helper-textarea is the focusable element
       // xterm attaches immediately after terminal.open() completes.

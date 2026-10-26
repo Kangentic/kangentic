@@ -46,6 +46,32 @@ export function shouldObserverScheduleRefit(
   return !deferContainerResize && !managerResizeInProgress;
 }
 
+export type RefitTimerAction = 'fit' | 'wait-for-gesture';
+
+/**
+ * What a debounced refit does when its timer fires.
+ *
+ * `shouldObserverScheduleRefit` is read when the observer notifies, and a gesture
+ * can open after that. A drag of the OS window's edge opens the gate on its SECOND
+ * resize, while the observer reports the FIRST resize's layout a frame or more
+ * earlier, so its 200ms refit is armed with the gate still closed and nothing
+ * cancels it when the gate opens. It then fits the terminal mid-drag, the fit
+ * moves the grid, and the PTY hears a second resize 200ms after that, in the
+ * middle of the gesture the gate exists to hold.
+ *
+ * So an observer refit asks again at fire time: while a gesture is open it waits
+ * (the caller arms it once more), and the gesture's end, which dispatches
+ * `terminal-panel-resize`, replaces it with the one refit that lands the final
+ * grid. A refit armed by anything else (the panel-resize event is dispatched
+ * after a gesture, or by a host that is not gated) fits as before.
+ */
+export function resolveRefitTimerAction(
+  scheduledByObserver: boolean,
+  managerResizeInProgress: boolean,
+): RefitTimerAction {
+  return scheduledByObserver && managerResizeInProgress ? 'wait-for-gesture' : 'fit';
+}
+
 export type PanelResizeAction =
   | { kind: 'immediate-fit-flush' }
   | { kind: 'debounced-fit'; delayMs: number; scheduleSettleCleanup: boolean };
@@ -125,11 +151,15 @@ export function useTerminalRefit(options: TerminalRefitOptions): void {
     if (!element) return;
 
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-    const scheduleRefit = (delayMs: number) => {
+    const scheduleRefit = (delayMs: number, scheduledByObserver = false) => {
       if (!initializedRef.current) return;
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         resizeTimer = null;
+        if (resolveRefitTimerAction(scheduledByObserver, isManagerResizeInProgress()) === 'wait-for-gesture') {
+          scheduleRefit(delayMs, true);
+          return;
+        }
         // Re-check size at fire time, not just at schedule time: a container
         // can collapse to 0 during the debounce (a tile/untile or visibility
         // transition), and FitAddon's own zero-size guard already no-ops in
@@ -158,7 +188,7 @@ export function useTerminalRefit(options: TerminalRefitOptions): void {
         return;
       }
       if (shouldObserverScheduleRefit(deferContainerResize, isManagerResizeInProgress())) {
-        scheduleRefit(OBSERVER_REFIT_DEBOUNCE_MS);
+        scheduleRefit(OBSERVER_REFIT_DEBOUNCE_MS, true);
       }
     });
     observer.observe(element);

@@ -215,6 +215,10 @@ export function startCommandTerminalSwapDrag(event: React.PointerEvent, options:
   const startX = event.clientX;
   const startY = event.clientY;
   let tiles: Map<string, Tile> | null = null;
+  // Where the overlay sits on screen, read once when the drag starts: the drag
+  // moves frames inside it, never the overlay, so a read per move would only
+  // force a layout after each preview's style writes.
+  let overlayOrigin: { left: number; top: number } | null = null;
   let float: Float | null = null;
   let landingMark: HTMLElement | null = null;
   let targetId: string | null = null;
@@ -248,6 +252,7 @@ export function startCommandTerminalSwapDrag(event: React.PointerEvent, options:
     const overlay = dragged?.frame.parentElement?.getBoundingClientRect();
     if (!dragged || !overlay || read.size < 2) return false;
     tiles = read;
+    overlayOrigin = { left: overlay.left, top: overlay.top };
     // The pointer crosses the terminals all drag long; none of them reacts to it.
     for (const tile of read.values()) tile.frame.style.pointerEvents = 'none';
     const grabX = startX - overlay.left - dragged.left;
@@ -304,12 +309,10 @@ export function startCommandTerminalSwapDrag(event: React.PointerEvent, options:
     }
     const activeTiles = tiles as Map<string, Tile> | null;
     const dragged = activeTiles?.get(options.windowId);
-    if (!activeTiles || !dragged || !float) return;
+    if (!activeTiles || !dragged || !float || !overlayOrigin) return;
     float.element.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
-    const overlay = dragged.frame.parentElement?.getBoundingClientRect();
-    if (!overlay) return;
-    const pointerX = moveEvent.clientX - overlay.left;
-    const pointerY = moveEvent.clientY - overlay.top;
+    const pointerX = moveEvent.clientX - overlayOrigin.left;
+    const pointerY = moveEvent.clientY - overlayOrigin.top;
     let hit: string | null = null;
     for (const tile of activeTiles.values()) {
       if (tile.windowId === options.windowId) continue;

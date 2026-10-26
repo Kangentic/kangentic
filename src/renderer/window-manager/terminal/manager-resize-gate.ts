@@ -194,6 +194,21 @@ export function createManagerResizeGate(
     return { end: () => close(gesture) };
   };
 
+  // The refit an OS window drag held, sent once the drag is over. A pointer
+  // gesture still open (a seam, a window edge) holds it to that gesture's end,
+  // as it holds every other refit; sent at once it refit the terminals mid-drag.
+  const announceWindowResizeEnd = (): void => {
+    if (gestures.size === 0) {
+      options.onWindowResizeEnd?.();
+      return;
+    }
+    const heldCallback = deferred;
+    deferred = () => {
+      heldCallback?.();
+      options.onWindowResizeEnd?.();
+    };
+  };
+
   // The OS window's own edge (see the header).
   let lastWindowResizeAt = Number.NEGATIVE_INFINITY;
   let windowDrag: { gesture: ManagerResizeGesture; settle: ReturnType<typeof setTimeout> | null } | null = null;
@@ -204,7 +219,7 @@ export function createManagerResizeGate(
     if (drag.settle) clearTimeout(drag.settle);
     drag.gesture.end();
     // After the held refit, which the end above sent.
-    queueMicrotask(() => options.onWindowResizeEnd?.());
+    queueMicrotask(announceWindowResizeEnd);
   };
   const onWindowResize = (): void => {
     const now = Date.now();
@@ -222,7 +237,7 @@ export function createManagerResizeGate(
         if (windowDrag !== drag) return;
         windowDrag = null;
         if (drag.settle) clearTimeout(drag.settle);
-        queueMicrotask(() => options.onWindowResizeEnd?.());
+        queueMicrotask(announceWindowResizeEnd);
       });
       windowDrag = drag;
     }

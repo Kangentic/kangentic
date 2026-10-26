@@ -26,9 +26,12 @@
  * not existence-based).
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, toastCountRightNow, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery, TERMINAL_FRAME_HOLD_SELECTOR } from './helpers';
+import {
+  waitForViteReady, gotoVite, toastCountRightNow, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery,
+  TERMINAL_FRAME_HOLD_SELECTOR, isManagerResizeGateOpen, readTerminalTrace,
+} from './helpers';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -226,6 +229,16 @@ async function launchWithState(
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { browser, page };
+}
+
+/**
+ * The message a renderer really receives when main throws `errorName` from a Command Terminal
+ * start: Electron's invoke wrapper, then the error class, then main's sentence. The UI mock does
+ * not decorate a rejection, so a spec whose assertion is the stripped sentence builds the
+ * decorated form itself: a plain mock rejection would pass against code that strips nothing.
+ */
+function decoratedInvokeMessage(errorName: string, sentence: string): string {
+  return `Error invoking remote method 'session:spawnTransient': ${errorName}: ${sentence}`;
 }
 
 const MULTI_PROJECT_ID = 'proj-multi-term';
@@ -1772,8 +1785,10 @@ test.describe('Command Terminal', () => {
         .toBe(2);
 
       // Hide the layer, then switch to Project B (wait for the switch to settle).
+      // Two windows are mounted until the hide lands, so a visibility check on the
+      // bare locator would be a strict-mode violation; the count is the question.
       await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
       await page.locator('[role="button"]:has-text("Project Beta")').click();
       await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
 
@@ -1816,9 +1831,11 @@ test.describe('Command Terminal', () => {
         .toBe(2);
       const originalASessionIds = (await transientEntriesFor(page, PROJECT_A_ID)).map((entry) => entry.sessionId).sort();
 
-      // Hide, switch to B, open (spawns B's one terminal), hide again.
+      // Hide, switch to B, open (spawns B's one terminal), hide again. Two windows
+      // are mounted until the first hide lands, so it asserts the count (a bare
+      // visibility check on two matches is a strict-mode violation).
       await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
       await page.locator('[role="button"]:has-text("Project Beta")').click();
       await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
       await page.keyboard.press('Control+Shift+P');
@@ -2118,7 +2135,13 @@ test.describe('Command Terminal', () => {
         // Two sit side by side, each the full height.
         await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-        await expect.poll(async () => (await layoutBoxes(page)).panes['slot-2']?.left ?? 0, { timeout: 3000 }).toBeGreaterThan(0);
+        // Poll for the settled two-up (slot-2 at the area's horizontal middle), not for
+        // the frame merely existing: the tiles reach their halves a hop after they mount.
+        await expect.poll(async () => {
+          const layout = await layoutBoxes(page);
+          const second = layout.panes['slot-2'];
+          return !!second && Math.abs(second.left - (layout.area.left + layout.area.width / 2)) <= PIXEL_TOLERANCE;
+        }, { timeout: 3000 }).toBe(true);
         let { area, panes } = await layoutBoxes(page);
         expectNear(panes['slot-1'].left, area.left, 'slot-1 left');
         expectNear(panes['slot-2'].left, area.left + area.width / 2, 'slot-2 left');
@@ -2370,6 +2393,195 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    /** The panel open on one terminal whose startup fits have reached the PTY, with the resize log cleared. */
+    async function openPanelSettled(page: Page): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      let previousCount = -1;
+      await expect.poll(async () => {
+        const count = await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+        const settled = count > 0 && count === previousCount;
+        previousCount = count;
+        return settled;
+      }, { intervals: [500], timeout: 10000 }).toBe(true);
+      await page.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+    }
+
+    const resizeCallCount = (page: Page) => page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+
+    /** The panel's saved place in global config, or null until it is moved or resized. */
+    const savedPanelPlace = (page: Page) => page.evaluate(async () => (await window.electronAPI.config.getGlobal()).commandTerminalPanel ?? null);
+
+    /** The grab point at the middle of one of the panel's resize edges. */
+    async function edgePoint(page: Page, edge: string): Promise<{ x: number; y: number }> {
+      const box = await page.getByTestId(`command-terminal-panel-resize-${edge}`).boundingBox();
+      if (!box) throw new Error(`no ${edge} edge`);
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    }
+
+    /** Where `expectNear` finds a panel box that was put back: its own start, edge to edge. */
+    function expectSameBox(actual: Box | null, expected: Box, label: string): void {
+      if (!actual) throw new Error(`${label}: no box`);
+      expectNear(actual.left, expected.left, `${label} left`);
+      expectNear(actual.top, expected.top, `${label} top`);
+      expectNear(actual.width, expected.width, `${label} width`);
+      expectNear(actual.height, expected.height, `${label} height`);
+    }
+
+    const boxOf = async (locator: Locator): Promise<Box> => {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error('no box');
+      return { left: box.x, top: box.y, width: box.width, height: box.height };
+    };
+
+    test('a panel edge drag whose release went unseen ends where it stood: the gate frees, the box is kept and saved, and the terminal refits', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openPanelSettled(page);
+        expect(await savedPanelPlace(page)).toBeNull();
+        const panel = page.getByTestId('command-terminal-panel');
+        const before = await boxOf(panel);
+        const since = Date.now();
+
+        // Press the east edge and drag it 80px in, then lose the release: nothing
+        // closes the drag but the gate, which watches the pointer for it.
+        await page.evaluate(() => {
+          const edge = document.querySelector<HTMLElement>('[data-testid="command-terminal-panel-resize-e"]');
+          if (!edge) throw new Error('no east edge');
+          const box = edge.getBoundingClientRect();
+          const x = box.left + box.width / 2;
+          const y = box.top + box.height / 2;
+          const init = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
+          edge.dispatchEvent(new PointerEvent('pointerdown', { ...init, button: 0, buttons: 1, clientX: x, clientY: y }));
+          edge.dispatchEvent(new PointerEvent('pointermove', { ...init, button: -1, buttons: 1, clientX: x - 80, clientY: y }));
+        });
+        // The drag is live: the gate is held, the panel follows the pointer, and the PTY has heard nothing.
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(true);
+        await expect.poll(async () => (await boxOf(panel)).width, { timeout: 3000 }).toBeLessThan(before.width - 60);
+        expect(await resizeCallCount(page)).toBe(0);
+
+        // The pointer moves on with no button held: the drag is over, and the gate commits it as it stands.
+        await page.mouse.move(20, 20);
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(false);
+        // The gate named the panel as the owner it abandoned, on the buttonless pointer event
+        // (the browser sends a pointerover ahead of the move when the pointer lands on a new element).
+        const abandoned = (await readTerminalTrace(page, since, ['manager-resize-abandoned'])).map((entry) => entry.detail);
+        expect(abandoned).toHaveLength(1);
+        expect(abandoned[0]).toMatchObject({ owner: 'command-terminal-panel' });
+        expect(['pointermove', 'pointerover']).toContain(abandoned[0]?.reason);
+        expectNear((await boxOf(panel)).width, before.width - 80, 'panel width kept');
+        await expect.poll(() => savedPanelPlace(page), { timeout: 3000 }).not.toBeNull();
+        await expect.poll(() => resizeCallCount(page), { timeout: 3000 }).toBeGreaterThan(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Escape mid-resize puts the panel back where it started, saves nothing, frees the gate and leaves the panel open', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openPanelSettled(page);
+        expect(await savedPanelPlace(page)).toBeNull();
+        const panel = page.getByTestId('command-terminal-panel');
+        const before = await boxOf(panel);
+        const grab = await edgePoint(page, 'e');
+        await page.mouse.move(grab.x, grab.y);
+        await page.mouse.down();
+        await page.mouse.move(grab.x - 120, grab.y, { steps: 6 });
+        await expect.poll(async () => (await boxOf(panel)).width, { timeout: 3000 }).toBeLessThan(before.width - 100);
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(true);
+
+        await page.keyboard.press('Escape');
+
+        // Read with the button still down: a release would let the gate sweep up a
+        // gesture Escape had leaked, and hide it.
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(false);
+        expectSameBox(await boxOf(panel), before, 'panel after Escape');
+        // Escape cancelled the gesture, not the layer.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        await page.mouse.up();
+        // Frames, not a timer: long enough for a save, were there one, to land.
+        await settleFrames(page, 20);
+        expect(await savedPanelPlace(page)).toBeNull();
+        expectSameBox(await boxOf(panel), before, 'panel after the release');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Escape mid-move puts the panel back where it started, saves nothing and leaves the panel open', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openPanelSettled(page);
+        expect(await savedPanelPlace(page)).toBeNull();
+        const panel = page.getByTestId('command-terminal-panel');
+        const before = await boxOf(panel);
+        const header = await page.getByTestId('command-terminal-panel-header').boundingBox();
+        if (!header) throw new Error('no panel header');
+        // The header's empty middle, clear of its buttons.
+        const grabX = header.x + header.width / 2;
+        const grabY = header.y + header.height / 2;
+        await page.mouse.move(grabX, grabY);
+        await page.mouse.down();
+        await page.mouse.move(grabX - 40, grabY + 60, { steps: 6 });
+        await expect.poll(async () => (await boxOf(panel)).top, { timeout: 3000 }).toBeGreaterThan(before.top + 40);
+
+        await page.keyboard.press('Escape');
+
+        await expect.poll(async () => (await boxOf(panel)).top, { timeout: 3000 }).toBeLessThanOrEqual(before.top + 3);
+        expectSameBox(await boxOf(panel), before, 'panel after Escape');
+        await expect(panel).toHaveCSS('transform', 'none');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+
+        await page.mouse.up();
+        await settleFrames(page, 20);
+        expect(await savedPanelPlace(page)).toBeNull();
+        expectSameBox(await boxOf(panel), before, 'panel after the release');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    for (const hide of [
+      { way: 'Hide button', act: (page: Page) => page.getByTestId('command-terminal-panel-hide').dispatchEvent('click') },
+      { way: 'panel.close shortcut', act: (page: Page) => page.keyboard.press('Control+Shift+W') },
+    ]) {
+      test(`hiding the panel with its ${hide.way} mid-resize frees the gate, so a later refit lands`, async () => {
+        const { browser, page } = await launchWithState(multiTerminalPreConfig());
+        try {
+          await openPanelSettled(page);
+          const panel = page.getByTestId('command-terminal-panel');
+          const before = await boxOf(panel);
+          const grab = await edgePoint(page, 'e');
+          await page.mouse.move(grab.x, grab.y);
+          await page.mouse.down();
+          await page.mouse.move(grab.x - 120, grab.y, { steps: 6 });
+          await expect.poll(async () => (await boxOf(panel)).width, { timeout: 3000 }).toBeLessThan(before.width - 100);
+          await expect.poll(() => isManagerResizeGateOpen(page)).toBe(true);
+
+          await hide.act(page);
+
+          await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0, { timeout: 3000 });
+          // Read with the button still down, so a leaked gesture cannot be swept up by a release.
+          await expect.poll(() => isManagerResizeGateOpen(page)).toBe(false);
+
+          // The button stays down, so the gate can only be free because the unmount freed it: the
+          // reopened panel's terminals refit when it maximizes (keyboard only, no pointer event).
+          await page.keyboard.press('Control+Shift+P');
+          await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+          await settleResizes(page);
+          await page.keyboard.press('Control+Shift+M');
+          await expect(page.getByTestId('command-terminal-panel')).toHaveAttribute('data-maximized', 'true');
+          await expect.poll(() => resizeCallCount(page), { timeout: 3000 }).toBeGreaterThan(0);
+          await page.mouse.up();
+        } finally {
+          await browser.close();
+        }
+      });
+    }
   });
 
   /** Each slot's session id, with its agent marked on screen and its terminal initialized. */
@@ -2617,12 +2829,22 @@ test.describe('Command Terminal', () => {
       try {
         await openTwoReady(page);
         const before = await tileWidth(page, 'slot-1');
+        const sizesBefore = (await commandTileLayout(page))?.sizes ?? [];
+        expect(sizesBefore).toHaveLength(2);
         const seam = await page.locator('[data-testid^="tile-splitter-"]').boundingBox();
         if (!seam) throw new Error('no seam');
         await page.mouse.move(seam.x + seam.width / 2, seam.y + seam.height / 2);
         await page.mouse.down();
+        // The press holds the resize gate, which is how a test sees it landed on the seam.
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(true);
         await page.mouse.up();
-        await page.waitForTimeout(200);
+        // The release closes it, and a commit would run in that same handler. Frames, not a
+        // timer, give any commit's re-render time to show before the ratio is read.
+        await expect.poll(() => isManagerResizeGateOpen(page)).toBe(false);
+        await settleFrames(page, 10);
+        const sizesAfter = (await commandTileLayout(page))?.sizes ?? [];
+        expect(sizesAfter).toHaveLength(2);
+        sizesAfter.forEach((size, index) => expect(Math.abs(size - sizesBefore[index])).toBeLessThanOrEqual(GEOMETRY_TOLERANCE));
         expect(Math.abs((await tileWidth(page, 'slot-1')) - before)).toBeLessThanOrEqual(2);
       } finally {
         await browser.close();
@@ -2904,7 +3126,15 @@ test.describe('Command Terminal', () => {
         if (!floatBox) throw new Error('no float');
         expect(Math.abs(floatBox.width - sourceBox.width)).toBeLessThanOrEqual(3);
         expect(Math.abs(floatBox.height - sourceBox.height)).toBeLessThanOrEqual(3);
-        await expect(page.getByTestId('command-terminal-swap-ghost')).toHaveCount(0);
+        // Nothing else swap-related is on screen: the picture, the float holding it and
+        // the landing mark, with no second copy of the terminal beside them.
+        await expect.poll(() => page.locator('[data-testid^="command-terminal-swap-"]').evaluateAll(
+          (elements) => elements.map((element) => element.getAttribute('data-testid')).sort(),
+        ), { timeout: 3000 }).toEqual([
+          'command-terminal-swap-float',
+          'command-terminal-swap-landing',
+          'command-terminal-swap-picture',
+        ]);
         // The landing tile is marked: the accent ring, over the tall tile.
         const landing = page.getByTestId('command-terminal-swap-landing');
         await expect(landing).toBeVisible();
@@ -3267,6 +3497,98 @@ test.describe('Command Terminal', () => {
       }
     });
 
+    const CONVERSATION_OPEN_SENTENCE = 'That conversation is already open in another terminal.';
+
+    /** Every spawnTransient the page made, the refused ones too, in order. */
+    async function spawnAttempts(page: Page): Promise<Array<{ slot: string | null; resumeAgentSessionId: string | null }>> {
+      return page.evaluate(() => (window as unknown as {
+        __spawnAttempts?: Array<{ slot: string | null; resumeAgentSessionId: string | null }>;
+      }).__spawnAttempts ?? []);
+    }
+
+    /**
+     * The default mock spawn, logged, with a start that names a conversation refused the way main
+     * refuses one another terminal holds. `window.__refuseFreshStarts`, once set, refuses a start
+     * that names none too, which is how a test makes the fresh start behind a refused resume fail.
+     */
+    function refuseResumeStarts(): string {
+      return `
+        (function () {
+          var spawnBeforeRefusal = window.electronAPI.sessions.spawnTransient;
+          window.__spawnAttempts = [];
+          window.__refuseFreshStarts = false;
+          window.electronAPI.sessions.spawnTransient = function (input) {
+            window.__spawnAttempts.push({ slot: input.slot || null, resumeAgentSessionId: input.resumeAgentSessionId || null });
+            if (input.resumeAgentSessionId) {
+              return Promise.reject(new Error(${JSON.stringify(decoratedInvokeMessage('CommandTerminalStartError', CONVERSATION_OPEN_SENTENCE))}));
+            }
+            if (window.__refuseFreshStarts) {
+              return Promise.reject(new Error(${JSON.stringify(decoratedInvokeMessage('CommandTerminalStartError', 'The terminal shell did not start.'))}));
+            }
+            return spawnBeforeRefusal(input);
+          };
+        })();
+      `;
+    }
+
+    test('a resume main refuses starts a fresh terminal in the same slot and says why', async () => {
+      // Main refuses a conversation another terminal holds only after the slot's unused terminal
+      // has ended, so the window used to close with nothing in it. A fresh terminal takes its place.
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)) + refuseResumeStarts());
+      try {
+        const coldSessionId = await openWithOneTerminal(page);
+        const coldStarts = (await spawnAttempts(page)).length;
+        expect(coldStarts).toBe(1);
+
+        await page.getByTestId('command-terminal-earlier-row').first().click();
+
+        const refusalToast = page.getByTestId('toast').filter({ hasText: "Couldn't resume conversation" });
+        await expect(refusalToast.getByTestId('toast-title')).toHaveText("Couldn't resume conversation");
+        await expect(refusalToast.getByTestId('toast-body')).toHaveText(CONVERSATION_OPEN_SENTENCE);
+        // The refused resume, then a fresh start in the same slot that names no conversation.
+        await expect.poll(async () => (await spawnAttempts(page)).slice(coldStarts), { timeout: 5000 }).toEqual([
+          { slot: 'slot-1', resumeAgentSessionId: 'conversation-1' },
+          { slot: 'slot-1', resumeAgentSessionId: null },
+        ]);
+        // Frames, not a timer: long enough for a third start, were there one, to go out.
+        await settleFrames(page, 20);
+        expect((await spawnAttempts(page)).length).toBe(coldStarts + 2);
+
+        // The window stayed, and a new terminal runs in its slot.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        await expect.poll(async () => {
+          const pairedSessionId = (await transientPairingFor(page, EARLIER_PROJECT_ID))['slot-1'];
+          return !!pairedSessionId && pairedSessionId !== coldSessionId && (await runningSessionIds(page, [pairedSessionId])).length === 1;
+        }, { timeout: 5000 }).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a refused resume whose fresh start fails too closes the window', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)) + refuseResumeStarts());
+      try {
+        await openWithOneTerminal(page);
+        const coldStarts = (await spawnAttempts(page)).length;
+        // From here on every start is refused: the resume, and the fresh one behind it.
+        await page.evaluate(() => { (window as unknown as { __refuseFreshStarts: boolean }).__refuseFreshStarts = true; });
+
+        await page.getByTestId('command-terminal-earlier-row').first().click();
+
+        await expect(page.getByTestId('toast').filter({ hasText: "Couldn't resume conversation" }).getByTestId('toast-body'))
+          .toHaveText(CONVERSATION_OPEN_SENTENCE);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        // Both starts went out, the resume and the fresh one, and no third.
+        await settleFrames(page, 20);
+        expect((await spawnAttempts(page)).slice(coldStarts)).toEqual([
+          { slot: 'slot-1', resumeAgentSessionId: 'conversation-1' },
+          { slot: 'slot-1', resumeAgentSessionId: null },
+        ]);
+      } finally {
+        await browser.close();
+      }
+    });
+
     test('at the cap the rows are off and say why', async () => {
       const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
       try {
@@ -3360,8 +3682,15 @@ test.describe('Command Terminal', () => {
       await expect.poll(async () => (await transientEntriesFor(page, DETACHED_PROJECT_ID)).length, { timeout: 5000 }).toBe(1);
     }
 
-    /** A page booted as the project's detached window, as main boots one. */
-    async function launchDetachedWindow(preConfig: string): Promise<{ browser: Browser; page: Page }> {
+    /**
+     * A page booted as a project's detached window, as main boots one. The window names
+     * `windowProjectId`, the seeded project's unless a test names another to stand for one
+     * that was removed after the window's descriptor was written.
+     */
+    async function launchDetachedWindow(
+      preConfig: string,
+      windowProjectId: string = DETACHED_PROJECT_ID,
+    ): Promise<{ browser: Browser; page: Page }> {
       await waitForViteReady();
       const browser = await chromium.launch({ headless: true });
       const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -3370,7 +3699,7 @@ test.describe('Command Terminal', () => {
       await page.addInitScript(`${preConfig}
         window.electronAPI.popOut.descriptor = {
           kind: 'command-terminal',
-          params: { projectId: '${DETACHED_PROJECT_ID}', projectName: '${DETACHED_PROJECT_NAME}' },
+          params: { projectId: '${windowProjectId}', projectName: '${DETACHED_PROJECT_NAME}' },
         };`);
       await gotoVite(page, VITE_URL);
       return { browser, page };
@@ -3540,6 +3869,78 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('a window whose project has since been removed says so, and starts no terminal', async () => {
+      // The seeded project is in the list and the window names another one.
+      const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: false }), 'proj-removed-since');
+      try {
+        await expect(page.getByTestId('command-terminal-window-missing')).toHaveText('This project is no longer in Kangentic.', { timeout: 10000 });
+        await expect(page.getByTestId('command-terminal-detached')).toHaveCount(0);
+        // Frames, not a timer: long enough for a start, were the layer mounted, to go out.
+        await settleFrames(page, 20);
+        expect(await spawnCount(page)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // A read the window needs that fails reports `failed`, never `ready`: mounting the
+    // terminals without the session list starts a second terminal in a slot that has one.
+    const FAILED_WINDOW_TEXT = "Couldn't load the terminals for this window.";
+    for (const unreadable of [
+      { read: 'project list', script: `window.electronAPI.projects.list = function () { return Promise.reject(new Error('projects unavailable')); };` },
+      { read: 'config', script: `window.electronAPI.config.get = function () { return Promise.reject(new Error('config unavailable')); };` },
+      { read: 'agent list', script: 'window.__mockAgentListRejects = true;' },
+      { read: 'session list', script: `window.electronAPI.sessions.list = function () { return Promise.reject(new Error('sessions unavailable')); };` },
+    ]) {
+      test(`a window that cannot read the ${unreadable.read} says so, and starts no terminal`, async () => {
+        // No terminal is running, so a window that mounted anyway would start one: a spawn
+        // count of zero then means it never mounted.
+        const { browser, page } = await launchDetachedWindow(`${detachedPreConfig({ liveTerminal: false })}
+          ${unreadable.script}`);
+        try {
+          await expect(page.getByTestId('command-terminal-window-failed')).toHaveText(FAILED_WINDOW_TEXT, { timeout: 10000 });
+          await expect(page.getByTestId('command-terminal-detached')).toHaveCount(0);
+          await settleFrames(page, 20);
+          expect(await spawnCount(page)).toBe(0);
+        } finally {
+          await browser.close();
+        }
+      });
+    }
+
+    // The header button hides the panel first, then asks main for the window. A window that
+    // does not open would leave the running terminals with nothing showing them.
+    for (const refusal of [
+      { outcome: 'refuses', arm: async (page: Page) => { await page.evaluate(() => (window as unknown as {
+        __mockPopOut: { setOpenResult: (opened: boolean) => void };
+      }).__mockPopOut.setOpenResult(false)); } },
+      { outcome: 'fails', arm: async (page: Page) => { await page.evaluate(() => {
+        window.electronAPI.popOut.open = () => Promise.reject(new Error('no window could be created'));
+      }); } },
+    ]) {
+      test(`when main ${refusal.outcome} the window, the panel comes back with its terminal, and a toast says so`, async () => {
+        const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: false }));
+        try {
+          await openPanelWithOneTerminal(page);
+          const startsBefore = await spawnCount(page);
+          await refusal.arm(page);
+
+          await page.getByTestId('command-terminal-panel-pop-out').click();
+
+          const toast = page.getByTestId('toast').filter({ hasText: "Couldn't open the window" });
+          await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't open the window");
+          await expect(toast.getByTestId('toast-body')).toHaveText('The terminals are back in the panel.');
+          // The pending-open flag reopened the panel, over the terminal that kept running.
+          await expect(page.getByTestId('command-terminal-panel')).toBeVisible({ timeout: 5000 });
+          await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+          await settleFrames(page, 20);
+          expect(await spawnCount(page)).toBe(startsBefore);
+        } finally {
+          await browser.close();
+        }
+      });
+    }
   });
 
   // ---------------------------------------------------------------------------
@@ -5363,12 +5764,6 @@ test.describe('Command Terminal', () => {
   test.describe('Refused spawn toasts', () => {
     const SHELL_REFUSAL_SENTENCE = 'The terminal\'s shell "pwsh" did not start; check it in Settings > Terminal.';
     const SLOT_REFUSAL_SENTENCE = 'Command Terminal slot-1 is already in use.';
-
-    /** The message a renderer really receives when main throws `errorName`:
-     *  Electron's invoke wrapper, then the error class, then main's sentence. */
-    function decoratedInvokeMessage(errorName: string, sentence: string): string {
-      return `Error invoking remote method 'session:spawnTransient': ${errorName}: ${sentence}`;
-    }
 
     test('a refused cold start toasts main\'s sentence without the IPC decoration and closes the window', async () => {
       // The cold-start effect's catch: it toasts the rejection and drops just

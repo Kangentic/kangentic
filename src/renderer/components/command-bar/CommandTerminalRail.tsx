@@ -22,7 +22,7 @@ import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
+import { commandTerminalDisplayName, commandTerminalHistoryName } from '../../../shared/command-terminal-name';
 import { StopButtonIcon } from './StopButtonIcon';
 import { NewTerminalButton } from './NewTerminalButton';
 import { useCommandTerminalHistory } from './useCommandTerminalHistory';
@@ -34,11 +34,14 @@ export interface RunningCommandTerminal {
   slot: string;
 }
 
+/** The rail's width, which the terminals' area excludes. */
+export const COMMAND_RAIL_WIDTH_PX = 248;
+
 /** One Earlier row (44px) plus the 2px gap between rows. */
 const EARLIER_ROW_PITCH_PX = 46;
 const EARLIER_ROW_GAP_PX = 2;
 
-/** Why New terminal and the Earlier rows are off: every slot is taken. */
+/** Why Add terminal and the Earlier rows are off: every slot is taken. */
 export const AT_CAP_REASON = 'Stop one of the four to add another';
 
 const MINUTE_MS = 60 * 1000;
@@ -104,7 +107,7 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
 
   return (
     <div className="flex h-9 flex-shrink-0 items-center gap-2.5 rounded-md px-2 hover:bg-surface-hover" data-testid="command-terminal-running-row" data-command-slot={terminal.slot}>
-      <Tooltip label="Stop. It moves to Earlier.">
+      <Tooltip label="Ends the terminal, and Earlier keeps its conversation if it was used">
         <button
           type="button"
           onClick={() => void handleStop()}
@@ -163,7 +166,8 @@ export function CommandTerminalRail({
   return (
     <nav
       aria-label="Command Terminals"
-      className="flex w-[248px] flex-shrink-0 flex-col border-r border-edge px-2 py-2.5 select-none"
+      className="flex flex-shrink-0 flex-col border-r border-edge px-2 py-2.5 select-none"
+      style={{ width: COMMAND_RAIL_WIDTH_PX }}
       data-testid="command-terminal-rail"
     >
       <div className="flex-shrink-0 pb-1">
@@ -181,16 +185,14 @@ export function CommandTerminalRail({
         </>
       )}
       {/* No heading and no hint until a conversation has ended. The list stays
-          mounted either way, so New terminal keeps its place at the foot and the
-          rail its width. */}
+          mounted either way, so it has measured how many rows fit before the
+          first one arrives. */}
       {entries.length > 0 && (
         <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading">Earlier</div>
       )}
       <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden" data-testid="command-terminal-earlier">
         {visibleEntries.map((entry) => {
-          // Its name, else what was first asked in it (nothing names a terminal
-          // without an Automation agent).
-          const name = entry.label ?? entry.firstPrompt ?? 'Untitled conversation';
+          const name = commandTerminalHistoryName(entry) ?? 'Untitled conversation';
           return (
             // No tip while it can be clicked: the row reads as what it resumes.
             // At the cap it says why it is off.

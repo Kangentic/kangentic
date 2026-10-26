@@ -67,7 +67,7 @@ function makeAdapter(name: string, options: { resumable: boolean }) {
   };
 }
 
-function createContext(history: Record<string, { agent_name: string; label: string | null }>, options: { alreadyOpen?: boolean } = {}) {
+function createContext(history: Record<string, { agent_name: string; label: string | null }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
   return {
     currentProjectId: 'proj-1',
     projectRepo: {
@@ -87,8 +87,10 @@ function createContext(history: Record<string, { agent_name: string; label: stri
         const row = history[agentSessionId];
         return row ? { agent_session_id: agentSessionId, cwd: PROJECT_ROOT, ...row } : null;
       }),
+      conversationAvailable: vi.fn(async () => options.transcriptGone !== true),
       claimResume: vi.fn(() => options.alreadyOpen !== true),
       settleResume: vi.fn(),
+      list: vi.fn(async () => [{ agentSessionId: 'conversation-a' }]),
     },
     sessionManager: {
       spawn: vi.fn(async () => ({ id: 'session-1', status: 'running' })),
@@ -172,5 +174,42 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     await expect(spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }))
       .rejects.toMatchObject({ code: 'conversation-gone' });
     expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('refuses a conversation whose transcript the agent purged since the list with conversation-gone, before claiming it', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } }, { transcriptGone: true });
+    await expect(spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }))
+      .rejects.toMatchObject({ code: 'conversation-gone' });
+    expect(context.commandTerminalHistory.conversationAvailable).toHaveBeenCalledWith(expect.objectContaining({ agent_session_id: 'conversation-a' }));
+    expect(context.commandTerminalHistory.claimResume).not.toHaveBeenCalled();
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('commandTerminalHistory:list', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+  });
+
+  function list(context: ReturnType<typeof createContext>, projectId: unknown): unknown {
+    registerTransientSessionHandlers(context as never);
+    return capturedHandlers.get(IPC.COMMAND_TERMINAL_HISTORY_LIST)!(null, projectId);
+  }
+
+  it("lists a known project's earlier conversations", async () => {
+    const context = createContext({});
+    await expect(list(context, 'proj-1')).resolves.toEqual([{ agentSessionId: 'conversation-a' }]);
+    expect(context.commandTerminalHistory.list).toHaveBeenCalledWith('proj-1');
+  });
+
+  it.each([
+    ['an id that names no project', 'proj-unknown'],
+    ['a non-string id', 42],
+  ])('answers %s with an empty list and never reads a database for it', (_name, projectId) => {
+    const context = createContext({});
+    context.projectRepo.getById.mockImplementation(((id: string) => (id === 'proj-1' ? { id: 'proj-1', path: PROJECT_ROOT, default_agent: 'codex', default_model: null, default_effort: null } : undefined)) as never);
+    expect(list(context, projectId)).toEqual([]);
+    expect(context.commandTerminalHistory.list).not.toHaveBeenCalled();
   });
 });

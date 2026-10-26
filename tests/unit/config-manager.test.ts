@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import type { SerializedWorkspace } from '../../src/shared/types';
+import { nativeTerminalDefaults, PREVIOUS_TERMINAL_DEFAULTS } from '../../src/shared/terminal-native-defaults';
 
 let tmpDir: string;
 let configPath: string;
@@ -1032,6 +1033,95 @@ describe('Config Manager -- native terminal defaults', () => {
 
     expect(config.terminal).toMatchObject({ fontFamily: 'Menlo, Consolas, "Courier New", monospace', fontSize: 14, cursorStyle: 'block' });
     expect(config.hasMigratedNativeTerminalDefaults).toBe(true);
+  });
+});
+
+describe('Config Manager - native terminal defaults when the config file is unreadable', () => {
+  // `platformDefaults()` is what a load that could not read the file falls back to. The file is
+  // left alone (a user can still repair it by hand) and the session runs on the platform's native
+  // terminal, not the shared default every platform used to get.
+
+  /** Runs `run` as `platform`. The platform config dirs are pointed at the throwaway dir too:
+   *  PATHS resolves its model cache from the platform's own config dir at import, and a pinned
+   *  platform would otherwise make the load create `~/.config/kangentic/models` (or its
+   *  Windows twin) under the real home directory. */
+  async function asPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T>): Promise<T> {
+    const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+    vi.stubEnv('APPDATA', tmpDir);
+    vi.stubEnv('XDG_CONFIG_HOME', tmpDir);
+    Object.defineProperty(process, 'platform', { value: platform });
+    try {
+      return await run();
+    } finally {
+      if (realPlatform) Object.defineProperty(process, 'platform', realPlatform);
+      vi.unstubAllEnvs();
+    }
+  }
+
+  const UNREADABLE_CONFIGS: Array<{ label: string; contents: string }> = [
+    { label: 'unparseable JSON', contents: '{ "terminal": { "fontSize": 18 }, }' },
+    // Valid JSON that is not a config object takes the other unreadable branch of load().
+    { label: 'JSON that is not an object', contents: '[]' },
+  ];
+
+  // Only Windows and Linux: macOS keeps the shared default, so its native defaults equal the
+  // old ones and nothing below could tell a native font from a missing one.
+  const PLATFORM_AND_CONFIG = (['win32', 'linux'] as const).flatMap((platform) =>
+    UNREADABLE_CONFIGS.map(({ label, contents }) => ({ platform, label, contents })));
+
+  it.each(PLATFORM_AND_CONFIG)(
+    'loads $platform native terminal defaults for $label and leaves the file untouched',
+    async ({ platform, contents }) => {
+      const native = nativeTerminalDefaults(platform);
+      // The case is only meaningful where the native defaults differ from the shared ones.
+      expect(native.fontFamily).not.toBe(PREVIOUS_TERMINAL_DEFAULTS.fontFamily);
+      fs.writeFileSync(configPath, contents);
+
+      const config = await asPlatform(platform, async () => (await createConfigManager()).load());
+
+      expect(config.terminal).toMatchObject({
+        fontFamily: native.fontFamily,
+        fontSize: native.fontSize,
+        cursorStyle: native.cursorStyle,
+      });
+      // A write here would replace a file the user could still repair with bare defaults.
+      expect(fs.readFileSync(configPath, 'utf-8')).toBe(contents);
+    },
+  );
+
+});
+
+describe('Config Manager - platformDefaults() returns a fresh terminal object', () => {
+  // The shallow `{ ...DEFAULT_CONFIG }` the load paths used shared DEFAULT_CONFIG's nested
+  // `terminal` with every ConfigManager, so a later write to `config.terminal` changed the
+  // constant for the whole process.
+  //
+  // It only shows on a load that neither replaces `terminal` nor saves: the native-defaults
+  // migration swaps the object out, and any save() deep-merges a new one. So the file here
+  // carries every one-time marker, no `terminal` key, and nothing legacy to migrate.
+  it('keeps a change to the loaded terminal config out of DEFAULT_CONFIG', async () => {
+    const settledConfig = JSON.stringify({
+      hasMigratedNativeTerminalDefaults: true,
+      hasMigratedWindowLightDismissDefault: true,
+      hasPurgedSeededDiscoveredModels: true,
+    });
+    fs.writeFileSync(configPath, settledConfig);
+
+    const config = (await createConfigManager()).load();
+    // The same module instance the manager read: vi.resetModules() in beforeEach makes a
+    // top-level import a different copy.
+    const { DEFAULT_CONFIG } = await import('../../src/shared/types');
+    const defaultFontFamily = DEFAULT_CONFIG.terminal.fontFamily;
+    const defaultFontSize = DEFAULT_CONFIG.terminal.fontSize;
+    // Precondition: nothing saved, so `config.terminal` is still the object the load built.
+    expect(fs.readFileSync(configPath, 'utf-8')).toBe(settledConfig);
+
+    expect(config.terminal).not.toBe(DEFAULT_CONFIG.terminal);
+    config.terminal.fontFamily = 'Changed Font';
+    config.terminal.fontSize = 99;
+
+    expect(DEFAULT_CONFIG.terminal.fontFamily).toBe(defaultFontFamily);
+    expect(DEFAULT_CONFIG.terminal.fontSize).toBe(defaultFontSize);
   });
 });
 

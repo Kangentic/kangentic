@@ -11,6 +11,7 @@ import { createWindowManagerStore } from '../../src/renderer/window-manager/stor
 import { findWindowTreeViolations } from '../../src/renderer/window-manager/store/tree-invariants';
 import { isHostArranged, windowIdsInReadingOrder } from '../../src/renderer/window-manager/tiling/host-arrangement';
 import type { TileNode } from '../../src/renderer/window-manager/store/types';
+import { MAX_COMMAND_TERMINALS } from '../../src/shared/command-terminal-name';
 
 function makeStore(windowCount: number) {
   const manager = createWindowManagerStore({ idPrefix: 'arrange-test', kind: 'command-terminal' });
@@ -57,6 +58,13 @@ describe('arrangeTiles', () => {
     expect(isHostArranged(state.windows, state.tileTree, state.tileTreeRect)).toBe(true);
     // Reading order is the order the windows were given, whatever the tree's own order.
     expect(windowIdsInReadingOrder(state.tileTree)).toEqual(ids);
+  });
+
+  it('has a preset for as many terminals as the cap allows', () => {
+    // The presets stop at four; a cap raised past them would float the extra terminals.
+    const { state, ids } = arranged(MAX_COMMAND_TERMINALS);
+    for (const id of ids) expect(state.windows[id].state).toBe('tiled');
+    expect(isHostArranged(state.windows, state.tileTree, state.tileTreeRect)).toBe(true);
   });
 
   it('floats a fifth window over the grid rather than leaving it pointing into the tree', () => {

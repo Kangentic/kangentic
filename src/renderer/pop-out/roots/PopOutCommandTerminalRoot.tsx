@@ -9,7 +9,7 @@ import { transientKey } from '../../stores/session-store/transient-session-slice
 import { syncFocusedTerminals } from '../../utils/focused-terminals';
 import type { PopOutProjectParams } from '../../../shared/pop-out';
 
-type LoadState = 'loading' | 'ready' | 'missing';
+type LoadState = 'loading' | 'ready' | 'missing' | 'failed';
 
 /**
  * Seed this window with its project and the state its terminals need, then
@@ -23,6 +23,9 @@ type LoadState = 'loading' | 'ready' | 'missing';
  * - the session list, because a window that mounts before it cannot find the
  *   terminal already running in its slot and starts a second one.
  * - the agent list, for the context bar's pickers.
+ *
+ * A read that fails reports `failed`, never `ready`: mounting without the
+ * session list would start a second terminal in a slot that has one.
  */
 function useSeedCommandTerminalWindow(projectId: string): LoadState {
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -37,13 +40,19 @@ function useSeedCommandTerminalWindow(projectId: string): LoadState {
         return;
       }
       useProjectStore.setState({ currentProject: project });
-      await Promise.all([
+      const [, sessionsSynced] = await Promise.all([
         useConfigStore.getState().loadConfig(),
         useSessionStore.getState().syncSessions(),
         useConfigStore.getState().loadAgentList(),
       ]);
-      if (!cancelled) setLoadState('ready');
-    })();
+      // A sync answers false when the list could not be read, and when a newer
+      // sync (a dev-mode update's) superseded it; asking once more settles which.
+      const sessionsLoaded = sessionsSynced || await useSessionStore.getState().syncSessions();
+      if (!cancelled) setLoadState(sessionsLoaded ? 'ready' : 'failed');
+    })().catch((error: unknown) => {
+      console.error('[PopOutCommandTerminalRoot] could not load the window', error);
+      if (!cancelled) setLoadState('failed');
+    });
     return () => {
       cancelled = true;
     };
@@ -87,6 +96,13 @@ export function PopOutCommandTerminalRoot({ params }: { params: PopOutProjectPar
     return (
       <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-missing">
         This project is no longer in Kangentic.
+      </div>
+    );
+  }
+  if (loadState === 'failed') {
+    return (
+      <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-failed">
+        Couldn't load the terminals for this window.
       </div>
     );
   }

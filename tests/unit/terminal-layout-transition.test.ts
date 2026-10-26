@@ -31,7 +31,7 @@ interface FakeScope {
   startViewTransition?: (update: () => Promise<void>) => FakeTransition;
 }
 
-function fakeScope(supportsTransitions = true): FakeScope {
+function fakeScope(): FakeScope {
   const scope: FakeScope = {
     isConnected: true,
     dataset: {},
@@ -41,13 +41,11 @@ function fakeScope(supportsTransitions = true): FakeScope {
     contains(element) { return element === scope.terminal; },
     querySelectorAll() { return scope.paneBoxes.map((box) => ({ getBoundingClientRect: () => box })); },
   };
-  if (supportsTransitions) {
-    scope.startViewTransition = (update) => {
-      scope.starts += 1;
-      const done = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(update);
-      return { ready: done, finished: done };
-    };
-  }
+  scope.startViewTransition = (update) => {
+    scope.starts += 1;
+    const done = new Promise<void>((resolve) => setTimeout(resolve, 0)).then(update);
+    return { ready: done, finished: done };
+  };
   return scope;
 }
 
@@ -64,8 +62,7 @@ async function landingDuration(scope: FakeScope): Promise<number> {
 describe('runTerminalLayoutChange', () => {
   beforeEach(() => {
     vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 5));
-    vi.stubGlobal('document', { getAnimations: () => [], visibilityState: 'visible' });
-    vi.stubGlobal('KeyframeEffect', class {});
+    vi.stubGlobal('document', { visibilityState: 'visible' });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -91,7 +88,7 @@ describe('runTerminalLayoutChange', () => {
     const change = vi.fn();
     runTerminalLayoutChange(null, change);
     expect(change).toHaveBeenCalledTimes(1);
-    vi.stubGlobal('document', { getAnimations: () => [], visibilityState: 'hidden' });
+    vi.stubGlobal('document', { visibilityState: 'hidden' });
     const scope = fakeScope();
     runTerminalLayoutChange(asElement(scope), change);
     expect(change).toHaveBeenCalledTimes(2);

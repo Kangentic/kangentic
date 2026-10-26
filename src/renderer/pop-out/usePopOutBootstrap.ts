@@ -22,17 +22,22 @@ import type { PopOutDescriptor } from '../../shared/pop-out';
  * AbortController on unmount, so a mount -> unmount -> mount double-invoke leaves
  * exactly one live subscription and at most one harmless extra fetch.
  */
+/** Re-read the config; a read that fails keeps the config this window has. */
+function reloadConfig(): void {
+  useConfigStore.getState().loadConfig().catch((error: unknown) => {
+    console.error('[usePopOutBootstrap] could not load the config', error);
+  });
+}
+
 export function usePopOutBootstrap(descriptor: PopOutDescriptor): void {
   const surface = getSurface(descriptor.kind);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    void useConfigStore.getState().loadConfig();
+    reloadConfig();
 
-    const offConfigChanged = window.electronAPI.config.onChanged(() => {
-      void useConfigStore.getState().loadConfig();
-    });
+    const offConfigChanged = window.electronAPI.config.onChanged(reloadConfig);
     controller.signal.addEventListener('abort', offConfigChanged);
 
     surface.bootstrap(descriptor.params, { signal: controller.signal });
@@ -59,7 +64,7 @@ export function usePopOutBootstrap(descriptor: PopOutDescriptor): void {
       // not wired here; add it before any surface adopts a stateful third-party subtree.
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      void useConfigStore.getState().loadConfig();
+      reloadConfig();
       surface.hmrResync();
     });
   }, [surface]);

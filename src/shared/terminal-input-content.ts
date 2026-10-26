@@ -52,8 +52,12 @@ export function writeCarriesUserContent(data: string): boolean {
     }
     if (next === ']' || next === 'P' || next === '_' || next === '^' || next === 'X') {
       // OSC, DCS, APC, PM and SOS strings only ever answer a query here
-      // (colour, version, capability replies).
-      index = stringEnd(data, index + 2);
+      // (colour, version, capability replies), and xterm sends each reply whole,
+      // terminator included. Without one the bytes are an Alt chord (Alt+],
+      // Alt+Shift+P, Alt+Shift+X), which a person pressed.
+      const end = stringEnd(data, index + 2);
+      if (end === null) return true;
+      index = end;
       continue;
     }
     return true; // SS3 keys (application-mode arrows) and Alt chords.
@@ -70,11 +74,11 @@ function csiEnd(data: string, start: number): number | null {
   return null;
 }
 
-/** Index just past the BEL or ST that ends a string started before `start`. */
-function stringEnd(data: string, start: number): number {
+/** Index just past the BEL or ST that ends a string started before `start`, or null if nothing ends it. */
+function stringEnd(data: string, start: number): number | null {
   for (let index = start; index < data.length; index++) {
     if (data[index] === '\x07') return index + 1;
     if (data[index] === '\x1b' && data[index + 1] === '\\') return index + 2;
   }
-  return data.length;
+  return null;
 }

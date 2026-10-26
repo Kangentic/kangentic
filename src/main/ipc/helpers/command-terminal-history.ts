@@ -20,7 +20,8 @@
  *
  * Rows are written as the id is captured, not when the terminal ends, because a
  * quit removes no row (`killAll` never calls `remove()`): a terminal open at
- * quit keeps its row, and the list stamps its end the first time it reads it.
+ * quit keeps its row, and the list stamps its end the first time it reads it,
+ * or deletes the row if nobody used that terminal.
  */
 import { EventType, PromptReason, type CommandTerminalHistoryEntry, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
@@ -170,18 +171,26 @@ export class CommandTerminalHistory {
         liveConversationIds.add(session.agentSessionId);
       }
     }
+    for (const held of this.heldBySession.values()) {
+      if (held.projectId === projectId) liveConversationIds.add(held.agentSessionId);
+    }
     let rows: CommandTerminalHistoryRow[];
     try {
+      // Before any await, while the live set still describes the terminals:
+      // a row nobody used whose terminal was open at a quit has no end, and is
+      // never listed, so nothing else would remove it.
+      repository.deleteUnusedExcept(liveConversationIds);
       rows = repository.listUsed();
     } catch (error) {
       warn('list', error);
       return [];
     }
+    const availability = await Promise.all(rows.map((row) =>
+      (liveConversationIds.has(row.agent_session_id) ? Promise.resolve(false) : this.conversationAvailable(row))));
     const entries: CommandTerminalHistoryEntry[] = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       if (liveConversationIds.has(row.agent_session_id)) continue;
-      const available = await this.deps.conversationAvailable(row.agent_name, row.agent_session_id, row.cwd);
-      if (!available) {
+      if (!availability[index]) {
         this.write(() => repository.delete(row.agent_session_id), 'drop');
         continue;
       }
@@ -201,6 +210,15 @@ export class CommandTerminalHistory {
       });
     }
     return entries;
+  }
+
+  /**
+   * Whether the conversation can still be resumed: its agent resumes by id and
+   * still finds the transcript, which it may have purged since the list showed
+   * the row. Never throws.
+   */
+  conversationAvailable(row: CommandTerminalHistoryRow): Promise<boolean> {
+    return this.deps.conversationAvailable(row.agent_name, row.agent_session_id, row.cwd);
   }
 
   /** The record of one conversation, for a resume. */
