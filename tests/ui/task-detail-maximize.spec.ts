@@ -367,20 +367,49 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       const { top, bottom } = await terminalRegions(ownPage);
       const changedAt = pictureStages(recording)[1].at;
       const shown = recording.frames.filter((frame) => frame.at >= changedAt).map((frame) => ({
+        at: frame.at * 1000,
         bottom: brightPixelsIn(recording, frame.picture, bottom),
         top: brightPixelsIn(recording, frame.picture, top),
       }));
       const summary = shown.map((frame) => `${frame.top}/${frame.bottom}`).join(' ');
-      expect(shown.every((frame) => frame.bottom > 20), summary).toBe(true);
+      // The swap, as the app traced it: when it hid the screen to resize and parse, when it showed
+      // it again, and how many frames painted in between.
+      const swap = await ownPage.evaluate(() => {
+        const trace = (window as unknown as {
+          __kangenticTerminalTrace: () => Array<{ ts: number; event: string; detail?: { framesHidden?: number } }>;
+        }).__kangenticTerminalTrace();
+        const started = trace.filter((event) => event.event === 'frame-hold-finish-start').at(-1);
+        const finished = trace.filter((event) => event.event === 'frame-hold-finished').at(-1);
+        return { startedAt: started?.ts ?? null, finishedAt: finished?.ts ?? null, framesHidden: finished?.detail?.framesHidden ?? null };
+      });
+      expect(swap.startedAt, summary).not.toBeNull();
+      expect(swap.finishedAt, summary).not.toBeNull();
+      expect(swap.framesHidden, summary).not.toBeNull();
+      const swapStartedAt = swap.startedAt ?? 0;
+      const swapFinishedAt = swap.finishedAt ?? 0;
+      // The swap hides the screen on purpose while xterm resizes and parses the agent's frame, and a
+      // frame that paints in that gap is blank (a blank frame beats the old one reflowed onto the
+      // new grid). Whether one does is the compositor's timing against the parse, which a loaded
+      // runner decides: this test saw one blank frame in 4 of 40 runs on two cores, each with the
+      // trace's framesHidden at 1. So the held frames are strict, and a blank frame is accepted only
+      // where the app says it hid the screen. The slack covers the screencast's frame timestamps
+      // against the page's clock.
+      const SWAP_SLACK_MS = 100;
+      const blankFrames = shown.filter((frame) => frame.bottom <= 20);
+      // The input box is on the bottom rows in every frame the screen was not hidden for.
+      expect(
+        blankFrames.every((frame) => frame.at >= swapStartedAt - SWAP_SLACK_MS && frame.at <= swapFinishedAt + SWAP_SLACK_MS),
+        `a blank frame outside the swap (${swapStartedAt} to ${swapFinishedAt}): ${summary}`,
+      ).toBe(true);
+      // Every blank frame is one the app counted, and the screen was never hidden past the repaint
+      // wait's draw cap and its frame fallback (useTerminal's FRAME_HOLD_DRAW_MAX_MS and the 50 ms
+      // nextFrame fallback), with room for a starved runner.
+      expect(blankFrames.length, summary).toBeLessThanOrEqual(swap.framesHidden ?? 0);
+      expect(swapFinishedAt - swapStartedAt, summary).toBeLessThanOrEqual(1000);
       const firstFilled = shown.findIndex((frame) => frame.top >= 10);
       // Held at least a frame, then filled for good.
       expect(firstFilled, summary).toBeGreaterThan(0);
       expect(shown.slice(firstFilled).every((frame) => frame.top >= 10), summary).toBe(true);
-      // The swap painted no frame with the screen hidden.
-      const finished = await ownPage.evaluate(() => (window as unknown as {
-        __kangenticTerminalTrace: () => Array<{ event: string; detail?: { framesHidden?: number } }>;
-      }).__kangenticTerminalTrace().filter((event) => event.event === 'frame-hold-finished').at(-1)?.detail);
-      expect(finished?.framesHidden).toBe(0);
     } finally {
       await own.browser.close();
     }
