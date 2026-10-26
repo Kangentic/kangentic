@@ -70,8 +70,9 @@ budget for it instead of waiting on liveness. `killAllSessions` therefore return
 that today, so the count is a guard, not a live case. node-pty 1.2 sets a ConPTY's `pid` after
 `spawn()` returns, but the pty host answers a spawn only once it is set, and answers a process that
 never started as a failed spawn (`src/main/pty/host/root-pid-gate.ts`). The exception is the gate's
-10 s backstop. It answers with pid 0, and logs, when node-pty reported neither a pid nor an exit,
-which node-pty's own 5 s connect timeout should prevent.
+backstop: 10 s, or as little as 6 s on the one retry of a ConPTY whose output never connected. It answers
+with pid 0, and logs, when node-pty reported neither a pid nor an exit, which node-pty's own 5 s
+connect timeout should prevent.
 
 Why it exists (Sentry DESKTOP-C, symbolicated against node-pty's shipped `conpty.pdb`): node-pty
 delivers a PTY's exit through a native `Napi::ThreadSafeFunction`. When that callback is first
