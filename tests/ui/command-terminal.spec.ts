@@ -2793,7 +2793,7 @@ test.describe('Command Terminal', () => {
         // A row's mark is that terminal's own Stop: it ends without being brought back.
         const stopButton = page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-2"]')
           .getByTestId('command-terminal-running-stop');
-        await expect(stopButton).toHaveAccessibleDescription('Stop. It moves to Earlier.');
+        await expect(stopButton).toHaveAccessibleDescription('Ends the terminal, and Earlier keeps its conversation if it was used');
         await stopButton.click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
         await expect(frameOf(page, 'slot-3')).toHaveAttribute('data-expanded', 'true');
