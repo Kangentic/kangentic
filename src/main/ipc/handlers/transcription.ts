@@ -128,7 +128,7 @@ export function registerTranscriptionHandlers(context: IpcContext): void {
   );
 
   // Forward partial/final transcription results to the renderer popup, guarded
-  // against a destroyed window during shutdown (mirrors the SESSION_DATA path).
+  // against a destroyed window during shutdown.
   transcriptionService.on('partial', (dictationSessionId: string, text: string) => {
     if (!context.mainWindow.isDestroyed()) {
       context.mainWindow.webContents.send(IPC.TRANSCRIBE_PARTIAL, dictationSessionId, text);

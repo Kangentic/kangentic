@@ -1641,7 +1641,70 @@ describe('Config Manager - project overrides served from memory', () => {
     };
   }
 
+  /**
+   * Hold the background re-read of `heldPath` pending, so a test picks when and how
+   * it ends. Any other file still reads for real.
+   */
+  function holdProjectReread(heldPath: string): {
+    readCount: () => number;
+    finishWith: (text: string) => Promise<void>;
+    failWith: (error: Error) => Promise<void>;
+  } {
+    let resolvePending!: (text: string) => void;
+    let rejectPending!: (error: Error) => void;
+    const pendingRead = new Promise<string>((resolve, reject) => {
+      resolvePending = resolve;
+      rejectPending = reject;
+    });
+    const realReadFile = fs.promises.readFile;
+    const readFile = vi.spyOn(fs.promises, 'readFile').mockImplementation(
+      (...readArguments) => (readArguments[0] === heldPath ? pendingRead : realReadFile(...readArguments)),
+    );
+    const afterReaderRan = async (): Promise<void> => {
+      await pendingRead.then(() => undefined, () => undefined);
+      // The reader's own handlers are attached first, so one more turn lets them run.
+      await new Promise((resolve) => setImmediate(resolve));
+    };
+    return {
+      readCount: () => readFile.mock.calls.filter((call) => call[0] === heldPath).length,
+      finishWith: async (text) => {
+        resolvePending(text);
+        await afterReaderRan();
+      },
+      failWith: async (error) => {
+        rejectPending(error);
+        await afterReaderRan();
+      },
+    };
+  }
+
+  /**
+   * Collect unhandled rejections until `stop()`. A re-read whose handler throws leaves
+   * one behind, and nothing else in a test would notice it.
+   */
+  function collectUnhandledRejections(): { reasons: unknown[]; stop: () => void } {
+    const reasons: unknown[] = [];
+    const listener = (reason: unknown): void => { reasons.push(reason); };
+    process.on('unhandledRejection', listener);
+    return { reasons, stop: () => { process.off('unhandledRejection', listener); } };
+  }
+
+  /** Make `process.platform` read as `platform` until the test ends. */
+  let restorePlatform: (() => void) | null = null;
+  function stubPlatform(platform: NodeJS.Platform): void {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    restorePlatform = () => { Object.defineProperty(process, 'platform', originalDescriptor); };
+  }
+
+  /** How many synchronous reads the spy saw of a path that names a folder `folderName`, in any case. */
+  function syncReadsInFolder(readFileSync: { mock: { calls: unknown[][] } }, folderName: string): number {
+    return readFileSync.mock.calls.filter((call) => String(call[0]).toLowerCase().includes(folderName.toLowerCase())).length;
+  }
+
   afterEach(() => {
+    restorePlatform?.();
+    restorePlatform = null;
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -1758,5 +1821,180 @@ describe('Config Manager - project overrides served from memory', () => {
 
     expect(configManager.loadProjectOverrides(projectDir)?.theme).toBe('ember');
     expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+
+  it('keeps a save that lands while a re-read is out, and drops the stale text the re-read comes back with', async () => {
+    const projectDir = path.join(tmpDir, 'proj-save-wins');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const held = holdProjectReread(projectConfigPath(projectDir));
+
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    expect(held.readCount()).toBe(1);
+    configManager.saveProjectOverrides(projectDir, { theme: 'ember' });
+    // The text the read was holding is another writer's edit from before the save. It
+    // differs from the cached text, so only the entry check can drop it: the "text is
+    // unchanged" shortcut would not.
+    await held.finishWith(JSON.stringify({ theme: 'sky' }));
+
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+  });
+
+  it('does not migrate the stale text of a re-read a save replaced, so the saved file is not rewritten', async () => {
+    const projectDir = path.join(tmpDir, 'proj-save-wins-migration');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const held = holdProjectReread(projectConfigPath(projectDir));
+
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    expect(held.readCount()).toBe(1);
+    configManager.saveProjectOverrides(projectDir, { theme: 'ember' });
+    // A retired theme id makes the parse migrate, and a migration writes the file. Parsing
+    // the stale text after the save would write 'clay' over the saved 'ember'.
+    await held.finishWith(JSON.stringify({ theme: 'kangentic-light' }));
+
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('ember');
+    expect(JSON.parse(fs.readFileSync(projectConfigPath(projectDir), 'utf-8')).theme).toBe('ember');
+  });
+
+  it('starts one re-read at a time, however many calls arrive past the interval, and another once it settles', async () => {
+    const projectDir = path.join(tmpDir, 'proj-single-flight');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const held = holdProjectReread(projectConfigPath(projectDir));
+
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    // A second interval goes by with the first read still out. Without the in-flight
+    // flag, the interval alone would let each of these start a read of its own.
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    configManager.getEffectiveConfig(projectDir);
+    expect(held.readCount()).toBe(1);
+
+    // The text is the cached text, so the read changes nothing. It must still free the flag.
+    await held.finishWith(JSON.stringify({ theme: 'forest' }));
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    expect(held.readCount()).toBe(2);
+  });
+
+  it('keeps the last good overrides when the disk refuses the re-read (EACCES)', async () => {
+    const projectDir = path.join(tmpDir, 'proj-refused');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.load().theme).not.toBe('forest');
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    const held = holdProjectReread(projectConfigPath(projectDir));
+
+    vi.setSystemTime(Date.now() + 1001);
+    configManager.getEffectiveConfig(projectDir);
+    expect(held.readCount()).toBe(1);
+    await held.failWith(Object.assign(new Error('EACCES: permission denied, open'), { code: 'EACCES' }));
+
+    // Only a missing file means no overrides (the deletion case above). A refused read
+    // says nothing about what the file holds.
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+  });
+
+  it.each(['5', '"text"', '[1,2]', 'null', 'true'])(
+    'reads a config.json holding the bare JSON value %s as no overrides on the first read',
+    async (bareJson) => {
+      const projectDir = path.join(tmpDir, 'proj-bare-first-read');
+      writeProjectConfig(projectDir, bareJson);
+      const configManager = await createConfigManager();
+
+      expect(() => configManager.getEffectiveConfig(projectDir)).not.toThrow();
+      // Equal to the global config as a whole: an array merged in as overrides would add
+      // its indexes as keys, which a check of one setting would miss.
+      expect(configManager.getEffectiveConfig(projectDir)).toEqual(configManager.load());
+      expect(fs.readFileSync(projectConfigPath(projectDir), 'utf-8')).toBe(bareJson);
+    },
+  );
+
+  it.each(['5', '"text"', '[1,2]', 'null', 'true'])(
+    'reads the bare JSON value %s in a background re-read as no overrides, without an unhandled rejection',
+    async (bareJson) => {
+      const projectDir = path.join(tmpDir, 'proj-bare-reread');
+      writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const configManager = await createConfigManager();
+      expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+      const rereads = watchProjectRereads();
+      const unhandled = collectUnhandledRejections();
+
+      writeProjectConfig(projectDir, bareJson);
+      vi.setSystemTime(Date.now() + 1001);
+      configManager.getEffectiveConfig(projectDir);
+      await rereads.settled();
+      unhandled.stop();
+
+      expect(unhandled.reasons).toEqual([]);
+      // The re-read replaced the cached 'forest' with no overrides, so the global config shows.
+      expect(configManager.getEffectiveConfig(projectDir)).toEqual(configManager.load());
+    },
+  );
+
+  it('shares one cache entry between spellings of a folder that path.resolve normalizes', async () => {
+    const projectDir = path.join(tmpDir, 'proj-spelled');
+    writeProjectConfig(projectDir, JSON.stringify({ theme: 'forest' }));
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    expect(configManager.getEffectiveConfig(projectDir).theme).toBe('forest');
+    configManager.saveProjectOverrides(projectDir, { theme: 'ember' });
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+
+    // A trailing separator and a dot segment. A key built from the raw string would
+    // make each a first read: same file, same value, one synchronous read apiece.
+    expect(configManager.getEffectiveConfig(`${projectDir}${path.sep}`).theme).toBe('ember');
+    expect(configManager.getEffectiveConfig(`${projectDir}${path.sep}.${path.sep}`).theme).toBe('ember');
+
+    expect(syncReadsInFolder(readFileSync, 'proj-spelled')).toBe(0);
+  });
+
+  it('shares one cache entry between spellings of a folder that differ only in case on win32', async () => {
+    // On a case-insensitive filesystem these name one folder. On a case-sensitive one
+    // they name two, and the second is never read: the shared entry answers first.
+    const upperSpelling = path.join(tmpDir, 'Proj-Case');
+    const lowerSpelling = path.join(tmpDir, 'proj-case');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    configManager.load();
+    stubPlatform('win32');
+    configManager.getEffectiveConfig(upperSpelling);
+    configManager.saveProjectOverrides(upperSpelling, { theme: 'ember' });
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+
+    // Served from the entry the save wrote, with no read of the file, and not after a re-read.
+    expect(configManager.getEffectiveConfig(lowerSpelling).theme).toBe('ember');
+    expect(syncReadsInFolder(readFileSync, 'proj-case')).toBe(0);
+  });
+
+  it('keeps spellings of a folder that differ in case apart off win32', async () => {
+    // The other half of the key: POSIX folders `Foo` and `foo` are two projects, so
+    // lowercasing on every platform would merge them.
+    const upperSpelling = path.join(tmpDir, 'Proj-Case');
+    const lowerSpelling = path.join(tmpDir, 'proj-case');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const configManager = await createConfigManager();
+    configManager.load();
+    stubPlatform('linux');
+    configManager.getEffectiveConfig(upperSpelling);
+    configManager.saveProjectOverrides(upperSpelling, { theme: 'ember' });
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+
+    configManager.getEffectiveConfig(lowerSpelling);
+
+    // A first read of its own entry. (What it finds depends on the filesystem's case rules.)
+    expect(syncReadsInFolder(readFileSync, 'proj-case')).toBe(1);
   });
 });

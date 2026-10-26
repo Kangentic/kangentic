@@ -91,26 +91,29 @@ Use for real-time updates pushed from main process. Always return an unsubscribe
 ```typescript
 // types.ts -- ElectronAPI
 sessions: {
-  onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+  onExit: (callback: (sessionId: string, exitCode: number, projectId?: string) => void) => () => void;
 };
 
 // preload.ts
-onData: (callback) => {
-  const handler = (_event, sessionId, data, projectId) => callback(sessionId, data, projectId);
-  ipcRenderer.on(IPC.SESSION_DATA, handler);
-  return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
+onExit: (callback) => {
+  const handler = (_event, sessionId, exitCode, projectId) => callback(sessionId, exitCode, projectId);
+  ipcRenderer.on(IPC.SESSION_EXIT, handler);
+  return () => ipcRenderer.removeListener(IPC.SESSION_EXIT, handler);
 },
 
 // handler (broadcast from service)
-context.sessionManager.on('data', (sessionId, data) => {
+context.sessionManager.on('exit', (sessionId, exitCode) => {
   if (!context.mainWindow.isDestroyed()) {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
-    context.mainWindow.webContents.send(IPC.SESSION_DATA, sessionId, data, projectId);
+    context.mainWindow.webContents.send(IPC.SESSION_EXIT, sessionId, exitCode, projectId);
   }
 });
 ```
 
 **Critical:** Always guard broadcasts with `!context.mainWindow.isDestroyed()` to prevent crashes during shutdown.
+
+A terminal's keystrokes and output are not push events: they ride each renderer's own port to
+the pty host (`src/preload/pty-port-client.ts`, `.claude/rules/pty-host-out-of-process.md`).
 
 ## Push Event Cleanup
 
@@ -118,9 +121,9 @@ Stores subscribing to push events MUST clean up on project switch or unmount:
 
 ```typescript
 // In store or component
-const unsubscribe = window.electronAPI.sessions.onData((sessionId, data, projectId) => {
+const unsubscribe = window.electronAPI.sessions.onExit((sessionId, exitCode, projectId) => {
   if (projectId && projectId !== currentProjectId) return; // scope by project
-  // handle data
+  // handle the exit
 });
 
 // On cleanup

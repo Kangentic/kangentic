@@ -7624,7 +7624,7 @@ export interface ElectronAPI {
      */
     getFirstOutput: () => Promise<Record<string, boolean>>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
-    onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+    onData: (callback: (sessionId: string, data: string) => void) => () => void;
     /**
      * Acknowledge that the renderer has consumed `bytes` of a session's output
      * (written to xterm or dropped during scrollback replay). Drives per-session

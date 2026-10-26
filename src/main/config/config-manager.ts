@@ -160,6 +160,12 @@ export class ConfigManager {
    */
   private readonly projectOverridesCache = new Map<string, CachedProjectOverrides>();
 
+  /** One entry per folder: `C:\p`, `c:\p` and `C:/p` are the same project on Windows. */
+  private overridesKey(projectPath: string): string {
+    const resolved = path.resolve(projectPath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  }
+
   load(): AppConfig {
     if (this.config) return this.config;
 
@@ -411,13 +417,16 @@ export class ConfigManager {
     projectPath: string,
     raw: string,
   ): { overrides: Partial<AppConfig> | null; rewritten: boolean } | undefined {
-    let overrides: Record<string, unknown> | null;
+    let parsed: unknown;
     try {
-      overrides = JSON.parse(raw);
+      parsed = JSON.parse(raw);
     } catch {
       return undefined;
     }
-    if (!overrides) return { overrides: null, rewritten: false };
+    // A bare number, string or array holds no overrides, and the `in` checks
+    // below would throw on a primitive (in the background re-read, every second).
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return { overrides: null, rewritten: false };
+    const overrides = parsed as Record<string, unknown>;
     let rewritten = false;
 
     // One-time migration: claude.* -> agent.* in project overrides
@@ -483,14 +492,14 @@ export class ConfigManager {
     if (persisted) {
       this.cacheProjectOverrides(projectPath, overrides, null);
     } else {
-      this.projectOverridesCache.delete(projectPath);
+      this.projectOverridesCache.delete(this.overridesKey(projectPath));
     }
     return persisted;
   }
 
   /** Replace a project's cached overrides. A re-read still out finds its entry replaced and is dropped. */
   private cacheProjectOverrides(projectPath: string, overrides: Partial<AppConfig> | null, raw: string | null): void {
-    this.projectOverridesCache.set(projectPath, {
+    this.projectOverridesCache.set(this.overridesKey(projectPath), {
       overrides: overrides === null ? null : structuredClone(overrides),
       raw,
       refreshing: false,
@@ -504,7 +513,7 @@ export class ConfigManager {
    * picks up a change another writer made.
    */
   private projectOverridesFor(projectPath: string): Partial<AppConfig> | null {
-    const cached = this.projectOverridesCache.get(projectPath);
+    const cached = this.projectOverridesCache.get(this.overridesKey(projectPath));
     if (!cached) return this.loadProjectOverrides(projectPath);
     this.refreshProjectOverrides(projectPath, cached);
     return cached.overrides === null ? null : structuredClone(cached.overrides);
@@ -516,17 +525,18 @@ export class ConfigManager {
     entry.refreshing = true;
     entry.refreshedAt = Date.now();
     const configPath = path.join(projectPath, '.kangentic', 'config.json');
+    const cacheKey = this.overridesKey(projectPath);
     void fs.promises.readFile(configPath, 'utf-8').then((raw) => {
       // A save or a fresh read replaced the entry while this one was out.
-      if (this.projectOverridesCache.get(projectPath) !== entry || raw === entry.raw) return;
+      if (this.projectOverridesCache.get(cacheKey) !== entry || raw === entry.raw) return;
       const parsed = this.parseProjectOverrides(projectPath, raw);
       // Text that does not parse (a writer mid-edit) keeps the last good overrides.
-      if (parsed === undefined || this.projectOverridesCache.get(projectPath) !== entry) return;
+      if (parsed === undefined || this.projectOverridesCache.get(cacheKey) !== entry) return;
       this.cacheProjectOverrides(projectPath, parsed.overrides, parsed.rewritten ? null : raw);
     }, (error: unknown) => {
       // Only a missing file means no overrides; a read the disk refused keeps them.
       const missing = (error as NodeJS.ErrnoException | null)?.code === 'ENOENT';
-      if (missing && this.projectOverridesCache.get(projectPath) === entry) {
+      if (missing && this.projectOverridesCache.get(cacheKey) === entry) {
         this.cacheProjectOverrides(projectPath, null, null);
       }
     }).finally(() => {

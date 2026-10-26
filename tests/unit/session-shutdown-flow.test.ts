@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, type Mock } from 'vitest';
 import type * as pty from 'node-pty';
 import { writeExitSequence, killAllSessions } from '../../src/main/pty/shutdown/session-shutdown';
 import type { ShutdownSession, ShutdownContext } from '../../src/main/pty/shutdown/session-shutdown';
+import type { PtyHandle } from '../../src/main/pty/host/pty-host-client';
 import { DeferredKillRegistry, KILL_GRACE_MS } from '../../src/main/pty/lifecycle/deferred-kill';
 
 describe('writeExitSequence', () => {
@@ -324,6 +325,180 @@ describe('killAllSessions', () => {
         expect(killPty).toHaveBeenCalledWith(parked);
         expect(deferredKills.size).toBe(0);
       });
+    });
+  });
+
+  /**
+   * Every place main drops a session's PTY handle seals it first. A renderer's
+   * keystrokes reach the pty host on the renderer's own port, not through main,
+   * so nulling `session.pty` no longer stops them: only the `sealUserInput`
+   * command does. Without it a user typing into a terminal whose agent is in
+   * its exit lands those keys in the agent. Main's own exit sequence is a
+   * direct `write`, which a sealed PTY still takes.
+   *
+   * `tests/unit/terminal-input-path.test.ts` only scans the source text for the
+   * call above `.pty = null`; it cannot tell whether the call runs, how often,
+   * or in what order. These cases run `killAllSessions` and read the order off
+   * `mock.invocationCallOrder`, which is global across every `vi.fn`.
+   *
+   * This file drives the quit path only. The same seal in `SessionManager.kill()`
+   * and in the suspend path's `clearPty` needs a whole `SessionManager`, so it
+   * is pinned beside the session-manager tests, not here.
+   */
+  describe('sealing the PTY handle', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    interface SealedRow {
+      session: ShutdownSession;
+      handle: PtyHandle;
+      write: Mock<(data: string) => void>;
+      sealUserInput: Mock<() => void>;
+      /** What the row's `pty` held each time the seal ran. */
+      rowPtyAtSeal: Array<PtyHandle | null>;
+    }
+
+    /** A session whose PTY handle records its writes and seals, and what the row held when sealed. */
+    function makeSealedRow(ptyId: number, overrides: Partial<ShutdownSession> = {}): SealedRow {
+      const session = makeSession({ id: `sess-${ptyId}`, taskId: `task-${ptyId}`, ...overrides });
+      const rowPtyAtSeal: Array<PtyHandle | null> = [];
+      const write = vi.fn<(data: string) => void>();
+      const sealUserInput = vi.fn<() => void>(() => {
+        rowPtyAtSeal.push(session.pty);
+      });
+      const handle: PtyHandle = {
+        ptyId,
+        pid: 4000 + ptyId,
+        cols: 80,
+        rows: 24,
+        write,
+        resize: vi.fn(),
+        kill: vi.fn(),
+        sealUserInput,
+      };
+      session.pty = handle;
+      return { session, handle, write, sealUserInput, rowPtyAtSeal };
+    }
+
+    function callOrders(spy: { mock: { invocationCallOrder: number[] } }): number[] {
+      return spy.mock.invocationCallOrder;
+    }
+
+    // Typed keys with no pause step: every one is written synchronously inside
+    // killAllSessions, so the order against the seal is deterministic.
+    const IMMEDIATE_EXIT_SEQUENCE = ['\x03', '/exit\r'];
+
+    it('seals each session PTY exactly once', () => {
+      const first = makeSealedRow(1, { exitSequence: IMMEDIATE_EXIT_SEQUENCE });
+      const second = makeSealedRow(2, { exitSequence: IMMEDIATE_EXIT_SEQUENCE });
+      const { context } = makeContext([first.session, second.session]);
+
+      killAllSessions(context);
+
+      expect(first.sealUserInput).toHaveBeenCalledTimes(1);
+      expect(second.sealUserInput).toHaveBeenCalledTimes(1);
+      expect(first.sealUserInput).toHaveBeenCalledWith();
+    });
+
+    it('does not seal a row with no PTY, and still seals the rows around it', () => {
+      const empty = makeSession({ id: 'sess-empty', pty: null });
+      const live = makeSealedRow(2);
+      const { context } = makeContext([empty, live.session]);
+
+      expect(() => killAllSessions(context)).not.toThrow();
+
+      expect(live.sealUserInput).toHaveBeenCalledTimes(1);
+    });
+
+    it('seals a graceful-close session once, though nothing is typed into it', () => {
+      const row = makeSealedRow(1, {
+        consoleCloseIsGraceful: true,
+        exitSequence: ['\x1b', { delayMs: 400 }, '\x03', '/exit\r'],
+      });
+      const { context, killPty } = makeContext([row.session]);
+
+      killAllSessions(context);
+
+      expect(row.write).not.toHaveBeenCalled();
+      expect(row.sealUserInput).toHaveBeenCalledTimes(1);
+      expect(killPty).toHaveBeenCalledWith(row.handle);
+    });
+
+    it('seals while the row still holds the handle, before session.pty is nulled', () => {
+      const row = makeSealedRow(1, { exitSequence: IMMEDIATE_EXIT_SEQUENCE });
+      const { context } = makeContext([row.session]);
+
+      killAllSessions(context);
+
+      // A seal moved below `session.pty = null` still runs through the local
+      // reference, so only what the row held at the call tells the two apart.
+      expect(row.rowPtyAtSeal).toHaveLength(1);
+      expect(row.rowPtyAtSeal[0]).toBe(row.handle);
+      expect(row.session.pty).toBeNull();
+    });
+
+    it('seals before the force-kill on the instant path', () => {
+      const row = makeSealedRow(1, { exitSequence: IMMEDIATE_EXIT_SEQUENCE });
+      const { context, killPty } = makeContext([row.session]);
+
+      killAllSessions(context);
+
+      expect(killPty).toHaveBeenCalledTimes(1);
+      expect(callOrders(row.sealUserInput)[0]).toBeLessThan(callOrders(killPty)[0]);
+    });
+
+    it('seals a parked young session at once, not when its grace timer fires', () => {
+      vi.useFakeTimers();
+      const row = makeSealedRow(1, {
+        startedAt: new Date().toISOString(),
+        exitSequence: IMMEDIATE_EXIT_SEQUENCE,
+      });
+      const { context, killPty } = makeContext([row.session]);
+
+      killAllSessions(context, { allowGrace: true, deferredKills: new DeferredKillRegistry({ killPty }) });
+
+      // The kill is parked; the seal must not wait for it.
+      expect(killPty).not.toHaveBeenCalled();
+      expect(row.sealUserInput).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(KILL_GRACE_MS);
+      expect(killPty).toHaveBeenCalledTimes(1);
+      expect(row.sealUserInput).toHaveBeenCalledTimes(1);
+      expect(callOrders(row.sealUserInput)[0]).toBeLessThan(callOrders(killPty)[0]);
+    });
+
+    // RED against the current source, and that is the finding. killAllSessions
+    // runs writeExitSequence (session-shutdown.ts, before `const ptyRef`) BEFORE
+    // ptyRef.sealUserInput(). SessionManager.kill() seals first and writes the
+    // exit sequence "past the seal". The host's direct `write` takes a sealed
+    // PTY either way, so the exit sequence is not lost; what the order decides
+    // is whether a keystroke a renderer posts between the two lands in the
+    // agent after the exit keys. Fix the order in killAllSessions, not this test.
+    it.each([
+      ['a mature session, killed at once', false],
+      ['a young session, parked on the grace timer', true],
+    ])('seals before the exit sequence is written, as SessionManager.kill() does (%s)', (_label, isYoung) => {
+      vi.useFakeTimers();
+      const row = makeSealedRow(1, {
+        startedAt: isYoung ? new Date().toISOString() : new Date(Date.now() - 120_000).toISOString(),
+        exitSequence: IMMEDIATE_EXIT_SEQUENCE,
+      });
+      const { context, killPty } = makeContext([row.session]);
+
+      killAllSessions(context, isYoung
+        ? { allowGrace: true, deferredKills: new DeferredKillRegistry({ killPty }) }
+        : {});
+
+      // Guard against a vacuous order check: both keys were written.
+      expect(row.write.mock.calls.map((call) => call[0])).toEqual(IMMEDIATE_EXIT_SEQUENCE);
+      const sealOrder = callOrders(row.sealUserInput)[0];
+      const firstWriteOrder = callOrders(row.write)[0];
+      expect(
+        sealOrder,
+        'sealUserInput() must run before the exit sequence is written, as in SessionManager.kill(): '
+          + 'a renderer keystroke posted between the two would land after the exit keys',
+      ).toBeLessThan(firstWriteOrder);
     });
   });
 });

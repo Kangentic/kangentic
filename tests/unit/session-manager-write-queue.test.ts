@@ -1,6 +1,9 @@
 /**
  * SessionManager write-queue integration tests.
  *
+ * The queue lives in the pty host core, keyed by PTY, and these drive it
+ * through `SessionManager.write()` against the in-process host.
+ *
  * Locks in the invariants that prevent the Ctrl+V paste-truncation regression:
  * the per-session FIFO queue must be created lazily, reused across calls,
  * and properly torn down on kill() and natural PTY exit. The regression

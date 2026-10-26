@@ -487,6 +487,11 @@ export class PtyHostClient {
     return this.transport.request('drainWrites', { ptyId });
   }
 
+  /** The host ledger's draft for the session, now (`getPromptDraft` in the core). */
+  getPromptDraft(sessionId: string): Promise<string | null> {
+    return this.transport.request('getPromptDraft', { sessionId });
+  }
+
   attachRendererPort(rendererId: number, port: RendererPort): void {
     this.transport.attachRendererPort(rendererId, port);
   }

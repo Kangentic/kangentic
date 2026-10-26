@@ -12,7 +12,8 @@
  * falls back to the current stack, async frames included.
  *
  * Every call site gates on `__KANGENTIC_DEV__`, so a production build captures
- * no stacks and never enters the storage.
+ * no stacks and never enters the storage. The storage is created on first use,
+ * so a production bundle that keeps this module still allocates nothing.
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -26,16 +27,17 @@ const CALLER_FRAMES = 3;
  */
 const WRAPPER_FRAME = /\b(stackCallerLabel|describeSpawnCaller|withSpawnCaller|tracedGitMethod|spawnTraced|callerLabel|execAsync|execFileAsync|runRemote|spawnOffMainCli|spawnWithAbort|runGitCommand|gitAt|spawnCli|localExec|localExecFile)\b/;
 
-const spawnCallerStorage = new AsyncLocalStorage<string>();
+let spawnCallerStorage: AsyncLocalStorage<string> | null = null;
 
 /** The caller a surrounding `withSpawnCaller` recorded, or undefined. */
 export function storedSpawnCaller(): string | undefined {
-  return spawnCallerStorage.getStore();
+  return spawnCallerStorage?.getStore();
 }
 
 /** Run `work` with `caller` as the spawn caller for everything it starts,
  *  across its awaits. */
 export function withSpawnCaller<Result>(caller: string, work: () => Result): Result {
+  spawnCallerStorage ??= new AsyncLocalStorage<string>();
   return spawnCallerStorage.run(caller, work);
 }
 

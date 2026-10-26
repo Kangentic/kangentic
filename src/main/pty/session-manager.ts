@@ -877,7 +877,9 @@ export class SessionManager extends EventEmitter {
     // accounting when the PTY exited.
     this.on('exit', (sessionId: string) => {
       // The prompt died with the PTY; a remembered draft would otherwise be
-      // reported as discarded by the next session to reuse this id.
+      // reported as discarded by the next session to reuse this id. The host
+      // sends a null `promptDraft` on its own exit; this covers a lost host,
+      // whose PTYs exit here with nothing to send it.
       this.promptDraftMirror.delete(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
@@ -2054,11 +2056,28 @@ export class SessionManager extends EventEmitter {
 
   /**
    * Text the user has typed into this session's prompt and not yet sent, or
-   * null when the prompt looks empty. Used by keystroke injection to decide
-   * whether a clear is needed and to report what it discarded.
+   * null when the prompt looks empty, from main's mirror of the host's ledger.
+   * The mirror trails a keystroke by the host's `promptDraft` event, so it
+   * suits the pause checks, which ask again on their next sweep. Keystroke
+   * injection reads `readPendingDraft` instead.
    */
   getPendingDraft(sessionId: string): string | null {
     return this.promptDraftMirror.get(sessionId) ?? null;
+  }
+
+  /**
+   * The draft as the host's ledger holds it now, for keystroke injection, which
+   * decides from it whether to clear the prompt and reports what it discarded.
+   * A renderer's keystrokes reach the host on its port, ahead of this request,
+   * so a key typed just before an injection is counted. Falls back to the
+   * mirror when there is no live PTY or the host cannot answer.
+   */
+  readPendingDraft(sessionId: string): Promise<string | null> {
+    if (!this.registry.get(sessionId)?.pty) return Promise.resolve(this.getPendingDraft(sessionId));
+    return this.host.getPromptDraft(sessionId).then(
+      (draft) => draft,
+      () => this.getPendingDraft(sessionId),
+    );
   }
 
   /**

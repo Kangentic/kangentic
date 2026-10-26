@@ -86,7 +86,8 @@ function isPortMessage(value: unknown): value is ToPtyHostPortMessage {
   const message = value as Record<string, unknown>;
   if (typeof message.sessionId !== 'string') return false;
   if (message.type === 'write') return typeof message.data === 'string';
-  if (message.type === 'ack') return typeof message.bytes === 'number' && Number.isFinite(message.bytes);
+  // A negative ack would raise the session's in-flight count and pause its PTY.
+  if (message.type === 'ack') return typeof message.bytes === 'number' && Number.isFinite(message.bytes) && message.bytes >= 0;
   return false;
 }
 
@@ -319,7 +320,9 @@ export class PtyHostCore {
           if (__KANGENTIC_DEV__) noteRoundTripStage(sessionId, 'flush', data);
           // Straight to each renderer that shows it, on its own port: output
           // never crosses main, so main's event loop cannot hold an echo back.
-          this.postToRenderersShowing(sessionId, { type: 'data', sessionId, data });
+          // Bytes no port took (a reloading page still in the focus set) are
+          // never acked, so they do not count toward a pause.
+          if (this.postToRenderersShowing(sessionId, { type: 'data', sessionId, data }) === 0) return;
           const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
           this.backpressure.recordEmitted(sessionId, data.length);
           if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
@@ -485,16 +488,25 @@ export class PtyHostCore {
    * drop relies on (`useTerminal.ts`). Main only learns where the answer went.
    */
   async getScrollbackForRenderer(params: PtyHostRequestMap['getScrollbackForRenderer']['params']): Promise<ScrollbackInvokeResult> {
+    // A reload replaces the renderer's port while the sample settles, and the
+    // reloaded page numbers its requests from 1 again: an answer posted on the
+    // new port could settle that page's request with this one's data. The
+    // answer goes only on the port that asked, while it is still the current one.
+    const askingPort = this.rendererPorts.get(params.rendererId);
+    const answerPort = (): RendererPort | undefined => {
+      const current = this.rendererPorts.get(params.rendererId);
+      return askingPort === undefined || current === askingPort ? current : undefined;
+    };
     let data: string;
     try {
       data = await this.getScrollback(params.sessionId, params.settle);
     } catch (error) {
-      const port = this.rendererPorts.get(params.rendererId);
+      const port = answerPort();
       if (!port) throw error;
       port.postMessage({ type: 'scrollbackFailed', requestId: params.requestId, message: error instanceof Error ? error.message : String(error) });
       return { sentToPort: true };
     }
-    const port = this.rendererPorts.get(params.rendererId);
+    const port = answerPort();
     if (!port) return { sentToPort: false, data };
     port.postMessage({ type: 'scrollback', requestId: params.requestId, data });
     return { sentToPort: true };
@@ -542,9 +554,7 @@ export class PtyHostCore {
   /** Into the PTY's write queue, written at once when nothing is ahead of it. */
   private enqueueWrite(entry: PtyEntry, data: string, origin: WriteOrigin): void {
     if (entry.exited || data.length === 0) return;
-    if (__KANGENTIC_DEV__) noteRoundTripStage(entry.sessionId, 'write', data);
-    // In the alt screen, the answer to this input flushes on the next loop turn, not the 16 ms timer.
-    this.bufferManager.noteInput(entry.sessionId);
+    this.stampInput(entry, data);
     this.recordDraft(entry.sessionId, data, origin);
     entry.writeQueue ??= createWriteQueue(
       () => (entry.exited ? null : entry.pty),
@@ -552,6 +562,13 @@ export class PtyHostCore {
       { onAutoDispose: () => { entry.writeQueue = null; } },
     );
     entry.writeQueue.enqueue(data);
+  }
+
+  /** Input is about to reach this PTY, queued or direct. */
+  private stampInput(entry: PtyEntry, data: string): void {
+    if (__KANGENTIC_DEV__) noteRoundTripStage(entry.sessionId, 'write', data);
+    // In the alt screen, the answer to this input flushes on the next loop turn, not the 16 ms timer.
+    this.bufferManager.noteInput(entry.sessionId);
   }
 
   /** Fold a write into the session's draft, and tell main when the draft changed. */
@@ -574,13 +591,22 @@ export class PtyHostCore {
     entry.writeQueue = null;
   }
 
-  private postToRenderersShowing(sessionId: string, message: FromPtyHostPortMessage): void {
+  /** Post to every renderer that shows the session. Returns how many ports took it. */
+  private postToRenderersShowing(sessionId: string, message: FromPtyHostPortMessage): number {
+    let posted = 0;
     for (const [rendererId, sessionIds] of this.rendererFocus) {
       if (!sessionIds.has(sessionId)) continue;
-      this.rendererPorts.get(rendererId)?.postMessage(message);
+      const port = this.rendererPorts.get(rendererId);
+      if (!port) continue;
+      port.postMessage(message);
+      posted += 1;
     }
+    return posted;
   }
 
+  /** The same union `SessionManager.recomputeFocusedUnion` keeps from the same
+   *  per-renderer sets (`setRendererFocus`). Change the two together: main reads
+   *  its copy to decide what is watched, and this one gates the flush. */
   private recomputeFocused(): void {
     this.focused.clear();
     for (const sessionIds of this.rendererFocus.values()) {
@@ -665,6 +691,8 @@ export class PtyHostCore {
         const queue = this.ptys.get((params as PtyHostRequestMap['drainWrites']['params']).ptyId)?.writeQueue;
         return (queue ? queue.drained().then(() => true as const) : Promise.resolve(true as const)) as Promise<PtyHostRequestMap[M]['result']>;
       }
+      case 'getPromptDraft':
+        return this.promptDrafts.get((params as PtyHostRequestMap['getPromptDraft']['params']).sessionId) as PtyHostRequestMap[M]['result'];
       case 'getSerializedFrame': {
         const { sessionId, settle } = params as PtyHostRequestMap['getSerializedFrame']['params'];
         return this.getSerializedFrame(sessionId, settle) as Promise<PtyHostRequestMap[M]['result']>;
@@ -725,9 +753,7 @@ export class PtyHostCore {
       case 'write':
         if (this.withRawPty(command.ptyId, (rawPty) => rawPty.write(command.data))) return;
         this.withLivePty(command.ptyId, (entry) => {
-          if (__KANGENTIC_DEV__) noteRoundTripStage(entry.sessionId, 'write', command.data);
-          // In the alt screen, the answer to this input flushes on the next loop turn, not the 16 ms timer.
-          this.bufferManager.noteInput(entry.sessionId);
+          this.stampInput(entry, command.data);
           entry.pty.write(command.data);
         });
         return;

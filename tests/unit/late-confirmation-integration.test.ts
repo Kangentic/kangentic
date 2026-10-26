@@ -35,7 +35,7 @@ import { SimulatedSessionManager, DEFAULT_TUI_OPTIONS, createStubPasteEngine } f
 const SESSION_ID = 's-late';
 const TASK_ID = 'task-late';
 
-/** The simulator plus the three reads the scheduler and the gate make. */
+/** The simulator plus the reads the scheduler and the gate make. */
 class SchedulerSessionManager extends SimulatedSessionManager {
   activity: 'thinking' | 'idle' = 'idle';
 
@@ -49,6 +49,10 @@ class SchedulerSessionManager extends SimulatedSessionManager {
 
   getPendingDraft(): string | null {
     return null;
+  }
+
+  readPendingDraft(): Promise<string | null> {
+    return Promise.resolve(null);
   }
 }
 
