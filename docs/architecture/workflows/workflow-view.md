@@ -27,7 +27,7 @@ src/renderer/components/workflows/
   WorkflowCanvasCard.tsx   # the board's card body under the workflow strip, as tall as its content
   canvas-card-heights.ts   # each card's measured height for the layout; an estimate until measured
   canvas-arrange.ts        # what Auto layout moved, so those cards slide and their links hide meanwhile
-  WorkflowInspector.tsx    # run order, route rail, links, Add blocker, footer (canvas and task detail)
+  WorkflowInspector.tsx    # run order, a task's plan approval, route rail, links, Add blocker, footer (canvas and task detail)
   WorkflowCardMenu.tsx     # the board's TaskContextMenu with Open on board
   TaskWorkflowPanel.tsx    # task detail's workflow panel: the inspector for the task's own workflow
   WorkflowPicker.tsx       # the header's picker, and the workflow state chip

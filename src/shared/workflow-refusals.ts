@@ -24,6 +24,16 @@ export const WORKFLOW_REFUSALS = {
   routeEmpty: 'A task visits at least one column.',
   /** A route step at or before the column the task is in (finished, current, or skipped on the way). */
   stepReached: (label: string, columnName: string) => `${label} has reached ${columnName}. Only the columns after it can change.`,
+  /** A plan approval change on a task past its last plan column. */
+  planPassed: (label: string, columnName: string) => `${label} has passed ${columnName}. Its plan approval can no longer change.`,
+  /** A plan approval change on a task in Done. */
+  planDone: (label: string) => `${label} is done. Its plan approval can no longer change.`,
+  /** A plan approval value outside the two, from an IPC, MCP or mobile caller. */
+  planApprovalValue: 'planApproval must be "automatic", "manual", or null.',
+  /** kangentic_save_workflow's removed workflow-level planApproval. */
+  planApprovalPerTask: 'planApproval is set per task now. Put planApproval on each task entry.',
+  /** A plan approval change, over MCP, on a task in no workflow. */
+  notInWorkflow: (label: string) => `${label} is not in a workflow. Its column's Plan approval decides; change that with kangentic_update_column.`,
   /** While the workflow agent's turn runs, whatever would change its plan waits. */
   agentWorking: 'Available when the workflow agent finishes',
   /** A move of a running workflow's task that only the workflow may make. */

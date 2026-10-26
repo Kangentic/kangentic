@@ -11,6 +11,12 @@ import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
 import { resolveMoveTarget, routeOf } from '../../automations/move-target';
 import { checkWorkflowMoveForAgent } from '../../workflows/workflow-lock-check';
 import { isInWorkflow } from '../../workflows/workflow-home';
+// Not workflow-service.ts: the MCP server loads this module, and that service
+// imports the session handlers.
+import { setTaskPlanApproval } from '../../workflows/workflow-task-plan-approval';
+import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
+import { isPlanApproval } from '../../../shared/plan-approval';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import {
   clampSlot,
   computeIdsWithTaskAtSlot,
@@ -25,7 +31,7 @@ import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { Task, TaskUpdateInput, PermissionMode, TaskRunMode } from '../../../shared/types';
+import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode } from '../../../shared/types';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
@@ -436,6 +442,13 @@ export const handleUpdateTask: CommandHandler = (
   const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
   const newAutomationsDisabled = readAutomationsDisabledParam(params.automationsDisabled);
   if (newAutomationsDisabled === 'invalid') return { success: false, error: AUTOMATIONS_DISABLED_PARAM_ERROR };
+  // Tri-state: absent leaves it, null follows the task's plan columns, a value
+  // sets it. Narrowed here too: the mobile bridge reaches this with no schema.
+  const rawPlanApproval = params.planApproval;
+  if (rawPlanApproval !== undefined && rawPlanApproval !== null && !isPlanApproval(rawPlanApproval)) {
+    return { success: false, error: WORKFLOW_REFUSALS.planApprovalValue };
+  }
+  const newPlanApproval: PlanApproval | null | undefined = rawPlanApproval;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateTask.
@@ -554,8 +567,31 @@ export const handleUpdateTask: CommandHandler = (
   }
   if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 
+  // A workflow task's own plan approval goes through the workflow's setter, so
+  // the inspector and an agent are held to one rule. Written before the other
+  // fields, so its refusal (a task past its plan column) leaves the task as it was.
+  let planApprovalTask: Task | null = null;
+  if (newPlanApproval !== undefined) {
+    if (!task.workflow_id) {
+      return { success: false, error: `${WORKFLOW_REFUSALS.notInWorkflow(`#${task.display_id}`)} The task was not updated.` };
+    }
+    try {
+      planApprovalTask = setTaskPlanApproval(
+        requireWorkflowRuntimeContext(),
+        task.workflow_project_id ?? context.projectId,
+        task.workflow_id,
+        { taskId: task.id, projectId: context.projectId },
+        newPlanApproval,
+      );
+    } catch (error) {
+      return { success: false, error: `${error instanceof Error ? error.message : String(error)} The task was not updated.` };
+    }
+  }
+  const planApprovalChanged = planApprovalTask !== null;
+
   const hasScalarChange = Object.keys(updates).length > 1;
-  let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
+  // The setter returns the row as it wrote it; a scalar update reads it back anyway.
+  let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : planApprovalTask ?? task;
 
   // Attach files if provided (additive - existing attachments are untouched).
   let attachmentsAdded = 0;
@@ -581,7 +617,7 @@ export const handleUpdateTask: CommandHandler = (
   // equivalent guard in handleUpdateBacklogItem. Reachable only via attachments,
   // since the tool layer forwards attachments past its "at least one field"
   // gate while attachments contribute to changedFields only when one succeeds.
-  if (!hasScalarChange && attachmentsAdded === 0) {
+  if (!hasScalarChange && attachmentsAdded === 0 && !planApprovalChanged) {
     const attachmentsRequested = newAttachments?.length ?? 0;
     return attachmentsRequested > 0
       ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.` }
@@ -636,6 +672,7 @@ export const handleUpdateTask: CommandHandler = (
   if (newProfileSelector !== undefined) changedFields.push('profile');
   if (newRunMode !== undefined) changedFields.push('runMode');
   if (newAutomationsDisabled !== null) changedFields.push('automationsDisabled');
+  if (planApprovalChanged) changedFields.push('planApproval');
   if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
@@ -667,6 +704,7 @@ export const handleUpdateTask: CommandHandler = (
       // resulting mode has to be visible in the response.
       runMode: updated.run_mode,
       automationsDisabled: updated.automations_disabled,
+      ...(planApprovalChanged ? { planApproval: updated.plan_approval } : {}),
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };

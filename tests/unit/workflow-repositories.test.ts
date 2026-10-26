@@ -261,16 +261,46 @@ describe('workflow tables', () => {
     expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
   });
 
-  it('stores who approves plans, null by default, without changing the plan\'s revision', () => {
-    const { workflows } = freshDatabase();
+  it('clears a legacy whole-workflow plan approval, and stores a draft\'s adopted copies, without changing the plan\'s revision', () => {
+    const { database, workflows } = freshDatabase();
     const workflow = workflows.create({ title: 'Usage budgets' });
     expect(workflow.plan_approval).toBeNull();
-    workflows.setPlanApproval(workflow.id, 'automatic');
-    const picked = workflows.getById(workflow.id)!;
-    expect(picked.plan_approval).toBe('automatic');
-    expect(picked.revision).toBe(workflow.revision);
-    workflows.setPlanApproval(workflow.id, null);
-    expect(workflows.getById(workflow.id)!.plan_approval).toBeNull();
+    const saved = workflows.saveDraft(workflow.id, {
+      tasks: [{
+        key: 'api', title: 'Budgets API', description: '', project_id: null, existing_task_id: null,
+        route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+        labels: [], priority: 0, canvas_x: null, canvas_y: null, plan_approval: null,
+        base_branch: null, use_worktree: null, run_mode: 'column_settings', profile_id: null,
+        agent_override: null, model_override: null, effort_override: null, permission_mode: null,
+      }],
+      links: [],
+    });
+    // An older version wrote the whole-workflow value; nothing writes it now.
+    database.prepare("UPDATE workflows SET plan_approval = 'automatic' WHERE id = ?").run(workflow.id);
+    expect(workflows.getById(workflow.id)!.plan_approval).toBe('automatic');
+
+    workflows.writeAdoptedDraft(workflow.id, { ...saved.draft!, tasks: saved.draft!.tasks.map((task) => ({ ...task, plan_approval: 'automatic' })) });
+    workflows.clearLegacyPlanApproval(workflow.id);
+
+    const after = workflows.getById(workflow.id)!;
+    expect(after.plan_approval).toBeNull();
+    expect(after.draft?.tasks[0].plan_approval).toBe('automatic');
+    expect(after.revision).toBe(saved.revision);
+  });
+
+  it('reads a planned task\'s plan approval defensively: anything it does not know follows the plan columns', () => {
+    const { database, workflows } = freshDatabase();
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    database.prepare('UPDATE workflows SET draft_json = ? WHERE id = ?').run(JSON.stringify({
+      tasks: [
+        { key: 'a', title: 'A', plan_approval: 'manual' },
+        { key: 'b', title: 'B', plan_approval: 'AUTOMATIC' },
+        { key: 'c', title: 'C' },
+      ],
+      links: [],
+    }), workflow.id);
+
+    expect(workflows.getById(workflow.id)!.draft!.tasks.map((task) => task.plan_approval)).toEqual(['manual', null, null]);
   });
 
   describe('the workflow agent\'s PTY grid', () => {

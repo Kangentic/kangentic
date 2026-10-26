@@ -7,8 +7,9 @@
  *   value that gets SAVED to Manual (the control would only DISPLAY Manual).
  * - A column that is not in plan mode never sends a plan_approval change, so a
  *   stored Automatic survives an unrelated edit.
- * - The workflow inspector offers Automatic only when some plan column on the
- *   workflow's routes runs an agent that can approve plans.
+ * - A workflow task's own Plan approval offers Automatic only when some plan
+ *   column on its route runs an agent that can approve plans, and task detail's
+ *   Workflow panel draws the same control.
  *
  * Every test launches its own page: the mock keeps swimlane state in the page,
  * so a shared page would leak one test's seeded Automatic or agent override
@@ -28,8 +29,8 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 const PROFILE_ID = 'profile-heavy';
 const PROFILE_REASON = 'Plan approval is shared by every profile. Switch to Default to change it.';
 const CODEX_COLUMN_REASON = "Kangentic can't approve Codex CLI's plans, so they wait for you.";
-const WORKFLOW_REASON = "Kangentic can't approve plans for the agents in these plan columns, so they wait for you.";
-const WORKFLOW_AUTOMATIC_TIP = 'Approve every plan in this workflow for you. Questions the agent asks still wait.';
+const TASK_AUTOMATIC_TIP = "Approve this task's plans for you. Questions the agent asks still wait.";
+const TASK_MANUAL_TIP = "You approve this task's plans.";
 
 interface BoardLaunchOptions {
   /** Board Profiles the mock serves from the start. */
@@ -218,13 +219,15 @@ interface PlanningSeed {
   planApproval: 'manual' | 'automatic';
   /** An agent override set on each of the workflow's tasks. Left out, the tasks carry none. */
   taskAgentOverride?: string | null;
+  /** A Plan approval stored on each of the workflow's tasks (the task row's own field). Left out, the tasks store none. */
+  taskPlanApproval?: 'manual' | 'automatic' | null;
 }
 
 /**
  * One running workflow whose three tasks wait in To Do, so every column on their
  * default route is "ahead", Planning among them. The Planning lane is seeded with
- * the given agent and Plan approval, and each task with the given agent override,
- * before the app loads.
+ * the given agent and Plan approval, and each task with the given agent override
+ * and stored Plan approval, before the app loads.
  */
 function workflowSeedScript(planning: PlanningSeed): string {
   const workflow = { workflow: { id: WORKFLOW_ID, title: 'Plan approval', state: 'running', draft: null, color_slot: 5 } };
@@ -253,6 +256,7 @@ function workflowSeedScript(planning: PlanningSeed): string {
           id: 't' + row[0], display_id: row[0], title: row[1], description: 'Planned by the workflow agent.',
           swimlane_id: 'lane-0', position: index, agent: 'claude', agent_override: ${JSON.stringify(planning.taskAgentOverride ?? null)}, session_id: null, worktree_path: null, branch_name: null,
           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
+          plan_approval: ${JSON.stringify(planning.taskPlanApproval ?? null)},
           attachment_count: 0, archived_at: null, workflow_id: '${WORKFLOW_ID}', workflow_project_id: '${WORKFLOW_PROJECT_ID}',
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
           created_at: seededAt, updated_at: seededAt,
@@ -263,9 +267,13 @@ function workflowSeedScript(planning: PlanningSeed): string {
   `;
 }
 
-/** The Workflows view on the seeded workflow, with the inspector showing its run order and Plan approval. */
-async function launchWorkflowInspector(
+/**
+ * The seeded workflow, either in the Workflows view (the inspector opens on the
+ * first task, whose route visits Planning) or on the board.
+ */
+async function launchWorkflowPage(
   planning: PlanningSeed,
+  view: 'workflows' | 'board' = 'workflows',
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
@@ -275,11 +283,11 @@ async function launchWorkflowInspector(
     await page.addInitScript(workflowSeedScript(planning));
     await gotoVite(page, VITE_URL);
     await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-    await page.locator('[data-testid="view-toggle-workflows"]').click();
-    await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 15000 });
-    // The inspector opens on the first task; a click on empty canvas shows the run order.
-    await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
-    await expect(page.locator('[data-testid="workflow-plan-approval-section"]')).toBeVisible();
+    if (view === 'workflows') {
+      await page.locator('[data-testid="view-toggle-workflows"]').click();
+      await page.locator('[data-testid="workflows-view"]').waitFor({ state: 'visible', timeout: 15000 });
+      await expect(page.locator('[data-testid="workflow-task-plan-approval-section"]')).toBeVisible();
+    }
     return { browser, page };
   } catch (error) {
     await browser.close();
@@ -287,67 +295,159 @@ async function launchWorkflowInspector(
   }
 }
 
-test.describe('Workflow inspector Plan approval availability', () => {
-  test('where every plan column runs an agent that cannot approve plans, Manual is lit and Automatic is off with the reason', async () => {
+const automaticOption = (page: Page) => page.locator('[data-testid="workflow-task-plan-approval-automatic"]');
+const manualOption = (page: Page) => page.locator('[data-testid="workflow-task-plan-approval-manual"]');
+
+test.describe('Workflow task Plan approval availability', () => {
+  test('where its plan column runs an agent that cannot approve plans, Manual is lit and Automatic is off with the reason', async () => {
     // Planning is the board's only plan column. A teammate stored Automatic on it,
-    // which Codex can never act on, so the workflow reads Manual.
-    const { browser, page } = await launchWorkflowInspector({ agentOverride: 'codex', planApproval: 'automatic' });
+    // which Codex can never act on, so the task reads Manual.
+    const { browser, page } = await launchWorkflowPage({ agentOverride: 'codex', planApproval: 'automatic' });
     try {
-      const section = page.locator('[data-testid="workflow-plan-approval-section"]');
-      const automatic = page.locator('[data-testid="workflow-plan-approval-automatic"]');
-      const manual = page.locator('[data-testid="workflow-plan-approval-manual"]');
+      const section = page.locator('[data-testid="workflow-task-plan-approval-section"]');
+      const automatic = automaticOption(page);
+      const manual = manualOption(page);
 
       await expect(manual).toHaveAttribute('aria-checked', 'true');
       await expect(automatic).toHaveAttribute('aria-checked', 'false');
-      await expect(section).toHaveAttribute('data-picked', 'false');
+      await expect(section).toHaveAttribute('data-set', 'columns');
       await expect(automatic).toBeDisabled();
-      await expect(automatic).toHaveAccessibleDescription(WORKFLOW_REASON);
+      await expect(automatic).toHaveAccessibleDescription(CODEX_COLUMN_REASON);
       // Only Automatic is off. The whole control is also disabled when the host
       // gives it no setter, which would disable Manual too.
       await expect(manual).toBeEnabled();
-      await expect(manual).toHaveAccessibleDescription('You approve every plan in this workflow.');
+      await expect(manual).toHaveAccessibleDescription("Manual, because Kangentic can't approve Codex CLI's plans.");
     } finally {
       await browser.close();
     }
   });
 
-  test("a task's own agent beats the plan column's: Claude tasks on a Codex column still offer Automatic", async () => {
+  test("picking the lit Manual clears a stale Automatic stored on the task, which a Codex plan column hides", async () => {
+    // Each task stored Automatic back when its plan column ran an agent Kangentic
+    // can approve plans for. The column now runs Codex, so the task reads Manual
+    // (lit) while its own stored value is still Automatic (data-set="automatic").
+    // The pick must be judged against what is stored, not what is lit: judged
+    // against the lit value, Manual is a no-op and the stale override can never
+    // be cleared from the UI.
+    const { browser, page } = await launchWorkflowPage({
+      agentOverride: 'codex',
+      planApproval: 'automatic',
+      taskPlanApproval: 'automatic',
+    });
+    try {
+      const section = page.locator('[data-testid="workflow-task-plan-approval-section"]');
+      const automatic = automaticOption(page);
+      const manual = manualOption(page);
+
+      await expect(manual).toHaveAttribute('aria-checked', 'true');
+      await expect(automatic).toHaveAttribute('aria-checked', 'false');
+      await expect(automatic).toBeDisabled();
+      await expect(section).toHaveAttribute('data-set', 'automatic');
+
+      const readStored = () => page.evaluate(async () => {
+        const detail = await window.electronAPI.workflows.get('plan-approval-proj', 'wf-plan-approval');
+        return Object.fromEntries(detail.tasks.map((workflowTask) => [workflowTask.key, workflowTask.task?.plan_approval ?? null]));
+      });
+      expect(await readStored()).toEqual({ t501: 'automatic', t502: 'automatic', t503: 'automatic' });
+
+      // Record what the inspector sends, and forward it untouched.
+      await page.evaluate(() => {
+        const spy = window as unknown as { __planApprovalCalls?: Array<{ key: string; planApproval: string | null }> };
+        spy.__planApprovalCalls = [];
+        const original = window.electronAPI.workflows.setTaskPlanApproval;
+        window.electronAPI.workflows.setTaskPlanApproval = async (projectId, workflowId, key, planApproval) => {
+          spy.__planApprovalCalls?.push({ key, planApproval });
+          return original(projectId, workflowId, key, planApproval);
+        };
+      });
+
+      await manual.click();
+
+      // The stored value is gone, so the task follows its plan columns again.
+      await expect(section).toHaveAttribute('data-set', 'columns');
+      await expect(manual).toHaveAttribute('aria-checked', 'true');
+      const calls = await page.evaluate(
+        () => (window as unknown as { __planApprovalCalls: Array<{ key: string; planApproval: string | null }> }).__planApprovalCalls,
+      );
+      // One call, carrying null (clear the override), not the raw 'manual' pick.
+      expect(calls).toHaveLength(1);
+      expect(calls[0].planApproval).toBeNull();
+      // Only the inspected task changed.
+      const expectedStored: Record<string, string | null> = { t501: 'automatic', t502: 'automatic', t503: 'automatic' };
+      expectedStored[calls[0].key] = null;
+      expect(await readStored()).toEqual(expectedStored);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("a task's own agent beats the plan column's: a Claude task on a Codex column still offers Automatic", async () => {
     // The agent that runs a task in a column is the task's override first, then
     // the column's, then the project's default. The column runs Codex, which
     // cannot approve plans, but every task is pinned to Claude, which can. Were
-    // the column's agent to win, no plan column could approve and Automatic would
-    // be disabled with the reason.
-    const { browser, page } = await launchWorkflowInspector({
+    // the column's agent to win, Automatic would be disabled with the reason.
+    const { browser, page } = await launchWorkflowPage({
       agentOverride: 'codex',
       planApproval: 'automatic',
       taskAgentOverride: 'claude',
     });
     try {
-      const section = page.locator('[data-testid="workflow-plan-approval-section"]');
-      const automatic = page.locator('[data-testid="workflow-plan-approval-automatic"]');
-      const manual = page.locator('[data-testid="workflow-plan-approval-manual"]');
+      const section = page.locator('[data-testid="workflow-task-plan-approval-section"]');
+      const automatic = automaticOption(page);
+      const manual = manualOption(page);
 
       await expect(automatic).toBeEnabled();
-      await expect(automatic).toHaveAccessibleDescription(WORKFLOW_AUTOMATIC_TIP);
-      // Nobody picked: the value is the plan column's own Automatic, which now takes effect.
+      // Not set: the value is the plan column's own Automatic, which now takes effect.
       await expect(automatic).toHaveAttribute('aria-checked', 'true');
+      await expect(automatic).toHaveAccessibleDescription("Automatic, from kangentic's Planning column.");
       await expect(manual).toHaveAttribute('aria-checked', 'false');
-      await expect(section).toHaveAttribute('data-picked', 'false');
+      await expect(manual).toHaveAccessibleDescription(TASK_MANUAL_TIP);
+      await expect(section).toHaveAttribute('data-set', 'columns');
     } finally {
       await browser.close();
     }
   });
 
   test('with the default Claude plan column, Automatic is offered and enabled', async () => {
-    const { browser, page } = await launchWorkflowInspector({ agentOverride: null, planApproval: 'manual' });
+    const { browser, page } = await launchWorkflowPage({ agentOverride: null, planApproval: 'manual' });
     try {
-      const automatic = page.locator('[data-testid="workflow-plan-approval-automatic"]');
-      const manual = page.locator('[data-testid="workflow-plan-approval-manual"]');
+      const automatic = automaticOption(page);
+      const manual = manualOption(page);
 
       await expect(manual).toHaveAttribute('aria-checked', 'true');
       await expect(automatic).toBeEnabled();
       await expect(manual).toBeEnabled();
-      await expect(automatic).toHaveAccessibleDescription(WORKFLOW_AUTOMATIC_TIP);
+      await expect(automatic).toHaveAccessibleDescription(TASK_AUTOMATIC_TIP);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test("task detail's Workflow panel draws the same control, above the route, and a pick sets the task's own value", async () => {
+    const { browser, page } = await launchWorkflowPage({ agentOverride: null, planApproval: 'manual' }, 'board');
+    try {
+      await page.locator('[data-board-lanes] [data-task-id="t501"]').click();
+      await page.locator('[data-testid="task-detail-edit-scroll"]').waitFor({ state: 'visible' });
+      await page.locator('[data-testid="task-detail-dialog"] [data-testid="workflow-toggle"]').click();
+      const dialog = page.locator('[data-testid="task-detail-dialog"]');
+      const section = dialog.locator('[data-testid="workflow-task-plan-approval-section"]');
+      await expect(section).toBeVisible();
+      await expect(dialog.locator('[data-testid="workflow-route-row"]').first()).toBeVisible();
+      const sectionFirst = await page.evaluate(() => {
+        const host = document.querySelector('[data-testid="task-detail-dialog"]');
+        const approval = host?.querySelector('[data-testid="workflow-task-plan-approval-section"]');
+        const route = host?.querySelector('[data-testid="workflow-route-row"]');
+        return !!approval && !!route && (approval.compareDocumentPosition(route) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      });
+      expect(sectionFirst).toBe(true);
+
+      await dialog.locator('[data-testid="workflow-task-plan-approval-automatic"]').click();
+      await expect(section).toHaveAttribute('data-set', 'automatic');
+      const stored = await page.evaluate(async () => {
+        const detail = await window.electronAPI.workflows.get('plan-approval-proj', 'wf-plan-approval');
+        return detail.tasks.find((task) => task.key === 't501')?.task?.plan_approval ?? null;
+      });
+      expect(stored).toBe('automatic');
     } finally {
       await browser.close();
     }

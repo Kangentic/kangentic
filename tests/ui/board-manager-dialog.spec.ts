@@ -209,7 +209,7 @@ test.describe('BoardManagerDialog', () => {
     expect(planApprovalFirst).toBe(true);
     await expect(afterPlanMode).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'About Plan approval' })).toHaveAccessibleDescription(
-      'Whether you approve each plan or Kangentic does. A workflow can change it for its own tasks.',
+      'Whether you approve each plan or Kangentic does. A workflow task can override it for itself.',
     );
     await expect(dialog.getByRole('button', { name: 'About After Plan Mode' })).toHaveAccessibleDescription(
       'Where the task goes when the agent exits Plan mode.',

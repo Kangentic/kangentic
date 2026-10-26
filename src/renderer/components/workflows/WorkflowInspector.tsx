@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { agentCannotApprovePlans, normalizeTaskPlanApproval, taskPlanApprovalTip } from '../../../shared/plan-approval';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -416,8 +417,8 @@ export interface WorkflowInspectorProps {
   onRefuse: (message: string) => void;
   /** taskDetail only: the footer's Open workflow. */
   onOpenWorkflow?: () => void;
-  /** Who approves plans for the workflow's tasks; the control is read-only without it. */
-  onSetPlanApproval?: (planApproval: PlanApproval) => void;
+  /** Who approves one task's plans; null follows its plan columns. The control is read-only without it. */
+  onSetTaskPlanApproval?: (key: string, planApproval: PlanApproval | null) => void;
 }
 
 export function WorkflowInspector(props: WorkflowInspectorProps) {
@@ -447,50 +448,86 @@ function RunOrderRowMark({ task }: { task: Task }) {
   );
 }
 
-/** Module scope: SegmentedControl keys its measuring effect on the options array. */
-const WORKFLOW_PLAN_APPROVAL_OPTIONS: readonly SegmentedControlOption<PlanApproval>[] = [
-  { value: 'automatic', label: 'Automatic', tip: 'Approve every plan in this workflow for you. Questions the agent asks still wait.', testId: 'workflow-plan-approval-automatic' },
-  { value: 'manual', label: 'Manual', tip: 'You approve every plan in this workflow.', testId: 'workflow-plan-approval-manual' },
-];
-
-/** For a workflow whose plan columns all run agents Kangentic cannot approve plans for. */
-const WORKFLOW_PLAN_APPROVAL_OPTIONS_MANUAL_ONLY: readonly SegmentedControlOption<PlanApproval>[] = WORKFLOW_PLAN_APPROVAL_OPTIONS.map((option) => (
-  option.value === 'automatic'
-    ? { ...option, disabled: true, disabledReason: 'Kangentic can\'t approve plans for the agents in these plan columns, so they wait for you.' }
-    : option
-));
+const AUTOMATIC_TIP = 'Approve this task\'s plans for you. Questions the agent asks still wait.';
+const MANUAL_TIP = 'You approve this task\'s plans.';
 
 /**
- * Who approves plans for every task in the workflow. What is lit is what
- * happens: until someone picks, that is the answer its plan columns give
- * together (`WorkflowDetail.planApproval`), and a pick holds from then on.
- * Where no plan column's agent can approve plans, that is Manual.
+ * A task's own plan approval, above its route. What is lit is what happens:
+ * left alone, the value the plan columns on its route give
+ * (`TaskPlanApproval.columnValue`); picking the other option sets it on the
+ * task, and picking the columns' value again goes back to following them. The
+ * lit option's tip says which, so the section carries no line of its own.
+ *
+ * Shown only while it can decide something: the route has a plan column and the
+ * task has not passed it. Automatic is off where no plan column's agent can
+ * approve plans, and the whole control waits while the workflow agent works.
  */
-function PlanApprovalSection({ detail, onSetPlanApproval }: Pick<WorkflowInspectorProps, 'detail' | 'onSetPlanApproval'>) {
+function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
+  task: WorkflowViewTask;
+  held: boolean;
+  onSetTaskPlanApproval?: (key: string, planApproval: PlanApproval | null) => void;
+}) {
+  const view = task.planApproval;
+  // Memoized: SegmentedControl keys its measuring effect on the options array.
+  const options = useMemo((): SegmentedControlOption<PlanApproval>[] => {
+    if (!view) return [];
+    const litTip = taskPlanApprovalTip(view);
+    const heldReason = held ? WORKFLOW_REFUSALS.agentWorking : undefined;
+    const automaticOff = !view.canApprove && view.agentName ? agentCannotApprovePlans(view.agentName) : undefined;
+    return [
+      {
+        value: 'automatic',
+        label: 'Automatic',
+        tip: view.value === 'automatic' ? litTip : AUTOMATIC_TIP,
+        testId: 'workflow-task-plan-approval-automatic',
+        disabled: held || !view.canApprove,
+        disabledReason: heldReason ?? automaticOff,
+      },
+      {
+        value: 'manual',
+        label: 'Manual',
+        tip: view.value === 'manual' ? litTip : MANUAL_TIP,
+        testId: 'workflow-task-plan-approval-manual',
+        disabled: held,
+        disabledReason: heldReason,
+      },
+    ];
+  }, [view, held]);
+  if (!view || view.passed) return null;
   return (
-    <section className="shrink-0 border-b border-edge px-4 py-3.5" data-testid="workflow-plan-approval-section" data-picked={detail.planApproval.picked}>
-      <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">Plan approval</div>
+    <section
+      className="px-4 py-3.5 border-b border-edge/60"
+      data-testid="workflow-task-plan-approval-section"
+      data-set={view.set ?? 'columns'}
+    >
+      <SectionHeading>Plan approval</SectionHeading>
       <SegmentedControl
-        options={detail.planApproval.canApprove ? WORKFLOW_PLAN_APPROVAL_OPTIONS : WORKFLOW_PLAN_APPROVAL_OPTIONS_MANUAL_ONLY}
-        value={detail.planApproval.value}
-        onChange={(next) => onSetPlanApproval?.(next)}
-        disabled={!onSetPlanApproval}
+        options={options}
+        value={view.value}
+        onChange={(next) => {
+          // Against what is stored, not what is lit: a task set to Automatic on
+          // an agent that cannot approve plans reads Manual, and picking Manual
+          // must still clear it. Main normalizes too; this only skips a no-op call.
+          const stored = normalizeTaskPlanApproval(next, view.columnValue);
+          if (stored === view.set) return;
+          onSetTaskPlanApproval?.(task.key, stored);
+        }}
+        disabled={held || !onSetTaskPlanApproval}
         fullWidth
         quiet
         ariaLabel="Plan approval"
-        testId="workflow-plan-approval"
+        testId="workflow-task-plan-approval"
       />
     </section>
   );
 }
 
-function RunOrderPanel({ detail, visibleKeys, onSelectTask, onSetPlanApproval }: WorkflowInspectorProps) {
+function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorProps) {
   const groups = useMemo(() => runOrder(detail)
     .map((group) => group.filter((task) => !visibleKeys || visibleKeys.has(task.key)))
     .filter((group) => group.length > 0), [detail, visibleKeys]);
   return (
     <>
-      <PlanApprovalSection detail={detail} onSetPlanApproval={onSetPlanApproval} />
       <div className="shrink-0 px-4 pt-3.5 pb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">Run order</div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3" data-testid="workflow-run-order">
         {groups.length === 0 && (
@@ -543,6 +580,7 @@ function TaskPanel({
   onSetLink,
   onRefuse,
   onOpenWorkflow,
+  onSetTaskPlanApproval,
 }: WorkflowInspectorProps & { task: WorkflowViewTask }) {
   const acrossBoards = detail.tasks.some((other) => other.projectId !== detail.homeProjectId);
   const projectNameOf = (viewTask: WorkflowViewTask): string | null => (acrossBoards ? detail.projectNames[viewTask.projectId] ?? null : null);
@@ -589,6 +627,7 @@ function TaskPanel({
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-y-auto">
+        <TaskPlanApprovalSection task={task} held={held} onSetTaskPlanApproval={onSetTaskPlanApproval} />
         <section className="px-4 py-3.5 border-b border-edge/60">
           <SectionHeading
             trailing={acrossBoards ? (

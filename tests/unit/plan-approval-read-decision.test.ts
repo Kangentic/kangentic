@@ -3,7 +3,7 @@
  * feeds `resolvePlanApprovalDecision` (the pure rules, pinned in
  * plan-approval-decision.test.ts). This pins what the read itself gathers: the
  * task's own row, its column folded through its Board Profile, the plan exit
- * target, a running workflow's value, the global mode, and the one board read a
+ * target, a workflow task's own value, the global mode, and the one board read a
  * `DecisionReadCache` shares between sessions.
  *
  * The seeded board is To Do, Planning (plan mode, exits to Executing),
@@ -13,9 +13,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type Database from 'better-sqlite3';
 import type { BoardProfile, PermissionMode, PlanApproval, Task } from '../../src/shared/types';
 
-const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
+const harness = vi.hoisted(() => ({
+  dbs: new Map<string, unknown>(),
+  /** Project ids whose database read fails as a locked file does: a SQLite error. */
+  throwFor: new Set<string>(),
+}));
 vi.mock('../../src/main/db/database', () => ({
-  getExistingProjectDb: (projectId: string) => harness.dbs.get(projectId) ?? null,
+  getExistingProjectDb: (projectId: string) => {
+    if (harness.throwFor.has(projectId)) {
+      throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
+    }
+    return harness.dbs.get(projectId) ?? null;
+  },
   getProjectDb: (projectId: string) => {
     const db = harness.dbs.get(projectId);
     if (!db) throw new Error(`No database for ${projectId}`);
@@ -52,6 +61,7 @@ describe('readPlanApprovalDecision', () => {
 
   beforeEach(() => {
     harness.dbs.clear();
+    harness.throwFor.clear();
     database('home');
     database('mobile');
     globalPermissionMode = 'default';
@@ -228,47 +238,75 @@ describe('readPlanApprovalDecision', () => {
       await service.startWorkflow(context, 'home', workflow.id);
       const [task] = taskRepository().listByWorkflow(workflow.id);
       taskRepository().move({ taskId: task.id, targetSwimlaneId: laneId('home', 'Planning'), targetPosition: 0 }, { origin: 'workflow' });
-      const pick = (planApproval: PlanApproval | null) => new WorkflowRepository(homeDb()).setPlanApproval(workflow.id, planApproval);
-      return { workflow, task, pick };
+      const setOwn = (planApproval: PlanApproval | null) => taskRepository().setPlanApproval(task.id, planApproval);
+      return { workflow, task, setOwn };
     }
 
-    it('follows the workflow\'s pick over an Automatic column', async () => {
+    it('follows its own value over an Automatic column', async () => {
       editColumn('Planning', { plan_approval: 'automatic' });
-      const { task, pick } = await startedWorkflowTaskInPlanning();
-      // Control: unpicked, the plan columns on its route say Automatic.
+      const { task, setOwn } = await startedWorkflowTaskInPlanning();
+      // Control: left alone, the plan column on its route says Automatic.
       expect(read(task.id)?.approve).toBe(true);
 
-      pick('manual');
+      setOwn('manual');
 
       expect(read(task.id)?.approve).toBe(false);
     });
 
-    it('follows the workflow\'s pick over a Manual column', async () => {
-      const { task, pick } = await startedWorkflowTaskInPlanning();
+    it('follows its own value over a Manual column', async () => {
+      const { task, setOwn } = await startedWorkflowTaskInPlanning();
       expect(read(task.id)?.approve).toBe(false);
 
-      pick('automatic');
+      setOwn('automatic');
 
       expect(read(task.id)?.approve).toBe(true);
     });
 
     it('moves on along its route, not along the column\'s exit target', async () => {
       editColumn('Planning', { plan_exit_target_id: laneId('home', 'Testing') });
-      const { task, pick } = await startedWorkflowTaskInPlanning();
-      pick('automatic');
+      const { task, setOwn } = await startedWorkflowTaskInPlanning();
+      setOwn('automatic');
 
       expect(read(task.id)?.detail).toBe('Moved to Executing');
     });
 
-    it('goes back to following its column once the workflow is no longer running', async () => {
+    it('keeps its own value while its workflow is paused, where its card can be moved by hand', async () => {
       editColumn('Planning', { plan_approval: 'automatic' });
-      const { workflow, task, pick } = await startedWorkflowTaskInPlanning();
-      pick('manual');
-      expect(read(task.id)?.approve).toBe(false);
+      const { workflow, task, setOwn } = await startedWorkflowTaskInPlanning();
+      setOwn('manual');
 
-      homeDb().prepare("UPDATE workflows SET state = 'done' WHERE id = ?").run(workflow.id);
+      homeDb().prepare("UPDATE workflows SET state = 'paused' WHERE id = ?").run(workflow.id);
+
+      expect(read(task.id)?.approve).toBe(false);
+    });
+
+    it('is not held by a Manual plan column on another task\'s board', async () => {
+      // The #452 case: this board's Planning is Automatic, the phone board's is
+      // Manual. Only the task whose route passes through it waits.
+      editColumn('Planning', { plan_approval: 'automatic' });
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' }],
+        links: [],
+      });
+      await service.startWorkflow(context, 'home', workflow.id);
+      const [task] = taskRepository().listByWorkflow(workflow.id);
+      taskRepository().move({ taskId: task.id, targetSwimlaneId: laneId('home', 'Planning'), targetPosition: 0 }, { origin: 'workflow' });
 
       expect(read(task.id)?.approve).toBe(true);
+    });
+
+    it('follows a legacy whole-workflow value until it has its own, and the value moves onto the task', async () => {
+      editColumn('Planning', { plan_approval: 'automatic' });
+      const { workflow, task } = await startedWorkflowTaskInPlanning();
+      homeDb().prepare("UPDATE workflows SET plan_approval = 'manual' WHERE id = ?").run(workflow.id);
+
+      expect(read(task.id)?.approve).toBe(false);
+
+      expect(taskRepository().getById(task.id)!.plan_approval).toBe('manual');
+      expect(new WorkflowRepository(homeDb()).getById(workflow.id)!.plan_approval).toBeNull();
+      // Read again, from the task's own copy.
+      expect(read(task.id)?.approve).toBe(false);
     });
   });
 
@@ -340,7 +378,7 @@ describe('readPlanApprovalDecision', () => {
       }
     });
 
-    it('reads a running workflow\'s derived value once for all its tasks', async () => {
+    it('reads a workflow task\'s value from its own route, without walking the workflow\'s other boards', async () => {
       const workflow = service.createWorkflow('home', {});
       service.savePlan(context, 'home', workflow.id, {
         tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'ui', title: 'Budgets UI' }],
@@ -352,19 +390,92 @@ describe('readPlanApprovalDecision', () => {
       try {
         listSpy.mockClear();
 
-        // The derived value walks every project's tasks: two boards here.
         const cache = newDecisionReadCache();
         read(first.id, {}, cache);
         read(second.id, {}, cache);
-        expect(listSpy).toHaveBeenCalledTimes(2);
 
-        listSpy.mockClear();
-        read(first.id, {}, newDecisionReadCache());
-        read(second.id, {}, newDecisionReadCache());
-        expect(listSpy).toHaveBeenCalledTimes(4);
+        expect(listSpy).not.toHaveBeenCalled();
       } finally {
         listSpy.mockRestore();
       }
+    });
+
+    describe('a legacy whole-workflow value that an unreadable board keeps from being adopted', () => {
+      /**
+       * A started workflow on the home board with a task in Planning (an
+       * Automatic column) whose legacy value is Manual, and the phone board
+       * unreadable after Start. The adoption walks every board, so with the
+       * phone board unreadable it cannot finish and the legacy value stays:
+       * without a once-per-pass guard, every session of the workflow would walk
+       * the boards again. (Once adopted, the value is cleared and the next
+       * attempt is one null check, which would hide the guard.)
+       */
+      async function stuckWorkflow(taskTitles: string[]) {
+        const workflow = service.createWorkflow('home', {});
+        service.savePlan(context, 'home', workflow.id, {
+          tasks: taskTitles.map((title, index) => ({ key: `task-${index}`, title })),
+          links: [],
+        });
+        await service.startWorkflow(context, 'home', workflow.id);
+        const tasks = taskRepository().listByWorkflow(workflow.id);
+        for (const task of tasks) {
+          taskRepository().move({ taskId: task.id, targetSwimlaneId: laneId('home', 'Planning'), targetPosition: 0 }, { origin: 'workflow' });
+        }
+        homeDb().prepare("UPDATE workflows SET plan_approval = 'manual' WHERE id = ?").run(workflow.id);
+        return { workflow, tasks };
+      }
+
+      const legacyOf = (workflowId: string) => new WorkflowRepository(homeDb()).getById(workflowId)!.plan_approval;
+
+      it('is tried once per pass for the sessions of one workflow, and once per session without a shared cache', async () => {
+        editColumn('Planning', { plan_approval: 'automatic' });
+        const { workflow, tasks: [first, second] } = await stuckWorkflow(['Budgets API', 'Budgets UI']);
+        harness.throwFor.add('mobile');
+        const listSpy = vi.spyOn(TaskRepository.prototype, 'listByWorkflow');
+        try {
+          listSpy.mockClear();
+
+          // The legacy Manual sits above the Automatic column, so neither session approves.
+          const cache = newDecisionReadCache();
+          expect(read(first.id, {}, cache)?.approve).toBe(false);
+          expect(read(second.id, {}, cache)?.approve).toBe(false);
+          // One attempt reads the one readable board's tasks once.
+          expect(listSpy).toHaveBeenCalledTimes(1);
+
+          // Control: a cache each is an attempt each, and the same decisions.
+          listSpy.mockClear();
+          expect(read(first.id, {}, newDecisionReadCache())?.approve).toBe(false);
+          expect(read(second.id, {}, newDecisionReadCache())?.approve).toBe(false);
+          expect(listSpy).toHaveBeenCalledTimes(2);
+        } finally {
+          listSpy.mockRestore();
+        }
+        // Nothing was adopted, so the next pass retries.
+        expect(legacyOf(workflow.id)).toBe('manual');
+      });
+
+      it('is tried once per workflow: a second workflow in the same pass is tried too', async () => {
+        editColumn('Planning', { plan_approval: 'automatic' });
+        const { workflow: firstWorkflow, tasks: [firstOfFirst, secondOfFirst] } = await stuckWorkflow(['Budgets API', 'Budgets UI']);
+        const { workflow: secondWorkflow, tasks: [onlyOfSecond] } = await stuckWorkflow(['Reports API']);
+        harness.throwFor.add('mobile');
+        const listSpy = vi.spyOn(TaskRepository.prototype, 'listByWorkflow');
+        try {
+          listSpy.mockClear();
+
+          const cache = newDecisionReadCache();
+          read(firstOfFirst.id, {}, cache);
+          expect(listSpy).toHaveBeenCalledTimes(1);
+          expect(read(onlyOfSecond.id, {}, cache)?.approve).toBe(false);
+          expect(listSpy).toHaveBeenCalledTimes(2);
+          expect(read(secondOfFirst.id, {}, cache)?.approve).toBe(false);
+          expect(listSpy).toHaveBeenCalledTimes(2);
+        } finally {
+          listSpy.mockRestore();
+        }
+        expect(legacyOf(firstWorkflow.id)).toBe('manual');
+        expect(legacyOf(secondWorkflow.id)).toBe('manual');
+      });
     });
   });
 });

@@ -163,7 +163,9 @@ function taskContentsMatch(previous: Task, next: Task): boolean {
     previous.route_start_swimlane_id !== next.route_start_swimlane_id ||
     previous.route_last_swimlane_id !== next.route_last_swimlane_id ||
     previous.canvas_x !== next.canvas_x ||
-    previous.canvas_y !== next.canvas_y
+    previous.canvas_y !== next.canvas_y ||
+    // A workflow task's own plan approval, which the Workflow panel draws.
+    previous.plan_approval !== next.plan_approval
   ) return false;
 
   return sameStrings(previous.labels ?? [], next.labels ?? [])

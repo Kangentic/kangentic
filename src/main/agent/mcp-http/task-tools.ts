@@ -48,8 +48,13 @@ const PLAN_APPROVAL_DESCRIPTION =
   'Who approves a plan when the agent in this column finishes planning. Only matters while permissionMode is "plan". '
   + '"manual" (default) waits for the user in the agent\'s terminal; "automatic" has Kangentic approve it, so the task '
   + 'moves on to planExitTargetColumn by itself. Only the plan prompt is answered: a question the agent asks the user '
-  + 'still waits, and an agent that cannot have its plans approved stays manual. A task in a running workflow follows '
-  + 'the workflow\'s plan approval instead.';
+  + 'still waits, and an agent that cannot have its plans approved stays manual. A workflow task can override it for '
+  + 'itself (planApproval on the task).';
+
+/** kangentic_update_task's planApproval: a workflow task's own, overriding its plan columns'. */
+const TASK_PLAN_APPROVAL_DESCRIPTION =
+  'For a task in a workflow: "automatic" or "manual" sets who approves its plan, overriding its plan column; null follows its plan column again. '
+  + 'Refused once the task has passed its plan column, and for a task in no workflow, whose column\'s Plan approval decides (kangentic_update_column).';
 
 /**
  * Written to lead a caller to the right answer rather than to name the enum. An
@@ -616,7 +621,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, disabling or enabling its column automations, and attaching files. To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). Setting automationsDisabled never restarts anything. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
+      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, disabling or enabling its column automations, a workflow task\'s own plan approval, and attaching files. To move a task between columns, use kangentic_move_task instead. Setting model, effort, profile, or runMode on a task with a running session restarts that session onto the new settings unless it already runs at them, which ends its current turn (your own turn, if it is your task). Setting automationsDisabled never restarts anything. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
@@ -643,17 +648,19 @@ export function registerTaskTools(
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments to ADD to the task. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
         automationsDisabled: z.boolean().optional().describe(AUTOMATIONS_DISABLED_DESCRIPTION),
+        planApproval: PLAN_APPROVAL_SCHEMA.nullable().optional().describe(TASK_PLAN_APPROVAL_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, automationsDisabled, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, profile, runMode, attachments, automationsDisabled, planApproval, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
-        profile === undefined && runMode === undefined && attachments === undefined && automationsDisabled === undefined
+        profile === undefined && runMode === undefined && attachments === undefined && automationsDisabled === undefined &&
+        planApproval === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -727,6 +734,8 @@ export function registerTaskTools(
           runMode: runMode ?? undefined,
           attachments: attachments ?? null,
           automationsDisabled: automationsDisabled ?? null,
+          // Tri-state, as the handler reads it: absent leaves it, null follows the columns.
+          planApproval,
         }, ctx, 'Failed to update task');
         return withLabelsAbsentNotice(
           result,

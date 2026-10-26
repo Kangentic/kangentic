@@ -42,6 +42,7 @@ import {
   type AutomationDraftsByColumn,
 } from './board-manager/automation-drafts';
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
+import { agentCannotApprovePlans } from '../../../shared/plan-approval';
 import { canTriggerRun } from '../../../shared/automation-manifest';
 import { automationAgentReady } from '../../../shared/answer-agent';
 import { IconPickerDialog } from './IconPickerDialog';
@@ -139,7 +140,7 @@ const SESSION_TARGET_OPTIONS: readonly SegmentedControlOption<SessionTarget>[] =
 
 const SESSION_TARGET_INFO = 'Columns share the task\'s main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.';
 
-const PLAN_APPROVAL_INFO = 'Whether you approve each plan or Kangentic does. A workflow can change it for its own tasks.';
+const PLAN_APPROVAL_INFO = 'Whether you approve each plan or Kangentic does. A workflow task can override it for itself.';
 const AFTER_PLAN_MODE_INFO = 'Where the task goes when the agent exits Plan mode.';
 
 /** Automatic first, the order the design settled on; Manual stays the default. Module scope for the reason above. */
@@ -168,7 +169,7 @@ function planApprovalOptionsFor({ agentCanApprove, agentDisplayName, underProfil
   }
   if (agentCanApprove) return PLAN_APPROVAL_OPTIONS;
   return PLAN_APPROVAL_OPTIONS.map((option) => (option.value === 'automatic'
-    ? { ...option, disabled: true, disabledReason: `Kangentic can't approve ${agentDisplayName}'s plans, so they wait for you.` }
+    ? { ...option, disabled: true, disabledReason: agentCannotApprovePlans(agentDisplayName) }
     : option));
 }
 

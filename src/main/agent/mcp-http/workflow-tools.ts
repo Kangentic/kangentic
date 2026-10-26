@@ -39,6 +39,19 @@ const RUN_SETTINGS_SHAPE = {
   permissionMode: z.enum(PERMISSION_MODES).optional().describe('Pin a permission mode for the whole task.'),
 };
 
+/**
+ * A task's own plan approval, for kangentic_save_workflow's planned tasks and
+ * kangentic_add_workflow_task. Not a run setting: a task taken in with
+ * existingTask may carry it too.
+ */
+const TASK_PLAN_APPROVAL_SHAPE = {
+  planApproval: z.enum(['automatic', 'manual']).nullable().optional().describe(
+    '"automatic" or "manual" sets who approves this task\'s plan: "automatic" has Kangentic approve it so the task moves on by itself (a question the agent asks the user still waits), "manual" waits for the user. '
+    + 'Omit it, or pass null, and the task follows its plan column: Automatic only when every plan column on its route is Automatic and runs an agent that can approve plans. '
+    + 'Setting the column\'s own value is the same as leaving it unset. Set it only when the user asks.',
+  ),
+};
+
 const PLANNED_TASK_SCHEMA = z.object({
   key: z.string().max(60).describe('A short key for this task, unique in the plan, used by links ("api", "ui").'),
   title: z.string().max(300).describe('The task\'s title.'),
@@ -51,6 +64,7 @@ const PLANNED_TASK_SCHEMA = z.object({
   labels: z.array(z.string()).optional(),
   priority: z.number().int().min(0).max(4).optional(),
   ...RUN_SETTINGS_SHAPE,
+  ...TASK_PLAN_APPROVAL_SHAPE,
 });
 
 export function registerWorkflowTools(server: McpServer, resolver: RequestResolver): void {
@@ -70,7 +84,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_get_workflow',
     {
-      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, its board when that is another project\'s, route, what it waits for, and, before Start, any settings that are not the default (project, base branch, worktree, profile or agent override) in kangentic_save_workflow\'s own names.',
+      description: 'Read one workflow: its state, its revision (pass it back to kangentic_save_workflow), and each task with its column, its board when that is another project\'s, route, what it waits for, its plan approval and where that comes from, and, before Start, any settings that are not the default (project, base branch, worktree, profile, agent override or planApproval) in kangentic_save_workflow\'s own names.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -83,7 +97,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_save_workflow',
     {
-      description: 'Save the plan of a workflow that has not started: its title, every planned task, and the links between them. Replaces the whole plan, so read it first with kangentic_get_workflow and send it back with your change, passing the revision you read; a save over a newer revision is refused so the user\'s own edits win. Omit `workflow` to create a new one. Nothing appears on any board until the user starts it. Each task can carry the settings a task on the board has: baseBranch, useWorktree, and Column Settings (optionally a profile) or an agent override; left out, it runs on Column Settings from the board\'s base branch, and the user can change any of them until Start. Since a save replaces the plan, send back every setting kangentic_get_workflow listed for a task you keep. Plan as few tasks as the work allows (one capable agent finishing a larger task costs less than several sharing it); link a task to another only when it needs that task\'s code merged first, and let everything else run side by side.',
+      description: 'Save the plan of a workflow that has not started: its title, every planned task, and the links between them. Replaces the whole plan, so read it first with kangentic_get_workflow and send it back with your change, passing the revision you read; a save over a newer revision is refused so the user\'s own edits win. Omit `workflow` to create a new one. Nothing appears on any board until the user starts it. Each task can carry the settings a task on the board has: baseBranch, useWorktree, and Column Settings (optionally a profile) or an agent override; left out, it runs on Column Settings from the board\'s base branch, and the user can change any of them until Start. Each task can also carry its own planApproval; left out, it follows its plan column. Since a save replaces the plan, send back every setting kangentic_get_workflow listed for a task you keep. Plan as few tasks as the work allows (one capable agent finishing a larger task costs less than several sharing it); link a task to another only when it needs that task\'s code merged first, and let everything else run side by side.',
       inputSchema: z.object({
         workflow: z.string().optional().describe(`${WORKFLOW_DESCRIPTION} Omit to create a new workflow.`),
         title: z.string().max(200).optional().describe('The workflow\'s name. Give a new workflow one when you first save it.'),
@@ -94,7 +108,9 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
           blocked: z.string().describe('The key of the task that waits for it.'),
         })).optional().describe('"blocked waits for blocker to reach Done". No loops.'),
         revision: z.number().int().optional().describe('The revision kangentic_get_workflow reported. Required when saving an existing workflow you read.'),
-        planApproval: z.enum(['automatic', 'manual']).nullable().optional().describe('Who approves each task\'s plan once the workflow runs: "automatic" has Kangentic approve it so the task moves on by itself (a question the agent asks the user still waits), "manual" waits for the user. Null follows the plan columns on the tasks\' routes (Automatic only when every one is). Set it only when the user asks; omit it to leave it as it is.'),
+        // Kept in the schema so a sender is refused with what to do instead,
+        // rather than having zod strip it silently.
+        planApproval: z.unknown().optional().describe('Removed: plan approval is set per task now. Put planApproval on each task entry instead.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
@@ -160,6 +176,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
         skip: z.array(z.string()).optional().describe('Columns inside its route it skips.'),
         waitsFor: z.array(z.string()).optional().describe('Tasks in this workflow it waits for: a task number on the workflow\'s own board, or the id of one on any of its boards.'),
         ...RUN_SETTINGS_SHAPE,
+        ...TASK_PLAN_APPROVAL_SHAPE,
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,

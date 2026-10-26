@@ -666,6 +666,13 @@ export interface Task {
    */
   canvas_x: number | null;
   canvas_y: number | null;
+  /**
+   * A workflow task's own plan approval, overriding its plan columns', or null
+   * to follow them (`taskPlanApproval`, `src/shared/plan-approval.ts`). A
+   * workflow column like the route: written by the workflow paths only, and
+   * cleared when the task leaves its workflow.
+   */
+  plan_approval: PlanApproval | null;
   attachment_count: number;
   /**
    * Outcome of this task's most recent auto_command injection - the durable
@@ -829,8 +836,8 @@ export type SessionSpawnStrategy = 'create_or_resume' | 'always_spawn_new';
  *   `supportsPlanAutoApproval`. It answers the plan prompt and, in plan mode, a
  *   prompt for another server's MCP tool the project allows; a question the
  *   agent asks the user always waits.
- * A task in a running workflow follows the workflow's value instead
- * (`Workflow.plan_approval`, see `src/shared/plan-approval.ts`).
+ * A workflow task can override it for itself (`Task.plan_approval`, see
+ * `src/shared/plan-approval.ts`).
  */
 export type PlanApproval = 'automatic' | 'manual';
 
@@ -5466,6 +5473,7 @@ export interface TaskWorkflowMembership {
   skipped_swimlane_ids: string[];
   canvas_x: number | null;
   canvas_y: number | null;
+  plan_approval: PlanApproval | null;
 }
 
 export interface TaskUpdateInput {
@@ -5665,6 +5673,12 @@ export interface WorkflowDraftTask extends WorkflowTaskRunSettings {
   priority: number;
   canvas_x: number | null;
   canvas_y: number | null;
+  /**
+   * Its own plan approval, or null to follow its plan columns. Not a run
+   * setting: a task taken in with `existing_task_id` may carry one, and Start
+   * copies it with the workflow membership.
+   */
+  plan_approval: PlanApproval | null;
 }
 
 /** "blocked waits for blocker", by draft keys. */
@@ -5718,11 +5732,10 @@ export interface Workflow {
    */
   agent_read_project_ids: string[];
   /**
-   * Who approves plans for this workflow's tasks while it runs, as the user (or
-   * the workflow agent, before Start) picked it. Null until picked: the
-   * workflow then follows its plan columns, Automatic only when every one is
-   * (`workflowPlanApproval`, `src/shared/plan-approval.ts`). Changing it changes
-   * no plan, so it does not move `revision`.
+   * Legacy: the whole-workflow plan approval older versions let the user pick.
+   * Nothing writes it any more. `adoptLegacyPlanApproval` copies a value left
+   * here onto each unfinished task, then clears it; until then the resolvers
+   * read it between the task's own value and its plan columns.
    */
   plan_approval: PlanApproval | null;
 }
@@ -5797,6 +5810,37 @@ export interface WorkflowViewTask {
    * stopped it, or it cannot start), while that holds; null otherwise.
    */
   stallReason: string | null;
+  /** Its plan approval and where it comes from; null when no column on its route runs in plan mode. */
+  planApproval: TaskPlanApproval | null;
+}
+
+/**
+ * A workflow task's plan approval as main resolves it (`taskPlanApproval`,
+ * `src/shared/plan-approval.ts`): what the task carries, what its plan columns
+ * give, and what happens. The inspector, the decision each session's approver
+ * reads, and the MCP tools all read this one shape.
+ */
+export interface TaskPlanApproval {
+  /** What the task carries (`Task.plan_approval`); null follows its plan columns. */
+  set: PlanApproval | null;
+  /** What happens. */
+  value: PlanApproval;
+  /** What its plan columns give with nothing set: Automatic only when every one is, and runs an agent that can approve plans. */
+  columnValue: PlanApproval;
+  /** Some plan column on its route runs an agent whose plans Kangentic can approve. */
+  canApprove: boolean;
+  /** The plan column that decided `columnValue`, and its board's name. */
+  column: { name: string; boardName: string };
+  /** The agent that cannot approve plans, when `canApprove` is false. */
+  agentName: string | null;
+  /**
+   * When `canApprove` is true: the agent of a plan column on its route that
+   * Kangentic cannot approve plans for, whose plans wait even with Automatic;
+   * null when every plan column's agent can.
+   */
+  waitingAgentName: string | null;
+  /** In Done, or past its last plan column: nothing it sets changes anything now. */
+  passed: boolean;
 }
 
 /** "blocked waits for blocker", by `WorkflowViewTask.key`. */
@@ -5819,15 +5863,6 @@ export interface WorkflowDetail {
    * own board's, not the open board's).
    */
   boardEnds: Record<string, WorkflowBoardEnds>;
-  /**
-   * The plan approval its tasks get: `value` is what happens, `picked` says
-   * whether someone chose it or it follows the plan columns on its tasks'
-   * routes. The inspector shows `value` either way. `canApprove` is false when
-   * no plan column on the routes runs an agent whose plans Kangentic can
-   * approve: `value` is then Manual whatever was picked, and Automatic is not
-   * offered.
-   */
-  planApproval: { value: PlanApproval; picked: boolean; canApprove: boolean };
 }
 
 /** What the Workflows view's agent pane shows: the workflow's own agent, or why it has none. */
@@ -8168,8 +8203,8 @@ export interface ElectronAPI {
     /** A new workflow, from a To Do task (its brief) or from nothing. */
     create: (projectId: string, sourceTaskId: string | null) => Promise<Workflow>;
     rename: (projectId: string, workflowId: string, title: string) => Promise<Workflow>;
-    /** Who approves plans for the workflow's tasks; null follows its plan columns. */
-    setPlanApproval: (projectId: string, workflowId: string, planApproval: PlanApproval | null) => Promise<void>;
+    /** Who approves one task's plans, by its key; null follows its plan columns. */
+    setTaskPlanApproval: (projectId: string, workflowId: string, key: string, planApproval: PlanApproval | null) => Promise<void>;
     delete: (projectId: string, workflowId: string) => Promise<void>;
     start: (projectId: string, workflowId: string) => Promise<void>;
     pause: (projectId: string, workflowId: string) => Promise<void>;

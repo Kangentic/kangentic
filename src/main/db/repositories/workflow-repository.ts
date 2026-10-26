@@ -1,7 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type {
-  PlanApproval,
   Workflow,
   WorkflowDraft,
   WorkflowDraftLink,
@@ -244,12 +243,22 @@ export class WorkflowRepository {
   }
 
   /**
-   * Who approves plans for this workflow's tasks; null follows its plan columns.
-   * Changes no plan, so the revision stays, like the agent conversation above: a
-   * save the workflow agent built on its last read must still go through.
+   * Store a not-started workflow's draft with the legacy whole-workflow plan
+   * approval copied onto its planned tasks (`adoptLegacyPlanApproval`). What
+   * each task gets is unchanged, so the revision stays: a save the workflow
+   * agent built on its last read must still go through. False when the row is
+   * no longer a draft, so the caller keeps the legacy value.
    */
-  setPlanApproval(id: string, planApproval: PlanApproval | null): void {
-    this.db.prepare('UPDATE workflows SET plan_approval = ? WHERE id = ?').run(planApproval, id);
+  writeAdoptedDraft(id: string, draft: WorkflowDraft): boolean {
+    return this.db.prepare("UPDATE workflows SET draft_json = ? WHERE id = ? AND state = 'draft'").run(JSON.stringify(draft), id).changes > 0;
+  }
+
+  /**
+   * Forget the legacy whole-workflow plan approval, once each of its tasks
+   * carries it (`adoptLegacyPlanApproval`). Nothing writes the column otherwise.
+   */
+  clearLegacyPlanApproval(id: string): void {
+    this.db.prepare('UPDATE workflows SET plan_approval = NULL WHERE id = ?').run(id);
   }
 
   /** The agent's PTY grid, on every resize the desktop makes. Changes no plan, so the revision stays. */
@@ -385,6 +394,8 @@ function readDraftTask(value: unknown): WorkflowDraftTask[] {
     priority: typeof entry.priority === 'number' ? entry.priority : 0,
     canvas_x: numberOrNull(entry.canvas_x),
     canvas_y: numberOrNull(entry.canvas_y),
+    // Anything this build does not know follows the plan columns.
+    plan_approval: isPlanApproval(entry.plan_approval) ? entry.plan_approval : null,
     // A draft saved before a planned task had run settings reads as the default.
     ...readRunSettings(entry),
   }];

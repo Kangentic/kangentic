@@ -57,8 +57,6 @@ interface WorkflowStore {
 
   createWorkflow: (sourceTaskId: string | null) => Promise<Workflow | null>;
   renameWorkflow: (title: string) => Promise<boolean>;
-  /** Who approves plans for the selected workflow's tasks. */
-  setPlanApproval: (planApproval: PlanApproval) => Promise<boolean>;
   deleteWorkflow: () => Promise<boolean>;
   startWorkflow: () => Promise<boolean>;
   pauseWorkflow: () => Promise<boolean>;
@@ -68,6 +66,8 @@ interface WorkflowStore {
   removeTask: (key: string) => Promise<boolean>;
   setLink: (blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
   setRoute: (key: string, swimlaneIds: string[]) => Promise<boolean>;
+  /** Who approves one task's plans in the selected workflow; null follows its plan columns. */
+  setTaskPlanApproval: (key: string, planApproval: PlanApproval | null) => Promise<boolean>;
   setPositions: (positions: WorkflowCanvasPosition[] | null) => Promise<boolean>;
 
   /**
@@ -78,6 +78,7 @@ interface WorkflowStore {
    */
   setLinkIn: (homeProjectId: string, workflowId: string, blockerKey: string, blockedKey: string, linked: boolean) => Promise<boolean>;
   setRouteIn: (homeProjectId: string, workflowId: string, key: string, swimlaneIds: string[]) => Promise<boolean>;
+  setTaskPlanApprovalIn: (homeProjectId: string, workflowId: string, key: string, planApproval: PlanApproval | null) => Promise<boolean>;
   removeTaskIn: (homeProjectId: string, workflowId: string, key: string) => Promise<boolean>;
   /** Card places for a workflow no longer on the canvas: saved, with nothing drawn. */
   setPositionsIn: (homeProjectId: string, workflowId: string, positions: WorkflowCanvasPosition[]) => Promise<boolean>;
@@ -655,12 +656,6 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       (await onSelected("Couldn't rename the workflow", (projectId, workflowId) =>
         window.electronAPI.workflows.rename(projectId, workflowId, title))).ok,
 
-    // The WORKFLOW_CHANGED push that follows reloads the detail, so the
-    // inspector shows the stored value rather than an optimistic copy.
-    setPlanApproval: async (planApproval) =>
-      (await onSelected("Couldn't change plan approval", (projectId, workflowId) =>
-        window.electronAPI.workflows.setPlanApproval(projectId, workflowId, planApproval))).ok,
-
     deleteWorkflow: async () => {
       const deletedId = get().selectedWorkflowId;
       const result = await onSelected("Couldn't delete the workflow", (projectId, workflowId) =>
@@ -716,6 +711,18 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       if (!projectId || !selectedWorkflowId) return false;
       return get().setRouteIn(projectId, selectedWorkflowId, key, swimlaneIds);
     },
+
+    setTaskPlanApproval: async (key, planApproval) => {
+      const { projectId, selectedWorkflowId } = get();
+      if (!projectId || !selectedWorkflowId) return false;
+      return get().setTaskPlanApprovalIn(projectId, selectedWorkflowId, key, planApproval);
+    },
+
+    // The WORKFLOW_CHANGED push that follows reloads the detail, so the control
+    // shows the stored value rather than an optimistic copy.
+    setTaskPlanApprovalIn: (homeProjectId, workflowId, key, planApproval) =>
+      onWorkflow("Couldn't change plan approval", () =>
+        window.electronAPI.workflows.setTaskPlanApproval(homeProjectId, workflowId, key, planApproval)),
 
     removeTaskIn: (homeProjectId, workflowId, key) =>
       onWorkflow("Couldn't remove the task", () => window.electronAPI.workflows.removeTask(homeProjectId, workflowId, key)),

@@ -1,4 +1,5 @@
 import type {
+  PlanApproval,
   Swimlane,
   Task,
   Workflow,
@@ -32,7 +33,7 @@ import { isHumanGate } from './workflow-lock-check';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import { linkEndState, readWorkflowTasks } from './workflow-tasks';
-import { readWorkflowPlanApproval } from '../plan-approval/workflow-plan-approval';
+import { adoptLegacyPlanApproval, readPlannedTaskPlanApproval, readTaskPlanApproval } from '../plan-approval/workflow-plan-approval';
 import {
   MAX_WORKFLOW_TASKS,
   WorkflowRequestError,
@@ -41,6 +42,7 @@ import {
   linkTasks,
   mergeRunSettings,
   parseRunSettingsInput,
+  plannedPlanApproval,
   removeFromWorkflow,
   requireProfileOnBoard,
   requireWorkflow,
@@ -52,6 +54,7 @@ import {
   unlinkTasks,
   workflowTasks,
 } from './workflow-service';
+import { setTaskPlanApproval } from './workflow-task-plan-approval';
 
 /**
  * The Workflows view's side of the workflow operations: a read model shaped
@@ -92,7 +95,7 @@ function projectNameOf(context: IpcContext, projectId: string): string {
 
 
 export function readWorkflowDetail(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowDetail {
-  const workflow = requireWorkflow(homeProjectId, workflowId);
+  const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
   const projectNames: Record<string, string> = { [homeProjectId]: projectNameOf(context, homeProjectId) };
   // Each board's To Do and Done columns: the ends of its cards' tracks, and a Done card's color.
   const ends: Record<string, WorkflowBoardEnds> = { [homeProjectId]: boardEnds(safeLanes(homeProjectId)) };
@@ -106,6 +109,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
     const tasks = draft.tasks.map((planned): WorkflowViewTask => {
       const projectId = planned.project_id ?? homeProjectId;
       noteProject(projectId);
+      const lanes = safeLanes(projectId);
       return {
         key: planned.key,
         projectId,
@@ -115,18 +119,16 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
         displayId: null,
         place: 'planned',
         swimlaneId: null,
-        steps: plannedSteps(safeLanes(projectId), planned),
+        steps: plannedSteps(lanes, planned),
         canvasX: planned.canvas_x,
         canvasY: planned.canvas_y,
         unnamedBlockerCount: 0,
         stallReason: null,
+        planApproval: readPlannedTaskPlanApproval(context, homeProjectId, planned, workflow.plan_approval, lanes),
       };
     });
     const links = draft.links.map((link): WorkflowViewLink => ({ blockerKey: link.blocker, blockedKey: link.blocked }));
-    return {
-      workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends,
-      planApproval: readWorkflowPlanApproval(context, homeProjectId, workflow),
-    };
+    return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
   }
 
   const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflowId);
@@ -161,6 +163,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       canvasY: task.canvas_y,
       unnamedBlockerCount: unnamedBlockers.get(task.id) ?? 0,
       stallReason: place === 'done' ? null : stallOf(projectId, task.id),
+      planApproval: readTaskPlanApproval(context, projectId, task, workflow.plan_approval, lanes),
     };
   });
   // A link with an end the detail does not have has nothing to draw: it is
@@ -168,10 +171,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
   const links = linkRows
     .filter((link) => present.has(link.blocker_task_id) && present.has(link.blocked_task_id))
     .map((link): WorkflowViewLink => ({ blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }));
-  return {
-    workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends,
-    planApproval: readWorkflowPlanApproval(context, homeProjectId, workflow),
-  };
+  return { workflow, homeProjectId, tasks, links, projectNames, boardEnds: ends };
 }
 
 /**
@@ -381,6 +381,7 @@ export function addViewTask(context: IpcContext, homeProjectId: string, workflow
       priority: input.priority ?? 0,
       canvas_x: null,
       canvas_y: null,
+      plan_approval: null,
       ...runSettings,
     });
   });
@@ -414,6 +415,8 @@ export function updatePlannedTask(context: IpcContext, homeProjectId: string, wo
         planned.route_start_swimlane_id = null;
         planned.route_last_swimlane_id = null;
         planned.skipped_swimlane_ids = [];
+        // Set against the old board's plan columns: it follows the new board's.
+        planned.plan_approval = null;
         current = { ...current, base_branch: null, profile_id: null };
       }
     }
@@ -498,6 +501,27 @@ export function setViewRoute(context: IpcContext, homeProjectId: string, workflo
   const route = routeFromColumns(safeLanes(projectId), swimlaneIds);
   if (!route) throw new WorkflowRequestError(WORKFLOW_REFUSALS.routeEmpty);
   setTaskRouteByIds(context, homeProjectId, workflowId, { taskId: task.id, projectId, route });
+}
+
+/** The task's Plan approval section: its own value, or null to follow its plan columns. */
+export function setViewPlanApproval(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  key: string,
+  planApproval: PlanApproval | null,
+): void {
+  const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
+  requireViewMayChange(workflow);
+  if (workflow.state === 'draft') {
+    editDraft(homeProjectId, workflowId, (draft) => {
+      const planned = requirePlanned(draft, key);
+      planned.plan_approval = plannedPlanApproval(context, homeProjectId, planned, planApproval);
+    });
+    return;
+  }
+  const { projectId, task } = requireCreated(context, homeProjectId, workflowId, key);
+  setTaskPlanApproval(context, homeProjectId, workflowId, { taskId: task.id, projectId }, planApproval);
 }
 
 /**

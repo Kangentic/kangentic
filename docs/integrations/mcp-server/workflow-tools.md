@@ -53,9 +53,26 @@ ran out, a low-memory pause stopped it, or it cannot start) ends its line with `
 and so does its `stalled` field. `data`
 carries every task's `runSettings` in the task row's shape.
 
-A `Plan approval:` line follows the header and brief, in `kangentic_save_workflow`'s own terms, so
-a plan read and sent back keeps it: `Plan approval: planApproval "automatic".` (or `"manual"`) once
-someone picked, else `Plan approval: follows the plan columns on the tasks' routes (planApproval null).`
+Plan approval is set per task, so an agent learns which way each task goes without reading any
+board's columns. A summary line follows the header and brief (`Plan approval: set per task. 1 task
+Manual, 2 Automatic; each task's line says why.`, or `Plan approval: set per task (planApproval on
+each task). No task's route has a plan column.`), and each task's line ends with its own sentence:
+
+- `Plan approval: Automatic, from kangentic's Planning column.` (left alone, it follows the plan
+  columns on its route: Automatic only when every one is Automatic and runs an agent that can
+  approve plans)
+- `Plan approval: Manual, set for this task (its Planning column is Automatic).`
+- `Plan approval: Automatic, set for this task (its Planning column is Manual), but Codex CLI's plans still wait for you.`
+  (a route where only some plan columns run an agent Kangentic can approve plans for)
+- `Plan approval: Manual, because Kangentic can't approve Codex CLI's plans (its Planning column is Automatic).`
+- `Plan approval: none, no plan column on its route.`
+
+A task that has passed its plan column adds ` It has passed Planning, so it can no longer change.`
+Before Start, a task's own value is also one of its settings (`planApproval "manual"`), printed
+even when its route has no plan column, so a plan read and sent back keeps it. `data` carries each
+task's `ownPlanApproval` (what it carries) and `planApproval`: `set` (its own value, or null),
+`value`, `columnValue`, `canApprove`, the deciding `column`, `agentName`, `waitingAgentName` and
+`passed`, or null with no plan column on its route.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -75,13 +92,23 @@ task, and the links. Omit `workflow` to create one. Nothing reaches a board unti
 | `tasks` | array | Yes | Every planned task (at most 100). See below. |
 | `links` | array | No | `{ blocker, blocked }` by key: blocked waits for blocker to reach Done. |
 | `revision` | number | No | The revision `kangentic_get_workflow` reported. A save over a newer one is refused, so the user's edits win. |
-| `planApproval` | string \| null | No | Who approves each task's plan once the workflow runs: `automatic` has Kangentic approve it, so the task moves on by itself (a question the agent asks the user still waits); `manual` waits for the user. `null` follows the plan columns on the tasks' routes: Automatic only when every one is Automatic and runs an agent that can approve plans. Omit to leave it as it is. It adds no revision of its own; the save's own bump still applies. After Start, only the Workflows inspector changes it. |
+| `planApproval` | | No | Removed: plan approval is set per task. A value is refused with "planApproval is set per task now. Put planApproval on each task entry."; `null` is accepted and ignored, since older `kangentic_get_workflow` output told agents to send it back. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
 Each planned task takes `key` (unique in the plan), `title`, `description`, and optionally
 `project` (another board, by name), `existingTask` (a To Do task to take in instead of creating
-one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`. It also takes the
-run settings a task on the board has, which Start copies onto the task it creates:
+one), `routeStart`, `routeLast`, `skip` (column names), `labels` and `priority`.
+
+It also takes `planApproval`: `automatic` has Kangentic approve the task's plan, so it moves on by
+itself (a question the agent asks the user still waits), and `manual` waits for the user. Omitted or
+`null`, the task follows the plan columns on its route. The column's own value is stored as nothing,
+the same as leaving it unset. It is not a run setting, so a task taken in with `existingTask` may
+carry it, and Start copies it onto the task. A value that is neither is refused, naming the task
+(`Budgets API: planApproval must be "automatic", "manual", or null.`). After Start, the Workflows
+inspector, task detail's Workflow panel and [`kangentic_update_task`](task-tools.md#kangentic_update_task)
+change it.
+
+It also takes the run settings a task on the board has, which Start copies onto the task it creates:
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -148,6 +175,7 @@ Add a task to a started workflow. It lands in To Do and starts once nothing it w
 | `skip` | string[] | No | Columns inside its route it skips. |
 | `waitsFor` | string[] | No | Tasks in this workflow it waits for: a task number on the workflow's own board, or the id of a task on any of its boards. Numbers count per board, so a task on another board is named by its id. |
 | `baseBranch`, `useWorktree`, `runMode`, `profile`, `agentOverride`, `modelOverride`, `effortOverride`, `permissionMode` | | No | Its run settings, as [`kangentic_save_workflow`](#kangentic_save_workflow)'s planned tasks take them. The task is created with them. |
+| `planApproval` | string \| null | No | Its own plan approval, as a planned task takes it. Omitted or `null` follows the plan columns on its route. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
 
 The run settings go through the same checks and refusals as a save's: the wrong type, an unknown

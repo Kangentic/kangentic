@@ -46,9 +46,10 @@ Operates on a per-project DB.
 | `setWorktreeSkipReason(id, reason)` | Record why the last spawn ran without a worktree (a `WorktreeSkipReason`), or null once it has one. Does NOT bump `updated_at`: spawn telemetry must not reorder the board |
 | `recoverLegacyWorktreeFolder(taskId, worktreesRoot)` | For a pre-numeric-scheme task whose `worktree_path` was already cleared by a Done move, recover and persist its original directory name from the newest `sessions.cwd`. Accepts only a direct child of `worktreesRoot`, so a project that is itself checked out at a worktree path cannot claim the enclosing worktree's name |
 | `move(input, provenance)` | Transactional move: shift positions in old and new swimlanes, update task, and write the `task_moves` row in the same transaction. `provenance` (`{ origin, reason? }`) is required, so no caller moves a task without saying who moved it; a reorder within the column records nothing |
-| `setWorkflowMembership(taskId, membership)` | Put a task in a workflow with its route, or take it out (`null`, which also clears its route and canvas place). Does not bump `updated_at` |
+| `setWorkflowMembership(taskId, membership)` | Put a task in a workflow with its route and own plan approval, or take it out (`null`, which also clears its route, canvas place and plan approval). Does not bump `updated_at` |
 | `setRoute(taskId, route)` | A workflow task's route (`route_start_swimlane_id`, `route_last_swimlane_id`, `skipped_swimlane_ids`). Does not bump `updated_at` |
 | `setCanvasPosition(taskId, canvasX, canvasY)` | Where a hand placed the card on the Workflows canvas, or `null, null` for the auto layout. Never bumps `updated_at`, so a card drag costs no re-index |
+| `setPlanApproval(taskId, planApproval)` | A workflow task's own plan approval (`plan_approval`), or null to follow the plan columns on its route. Does not bump `updated_at` |
 | `listByWorkflow(workflowId)` | Every task of a workflow on this board, archived (Done) included, by display id |
 | `listWorkflowMemberships()` | Distinct `{ workflow_id, workflow_project_id }` of this board's workflow tasks, archived included. What a project delete reads before its database goes |
 | `releaseAllWorkflowMembers()` | Take every task on this board out of its workflow (the deleted board's own tasks, on a project delete). Returns the count; no `updated_at` |
@@ -154,7 +155,8 @@ Operates on the workflow's home project DB.
 | `forgetAgentSessionId(id)` | Clear `agent_session_id` only, after a resume finds no conversation: the agent stays recorded, so the next start continues from the saved plan. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
 | `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |
-| `setPlanApproval(id, planApproval)` | Who approves its tasks' plans (`plan_approval`), or null to follow its plan columns. The revision stays |
+| `writeAdoptedDraft(id, draft)` | Store a not-started workflow's plan with the legacy whole-workflow plan approval copied onto its tasks, leaving the revision alone: what each task gets did not change |
+| `clearLegacyPlanApproval(id)` | Clear the legacy whole-workflow `plan_approval` once every task has its copy. The revision stays |
 | `delete(id)` | Delete; its links cascade |
 
 ## TaskLinkRepository

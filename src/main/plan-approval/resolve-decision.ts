@@ -11,8 +11,8 @@ export interface PlanApprovalDecisionInput {
   bypassAvailable: boolean;
   /** The task's column, folded through its Board Profile. */
   column: { name: string; permission_mode: PermissionMode | null; plan_approval: PlanApproval };
-  /** The task's workflow value, when the workflow is running; null otherwise. */
-  runningWorkflowValue: PlanApproval | null;
+  /** A workflow task's own plan approval (`taskPlanApproval`); null for an ordinary task, or a workflow task with no plan column on its route. */
+  workflowTaskValue: PlanApproval | null;
   /** Where the plan exit sends the task (folded through its profile); null means it stays. */
   target: { name: string; permission_mode: PermissionMode | null } | null;
   taskPermissionMode: PermissionMode | null;
@@ -25,14 +25,14 @@ export interface PlanApprovalDecisionInput {
  * tested without a database.
  *
  * Which value applies:
- * - in a running workflow, the workflow's (picked, or derived from its plan
- *   columns by `workflowPlanApproval`);
+ * - for a workflow task, its own (set on the task, or derived from the plan
+ *   columns on its route by `taskPlanApproval`);
  * - otherwise the column's own, and only while the column runs in plan mode;
  *   a column of any other mode is Manual.
  * Automatic approves only where the session's agent can approve plans, and
  * never for a task whose automations are disabled: an approval would let the
  * After Plan Mode move advance a task the user is holding. A workflow task
- * never carries that switch, so a workflow's value is not affected.
+ * never carries that switch, so its value is not affected.
  *
  * The mode is the destination's, the one the session would spawn with there:
  * a plan approval keeps the live session, so whatever `setMode` sets is what
@@ -43,7 +43,7 @@ export interface PlanApprovalDecisionInput {
  * where Claude would ignore the switch and leave the session in `default`.
  */
 export function resolvePlanApprovalDecision(input: PlanApprovalDecisionInput): PlanApprovalDecision {
-  const value: PlanApproval = input.runningWorkflowValue
+  const value: PlanApproval = input.workflowTaskValue
     ?? (input.column.permission_mode === 'plan' ? input.column.plan_approval : 'manual');
   const mode = continuingMode(input);
   return {

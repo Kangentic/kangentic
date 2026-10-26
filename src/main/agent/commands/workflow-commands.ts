@@ -2,6 +2,7 @@ import type { PermissionMode, PlanApproval, TaskRunMode, Workflow } from '../../
 import { resolveEffortSelector, resolveSpacedModelName } from '../../../shared/model-id';
 import { PERMISSION_MODES, RUN_MODES, isPermissionMode, isRunMode } from '../../../shared/workflow-run-settings';
 import { isPlanApproval } from '../../../shared/plan-approval';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
@@ -166,6 +167,18 @@ function plannedText(record: Record<string, unknown>, field: string, label: stri
   return raw;
 }
 
+/**
+ * A task's own plan approval: absent or null follows its plan columns, anything
+ * outside the two values is refused. Narrowed here as well as in the zod schema:
+ * the mobile bridge reaches handlers with no schema in front of them.
+ */
+function planApprovalParam(record: Record<string, unknown>, label: string): PlanApproval | null {
+  const raw = record.planApproval;
+  if (raw === undefined || raw === null) return null;
+  if (!isPlanApproval(raw)) throw new WorkflowRequestError(`${label}: ${WORKFLOW_REFUSALS.planApprovalValue}`);
+  return raw;
+}
+
 function plannedTextList(record: Record<string, unknown>, field: string, label: string): string[] | null {
   const raw = record[field];
   if (raw === undefined || raw === null) return null;
@@ -200,6 +213,7 @@ function plannedTasksParam(params: Record<string, unknown>): PlannedTaskInput[] 
       labels: plannedTextList(record, 'labels', label),
       priority: typeof priority === 'number' ? priority : null,
       ...runSettingsParams(record, label),
+      planApproval: planApprovalParam(record, label),
     };
   });
 }
@@ -231,13 +245,12 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
     const links = linksParam(params);
     const title = stringParam(params, 'title');
     const brief = stringParam(params, 'brief');
-    // Narrowed here as well as in the zod schema: the mobile bridge reaches
-    // handlers with no schema in front of them.
-    const planApprovalValue = params.planApproval;
-    if (planApprovalValue !== undefined && planApprovalValue !== null && !isPlanApproval(planApprovalValue)) {
-      throw new WorkflowRequestError('planApproval must be "automatic", "manual", or null to follow the plan columns.');
+    // The workflow-level planApproval is gone: plan approval is set per task.
+    // A null is accepted and ignored, since older kangentic_get_workflow output
+    // told agents to send `planApproval null` back.
+    if (params.planApproval !== undefined && params.planApproval !== null) {
+      throw new WorkflowRequestError(WORKFLOW_REFUSALS.planApprovalPerTask);
     }
-    const planApproval: PlanApproval | null | undefined = planApprovalValue;
     // Models and efforts are checked against each agent's CLI first, which can
     // take a moment; everything else is checked before anything is written. A
     // new workflow is created only with a plan that passed, in the same write,
@@ -249,9 +262,8 @@ export const handleSaveWorkflow: CommandHandler = async (params, context) => {
         tasks,
         links,
         revision: (revisionValue as number | null | undefined) ?? null,
-        planApproval,
       })
-      : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null, planApproval });
+      : createWorkflowWithPlan(runtime, context.projectId, { brief }, { title, tasks, links, revision: null });
     const taskCount = saved.draft?.tasks.length ?? 0;
     const linkCount = saved.draft?.links.length ?? 0;
     return {
@@ -319,6 +331,7 @@ export const handleAddWorkflowTask: CommandHandler = async (params, context) => 
       skip: stringListParam(params, 'skip'),
       waitsFor: stringListParam(params, 'waitsFor'),
       ...runSettingsParams(params, label),
+      planApproval: planApprovalParam(params, label),
     };
     // Its model and effort against its agent's CLI, which can take a moment;
     // everything else is checked by addWorkflowTask, before it writes.

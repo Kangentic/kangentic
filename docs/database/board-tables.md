@@ -59,8 +59,8 @@ on `tasks` is unaffected and still MCP-only.
 `plan_approval` is who approves a plan made in this column: `manual` (the user, in the agent's
 terminal) or `automatic` (Kangentic, through the agent's plan approval hook). It is read only while
 the column's `permission_mode` is `plan`, and `mapRow` reads any other stored value as `manual`. A
-task in a running workflow follows the workflow's `plan_approval` instead (see the `workflows`
-table below), and a task with `automations_disabled` set is always `manual`.
+workflow task follows its own `plan_approval` instead, else the plan columns on its route (see the
+`tasks` table above), and a task with `automations_disabled` set is always `manual`.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Isolated Sessions](../architecture/sessions/spawn-flow.md#isolated-sessions-per-column-session-model)):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.
@@ -117,6 +117,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Is
 | skipped_swimlane_ids | TEXT | | NULL |
 | canvas_x | REAL | | NULL |
 | canvas_y | REAL | | NULL |
+| plan_approval | TEXT | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
@@ -127,14 +128,25 @@ Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypa
 `auto`, or NULL when the task pins none. A set value outranks the column's for the task's whole
 life.
 
-The seven workflow columns are NULL on an ordinary task. `workflow_id` names the task's workflow and
+The eight workflow columns are NULL on an ordinary task. `workflow_id` names the task's workflow and
 `workflow_project_id` the project whose database holds it (the task's own project unless the
 workflow put it on another board). The route is `route_start_swimlane_id` (NULL: the first column
 after To Do), `route_last_swimlane_id` (NULL: the column before Done) and `skipped_swimlane_ids` (a
 JSON array, NULL for none), read through `src/shared/workflow-route.ts`. `canvas_x` / `canvas_y`
 are where a hand placed the card on the Workflows canvas. None of them is in `update()`'s column
-list: `setWorkflowMembership`, `setRoute` and `setCanvasPosition` write them without bumping
-`updated_at`, so a canvas drag never re-indexes the task.
+list: `setWorkflowMembership`, `setRoute`, `setCanvasPosition` and `setPlanApproval` write them
+without bumping `updated_at`, so a canvas drag never re-indexes the task.
+
+`plan_approval` is a workflow task's own plan approval: `automatic`, `manual`, or NULL. NULL
+follows the plan columns on its route (a route column whose permission mode, after the task's Board
+Profile, is `plan`): Automatic only when every one is Automatic and runs an agent that can approve
+plans, Manual otherwise (`taskPlanApproval`, `src/shared/plan-approval.ts`). Where no plan column's
+agent can approve plans it reads Manual whatever is stored. A value equal to the columns' own is
+stored as NULL (`normalizeTaskPlanApproval`), so the task keeps following them. While the workflow
+still holds a legacy value (`workflows.plan_approval`, below), NULL would read as that value, so a
+pick is stored as given and following the columns is stored as their value. A copied legacy value
+is kept as it was, so each task keeps the pick it had. Leaving the workflow clears it with the
+other workflow columns, and a value this build does not know reads as NULL.
 
 `worktree_folder` is the DIRECTORY NAME of the task's worktree, written once and never rewritten
 (`TaskRepository.setWorktreeFolder` guards on `worktree_folder IS NULL`). New tasks get
@@ -496,13 +508,16 @@ pane's size rather than the spawn default.
 every other state, so it is set only while the workflow is paused. The Workflows picker reads it
 for the paused row's "Paused yesterday 18:20". A workflow paused before the column existed has none.
 
-`plan_approval` is who approves plans for the workflow's tasks while it runs: `automatic`, `manual`,
-or NULL. NULL follows the plan columns on its tasks' routes (a route column whose permission mode,
-after the task's Board Profile, is `plan`): Automatic only when every one is Automatic and runs an
-agent that can approve plans, Manual otherwise, and Manual with no plan column at all
-(`workflowPlanApproval`, `src/shared/plan-approval.ts`). A task already in Done no longer counts.
-A pick holds until it is set back to NULL. It changes no plan, so writing it leaves `revision`
-alone, and a value this build does not know reads as NULL.
+`plan_approval` is legacy: one plan approval for every task in the workflow, which v0.47.0 to
+v0.50.0 wrote from the inspector and `kangentic_save_workflow`. Nothing writes it now; plan approval
+is per task (`tasks.plan_approval`, and `plan_approval` on each draft task). The first read of a
+workflow that still holds one copies it onto every draft task and every unfinished task that has
+no value of its own, on whichever board each sits, then clears it (`adoptLegacyPlanApproval`,
+`src/main/plan-approval/workflow-plan-approval.ts`). A per-database migration cannot do this,
+since a workflow's tasks can sit in other projects' databases. A board whose database will not
+read leaves the value set, so the next read retries, and until it is cleared every reader takes it
+as the value of a task that has none. The copy changes nothing a task gets, so it moves no
+`revision` and announces nothing.
 
 Index: `idx_workflows_state` on (state), so the engine's "anything running?" probe is one lookup.
 
