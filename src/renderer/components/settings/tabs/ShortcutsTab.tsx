@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
 import { useBoardStore } from '../../../stores/board-store';
@@ -11,6 +11,7 @@ import { ShortcutGlyph } from '../../../utils/swimlane-icons';
 import { warmIconCatalog } from '../../../utils/icon-registry';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { INPUT_CLASS } from '../shared';
 import { SettingsCard, CardTile } from '../settings-card';
 import { Pill } from '../../Pill';
@@ -317,8 +318,8 @@ export function ShortcutsTab() {
   // sortable), so it gets the shared keyboard sensor. Never the stock
   // KeyboardSensor (keyboard-drag-intent.md).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   // Click-outside handler for presets dropdown (capture phase to beat scroll containers)

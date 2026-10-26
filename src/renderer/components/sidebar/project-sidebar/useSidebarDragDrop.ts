@@ -9,6 +9,7 @@ import {
   type CollisionDetection,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
+import { POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import type { Project, ProjectGroup } from '../../../../shared/types';
 
 export function useSidebarDragDrop(
@@ -20,7 +21,7 @@ export function useSidebarDragDrop(
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
   );
 
   // Build sorted groups and project maps

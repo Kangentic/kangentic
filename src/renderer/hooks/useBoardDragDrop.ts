@@ -16,10 +16,7 @@ import {
   type DropAnimationKeyframeResolver,
   type Modifier,
 } from '@dnd-kit/core';
-import {
-  sortableKeyboardCoordinates,
-  arrayMove,
-} from '@dnd-kit/sortable';
+import { arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
@@ -28,6 +25,7 @@ import { useConfigStore } from '../stores/config-store';
 import { useWorkflowStore } from '../stores/workflow-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../utils/dnd-sensor-options';
 import { boardWorkflowNow, refusedBoardMove, showWorkflowRefusal } from '../utils/workflow-refusal';
 import { isLockedOnBoard } from '../utils/board-workflow';
 import {
@@ -194,20 +192,24 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
 
   // Never the stock KeyboardSensor: it arms on a mouse-focused card and cannot
   // end on a click. See intent-keyboard-sensor.ts and keyboard-drag-intent.md.
+  // Module-constant options, never inline literals: see dnd-sensor-options.ts.
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 5 },
-    }),
-    useSensor(IntentKeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   // All columns participate in the sortable context so dnd-kit knows
   // their positions.  Only custom columns get drag handles (see SortableSwimlane).
+  //
+  // Keyed on the ids, not on the array. Every board reload hands `swimlanes` a
+  // new array even when no column changed, and a new `items` array changes the
+  // column SortableContext's value, which re-renders every column and every card
+  // through dnd-kit's context, past their React.memo. Measured in dev, one
+  // agent's task update re-rendered 378 components in a 25 to 29 ms commit.
+  const columnIdsKey = swimlanes.map((swimlane) => swimlane.id).join(',');
   const sortableColumnIds = useMemo(
-    () => swimlanes.map((swimlane) => `column:${swimlane.id}`),
-    [swimlanes],
+    () => (columnIdsKey === '' ? [] : columnIdsKey.split(',').map((id) => `column:${id}`)),
+    [columnIdsKey],
   );
 
   const swimlaneIds = useMemo(

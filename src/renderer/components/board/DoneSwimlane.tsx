@@ -76,7 +76,10 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
   // Completing tasks (mid-fly into the dropzone) are already filtered out
   // upstream in KanbanBoard's tasksPerLane, so the `tasks` prop never contains
   // one. No local guard needed here.
-  const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+  // Keyed on the ids, as in Swimlane: a new `items` array re-renders every card
+  // in the lane through the SortableContext value.
+  const taskIdsKey = tasks.map((task) => task.id).join(',');
+  const taskIds = useMemo(() => (taskIdsKey === '' ? [] : taskIdsKey.split(',')), [taskIdsKey]);
 
   // Stable identity: a fresh `data` object each render forces dnd-kit to
   // re-register the droppable, which the HMR-stale-subscription fix

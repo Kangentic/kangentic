@@ -4,6 +4,8 @@ import path from 'node:path';
 import {
   applyStructuralSharing,
   applySwimlaneStructuralSharing,
+  keepIfSameJson,
+  keepIfUnchanged,
 } from '../../src/renderer/stores/board-store/structural-sharing';
 import type { Task, Swimlane } from '../../src/shared/types';
 
@@ -382,20 +384,52 @@ describe('applySwimlaneStructuralSharing', () => {
     expect(result).toBe(next);
   });
 
-  it('returns a new outer array reference even when every swimlane was reused', () => {
+  it('returns the previous array when every swimlane was reused in order', () => {
+    // Unlike tasks: a new swimlanes array on a reload that changed no column
+    // re-rendered every open task window and, through the onboarding hook, the app.
     const previous = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
     const next = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
 
     const result = applySwimlaneStructuralSharing(previous, next);
 
-    expect(result).not.toBe(previous);
-    expect(result).not.toBe(next);
-    expect(result[0]).toBe(previous[0]);
-    expect(result[1]).toBe(previous[1]);
+    expect(result).toBe(previous);
+  });
+
+  it('returns a new array when a column changed, moved, or was added', () => {
+    const previous = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
+    const renamed = applySwimlaneStructuralSharing(previous, [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b', name: 'Renamed' })]);
+    expect(renamed).not.toBe(previous);
+    expect(renamed[0]).toBe(previous[0]);
+    const reordered = applySwimlaneStructuralSharing(previous, [makeSwimlane({ id: 'b' }), makeSwimlane({ id: 'a' })]);
+    expect(reordered).not.toBe(previous);
+    const added = applySwimlaneStructuralSharing(previous, [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' }), makeSwimlane({ id: 'c' })]);
+    expect(added).not.toBe(previous);
   });
 
   // The Swimlane counterpart of the Task drift guard above lives beside it, so
   // both read their interface out of types.ts by the same derivation. The
   // fixture-count form this replaced was passing while swimlaneContentsMatch
   // silently omitted `auto_command_mode`.
+});
+
+describe('keeping an unchanged reload\'s identity', () => {
+  it('keepIfUnchanged returns the previous array only for the same elements in the same order', () => {
+    const first = makeTask({ id: 'a' });
+    const second = makeTask({ id: 'b' });
+    const previous = [first, second];
+    expect(keepIfUnchanged(previous, [first, second])).toBe(previous);
+    const reordered = [second, first];
+    expect(keepIfUnchanged(previous, reordered)).toBe(reordered);
+    const shorter = [first];
+    expect(keepIfUnchanged(previous, shorter)).toBe(shorter);
+    const replaced = [first, makeTask({ id: 'b' })];
+    expect(keepIfUnchanged(previous, replaced)).toBe(replaced);
+  });
+
+  it('keepIfSameJson returns the previous value only when the data is equal', () => {
+    const previous = [{ id: 'one', label: 'Build' }];
+    expect(keepIfSameJson(previous, [{ id: 'one', label: 'Build' }])).toBe(previous);
+    const changed = [{ id: 'one', label: 'Test' }];
+    expect(keepIfSameJson(previous, changed)).toBe(changed);
+  });
 });

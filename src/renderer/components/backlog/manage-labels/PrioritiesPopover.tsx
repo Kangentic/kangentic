@@ -12,7 +12,6 @@ import {
   verticalListSortingStrategy,
   useSortable,
   arrayMove,
-  sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
@@ -22,6 +21,7 @@ import { useBacklogStore } from '../../../stores/backlog-store';
 import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import type { AppConfig } from '../../../../shared/types';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
@@ -92,8 +92,8 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
   // sortable), so it gets the shared keyboard sensor. Never the stock
   // KeyboardSensor (keyboard-drag-intent.md).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   const handleRename = useCallback((index: number, newLabel: string) => {

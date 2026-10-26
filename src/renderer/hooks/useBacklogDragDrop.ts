@@ -1,8 +1,9 @@
 import { useState, useCallback } from 'react';
 import { PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
-import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { arrayMove } from '@dnd-kit/sortable';
 import { useBacklogStore } from '../stores/backlog-store';
 import { IntentKeyboardSensor } from '../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../utils/dnd-sensor-options';
 import type { BacklogTask } from '../../shared/types';
 import type { DragEndEvent } from '@dnd-kit/core';
 
@@ -54,8 +55,8 @@ export function useBacklogDragDrop(displayItems: BacklogTask[], allItems: Backlo
   // sensor is what makes that announcement true. Never the stock KeyboardSensor
   // (keyboard-drag-intent.md).
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   const handleDragStart = useCallback((event: { active: { id: string | number } }) => {

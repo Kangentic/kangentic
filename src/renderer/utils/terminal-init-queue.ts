@@ -38,7 +38,8 @@
  * signal, and mount order is a good enough proxy that inventing one is not yet justified.
  *
  * The first enqueue still runs on the very next frame, so a single terminal opening on its
- * own is exactly as fast as before. Only the 2nd and later in a burst are pushed out.
+ * own is exactly as fast as before. Only the 2nd and later in a burst are pushed out, and
+ * any of them while a drag or typing holds the queue (below).
  *
  * BOARD DRAG HOLD. While a card is being dragged the pump does not run at all. A drag is
  * driven by pointer events on the main thread, so a construction landing inside one skips
@@ -55,8 +56,41 @@
  * starve inits, and the cost of the hold is one gesture of extra veil on a card that
  * spawned mid-drag. This holds CONSTRUCTION only; the xterm write queue deliberately does
  * not hold for a drag (see `shouldHold` in useTerminal.ts).
+ *
+ * TYPING HOLD. The same reasoning for keys: a construction that lands between two keys
+ * holds the second key's echo for the whole frame. Measured in dev while typing and
+ * spawning tasks by drag, the spawned pane's construction put 109 ms into a 160 ms frame
+ * and the worst key's echo took 170 ms. So the pump also waits while a key was pressed in
+ * any terminal within `TYPING_QUIET_MS` (`terminal-typing.ts`), and runs at the first
+ * pause that long. Typing has no end event the way a drag has a drop, so the hold is
+ * capped. Once the oldest queued init has waited `TYPING_HOLD_CAP_MS` it is built in the
+ * next gap between keys: `ECHO_SETTLE_MS` after the last key, when that key's echo has
+ * painted and the next key is still to come. Released at an arbitrary moment instead, the
+ * build landed on the echo of the key just typed. A held key autorepeats faster than that
+ * gap, so `TYPING_HOLD_HARD_CAP_MS` builds it regardless.
  */
 import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
+import { msSinceTerminalKeydown } from './terminal-typing';
+
+/** A pause in typing this long lets a held construction run. Typing runs about 100 to
+ *  250 ms between keys, so 500 ms is a pause, not the gap between two words. */
+export const TYPING_QUIET_MS = 500;
+/** The longest typing holds the oldest queued init for a pause. The terminal it builds sits
+ *  behind its replay veil meanwhile, so the wait shows as a slower arrival, never a blank
+ *  pane. */
+export const TYPING_HOLD_CAP_MS = 3000;
+/** Past the cap, the build waits this long after the last key. A key's echo paints 10 to
+ *  15 ms after it (p50 and p99 measured with the keys drive), so this is after the echo
+ *  with margin, and shorter than any gap between two typed keys. */
+export const ECHO_SETTLE_MS = 40;
+/** The build runs here whatever the keys do. A held key autorepeats about every 33 ms,
+ *  inside `ECHO_SETTLE_MS`, and would otherwise hold the queue for as long as it is held. */
+export const TYPING_HOLD_HARD_CAP_MS = 6000;
+
+interface PendingInit {
+  init: () => void;
+  enqueuedAt: number;
+}
 
 // Both declarations reset on an HMR update rather than being preserved, which is correct
 // here: they hold per-mount work, not durable state. Carrying entries across an update would
@@ -76,9 +110,38 @@ import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalesc
 // permanently blank until a full reload. The reset exists for tests only.
 
 // hmr-safe: per-mount work; hosts re-enqueue on the effect re-run (see above).
-let pendingInits: Array<() => void> = [];
+let pendingInits: PendingInit[] = [];
 // hmr-safe: tracks a frame handle that does not survive the update (see above).
 let pumpScheduled = false;
+// hmr-safe: a timer handle, cleared by the dispose below.
+let typingPauseTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * How much longer typing holds the queue: zero once the keys pause for
+ * `TYPING_QUIET_MS`, once the oldest init has waited `TYPING_HOLD_CAP_MS` and the
+ * last key is `ECHO_SETTLE_MS` old, or once it has waited `TYPING_HOLD_HARD_CAP_MS`.
+ */
+function typingHoldRemainingMs(now: number): number {
+  if (pendingInits.length === 0) return 0;
+  const sinceKey = msSinceTerminalKeydown(now);
+  const waited = now - pendingInits[0].enqueuedAt;
+  if (sinceKey >= TYPING_QUIET_MS || waited >= TYPING_HOLD_HARD_CAP_MS) return 0;
+  if (waited < TYPING_HOLD_CAP_MS) {
+    return Math.min(TYPING_QUIET_MS - sinceKey, TYPING_HOLD_CAP_MS - waited);
+  }
+  if (sinceKey >= ECHO_SETTLE_MS) return 0;
+  return Math.min(ECHO_SETTLE_MS - sinceKey, TYPING_HOLD_HARD_CAP_MS - waited);
+}
+
+/** Look again when the hold could next end. A key pressed meanwhile only moves the
+ *  answer later, and the pump asks again then. */
+function retryAfterTypingPause(delayMs: number): void {
+  if (typingPauseTimer !== null) return;
+  typingPauseTimer = setTimeout(() => {
+    typingPauseTimer = null;
+    schedulePump();
+  }, delayMs);
+}
 
 function schedulePump(): void {
   if (pumpScheduled) return;
@@ -97,10 +160,15 @@ function pumpInitQueue(): void {
   // Held for the gesture: a drag that BEGAN after this frame was armed, which the guard in
   // `schedulePump` cannot see. The queue stays intact and `resumeAfterDrag` below re-arms it.
   if (isBoardDragActive()) return;
+  const typingHoldMs = typingHoldRemainingMs(performance.now());
+  if (typingHoldMs > 0) {
+    retryAfterTypingPause(typingHoldMs);
+    return;
+  }
   const next = pendingInits.shift();
   if (!next) return;
   try {
-    next();
+    next.init();
   } finally {
     // Drain in `finally` so one host throwing during construction cannot strand every
     // terminal queued behind it - a wedged queue would leave panes permanently blank.
@@ -128,6 +196,7 @@ if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose(() => {
     unsubscribeResumeAfterDrag();
+    if (typingPauseTimer !== null) clearTimeout(typingPauseTimer);
   });
 }
 
@@ -137,10 +206,10 @@ if (import.meta.hot) {
  * relies on a queued init being cancellable before it ever runs).
  */
 export function enqueueTerminalInit(initTerminal: () => void): () => void {
-  pendingInits.push(initTerminal);
+  pendingInits.push({ init: initTerminal, enqueuedAt: performance.now() });
   schedulePump();
   return () => {
-    pendingInits = pendingInits.filter((pending) => pending !== initTerminal);
+    pendingInits = pendingInits.filter((pending) => pending.init !== initTerminal);
   };
 }
 
@@ -154,6 +223,8 @@ export function enqueueTerminalInit(initTerminal: () => void): () => void {
 export function resetTerminalInitQueue(): void {
   pendingInits = [];
   pumpScheduled = false;
+  if (typingPauseTimer !== null) clearTimeout(typingPauseTimer);
+  typingPauseTimer = null;
 }
 
 /** Number of inits still waiting. Test-facing; the queue is otherwise write-only. */

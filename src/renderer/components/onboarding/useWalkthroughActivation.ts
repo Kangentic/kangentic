@@ -22,7 +22,6 @@ export function useWalkthroughActivation(): {
   const closeBoardManager = useBoardStore((state) => state.closeBoardManager);
   const requestNewTask = useBoardStore((state) => state.requestNewTask);
   const dismissNewTask = useBoardStore((state) => state.dismissNewTask);
-  const swimlanes = useBoardStore((state) => state.swimlanes);
   const currentProject = useProjectStore((state) => state.currentProject);
 
   const projectPath = currentProject?.path ?? null;
@@ -41,7 +40,9 @@ export function useWalkthroughActivation(): {
     step.activate({
       openBoardManager,
       requestNewTask,
-      swimlanes,
+      // Read when the step starts, not subscribed: AppLayout calls this hook, and every
+      // board reload hands `swimlanes` a new array, which re-rendered the whole app.
+      swimlanes: useBoardStore.getState().swimlanes,
       openProjectSettings: (tabId) => {
         if (!projectPath || !projectName) return;
         // Always close-then-reopen on the next frame. SettingsPanel picks its tab in a
@@ -54,7 +55,7 @@ export function useWalkthroughActivation(): {
       },
     });
   }, [
-    closeStepSurfaces, setWalkthroughStep, openBoardManager, requestNewTask, swimlanes,
+    closeStepSurfaces, setWalkthroughStep, openBoardManager, requestNewTask,
     openProjectSettings, projectPath, projectName,
   ]);
 

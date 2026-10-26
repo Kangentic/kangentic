@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import type { BoardProfile, Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
 import { useToastStore } from '../toast-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { keepIfSameJson } from './structural-sharing';
 import type { BoardStore } from './types';
 
 export interface SwimlaneSlice {
@@ -29,7 +30,9 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
 
   loadBoardProfiles: async () => {
     try {
-      set({ boardProfiles: await window.electronAPI.boardConfig.getBoardProfiles() });
+      // Reloaded with every board load: an unchanged list keeps its identity.
+      const boardProfiles = await window.electronAPI.boardConfig.getBoardProfiles();
+      set((state) => ({ boardProfiles: keepIfSameJson(state.boardProfiles, boardProfiles) }));
     } catch (error) {
       // A project with no kangentic.json resolves to an empty list on the main
       // side rather than throwing, so reaching here means a genuine IPC failure.
