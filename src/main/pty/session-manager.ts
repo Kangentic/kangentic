@@ -1781,13 +1781,27 @@ export class SessionManager extends EventEmitter {
 
   private cancelSpawnInFlight(sessionId: string): void {
     const inFlight = this.spawnsInFlight.get(sessionId);
-    if (inFlight) inFlight.cancelled = true;
+    if (inFlight) this.markSpawnCancelled(sessionId, inFlight);
   }
 
   private cancelTaskSpawnsInFlight(taskId: string): void {
-    for (const inFlight of this.spawnsInFlight.values()) {
-      if (inFlight.taskId === taskId) inFlight.cancelled = true;
+    for (const [sessionId, inFlight] of this.spawnsInFlight) {
+      if (inFlight.taskId === taskId) this.markSpawnCancelled(sessionId, inFlight);
     }
+  }
+
+  /**
+   * The host is told too, once: a ConPTY whose output never connected is
+   * otherwise spawned again before the answer (`root-pid-gate.ts`), and a
+   * teardown waiting on this spawn to settle would wait out that attempt. A
+   * cancel that lands once the second attempt has started still waits it out:
+   * node-pty holds a kill until a ConPTY's first output, so the host cannot end
+   * it sooner.
+   */
+  private markSpawnCancelled(sessionId: string, inFlight: InFlightSpawn): void {
+    if (inFlight.cancelled) return;
+    inFlight.cancelled = true;
+    this.host.post({ type: 'cancelSpawn', sessionId });
   }
 
   get queuedCount(): number {

@@ -47,7 +47,14 @@ import {
   type ExitedRoot,
   type RootDescendant,
 } from './exited-root-wait';
-import { RootPidGate, processNotStartedError, type RootPidOutcome } from './root-pid-gate';
+import {
+  OUTPUT_NOT_CONNECTED_EXIT_CODE,
+  ROOT_PID_WAIT_LIMIT_MS,
+  RootPidGate,
+  processNotStartedError,
+  retryWindowMs,
+  type RootPidOutcome,
+} from './root-pid-gate';
 import { writeToExitedConsole } from '../spawn/exited-console-input';
 import { traceTerminal } from '../terminal-trace';
 import { launchesOwnBinary } from './host-exec';
@@ -251,6 +258,21 @@ interface PtyEntry extends RawPtyEntry {
   writeQueue: WriteQueue | null;
   /** Main took this PTY off its row (`sealUserInput`): a renderer's writes are dropped. */
   userInputSealed: boolean;
+  /** Main cancelled the spawn (`cancelSpawn`): a never-connected attempt is not retried. */
+  spawnCancelled: boolean;
+}
+
+/** One attempt at a session spawn whose answer waits on the pid (`answerOnPid`). */
+interface GatedSpawnAttempt {
+  params: PtyHostSpawnParams;
+  /** The carry-over read at the spawn, handed back with a failed answer. */
+  previousScrollback: string;
+  /** Wall clock just before the first attempt; a retry's window counts from it. */
+  firstSpawnedAtMs: number;
+  /** How long the request waited for this loop before the first attempt (`sentAtMs`). */
+  queuedMs: number;
+  /** A retry's backstop (`retryWindowMs`); null on the first attempt. */
+  retryLimitMs: number | null;
 }
 
 interface CoalesceState {
@@ -370,7 +392,9 @@ export class PtyHostCore {
 
   /**
    * Answers at once when node-pty set the pid at the spawn (POSIX), and once
-   * it has set it otherwise (Windows ConPTY; `root-pid-gate.ts`).
+   * it has set it otherwise (Windows ConPTY; `root-pid-gate.ts`). A ConPTY
+   * whose output never connected is spawned once more before the answer
+   * (`answerGatedSpawn`).
    */
   spawn(params: PtyHostSpawnParams): PtyHostSpawnResult | Promise<PtyHostSpawnResult> {
     // The carry-over is copied, so a resume shows unbroken history (see
@@ -382,17 +406,13 @@ export class PtyHostCore {
 
     let pty: nodePty.IPty;
     const spawnedAtMs = this.now();
+    // Main stamped the send with its own `Date.now()`, so this reads the same
+    // clock. A request held behind a busy loop has spent that much of main's
+    // budget before the first attempt starts.
+    const queuedMs = params.sentAtMs === undefined ? 0 : Math.max(0, Date.now() - params.sentAtMs);
     try {
       refuseOwnExecutable(params.file);
-      // Labelled like the `cli:spawn:<program>` spans: the pseudo console and its console host
-      // start on this thread, which every terminal's output shares.
-      pty = timeSyncWork('pty:spawn', () => this.spawnPty(params.file, params.args, {
-        name: 'xterm-256color',
-        cols: params.cols,
-        rows: params.rows,
-        cwd: params.cwd,
-        env: params.env,
-      }));
+      pty = this.spawnSessionPty(params);
     } catch (error) {
       return { ok: false, error: toPtyHostError(error), previousScrollback };
     }
@@ -419,9 +439,6 @@ export class PtyHostCore {
       params.transient,
     );
 
-    // Holds the PTY's events while the answer waits for node-pty to set the
-    // pid (Windows; `root-pid-gate.ts`). Null when it was set at the spawn.
-    const pidGate = pty.pid > 0 ? null : new RootPidGate(pty);
     const entry: PtyEntry = {
       ptyId: params.ptyId,
       sessionId: params.sessionId,
@@ -438,19 +455,46 @@ export class PtyHostCore {
       taskId: params.taskId ?? null,
       writeQueue: null,
       userInputSealed: false,
+      spawnCancelled: false,
     };
     this.ptys.set(params.ptyId, entry);
+    return this.answerOnPid(entry, { params, previousScrollback, firstSpawnedAtMs: spawnedAtMs, queuedMs, retryLimitMs: null });
+  }
+
+  /** Start a session's PTY, the first attempt and a retry alike. */
+  private spawnSessionPty(params: PtyHostSpawnParams): nodePty.IPty {
+    // Labelled like the `cli:spawn:<program>` spans: the pseudo console and its console host
+    // start on this thread, which every terminal's output shares.
+    return timeSyncWork('pty:spawn', () => this.spawnPty(params.file, params.args, {
+      name: 'xterm-256color',
+      cols: params.cols,
+      rows: params.rows,
+      cwd: params.cwd,
+      env: params.env,
+    }));
+  }
+
+  /**
+   * Subscribe to the entry's PTY and answer the spawn: at once when node-pty
+   * set the pid at the spawn, otherwise once it has (`root-pid-gate.ts`).
+   */
+  private answerOnPid(entry: PtyEntry, attempt: GatedSpawnAttempt): PtyHostSpawnResult | Promise<PtyHostSpawnResult> {
+    // Holds the PTY's events while the answer waits for node-pty to set the
+    // pid (Windows). Null when it was set at the spawn.
+    const pidGate = entry.pty.pid > 0
+      ? null
+      : new RootPidGate(entry.pty, attempt.retryLimitMs ?? ROOT_PID_WAIT_LIMIT_MS);
     entry.disposables.push(...subscribeThroughGate(
-      pty,
+      entry.pty,
       pidGate,
       (data) => timeSyncWork('pty:data', () => this.onPtyData(entry, data)),
       (exitCode) => this.onPtyExit(entry, exitCode),
     ));
     if (!pidGate) {
       this.pinRootOf(entry);
-      return { ok: true, pid: pty.pid };
+      return { ok: true, pid: entry.pty.pid };
     }
-    return pidGate.outcome.then((outcome) => this.answerGatedSpawn(entry, pidGate, outcome, previousScrollback));
+    return pidGate.outcome.then((outcome) => this.answerGatedSpawn(entry, pidGate, outcome, attempt));
   }
 
   /** Answer a spawn whose pid node-pty had not set yet (see `spawn`). */
@@ -458,18 +502,31 @@ export class PtyHostCore {
     entry: PtyEntry,
     pidGate: RootPidGate,
     outcome: RootPidOutcome,
-    previousScrollback: string,
-  ): PtyHostSpawnResult {
+    attempt: GatedSpawnAttempt,
+  ): PtyHostSpawnResult | Promise<PtyHostSpawnResult> {
     if (outcome.kind === 'failed') {
       // Nothing started, so this is a failed spawn, not a session that ended:
-      // main hears no exit, and the host forgets the session as if the spawn
-      // had thrown. Main's failure path seeds the session's ring again.
+      // main hears no exit. The attempt's listeners go first, so nothing the
+      // dead PTY still emits reaches the entry a retry reuses.
       pidGate.discard();
-      entry.exited = true;
       for (const disposable of entry.disposables) disposable.dispose();
-      this.ptys.delete(entry.ptyId);
-      if (this.sessions.get(entry.sessionId)?.livePtyId === entry.ptyId) this.dropSession(entry.sessionId);
-      return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode)), previousScrollback };
+      entry.disposables.length = 0;
+      const retryLimitMs = this.retryLimitFor(entry, outcome.exitCode, attempt);
+      if (retryLimitMs !== null) {
+        console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s PTY output never connected after ${this.now() - entry.spawnedAtMs} ms (longest pty host stall ${pidGate.longestStallMs} ms); spawning it once more`);
+        try {
+          entry.pty = this.spawnSessionPty(attempt.params);
+        } catch (error) {
+          return this.failGatedSpawn(entry, error, attempt.previousScrollback);
+        }
+        entry.spawnedAtMs = this.now();
+        return this.answerOnPid(entry, { ...attempt, retryLimitMs });
+      }
+      return this.failGatedSpawn(
+        entry,
+        processNotStartedError(outcome.exitCode, this.now() - entry.spawnedAtMs, pidGate.longestStallMs),
+        attempt.previousScrollback,
+      );
     }
     if (outcome.kind === 'timedOut') {
       console.warn(`[pty-host] session ${entry.sessionId.slice(0, 8)}'s PTY reported no pid and no exit within the wait; answering without its pid, so its root is not pinned and nothing it leaves running at a natural exit is cleaned up`);
@@ -477,6 +534,31 @@ export class PtyHostCore {
     this.pinRootOf(entry);
     pidGate.release();
     return { ok: true, pid: entry.pty.pid };
+  }
+
+  /**
+   * The backstop for a second attempt at a spawn whose output never connected
+   * (`root-pid-gate.ts`), or null when it gets none. Only the first attempt is
+   * retried, and only while it is still wanted: not in a quit, not after main
+   * gave up and killed the ptyId (its request timed out), not after a teardown
+   * cancelled the spawn (`cancelSpawn`), and not when the session is no longer
+   * this PTY's (removed, or spawned again since). The retry must also fit
+   * inside main's budget for the answer, which runs from main's send.
+   */
+  private retryLimitFor(entry: PtyEntry, exitCode: number, attempt: GatedSpawnAttempt): number | null {
+    if (exitCode !== OUTPUT_NOT_CONNECTED_EXIT_CODE || attempt.retryLimitMs !== null) return null;
+    if (this.shuttingDown || entry.killed || entry.spawnCancelled) return null;
+    if (this.sessions.get(entry.sessionId)?.livePtyId !== entry.ptyId) return null;
+    return retryWindowMs(attempt.queuedMs + this.now() - attempt.firstSpawnedAtMs);
+  }
+
+  /** Answer a gated spawn as failed: the host forgets the session as if the spawn had thrown. */
+  private failGatedSpawn(entry: PtyEntry, error: unknown, previousScrollback: string): PtyHostSpawnResult {
+    // Main's failure path seeds the session's ring again.
+    entry.exited = true;
+    this.ptys.delete(entry.ptyId);
+    if (this.sessions.get(entry.sessionId)?.livePtyId === entry.ptyId) this.dropSession(entry.sessionId);
+    return { ok: false, error: toPtyHostError(error), previousScrollback };
   }
 
   async getScrollback(sessionId: string, settle: boolean): Promise<string> {
@@ -860,6 +942,15 @@ export class PtyHostCore {
       case 'removeSession':
         this.dropSession(command.sessionId);
         return;
+      case 'cancelSpawn':
+        // Read only by `retryLimitFor`: a spawn still waiting on its pid is not
+        // tried again. A second attempt already started runs on, because
+        // node-pty holds a kill until a ConPTY's first output. Main abandons
+        // what the answer brings back.
+        for (const entry of this.ptys.values()) {
+          if (entry.sessionId === command.sessionId) entry.spawnCancelled = true;
+        }
+        return;
       case 'initSession':
         this.bufferManager.initSession(command.sessionId, command.scrollback, command.cols);
         return;
@@ -1146,9 +1237,11 @@ export class PtyHostCore {
     }
     return pidGate.outcome.then((outcome): PtyHostRawSpawnResult => {
       if (outcome.kind === 'failed') {
+        // Not spawned again: only a session spawn is retried. The failure
+        // rejects to the probe's caller (`spawnOffMainPty`).
         pidGate.discard();
         this.rawPtys.delete(ptyId);
-        return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode)) };
+        return { ok: false, error: toPtyHostError(processNotStartedError(outcome.exitCode, this.now() - raw.spawnedAtMs, pidGate.longestStallMs)) };
       }
       if (outcome.kind === 'timedOut') {
         console.warn(`[pty-host] raw PTY ${ptyId} reported no pid and no exit within the wait; answering without its pid`);

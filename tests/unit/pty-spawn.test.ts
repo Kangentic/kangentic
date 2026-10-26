@@ -7,14 +7,22 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: (message: string) => message,
 }));
 
+vi.mock('../../src/main/analytics/error-reporting', () => ({
+  reportHandledError: vi.fn(),
+}));
+
 import {
   resolveShellArgs,
   buildSpawnEnv,
   resolveSpawnCwd,
   diagnoseSpawnFailure,
+  recordSpawnFailure,
   FULL_REPAINT_ENV_KEY,
   SCROLL_SPEED_ENV_KEY,
 } from '../../src/main/pty/spawn/pty-spawn';
+import { reportHandledError } from '../../src/main/analytics/error-reporting';
+import { processNotStartedError } from '../../src/main/pty/host/root-pid-gate';
+import { fromPtyHostError, toPtyHostError } from '../../src/main/pty/host/protocol';
 import { buildSpawnClearPrelude } from '../../src/shared/paths';
 import { parseWslShellSpec } from '../../src/main/pty/process-tag/task-process-tag';
 
@@ -753,5 +761,58 @@ describe('diagnoseSpawnFailure', () => {
       originalCwd: '/tmp',
     });
     expect(result.errorMessage).toBe('weird string error');
+  });
+
+  it('tells the user a ConPTY whose output never connected was too busy to start, from the error main rebuilt off the wire', () => {
+    // The host's answer as main sees it: flattened for the wire and rebuilt.
+    const spawnError = fromPtyHostError(toPtyHostError(processNotStartedError(-1, 5012, 4870)));
+    const result = diagnoseSpawnFailure({
+      err: spawnError,
+      shellExe: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+      effectiveCwd: 'C:\\Users\\dev\\project',
+      originalCwd: 'C:\\Users\\dev\\project',
+    });
+    expect(result.kind).toBe('output-not-connected');
+    expect(result.errno).toBe('PTY_OUTPUT_NOT_CONNECTED');
+    expect(result.scrollbackSuffix).toContain('output never connected');
+    expect(result.scrollbackSuffix).toContain('too busy');
+    expect(result.scrollbackSuffix).not.toContain('spawn-helper');
+  });
+
+  it('gives a real CreateProcessW failure no hint and no kind of its own', () => {
+    const spawnError = fromPtyHostError(toPtyHostError(processNotStartedError(267, 40, 10)));
+    const result = diagnoseSpawnFailure({ err: spawnError, shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    expect(result.kind).toBe('other');
+    expect(result.scrollbackSuffix).toBe('');
+    expect(result.errno).toBe('');
+  });
+});
+
+describe('recordSpawnFailure', () => {
+  afterEach(() => {
+    vi.mocked(reportHandledError).mockClear();
+    vi.restoreAllMocks();
+  });
+
+  function reportedFor(spawnError: Error): { error: Error; tags: Record<string, string> } {
+    const diagnostic = diagnoseSpawnFailure({ err: spawnError, shellExe: 'pwsh', effectiveCwd: '/tmp', originalCwd: '/tmp' });
+    recordSpawnFailure({ diagnostic, shellExe: 'pwsh', shellArgs: [] });
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [error, tags] = vi.mocked(reportHandledError).mock.calls[0];
+    return { error: error as Error, tags: tags as Record<string, string> };
+  }
+
+  it('reports a ConPTY whose output never connected under its own error type, so it opens its own issue', () => {
+    const { error, tags } = reportedFor(fromPtyHostError(toPtyHostError(processNotStartedError(-1, 5012, 4870))));
+    expect(error.name).toBe('PtyOutputNotConnectedError');
+    expect(error.message).toBe('Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)');
+    expect(tags).toMatchObject({ source: 'pty_spawn', errno: 'PTY_OUTPUT_NOT_CONNECTED' });
+  });
+
+  it('keeps every other spawn failure a plain Error, and tags one with no errno as none', () => {
+    const { error, tags } = reportedFor(fromPtyHostError(toPtyHostError(processNotStartedError(267, 40, 10))));
+    expect(error.name).toBe('Error');
+    expect(error.message).toBe('Cannot create process, error code: 267');
+    expect(tags).toMatchObject({ source: 'pty_spawn', errno: 'none' });
   });
 });

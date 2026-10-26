@@ -10,13 +10,32 @@
  * was read, the PTY exited first, the 10 s backstop ran out) it must leave no
  * timer behind, since the host builds one gate per spawn on Windows.
  *
+ * They also pin the failed answer's text and the retry window for a ConPTY
+ * whose output never connected (Sentry DESKTOP-23): a retry gets node-pty's
+ * full connect timeout and still answers inside main's budget for the spawn.
+ *
  * Fake timers drive everything. The gate arms both its timers in its
  * constructor, so each test builds its gate after the clock is installed.
  *
  * Tier: Unit.
  */
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { RootPidGate, ROOT_PID_POLL_MS, ROOT_PID_WAIT_LIMIT_MS } from '../../src/main/pty/host/root-pid-gate';
+import {
+  NODE_PTY_CONNECT_TIMEOUT_MS,
+  PTY_OUTPUT_NOT_CONNECTED_CODE,
+  ROOT_PID_POLL_MS,
+  ROOT_PID_WAIT_LIMIT_MS,
+  RootPidGate,
+  SPAWN_ANSWER_MARGIN_MS,
+  SPAWN_REQUEST_TIMEOUT_MS,
+  SPAWN_RETRY_MIN_WINDOW_MS,
+  processNotStartedError,
+  retryWindowMs,
+} from '../../src/main/pty/host/root-pid-gate';
+
+const requireFromTest = createRequire(import.meta.url);
 
 /** The one field the gate reads. node-pty sets it after spawn() returns on Windows. */
 function createPty(pid: number): { pid: number } {
@@ -133,5 +152,97 @@ describe('RootPidGate timers', () => {
 
     await expect(gate.outcome).resolves.toEqual({ kind: 'timedOut' });
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('runs out at the limit a retry passes, not before and not at the default', async () => {
+    const gate = new RootPidGate(createPty(0), 9_000);
+    let settled = false;
+    void gate.outcome.then(() => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(8_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(gate.outcome).resolves.toEqual({ kind: 'timedOut' });
+  });
+});
+
+describe('RootPidGate stall measure', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('reads one poll interval while the loop runs every poll on time', async () => {
+    const gate = new RootPidGate(createPty(0));
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(gate.longestStallMs).toBe(ROOT_PID_POLL_MS);
+  });
+
+  it('reads the gap a held loop left between two polls', async () => {
+    const gate = new RootPidGate(createPty(0));
+    await vi.advanceTimersByTimeAsync(500);
+
+    // A held loop runs no timer: the clock moves with no poll between.
+    vi.setSystemTime(Date.now() + 5_200);
+    await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS);
+
+    expect(gate.longestStallMs).toBe(5_200 + ROOT_PID_POLL_MS);
+  });
+
+  it('counts the gap that ends in the exit, which can run before the next poll', async () => {
+    const gate = new RootPidGate(createPty(0));
+    const onExit = gate.gateExit(() => undefined);
+    await vi.advanceTimersByTimeAsync(500);
+
+    vi.setSystemTime(Date.now() + 5_200);
+    onExit(-1, undefined);
+
+    await expect(gate.outcome).resolves.toEqual({ kind: 'failed', exitCode: -1 });
+    expect(gate.longestStallMs).toBe(5_200);
+  });
+});
+
+describe('processNotStartedError', () => {
+  it('names an output connection that never came up, with the attempt\'s time, the host\'s longest stall and its own code', () => {
+    const error = processNotStartedError(-1, 5012, 4870) as NodeJS.ErrnoException;
+    expect(error.message).toBe('Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)');
+    expect(error.code).toBe(PTY_OUTPUT_NOT_CONNECTED_CODE);
+  });
+
+  it('keeps node-pty 1.1.0\'s text, and no code, for a CreateProcessW failure', () => {
+    const error = processNotStartedError(267, 40, 10) as NodeJS.ErrnoException;
+    expect(error.message).toBe('Cannot create process, error code: 267');
+    expect(error.code).toBeUndefined();
+  });
+});
+
+describe('the retry window for a ConPTY whose output never connected', () => {
+  it('leaves a first attempt that ran node-pty\'s full timeout a full second one', () => {
+    const windowMs = retryWindowMs(NODE_PTY_CONNECT_TIMEOUT_MS);
+    expect(windowMs).toBe(9_000);
+    expect(windowMs).toBeGreaterThanOrEqual(NODE_PTY_CONNECT_TIMEOUT_MS);
+  });
+
+  it('ends every retry before main stops waiting for the answer', () => {
+    for (let elapsedMs = 0; elapsedMs <= SPAWN_REQUEST_TIMEOUT_MS; elapsedMs += 250) {
+      const windowMs = retryWindowMs(elapsedMs);
+      if (windowMs === null) continue;
+      expect(elapsedMs + windowMs + SPAWN_ANSWER_MARGIN_MS).toBeLessThanOrEqual(SPAWN_REQUEST_TIMEOUT_MS);
+      expect(windowMs).toBeLessThanOrEqual(ROOT_PID_WAIT_LIMIT_MS);
+    }
+  });
+
+  it('gives no retry once too little is left for node-pty\'s full timeout', () => {
+    expect(retryWindowMs(8_000)).toBe(SPAWN_RETRY_MIN_WINDOW_MS);
+    expect(retryWindowMs(8_001)).toBeNull();
+  });
+
+  it('never fits a third attempt: two timed-out attempts leave no window', () => {
+    expect(retryWindowMs(2 * NODE_PTY_CONNECT_TIMEOUT_MS)).toBeNull();
+  });
+
+  it('matches node-pty\'s own connect timeout, so a node-pty bump that moves it fails here', () => {
+    const agentSource = fs.readFileSync(requireFromTest.resolve('node-pty/lib/windowsPtyAgent.js'), 'utf8');
+    expect(agentSource).toMatch(new RegExp(`\\bCONNECTION_TIMEOUT = ${NODE_PTY_CONNECT_TIMEOUT_MS};`));
   });
 });

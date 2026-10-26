@@ -77,7 +77,15 @@ sessions bypass all of this (not task agents).
      - Resolve shell and arguments (platform-specific)
      - Spawn the PTY in the `kangentic-pty-host` utility process (`PtyHostClient.spawn`; node-pty
        runs only there, see [PTY host](crash-recovery.md#pty-host)). The host reads the carry-over before it drops
-       the task's earlier sessions.
+       the task's earlier sessions. A Windows ConPTY whose output never connected is spawned once more
+       before the host answers (`PtyHostCore.retryLimitFor`; the window is `retryWindowMs` in
+       `src/main/pty/host/root-pid-gate.ts`). The retry runs only when at least 6 s remain of main's 15 s
+       budget, counted from main's send, and not during a quit, after main killed the PTY, or when the
+       session row no longer names this PTY. A probe's raw PTY is never retried. A teardown that cancels the spawn posts
+       `cancelSpawn`, so a cancel during the first attempt means no second one. A cancel that lands after
+       the second attempt started waits it out, because node-pty holds a kill until a ConPTY's first
+       output. A spawn that still fails gets an exited placeholder whose terminal says why
+       (`handleSpawnFailure`).
      - Start status file watcher (100ms debounce)
      - Start events file watcher (50ms debounce)
      - The host runs the output handler (16ms batched flush, 512KB scrollback)

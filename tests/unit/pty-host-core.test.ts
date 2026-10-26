@@ -15,7 +15,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
-import { ROOT_PID_POLL_MS, ROOT_PID_WAIT_LIMIT_MS } from '../../src/main/pty/host/root-pid-gate';
+import {
+  NODE_PTY_CONNECT_TIMEOUT_MS,
+  PTY_OUTPUT_NOT_CONNECTED_CODE,
+  ROOT_PID_POLL_MS,
+  ROOT_PID_WAIT_LIMIT_MS,
+  SPAWN_REQUEST_TIMEOUT_MS,
+} from '../../src/main/pty/host/root-pid-gate';
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 import { BACKPRESSURE_HIGH_WATER, BACKPRESSURE_LOW_WATER, PENDING_HIGH_WATER, PENDING_LOW_WATER } from '../../src/main/pty/buffer/backpressure-controller';
 import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
@@ -1529,6 +1535,307 @@ describe('PtyHostCore', () => {
         warn.mockRestore();
       }
     });
+
+    describe('a ConPTY whose output never connected (exit -1 before the pid)', () => {
+      // node-pty's own 5 s connect timeout, or its conout worker's error, ends the
+      // PTY before CreateProcessW runs and reports it as an exit carrying -1.
+      // Nothing started, so the host spawns it once more before it answers. The
+      // fake clock runs every 10 ms poll on time, so the longest stall is one poll.
+      const NOT_CONNECTED_AFTER_TIMEOUT = 'Terminal output never connected after 5000 ms, longest pty host stall 10 ms (ConPTY error code: -1)';
+      let warn: ReturnType<typeof vi.spyOn>;
+      beforeEach(() => { warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined); });
+      afterEach(() => warn.mockRestore());
+
+      /**
+       * A core whose first spawn is `first` and whose next is `second`, with a carry-over source.
+       * `params` overrides the request's own, and `secondSpawn` replaces what the retry's spawn does.
+       */
+      function retryRig(options: { params?: Partial<PtyHostSpawnParams>; secondSpawn?: () => nodePty.IPty } = {}) {
+        const first = latePidFake();
+        const second = latePidFake();
+        const rig = makeCore({ fake: first });
+        rig.core.handleCommand({ type: 'initSession', sessionId: 'old-session', scrollback: 'old bytes', cols: 120 });
+        rig.core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+        const answer = Promise.resolve(rig.core.handleRequest('spawn', spawnParams({ carryoverFromSessionId: 'old-session', ...options.params })));
+        // One queue serves return values and implementations alike, so this is the retry's spawn.
+        rig.spawnPty.mockImplementationOnce(options.secondSpawn ?? (() => second.pty));
+        return { ...rig, first, second, answer };
+      }
+
+      /**
+       * The retry has just started and its PTY never connects, so only its gate's backstop answers it:
+       * not before `windowMs` after the retry began, and at it.
+       */
+      async function expectBackstopAnswerAt(answer: Promise<unknown>, windowMs: number): Promise<void> {
+        let settled = false;
+        void answer.then(() => { settled = true; });
+        await vi.advanceTimersByTimeAsync(windowMs - 1);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(settled).toBe(true);
+        await expect(answer).resolves.toEqual({ ok: true, pid: 0 });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('reported no pid and no exit within the wait'));
+      }
+
+      it('spawns it once more, and answers with the second PTY\'s pid and its output', async () => {
+        const { core, events, spawnPty, first, second, answer } = retryRig();
+
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        first.exit(-1);
+        await vi.advanceTimersByTimeAsync(0);
+        // The same program, arguments and options as the first attempt.
+        expect(spawnPty).toHaveBeenCalledTimes(2);
+        expect(spawnPty.mock.calls[1]).toEqual(spawnPty.mock.calls[0]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('output never connected after 5000 ms'));
+
+        second.connect(5150);
+        second.feed('second attempt output');
+        await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+
+        await flush();
+        expect(events).toContainEqual({ type: 'data', sessionId: 'session-1', data: 'second attempt output' });
+        // The first attempt never started, so main hears no exit for it.
+        expect(events.filter((event) => event.type === 'exit')).toEqual([]);
+        // The session kept its carry-over through the retry.
+        expect(core.getRawScrollback('session-1')).toBe('old bytessecond attempt output');
+        expect(core.livePtyCount).toBe(1);
+      });
+
+      it('answers failed, naming the attempt\'s elapsed time, when the second attempt does not connect either', async () => {
+        const { core, events, spawnPty, first, second, answer } = retryRig();
+
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        first.exit(-1);
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        second.exit(-1);
+
+        await expect(answer).resolves.toMatchObject({
+          ok: false,
+          error: { message: NOT_CONNECTED_AFTER_TIMEOUT, code: PTY_OUTPUT_NOT_CONNECTED_CODE },
+          previousScrollback: 'old bytes',
+        });
+        // A third attempt would not fit inside main's spawn budget.
+        expect(spawnPty).toHaveBeenCalledTimes(2);
+        await flush();
+        expect(events.filter((event) => event.type === 'exit')).toEqual([]);
+        expect(core.livePtyCount).toBe(0);
+        expect(core.getRawScrollback('session-1')).toBe('');
+        expect(core.getRawScrollback('old-session')).toBe('old bytes');
+      });
+
+      it('does not spawn again once the host is shutting down, main sent a kill for the PTY, or main cancelled the spawn', async () => {
+        for (const giveUp of [
+          { type: 'shutdown' } as const,
+          { type: 'kill', ptyId: 1 } as const,
+          { type: 'cancelSpawn', sessionId: 'session-1' } as const,
+        ]) {
+          const { core, spawnPty, first, answer } = retryRig();
+          await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+          core.handleCommand(giveUp);
+          first.exit(-1);
+          await vi.advanceTimersByTimeAsync(0);
+
+          // Checked before the answer: a retry would leave it waiting on a PTY that never connects.
+          expect(spawnPty).toHaveBeenCalledTimes(1);
+          await expect(answer).resolves.toMatchObject({ ok: false, error: { message: NOT_CONNECTED_AFTER_TIMEOUT } });
+        }
+      });
+
+      it('does not spawn again when the first attempt left too little of main\'s budget for a full second one', async () => {
+        const { spawnPty, first, answer } = retryRig();
+
+        await vi.advanceTimersByTimeAsync(8_001);
+        first.exit(-1);
+        await vi.advanceTimersByTimeAsync(0);
+
+        // Checked before the answer: a retry would leave it waiting on a PTY that never connects.
+        expect(spawnPty).toHaveBeenCalledTimes(1);
+        await expect(answer).resolves.toMatchObject({
+          ok: false,
+          error: { message: 'Terminal output never connected after 8001 ms, longest pty host stall 10 ms (ConPTY error code: -1)' },
+        });
+      });
+
+      it('answers failed, handing the carry-over back, when the retry\'s own spawn throws', async () => {
+        const { core, events, spawnPty, first, answer } = retryRig({
+          secondSpawn: () => { throw new Error('CreateProcessW could not allocate the console'); },
+        });
+
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        first.exit(-1);
+
+        await expect(answer).resolves.toMatchObject({
+          ok: false,
+          error: { message: 'CreateProcessW could not allocate the console' },
+          previousScrollback: 'old bytes',
+        });
+        // The throw came from the retry: the first attempt's spawn returned a PTY.
+        expect(spawnPty).toHaveBeenCalledTimes(2);
+        await flush();
+        expect(events.filter((event) => event.type === 'exit')).toEqual([]);
+        expect(core.livePtyCount).toBe(0);
+        expect(core.getRawScrollback('session-1')).toBe('');
+        expect(core.getRawScrollback('old-session')).toBe('old bytes');
+      });
+
+      it('stops listening to the dead first attempt, so what it still emits never reaches the retry', async () => {
+        const { core, events, spawnPty, first, second, answer } = retryRig();
+
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        first.exit(-1);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(spawnPty).toHaveBeenCalledTimes(2);
+        expect(first.disposeData).toHaveBeenCalledTimes(1);
+        expect(first.disposeExit).toHaveBeenCalledTimes(1);
+
+        // The retry reuses the entry and the session's ring. A late chunk or exit
+        // from the dead PTY, heard, would write into that ring or end the entry.
+        first.feed('late output from the dead first attempt');
+        first.exit(0);
+
+        second.connect(5150);
+        second.feed('second attempt output');
+        // The gate's poll reads the pid whatever else happened to the retry's listeners.
+        await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS);
+        await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+        await flush();
+
+        expect(events.filter((event) => event.type === 'exit')).toEqual([]);
+        expect(core.livePtyCount).toBe(1);
+        expect(core.getRawScrollback('session-1')).toBe('old bytessecond attempt output');
+        // Disposing the first attempt's listeners left the retry's own alone.
+        expect(second.disposeData).not.toHaveBeenCalled();
+        expect(second.disposeExit).not.toHaveBeenCalled();
+
+        // The entry forgot the first attempt's listeners, so the retry's own exit disposes only its own.
+        second.exit(0);
+        await flush();
+        expect(second.disposeData).toHaveBeenCalledTimes(1);
+        expect(first.disposeData).toHaveBeenCalledTimes(1);
+        expect(first.disposeExit).toHaveBeenCalledTimes(1);
+      });
+
+      it('gives the retry the window main\'s budget leaves, not the 10 s default backstop', async () => {
+        const { first, answer } = retryRig();
+
+        // Straight after node-pty's own timeout: 15 s less the 1 s margin less 5 s is 9 s.
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        first.exit(-1);
+        await vi.advanceTimersByTimeAsync(0);
+
+        await expectBackstopAnswerAt(answer, 9_000);
+      });
+
+      describe('the time the request waited for the host\'s loop (sentAtMs) counts against the retry window', () => {
+        it('does not spawn again when that wait leaves less than a full second attempt', async () => {
+          // 3.5 s waiting and 5 s for the first attempt: 8.5 s used leaves 5.5 s once the margin is kept
+          // back, under the 6 s a full connect timeout and a second need.
+          const { spawnPty, first, answer } = retryRig({ params: { sentAtMs: Date.now() - 3_500 } });
+
+          await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+          first.exit(-1);
+          await vi.advanceTimersByTimeAsync(0);
+
+          // Checked before the answer: a retry would leave it waiting on a PTY that never connects.
+          expect(spawnPty).toHaveBeenCalledTimes(1);
+          await expect(answer).resolves.toMatchObject({
+            ok: false,
+            error: { message: NOT_CONNECTED_AFTER_TIMEOUT, code: PTY_OUTPUT_NOT_CONNECTED_CODE },
+          });
+        });
+
+        it('spawns again when the request waited no time at all (the control for the case above)', async () => {
+          const { spawnPty, first, second, answer } = retryRig({ params: { sentAtMs: Date.now() } });
+
+          await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+          first.exit(-1);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(spawnPty).toHaveBeenCalledTimes(2);
+
+          second.connect(5150);
+          await vi.advanceTimersByTimeAsync(ROOT_PID_POLL_MS);
+          await expect(answer).resolves.toEqual({ ok: true, pid: 5150 });
+        });
+
+        it('shortens the retry\'s backstop by the wait, down to the 6 s minimum window', async () => {
+          // 3 s waiting and 5 s for the first attempt: 8 s used, so 15 s less 1 s less 8 s is 6 s.
+          const { spawnPty, first, answer } = retryRig({ params: { sentAtMs: Date.now() - 3_000 } });
+
+          await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+          first.exit(-1);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(spawnPty).toHaveBeenCalledTimes(2);
+
+          await expectBackstopAnswerAt(answer, 6_000);
+        });
+
+        it('counts a stamp ahead of the host\'s clock (a clock that stepped back) as no wait, not as extra time', async () => {
+          // Unclamped, the 4 s the stamp is ahead would read as -4 s waited and stretch the window to the 10 s cap.
+          const { spawnPty, first, answer } = retryRig({ params: { sentAtMs: Date.now() + 4_000 } });
+
+          await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+          first.exit(-1);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(spawnPty).toHaveBeenCalledTimes(2);
+
+          await expectBackstopAnswerAt(answer, 9_000);
+        });
+      });
+
+      it('names how long the host\'s own loop was held while the attempt waited', async () => {
+        // The DESKTOP-23 lead: a loop held past node-pty's timeout runs the
+        // timeout before it reads the worker's ready message. A held loop runs
+        // no timer, so the clock jumps with none of the gate's polls between.
+        const fake = latePidFake();
+        const { core } = makeCore({ fake });
+        const answer = Promise.resolve(core.handleRequest('spawnRaw', rawSpawnParams()));
+
+        await vi.advanceTimersByTimeAsync(1_000);
+        vi.setSystemTime(Date.now() + 5_200);
+        fake.exit(-1);
+
+        await expect(answer).resolves.toMatchObject({
+          ok: false,
+          error: { message: 'Terminal output never connected after 6200 ms, longest pty host stall 5200 ms (ConPTY error code: -1)' },
+        });
+      });
+
+      it('does not spawn again over a newer spawn of the same session id', async () => {
+        const older = latePidFake();
+        const newer = createFakePty(6161);
+        const { core, spawnPty } = makeCore({ fake: older });
+        const olderAnswer = Promise.resolve(core.handleRequest('spawn', spawnParams({ ptyId: 1 })));
+        spawnPty.mockReturnValueOnce(newer.pty);
+        expect(core.spawn(spawnParams({ ptyId: 2 }))).toEqual({ ok: true, pid: 6161 });
+        newer.feed('newer spawn output');
+
+        older.exit(-1);
+        await expect(olderAnswer).resolves.toMatchObject({ ok: false, error: { code: PTY_OUTPUT_NOT_CONNECTED_CODE } });
+
+        // The older spawn's retry would have replaced the newer one's ring.
+        expect(spawnPty).toHaveBeenCalledTimes(2);
+        expect(core.getRawScrollback('session-1')).toBe('newer spawn output');
+        expect(core.livePtyCount).toBe(1);
+      });
+
+      it('answers a raw PTY with the same message, without spawning it again', async () => {
+        const fake = latePidFake();
+        const { core, spawnPty, events } = makeCore({ fake });
+        const answer = Promise.resolve(core.handleRequest('spawnRaw', rawSpawnParams()));
+
+        await vi.advanceTimersByTimeAsync(NODE_PTY_CONNECT_TIMEOUT_MS);
+        fake.exit(-1);
+
+        await expect(answer).resolves.toMatchObject({
+          ok: false,
+          error: { message: NOT_CONNECTED_AFTER_TIMEOUT, code: PTY_OUTPUT_NOT_CONNECTED_CODE },
+        });
+        expect(spawnPty).toHaveBeenCalledTimes(1);
+        await flush();
+        expect(events).toEqual([]);
+        expect(core.livePtyCount).toBe(0);
+      });
+    });
   });
 
   describe('a PTY that exited on its own is released (node-pty frees its conout worker only in kill())', () => {
@@ -1807,5 +2114,56 @@ describe('PtyHostClient and RemotePty', () => {
     // The caller's budget rides along in the options; without it the transport falls back to its own default.
     expect(request).toHaveBeenCalledWith('awaitAgentExit', { taskIds: ['task-a', 'task-b'] }, { timeoutMs: 13_000 });
     expect(answer).toBe(hostAnswer);
+  });
+
+  it('gives a spawn and a raw spawn the budget the host\'s retry window is sized against', async () => {
+    const request = vi.fn(async () => ({ ok: true, pid: 4242 }));
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: null,
+      shutdown: () => undefined,
+    };
+    const client = new PtyHostClient(transport);
+
+    await client.spawn(spawnInput);
+    await client.spawnRaw('claude', [], { name: 'xterm-256color', cols: 80, rows: 24, cwd: '/mock', env: {} });
+
+    expect(request.mock.calls.map((call) => [call[0], call[2]])).toEqual([
+      ['spawn', { timeoutMs: SPAWN_REQUEST_TIMEOUT_MS }],
+      ['spawnRaw', { timeoutMs: SPAWN_REQUEST_TIMEOUT_MS }],
+    ]);
+  });
+
+  it('stamps each spawn with main\'s clock as it is sent, whatever stamp the caller passes', async () => {
+    const request = vi.fn(async (_method: string, _params: { sentAtMs?: number }) => ({ ok: true, pid: 4242 }));
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: null,
+      shutdown: () => undefined,
+    };
+    const client = new PtyHostClient(transport);
+    // The host reads the stamp against its own clock to learn how long the request waited.
+    const FIRST_SEND_MS = 1_900_000_000_000;
+    const withStaleStamp = { ...spawnInput, sentAtMs: 1 };
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(FIRST_SEND_MS);
+      await client.spawn(spawnInput);
+      // A later send reads the clock again, and a caller cannot stamp over it.
+      vi.setSystemTime(FIRST_SEND_MS + 7_000);
+      await client.spawn(withStaleStamp);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(request.mock.calls.map((call) => [call[0], call[1].sentAtMs])).toEqual([
+      ['spawn', FIRST_SEND_MS],
+      ['spawn', FIRST_SEND_MS + 7_000],
+    ]);
   });
 });

@@ -35,6 +35,7 @@ import {
 import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
+import { SPAWN_REQUEST_TIMEOUT_MS } from './root-pid-gate';
 
 /** A listener registration that can be undone. */
 export interface PtyDisposable {
@@ -436,12 +437,14 @@ export class PtyHostClient {
     this.transport.post(command);
   }
 
-  async spawn(params: Omit<PtyHostSpawnParams, 'ptyId'>): Promise<PtyHostSpawnOutcome> {
+  async spawn(params: Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'>): Promise<PtyHostSpawnOutcome> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;
     let result: PtyHostSpawnResult;
     try {
-      result = await this.transport.request('spawn', { ...params, ptyId });
+      // The budget the host sizes a retry of a never-connected ConPTY against,
+      // counted from this send.
+      result = await this.transport.request('spawn', { ...params, ptyId, sentAtMs: Date.now() }, { timeoutMs: SPAWN_REQUEST_TIMEOUT_MS });
     } catch (error) {
       // The host was lost or did not answer in time. A host that still runs
       // the request later would start a PTY no handle holds, so a kill follows
@@ -522,7 +525,7 @@ export class PtyHostClient {
     this.nextPtyId += 1;
     let result: PtyHostRawSpawnResult;
     try {
-      result = await this.transport.request('spawnRaw', { ptyId, file, args, ...options });
+      result = await this.transport.request('spawnRaw', { ptyId, file, args, ...options }, { timeoutMs: SPAWN_REQUEST_TIMEOUT_MS });
     } catch (error) {
       // The caller spawns locally instead. A host that only timed out may
       // still run the request, and the probe would then run twice, so a kill
