@@ -21,7 +21,7 @@ import {
   type CommandTerminalStartErrorCode,
 } from '../../ipc/handlers/transient-sessions';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
-import { commandTerminalDisplayName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
+import { commandTerminalDisplayName, commandTerminalHistoryName, commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { resolveKnownProject } from './known-project';
 import { toWireJson } from './wire-mappers';
@@ -56,7 +56,7 @@ const START_REFUSAL_CODES: Record<CommandTerminalStartErrorCode, CapabilityError
  * `command-terminal`: a phone starts, resumes or stops a Command Terminal, the
  * agent the desktop's Ctrl+Shift+P panel runs at a project's root, and lists
  * the ended conversations it can resume. Start and resume run the very
- * function the desktop's own New terminal and Earlier list do
+ * function the desktop's own Add terminal and Earlier list do
  * (`startCommandTerminal`), in its unattended form: same cap, slot, agent,
  * model, effort and default-branch checkout, with the git steps unable to
  * prompt or stall the answer. All of it works whether or not the project is
@@ -97,8 +97,8 @@ export async function handleCommandTerminal(
       projectId: project.projectId,
       conversations: entries.map((entry) => ({
         agentSessionId: entry.agentSessionId,
-        // The first prompt when nothing named it, as the desktop's row reads.
-        name: entry.label ?? entry.firstPrompt,
+        // The words the desktop's row reads.
+        name: commandTerminalHistoryName(entry),
         endedAt: entry.endedAt,
       })),
     };

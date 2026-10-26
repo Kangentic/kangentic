@@ -35,7 +35,7 @@ export const COMMAND_TERMINAL_BASE_TITLE = 'Command Terminal';
  * How many Command Terminals one project may run at once. Main owns the cap and
  * the slot allocation (`startCommandTerminal` in transient-sessions.ts), because
  * a phone can start a terminal while the desktop's own layer is closed. The
- * renderer's "New terminal" button reads the same number so it disables at the
+ * renderer's Add terminal button reads the same number so it disables at the
  * same point main would refuse.
  */
 export const MAX_COMMAND_TERMINALS = 4;
@@ -74,4 +74,13 @@ export function commandTerminalTitle(slot: string | null | undefined): string {
 export function commandTerminalDisplayName(label: string | null | undefined, slot: string | null | undefined): string {
   const trimmed = label?.trim();
   return trimmed ? trimmed : commandTerminalTitle(slot);
+}
+
+/**
+ * What an earlier conversation is called in the panel's Earlier list and on a
+ * phone: the terminal's name, else the first thing typed into it (with no
+ * Automation agent nothing names a terminal). Null when it has neither.
+ */
+export function commandTerminalHistoryName(entry: { label: string | null; firstPrompt: string | null }): string | null {
+  return entry.label ?? entry.firstPrompt;
 }

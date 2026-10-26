@@ -1754,7 +1754,7 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail\'s Earlier list shows its empty hint, which is what the desktop shows a project in that state.',
+    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail shows no Earlier list, which is what the desktop shows a project in that state.',
     alt: 'The Command Terminal panel open over the blurred board, a rail with Add terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
     config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
     ready: COMMAND_TERMINAL_WINDOW,

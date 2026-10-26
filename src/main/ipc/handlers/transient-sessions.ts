@@ -79,7 +79,7 @@ export class CommandTerminalStartError extends Error {
 export interface StartCommandTerminalInput extends SpawnTransientSessionInput {
   /**
    * Nobody is at the desk (a phone started it). The start runs the same steps
-   * as the desktop's New terminal, made unable to block: the fetch is
+   * as the desktop's Add terminal, made unable to block: the fetch is
    * non-interactive and short, the git phase has one deadline, and it never
    * checks out under another agent that is live in the project folder.
    */
@@ -234,7 +234,7 @@ export async function startCommandTerminal(
     // A resume runs on the agent that held the conversation, which may not be
     // the project's default any more.
     const resume = input.resumeAgentSessionId
-      ? resolveResumedConversation(context, input.projectId, input.resumeAgentSessionId)
+      ? await resolveResumedConversation(context, input.projectId, input.resumeAgentSessionId)
       : null;
     if (resume) {
       if (!context.commandTerminalHistory?.claimResume(input.projectId, resume.agentSessionId)) {
@@ -393,14 +393,20 @@ export async function startCommandTerminal(
  * The earlier conversation a resume picks up, or the refusal. Read from the
  * project's own history (command-terminal-history.ts), never from the renderer.
  */
-function resolveResumedConversation(
+async function resolveResumedConversation(
   context: IpcContext,
   projectId: string,
   agentSessionId: string,
-): { agentSessionId: string; agentName: string; label: string | null } {
-  const row = context.commandTerminalHistory?.find(projectId, agentSessionId) ?? null;
+): Promise<{ agentSessionId: string; agentName: string; label: string | null }> {
+  const history = context.commandTerminalHistory;
+  const row = history?.find(projectId, agentSessionId) ?? null;
   const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
-  if (!row || !adapter || !canResumeConversationById(adapter)) {
+  // The transcript too: an agent purges old ones, and one gone since the list
+  // was read would start a resume the CLI cannot find.
+  const resumable = history && row && adapter && canResumeConversationById(adapter)
+    ? await history.conversationAvailable(row)
+    : false;
+  if (!row || !resumable) {
     throw new CommandTerminalStartError('conversation-gone', 'That conversation can no longer be resumed.');
   }
   return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label };
@@ -524,8 +530,12 @@ async function checkOutStartBranch(
 export function registerTransientSessionHandlers(context: IpcContext): void {
   // The panel's Earlier list. A read: it changes nothing, and a project the
   // desktop does not have open answers too.
-  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_LIST, (_, projectId: string) =>
-    context.commandTerminalHistory?.list(projectId) ?? []);
+  // A project id that names no project gets an empty list, never a database
+  // file opened (and created) for it.
+  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_LIST, (_, projectId: unknown) => {
+    if (typeof projectId !== 'string' || !context.projectRepo.getById(projectId)) return [];
+    return context.commandTerminalHistory?.list(projectId) ?? [];
+  });
 
   // Routed by the input's project, never the one the main window shows: a
   // detached Command Terminal window starts terminals for its own project

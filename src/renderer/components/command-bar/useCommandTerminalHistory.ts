@@ -8,7 +8,7 @@
  * before main's push arrives.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '../../stores/session-store';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
@@ -19,17 +19,31 @@ export function useCommandTerminalHistory(projectId: string | null): {
   hide: (agentSessionId: string) => void;
 } {
   // Keyed by the project it was read for, so a project switch never shows the
-  // previous project's list while the new one loads. `hidden` belongs to the
-  // list it was hidden from, so the next read clears it.
-  const [loaded, setLoaded] = useState<{ projectId: string; entries: CommandTerminalHistoryEntry[]; hidden: ReadonlySet<string> } | null>(null);
+  // previous project's list while the new one loads. `hidden` maps each hidden
+  // conversation to the read that was newest when it was hidden: only a read
+  // started after the hide can say whether it is still free, so only that one
+  // clears it.
+  const [loaded, setLoaded] = useState<{ projectId: string; entries: CommandTerminalHistoryEntry[]; hidden: ReadonlyMap<string, number> } | null>(null);
+  // Numbers each read, so a slow answer never replaces a newer one.
+  const readSequenceRef = useRef(0);
 
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
     const load = (): void => {
+      const read = ++readSequenceRef.current;
       window.electronAPI.sessions.listCommandTerminalHistory(projectId)
         .then((entries) => {
-          if (!cancelled) setLoaded({ projectId, entries, hidden: new Set() });
+          if (cancelled || read !== readSequenceRef.current) return;
+          setLoaded((current) => {
+            const hidden = new Map<string, number>();
+            if (current?.projectId === projectId) {
+              for (const [agentSessionId, hiddenAtRead] of current.hidden) {
+                if (hiddenAtRead >= read) hidden.set(agentSessionId, hiddenAtRead);
+              }
+            }
+            return { projectId, entries, hidden };
+          });
         })
         // A failed read keeps the last list; the next push reads again.
         .catch(() => undefined);
@@ -48,7 +62,8 @@ export function useCommandTerminalHistory(projectId: string | null): {
     state.sessions.flatMap((session) => (session.agentSessionId ? [session.agentSessionId] : []))));
 
   const hide = useCallback((agentSessionId: string) => {
-    setLoaded((current) => (current ? { ...current, hidden: new Set([...current.hidden, agentSessionId]) } : current));
+    const newestRead = readSequenceRef.current;
+    setLoaded((current) => (current ? { ...current, hidden: new Map(current.hidden).set(agentSessionId, newestRead) } : current));
   }, []);
 
   const entries = useMemo(() => {

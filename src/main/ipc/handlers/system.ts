@@ -711,8 +711,9 @@ export function registerSystemHandlers(context: IpcContext): void {
   // in CSS pixels; capturePage takes the page's DIPs, so the zoom factor scales it.
   ipcMain.handle(IPC.WINDOW_CAPTURE_REGION, async (event, rect: unknown): Promise<string | null> => {
     if (!isCaptureRect(rect)) return null;
-    const zoom = event.sender.getZoomFactor();
     try {
+      // Inside the try: a sender destroyed since it asked throws on any call.
+      const zoom = event.sender.getZoomFactor();
       const image = await event.sender.capturePage({
         x: Math.round(rect.x * zoom),
         y: Math.round(rect.y * zoom),

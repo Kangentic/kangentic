@@ -302,6 +302,9 @@ export function createTransientSessionSlice(preserved: {
       return result;
     },
 
+    // Not carried through the HMR stash, unlike `transientSessions`: a request
+    // lives for the few frames until its window takes it, and the pinned store
+    // keeps it through every update after the first.
     pendingCommandTerminalResumes: {},
 
     requestCommandTerminalResume: (projectId, slot, agentSessionId) => {

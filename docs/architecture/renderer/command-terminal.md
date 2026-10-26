@@ -31,7 +31,7 @@ The end-user walkthrough is in [Command Terminal](../../user-guide/command-termi
 ## One panel over a second window-manager layer
 
 The Command Terminal is one panel over a slight backdrop blur (`CommandTerminalPanel`): a header
-with an Add terminal icon, Open in new window, Maximize and Hide; a 248px rail
+with Open in new window, Maximize and Hide; a 248px rail
 (`CommandTerminalRail`) with Add terminal at its top, the Earlier list, and a Running list while a
 terminal is expanded; and up to four terminals in the rest. The button says "Add", as "Add task"
 and "Add column" do, because "New terminal" read as replacing the terminal already open. The
@@ -39,8 +39,8 @@ panel's Maximize keeps the corners icon (`Maximize`) on purpose: each terminal's
 diagonal arrows (`Maximize2`) a task window's maximize does, and the two sit one above the other. The panel moves by its header, resizes from its outer edges, and maximizes
 to the area between the title bar and the status bar. A move translates the real panel and a
 resize changes its box live, and both are saved once, on release. The first build drew a dashed
-outline during a resize and changed nothing until the release, which no other resizable surface
-in the app does and which made shrinking the panel hard to judge. A resize holds the
+outline during a resize and changed nothing until the release, which no other resizable window
+or panel in the app does and which made shrinking the panel hard to judge. A resize holds the
 manager-resize gate (`window-manager/terminal/manager-resize-gate.ts`) for the whole gesture: the
 terminals re-tile with the panel but keep their grids, and the gate holds every
 `scheduleWindowTerminalResize` the re-tiling asks for and sends one when the gesture ends, so each
@@ -321,7 +321,7 @@ Three covers came first, and each read as a flicker in a different way:
 - A picture of the terminal area taken before the switch (`window:captureRegion`). It covered
   Expand and Restore only, because every trigger had to call it before the layout changed, and
   each jump paid the capture over IPC.
-- A copy of each terminal's own canvas taken in `useTerminal`'s fit. It reached every surface, but
+- A copy of each terminal's own canvas taken in `useTerminal`'s fit. It reached every terminal host, but
   the WebGL renderer had to keep its drawing buffer for it (`preserveDrawingBuffer`, a copy on
   every frame every terminal draws), and it showed three stages: the old frame pinned to the
   top left of a pane that had already grown, a crossfade, then the new frame.

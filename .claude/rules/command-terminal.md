@@ -114,8 +114,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   (`Session.hasUserInput`, set in main from the input's content, never from xterm replies, focus
   reports or the repaint nudge) whose agent can resume by id (`canResumeConversationById`) and
   still find the transcript, and that no live terminal or in-flight resume holds. With no such
-  row the rail shows no Earlier heading and no hint; the list stays mounted, so the rail keeps its
-  width and New terminal its place. A resume is a start with `resumeAgentSessionId`; main claims the
+  row the rail shows no Earlier heading and no hint; the list stays mounted, so it has measured
+  how many rows fit before the first arrives. A resume is a start with `resumeAgentSessionId`; main claims the
   conversation first (`claimResume`) and refuses a second with `conversation-open`, and a row it
   cannot resume with `conversation-gone`. A row resumes IN PLACE of the focused terminal only
   while nothing has reached that terminal; a used terminal is never replaced, and the resume opens

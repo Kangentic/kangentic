@@ -637,8 +637,14 @@ export function brightPixelsIn(recording: LayoutChangeRecording, picture: Uint8A
 /** The width the scope is reduced to for comparing pictures: text antialiasing averages out, layout does not. */
 const PICTURE_WIDTH = 240;
 
-/** On a terminal's host while it holds its last frame (`TERMINAL_FRAME_HOLD_ATTRIBUTE` in useTerminal.ts). */
-export const TERMINAL_FRAME_HOLD_SELECTOR = '[data-terminal-frame-hold]';
+/**
+ * The attribute a terminal's host carries while it holds its last frame (`TERMINAL_FRAME_HOLD_ATTRIBUTE`
+ * in useTerminal.ts, which a spec cannot import: it pulls in xterm and React). A `page.evaluate`
+ * closure cannot see these module constants, so a caller passes them in as arguments.
+ */
+export const TERMINAL_FRAME_HOLD_ATTRIBUTE = 'data-terminal-frame-hold';
+/** Matches the host of every terminal that holds its last frame right now. */
+export const TERMINAL_FRAME_HOLD_SELECTOR = `[${TERMINAL_FRAME_HOLD_ATTRIBUTE}]`;
 
 /** Wait until no terminal anywhere holds its frame: every layout change has drawn its new frames. */
 export async function expectNoFrameHold(page: Page, timeout = 3000): Promise<void> {
@@ -659,6 +665,53 @@ export async function expectNoFrameHoldRecovery(page: Page, since: number): Prom
     .map((event) => event.detail?.reason)
     .filter((reason) => reason === 'watchdog' || reason === 'send-failed' || reason === 'finish-failed'), since);
   expect(recoveries).toEqual([]);
+}
+
+/** One entry of the renderer's terminal trace ring (`traceTerminalRenderer`), as `window.__kangenticTerminalTrace` hands it back. */
+export interface TerminalTraceEvent {
+  ts: number;
+  sessionId: string | null;
+  event: string;
+  detail?: Record<string, unknown>;
+}
+
+/**
+ * The terminal trace events named in `events` that happened at or after `since` (ms since
+ * epoch), oldest first. The ring keeps the last 300 events, so a caller reads soon after the
+ * thing it traces. Events from the repaint wait carry `sessionId: null`.
+ */
+export async function readTerminalTrace(page: Page, since: number, events: readonly string[]): Promise<TerminalTraceEvent[]> {
+  return page.evaluate(({ from, names }) => (window as unknown as {
+    __kangenticTerminalTrace: () => TerminalTraceEvent[];
+  }).__kangenticTerminalTrace().filter((entry) => entry.ts >= from && names.includes(entry.event)), { from: since, names: [...events] });
+}
+
+/**
+ * Whether any resizer holds the manager-resize gate open right now
+ * (`manager-resize-gate.ts`): true from a seam, edge or panel press until the gesture ends,
+ * commits or is abandoned. A stuck gate freezes every window terminal's refit, so a spec that
+ * pins a gesture's end reads this.
+ */
+export async function isManagerResizeGateOpen(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
+      isManagerResizeInProgress: () => boolean;
+    };
+    return gate.isManagerResizeInProgress();
+  });
+}
+
+/**
+ * Tell the renderer a session's agent is on screen, which lifts its terminal's launch overlay
+ * (`sessionFirstOutput`). The mock never writes to a terminal, so without this a task window's
+ * xterm never mounts.
+ */
+export async function markSessionFirstOutput(page: Page, sessionId: string): Promise<void> {
+  await page.evaluate((targetSessionId) => {
+    (window as unknown as {
+      __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+    }).__zustandStores.session.getState().markFirstOutput(targetSessionId);
+  }, sessionId);
 }
 
 /**

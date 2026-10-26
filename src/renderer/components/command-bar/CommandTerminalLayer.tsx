@@ -36,14 +36,15 @@ import {
   windowIdsInReadingOrder,
 } from '../../window-manager';
 import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-manager';
-import { CommandTerminalPanel } from './CommandTerminalPanel';
-import { CommandTerminalRail } from './CommandTerminalRail';
+import { COMMAND_PANEL_HEADER_HEIGHT_PX, CommandTerminalPanel } from './CommandTerminalPanel';
+import { COMMAND_RAIL_WIDTH_PX, CommandTerminalRail } from './CommandTerminalRail';
 import type { RunningCommandTerminal } from './CommandTerminalRail';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useToastStore } from '../../stores/toast-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
@@ -66,10 +67,6 @@ const COMMAND_WORKSPACE_KEY = 'command-terminal';
 
 /** The body-level host the panel portals into. */
 const COMMAND_LAYER_ROOT_ID = 'command-terminal-layer-root';
-
-/** The panel's rail and header, which the terminals' area excludes. */
-const COMMAND_RAIL_WIDTH_PX = 248;
-const COMMAND_PANEL_HEADER_HEIGHT_PX = 40;
 
 /**
  * The panel arranges its terminals (`hostArranged`). The pane floor is a task
@@ -200,15 +197,12 @@ function openCommandTerminalWindowInSlot(slot: string): void {
   arrangeCommandTerminals();
 }
 
-/** Open another Command Terminal in the next free slot (up to the cap). Operates
- *  on the module-singleton store, so it works whether or not the layer is
- *  currently mounted. Returns false if already at the cap. */
-export function spawnAdditionalCommandTerminal(): boolean {
+/** Open another Command Terminal in the next free slot, or nothing at the cap.
+ *  Operates on the module-singleton store, so it works whether or not the layer
+ *  is currently mounted. */
+function spawnAdditionalCommandTerminal(): void {
   const slot = nextFreeSlot(occupiedCommandTerminalSlots());
-  if (!slot) return false;
-
-  openCommandTerminalWindowInSlot(slot);
-  return true;
+  if (slot) openCommandTerminalWindowInSlot(slot);
 }
 
 /** The slot an Earlier row would resume into in place: the focused terminal,
@@ -465,7 +459,7 @@ function useTrackHeadBranch(): void {
     window.electronAPI.git.subscribeDiff(projectRoot);
     // agent-focus-ok: this push opens nothing. It only re-reads HEAD and
     // rewrites the branch text of windows that already exist; every openWindow
-    // in this file runs off a user gesture (Ctrl+Shift+P, "New terminal") or
+    // in this file runs off a user gesture (Ctrl+Shift+P, Add terminal) or
     // the reconcile that follows it, never off this subscription. The scan in
     // agent-driven-focus-sites.test.ts cannot tell the two apart, so the answer
     // is written down here. See .claude/rules/agent-driven-focus.md.
@@ -611,7 +605,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
     runTerminalLayoutChange(terminalLayoutScopeOf(terminalArea), change);
   }, [terminalArea]);
   const handleNewTerminal = useCallback(() => {
-    changeLayout(() => { spawnAdditionalCommandTerminal(); });
+    changeLayout(spawnAdditionalCommandTerminal);
   }, [changeLayout]);
   const handleResume = useCallback((entry: CommandTerminalHistoryEntry) => {
     changeLayout(() => resumeCommandTerminalConversation(entry.agentSessionId));
@@ -636,7 +630,18 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
     // Hide first: the terminals unmount here and the layout saves, so this
     // window has stopped drawing them before the new window draws its own.
     onHide();
-    void window.electronAPI.popOut.open('command-terminal', { projectId, projectName });
+    // A window that did not open would leave the running terminals with
+    // nothing showing them. The pending-open flag reopens the panel through
+    // the same open (and reconcile) the shortcut runs.
+    const showPanelAgain = (): void => {
+      useToastStore.getState().addToast({ title: "Couldn't open the window", message: 'The terminals are back in the panel.', variant: 'error' });
+      useSessionStore.getState().setPendingOpenCommandTerminal(true);
+    };
+    window.electronAPI.popOut.open('command-terminal', { projectId, projectName })
+      .then((opened) => {
+        if (!opened) showPanelAgain();
+      })
+      .catch(showPanelAgain);
   }, [projectId, projectName, onHide]);
 
   const rail = (

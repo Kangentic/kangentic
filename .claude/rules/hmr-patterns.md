@@ -69,6 +69,13 @@ workaround (surface the gap and extend this catalog deliberately); do not gate P
 `process.env.NODE_ENV` (`import.meta.hot` is `undefined` in production builds, so the guards
 already collapse to no-ops).
 
+**An object a factory built, held in a component's ref, outlives an edit of the factory's
+module.** Fast Refresh keeps the ref, so the live component goes on calling the old instance,
+whose methods the edit may have renamed or removed. None of A to E reaches it. Where a stale
+instance can leave state held (a hold that only the instance's answer ends), bound the hold
+instead of trusting the answer: `useTerminal`'s `FRAME_HOLD_WATCHDOG_MS` ends a frame hold that
+a throw from the repaint wait (`terminal-repaint-wait.ts`) left open.
+
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/hmr-resync.test.ts` enforces four things: every IPC-backed store's

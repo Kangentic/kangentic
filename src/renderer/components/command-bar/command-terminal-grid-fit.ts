@@ -9,10 +9,9 @@
  * Running instead (`CommandTerminalLayer`).
  */
 
-export interface AreaSize {
-  width: number;
-  height: number;
-}
+import type { ContainerSize } from '../../window-manager/store/geometry';
+
+export type AreaSize = ContainerSize;
 
 export function commandTerminalGridFits(terminalCount: number, area: AreaSize, floor: AreaSize): boolean {
   if (terminalCount <= 1) return true;

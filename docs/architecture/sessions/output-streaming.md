@@ -404,9 +404,15 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   the window's resizes too. A second resize within `WINDOW_RESIZE_SETTLE_MS` (150 ms) of the last
   opens a gesture of its own, which closes once the size has held that long, and then tells every
   terminal to refit (the bottom panel included, whose observer the gate held meanwhile). The same
-  drag now sends 2 or 3. A lone resize opens nothing and refits at once; the OS maximizing or
-  restoring the window delivers one (measured in Electron 45). Gate opens and abandons go to the terminal trace with their owner. Gated by
-  `tests/unit/manager-resize-gate.test.ts`, the unseen-release and OS window drag cases in
+  drag now sends 2, the first resize at once and one more when the size holds. A lone resize opens
+  nothing and refits at once; the OS maximizing or restoring the window delivers one (measured in
+  Electron 45). The gate opens on the second resize, but the observer reports the first resize's
+  layout a frame or more earlier, so its 200 ms refit is armed with the gate still closed. That
+  refit asks the gate again when its timer fires and waits while a gesture is open
+  (`resolveRefitTimerAction`); fitting there moved the grid mid-drag and the PTY heard a third
+  resize 200 ms after it, about one drag in ten. Gate opens and abandons go to the terminal trace
+  with their owner. Gated by `tests/unit/manager-resize-gate.test.ts`,
+  `tests/unit/use-terminal-refit.test.ts`, the unseen-release and OS window drag cases in
   `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts`.
 - **Fit only on the renderer the terminal keeps.** The container is not the fit's only input: the
   cell metric is, and that comes from whichever renderer is attached

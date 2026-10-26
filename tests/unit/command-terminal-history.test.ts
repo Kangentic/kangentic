@@ -274,6 +274,23 @@ describe('CommandTerminalHistory', () => {
     expect(repository.get('open-at-quit')?.ended_at).toBe(lastSeen);
   });
 
+  it('deletes the row a quit left open for a terminal nobody used, and keeps a live unused one', async () => {
+    const { repository, sessions, history } = setup();
+    // A quit removes no row: this unused one has no end and no live terminal.
+    repository.recordConversation({ agentSessionId: 'unused-at-quit', agentName: 'claude', cwd: '/projects/demo', label: null, touched: false });
+    // A live terminal nobody has used yet keeps its row, so its first touch has one to mark.
+    sessions.add('pty-1');
+    sessions.reportAgentId('pty-1', 'conversation-live');
+
+    expect(await history.list(PROJECT_ID)).toEqual([]);
+    expect(repository.get('unused-at-quit')).toBeNull();
+    expect(repository.get('conversation-live')).not.toBeNull();
+
+    sessions.change('pty-1', { hasUserInput: true });
+    sessions.remove('pty-1');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-live' }]);
+  });
+
   it('keeps the newest ended conversations and never prunes one still open', () => {
     const { repository } = setup();
     repository.recordConversation({ agentSessionId: 'still-open', agentName: 'claude', cwd: '/projects/demo', label: null, touched: false });

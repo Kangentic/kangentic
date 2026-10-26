@@ -378,40 +378,56 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
 
   const defaultBranch = config.git.defaultBaseBranch || 'main';
 
+  // A branch switch and a resume in place both end this slot's terminal and
+  // start another in it, so the window, its slot and its grid stay. Each caller
+  // reads the grid BEFORE the kill (the pane unmounts, and clears its getter,
+  // once sessionId flips to null, and the awaited spawn IPC is not guaranteed
+  // to happen after that unmount commits) and clears liveSessionIdRef before
+  // its first await, so a resume asked for mid-respawn waits for the new
+  // terminal rather than starting a second respawn of this slot.
+  const stopForRespawn = useCallback(async (projectId: string): Promise<void> => {
+    // Act on the outcome here too, not just in handleTerminate: this path scrubs the
+    // slot and immediately spawns a replacement on it, so a kill that failed may leave
+    // the old PTY running and unreachable. Warn, then still try the respawn: if the old
+    // row is gone it succeeds, and if it lives main refuses its slot (`slot-taken`) and
+    // the caller's catch says so. The kill handler's only refusal (a task's session)
+    // cannot reach this path, so 'failed' means the invoke itself failed.
+    const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(projectId, slot);
+    if (killOutcome === 'failed') {
+      useToastStore.getState().addToast({
+        title: "Couldn't stop the old terminal",
+        message: 'Its process may still be running.',
+        variant: 'warning',
+      });
+    }
+    setSessionId(null);
+    setReadyLatch(false);
+  }, [slot]);
+
+  const spawnInSlot = useCallback(async (
+    grid: { cols: number; rows: number } | undefined,
+    branch?: string,
+    resumeAgentSessionId?: string,
+  ) => {
+    const result = await useSessionStore.getState().spawnTransientSession(slot, branch, grid, resumeAgentSessionId);
+    liveSessionIdRef.current = result.session.id;
+    setSessionId(result.session.id);
+    // A row clicked while this terminal started opens beside it.
+    takePendingResumeRef.current();
+    return result;
+  }, [slot]);
+
   // Kill this slot's session, checkout the new branch, and respawn it.
   const handleBranchChange = useCallback(async (newBranch: string) => {
     const resolvedBranch = newBranch || defaultBranch;
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
     if (!currentProjectId) return;
-    // Read BEFORE the kill: the pane unmounts (and clears this ref) once
-    // sessionId flips to null below, and the awaited spawn IPC is not
-    // guaranteed to happen after that unmount commits.
     const grid = gridGetterRef.current?.() ?? undefined;
-    // Before the first await, as in resumeInPlace: a resume asked for mid-switch
-    // waits for the new terminal.
     liveSessionIdRef.current = null;
     try {
-      // Act on the outcome here too, not just in handleTerminate: this path scrubs the
-      // slot and immediately spawns a replacement on it, so a kill that failed may leave
-      // the old PTY running and unreachable. Warn, then still try the respawn: if the old
-      // row is gone it succeeds, and if it lives main refuses its slot (`slot-taken`) and
-      // the catch below says so. The kill handler's only refusal (a task's session)
-      // cannot reach this path, so 'failed' means the invoke itself failed.
-      const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
-      if (killOutcome === 'failed') {
-        useToastStore.getState().addToast({
-          title: "Couldn't stop the old terminal",
-          message: 'Its process may still be running.',
-          variant: 'warning',
-        });
-      }
-      setSessionId(null);
-      setReadyLatch(false);
+      await stopForRespawn(currentProjectId);
       setStartingResume(false);
-      const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch, grid);
-      liveSessionIdRef.current = result.session.id;
-      setSessionId(result.session.id);
-      takePendingResumeRef.current();
+      const result = await spawnInSlot(grid, resolvedBranch);
       if (result.checkoutError) {
         useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
       }
@@ -422,46 +438,40 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         variant: 'error',
       });
     }
-  }, [defaultBranch, slot]);
+  }, [defaultBranch, stopForRespawn, spawnInSlot]);
 
   // Resume an earlier conversation IN PLACE of this terminal, which the panel's
   // Earlier list asks for only while nothing has reached the terminal yet
-  // (`Session.hasUserInput`). The same kill-then-respawn-same-slot shape as a
-  // branch switch, so the window, its slot and its grid stay.
+  // (`Session.hasUserInput`).
   const resumeInPlace = useCallback(async (agentSessionId: string) => {
     const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
     if (!currentProjectId) return;
     const grid = gridGetterRef.current?.() ?? undefined;
-    // Before the first await: a second request arriving mid-respawn waits for
-    // the new terminal rather than starting a second respawn of this slot.
+    // The branch the ended terminal showed, for a fresh one if main refuses the resume.
+    const branch = useSessionStore.getState().transientSessions[transientKey(currentProjectId, slot)]?.branch ?? undefined;
     liveSessionIdRef.current = null;
     try {
-      const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
-      if (killOutcome === 'failed') {
-        useToastStore.getState().addToast({
-          title: "Couldn't stop the old terminal",
-          message: 'Its process may still be running.',
-          variant: 'warning',
-        });
-      }
-      setSessionId(null);
-      setReadyLatch(false);
+      await stopForRespawn(currentProjectId);
       setStartingResume(true);
-      const result = await useSessionStore.getState().spawnTransientSession(slot, undefined, grid, agentSessionId);
-      liveSessionIdRef.current = result.session.id;
-      setSessionId(result.session.id);
-      // A second row clicked while this one resumed opens beside it.
-      takePendingResumeRef.current();
+      await spawnInSlot(grid, undefined, agentSessionId);
     } catch (error) {
       useToastStore.getState().addToast({
         title: "Couldn't resume conversation",
         message: asSentence(describeIpcError(error, String(error))),
         variant: 'error',
       });
-      // The fresh terminal is already gone, so the window goes with it.
-      closeWindow(windowId);
+      // Main refuses a conversation another terminal holds or one it can no
+      // longer find only after this slot's unused terminal has ended, so a fresh
+      // one takes its place and the refusal costs nothing. The window goes only
+      // when that start fails too.
+      setStartingResume(false);
+      try {
+        await spawnInSlot(grid, branch);
+      } catch {
+        closeWindow(windowId);
+      }
     }
-  }, [slot, closeWindow, windowId]);
+  }, [slot, stopForRespawn, spawnInSlot, closeWindow, windowId]);
 
   // Take a resume the Earlier list asked of this slot, once the slot has a live
   // terminal. The list judged that terminal unused when it asked; if something

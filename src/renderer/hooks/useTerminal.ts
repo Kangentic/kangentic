@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
-import { isTerminalLayoutLandingFor } from '../utils/terminal-layout-transition';
+import { isTerminalLayoutLandingFor, nextFrame } from '../utils/terminal-layout-transition';
 import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
@@ -184,6 +184,12 @@ interface FrameHold {
   /** The grid last asked of the PTY during this hold, or null before the first send. */
   sent: TerminalGrid | null;
   sendSequence: number;
+  /**
+   * The answer to the send numbered `sendSequence` when it came in while a
+   * refit had aimed the hold at another grid. A refit back to the sent grid
+   * ends the hold on it, since no second answer is coming.
+   */
+  answered: { sendSequence: number; result: SessionResizeResult | undefined } | null;
 }
 
 const sameGrid = (first: TerminalGrid, second: TerminalGrid): boolean =>
@@ -1018,7 +1024,7 @@ export function useTerminal(options: UseTerminalOptions) {
   }, [conformToHeldGrid, releaseHeldGrid]);
 
   /** Cancel a hold's pending send, if one is waiting for its still frame, and its watchdog. */
-  const cancelFrameHoldSend = useCallback((): void => {
+  const cancelFrameHoldTimers = useCallback((): void => {
     if (frameHoldSendFrameRef.current !== null) cancelAnimationFrame(frameHoldSendFrameRef.current);
     if (frameHoldSendTimerRef.current) clearTimeout(frameHoldSendTimerRef.current);
     if (frameHoldWatchdogRef.current) clearTimeout(frameHoldWatchdogRef.current);
@@ -1046,7 +1052,7 @@ export function useTerminal(options: UseTerminalOptions) {
    */
   const dropFrameHold = useCallback((reason: string): void => {
     if (!frameHoldRef.current) return;
-    cancelFrameHoldSend();
+    cancelFrameHoldTimers();
     frameHoldRef.current = null;
     const terminal = xtermRef.current;
     if (terminal) {
@@ -1056,7 +1062,7 @@ export function useTerminal(options: UseTerminalOptions) {
     holdOutputRef.current = false;
     incomingResumeRef.current?.();
     traceTerminalRenderer(sessionIdRef.current, 'frame-hold-dropped', { reason });
-  }, [cancelFrameHoldSend, clearFrameHoldStyle]);
+  }, [cancelFrameHoldTimers, clearFrameHoldStyle]);
 
   /**
    * End a frame hold that went wrong and refit as a plain terminal does,
@@ -1081,8 +1087,18 @@ export function useTerminal(options: UseTerminalOptions) {
       const hold = frameHoldRef.current;
       return hold !== null && hold.sendSequence === sendSequence && hold.sent !== null && sameGrid(hold.target, hold.sent);
     };
+    // The answer to the hold's latest send, while a refit aims it elsewhere: kept
+    // on the hold, so a refit back to the sent grid can end it (sendFrameHoldGrid).
+    const keepAnswerForReAim = (): void => {
+      const hold = frameHoldRef.current;
+      if (hold && hold.sendSequence === sendSequence) frameHoldRef.current = { ...hold, answered: { sendSequence, result: answer } };
+    };
     const terminal = xtermRef.current;
-    if (!terminal || !isCurrent()) return;
+    if (!terminal) return;
+    if (!isCurrent()) {
+      keepAnswerForReAim();
+      return;
+    }
     // Right after a frame has been painted, so the resize, the parse of the held
     // output and the renderer's next frame all land before the next paint: the
     // first frame painted after the resize is the agent's. A View Transition on
@@ -1097,7 +1113,10 @@ export function useTerminal(options: UseTerminalOptions) {
     });
     // A refit meanwhile re-aimed the hold, whose own send ends it later.
     const hold = frameHoldRef.current;
-    if (!hold || !isCurrent()) return;
+    if (!hold || !isCurrent()) {
+      keepAnswerForReAim();
+      return;
+    }
     const host = terminal.element?.closest<HTMLElement>('[data-terminal-host]') ?? null;
     const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen') ?? null;
     // A box that grew held nothing on screen; its frame fades in.
@@ -1149,15 +1168,11 @@ export function useTerminal(options: UseTerminalOptions) {
     // asked for now runs after the renderer's in that frame, so the screen shows
     // in the same paint as the canvas it drew (or after 50 ms in a window that
     // draws none).
-    await new Promise<void>((resolve) => {
-      const fallback = setTimeout(resolve, 50);
-      requestAnimationFrame(() => {
-        clearTimeout(fallback);
-        resolve();
-      });
-    });
+    await nextFrame();
     hiddenFrames.counting = false;
-    if (screen) {
+    // A refit during the draw opened a new hold, which has set the screen the
+    // way that hold shows it.
+    if (screen && !frameHoldRef.current) {
       screen.style.opacity = '';
       // A frame in a box that grew comes in from the terminal's background
       // rather than at once.
@@ -1176,15 +1191,23 @@ export function useTerminal(options: UseTerminalOptions) {
     const hold = frameHoldRef.current;
     const sessionId = sessionIdRef.current;
     if (!hold || !sessionId) return;
+    const endOnAnswer = (sendSequence: number, answer: SessionResizeResult | undefined): void => {
+      void finishFrameHold(sendSequence, answer).catch((error: unknown) => {
+        console.error('[useTerminal] a frame hold could not end', error);
+        recoverFrameHold('finish-failed');
+      });
+    };
     const asked = hold.sent ?? hold.base;
     if (sameGrid(hold.target, asked)) {
       // Back to the grid the PTY has. Nothing was sent, so the old frame is
-      // current; otherwise that grid's answer is still on its way and ends it.
+      // current; otherwise that grid's answer ends it, still on its way or
+      // already in while a refit had the hold aimed elsewhere.
       if (!hold.sent) dropFrameHold('unchanged');
+      else if (hold.answered?.sendSequence === hold.sendSequence) endOnAnswer(hold.sendSequence, hold.answered.result);
       return;
     }
     const sendSequence = hold.sendSequence + 1;
-    frameHoldRef.current = { ...hold, sent: hold.target, sendSequence };
+    frameHoldRef.current = { ...hold, sent: hold.target, sendSequence, answered: null };
     try {
       // The wait opens before the send, which is what times the agent's repaint.
       const repaintWait = repaintWaitRef.current;
@@ -1200,11 +1223,7 @@ export function useTerminal(options: UseTerminalOptions) {
         .finally(() => {
           if (capTimer) clearTimeout(capTimer);
         })
-        .then((answer) => finishFrameHold(sendSequence, answer))
-        .catch((error: unknown) => {
-          console.error('[useTerminal] a frame hold could not end', error);
-          recoverFrameHold('finish-failed');
-        });
+        .then((answer) => endOnAnswer(sendSequence, answer));
     } catch (error) {
       console.error('[useTerminal] a frame hold could not send its grid', error);
       recoverFrameHold('send-failed');
@@ -1227,6 +1246,7 @@ export function useTerminal(options: UseTerminalOptions) {
       target,
       sent: previous?.sent ?? null,
       sendSequence: previous?.sendSequence ?? 0,
+      answered: previous?.answered ?? null,
     };
     frameHoldRef.current = hold;
     holdOutputRef.current = true;
@@ -1251,7 +1271,7 @@ export function useTerminal(options: UseTerminalOptions) {
     traceTerminalRenderer(sessionIdRef.current, 'frame-hold', { fromCols: hold.base.cols, fromRows: hold.base.rows, cols: target.cols, rows: target.rows });
     // The next frame's observers deliver any hop still to come; a task queued
     // from that frame's callbacks runs after it.
-    cancelFrameHoldSend();
+    cancelFrameHoldTimers();
     frameHoldSendFrameRef.current = requestAnimationFrame(() => {
       frameHoldSendFrameRef.current = null;
       frameHoldSendTimerRef.current = setTimeout(() => {
@@ -1263,7 +1283,7 @@ export function useTerminal(options: UseTerminalOptions) {
       frameHoldWatchdogRef.current = null;
       recoverFrameHold('watchdog');
     }, FRAME_HOLD_WATCHDOG_MS);
-  }, [cancelFrameHoldSend, recoverFrameHold, sendFrameHoldGrid]);
+  }, [cancelFrameHoldTimers, recoverFrameHold, sendFrameHoldGrid]);
 
   /** Whether a refit of this terminal may hold its frame rather than reflow it. */
   const canHoldFrame = useCallback((element: HTMLElement): boolean => {
@@ -2323,7 +2343,7 @@ export function useTerminal(options: UseTerminalOptions) {
       repaintWaitRef.current?.dispose();
       repaintWaitRef.current = null;
       // A frame hold dies with its terminal.
-      cancelFrameHoldSend();
+      cancelFrameHoldTimers();
       frameHoldRef.current = null;
       holdOutputRef.current = false;
       // Tear down WebGL (cancel any pending re-init retry, drop the report entry)

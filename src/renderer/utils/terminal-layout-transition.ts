@@ -59,7 +59,7 @@ interface Landing {
 const landings = new Map<HTMLElement, Landing>();
 
 /** The next frame, or 50 ms in a window that draws none (a hidden one stops its frames). */
-function nextFrame(): Promise<void> {
+export function nextFrame(): Promise<void> {
   return new Promise((resolve) => {
     const fallback = setTimeout(resolve, 50);
     requestAnimationFrame(() => {

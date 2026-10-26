@@ -259,6 +259,23 @@ describe('manager-resize gate', () => {
       expect(ended).toHaveBeenCalledTimes(1);
     });
 
+    it('holds its refit while a pointer gesture is still open, and sends it when that one ends', async () => {
+      vi.useFakeTimers();
+      const target = new EventTarget();
+      const ended = vi.fn();
+      const gate = createManagerResizeGate(target, () => {}, { onWindowResizeEnd: ended });
+      const seamDrag = gate.begin('tile-splitter', MOUSE, () => {});
+      target.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(16);
+      target.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(WINDOW_RESIZE_SETTLE_MS);
+      await Promise.resolve();
+      expect(ended).not.toHaveBeenCalled();
+      expect(gate.isInProgress()).toBe(true);
+      seamDrag.end();
+      expect(ended).toHaveBeenCalledTimes(1);
+    });
+
     it('stops watching the window once disposed', () => {
       vi.useFakeTimers();
       const target = new EventTarget();
