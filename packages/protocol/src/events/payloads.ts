@@ -605,16 +605,16 @@ export interface DiffFileContentWire {
 
 // === Guards (the phone's trust boundary for desktop-originated payloads) ===
 
-const DIFF_FILE_STATUSES: readonly string[] = ['A', 'M', 'D', 'R', 'C', 'U'];
+export const DIFF_FILE_STATUSES: readonly string[] = ['A', 'M', 'D', 'R', 'C', 'U'];
 const TRANSCRIPT_SYSTEM_SUBTYPES: readonly string[] = ['compaction', 'command', 'command_output', 'session_boundary'];
 
-function requireString(record: Record<string, unknown>, field: string, context: string): string {
+export function requireString(record: Record<string, unknown>, field: string, context: string): string {
   const value = record[field];
   if (typeof value !== 'string') throw new Error(`${context} is missing a string "${field}"`);
   return value;
 }
 
-function requireNumber(record: Record<string, unknown>, field: string, context: string): number {
+export function requireNumber(record: Record<string, unknown>, field: string, context: string): number {
   const value = record[field];
   if (typeof value !== 'number') throw new Error(`${context} is missing a number "${field}"`);
   return value;
@@ -799,12 +799,12 @@ function parseStringArray(value: unknown, context: string): string[] {
   return value;
 }
 
-function nullableString(record: Record<string, unknown>, field: string): string | null {
+export function nullableString(record: Record<string, unknown>, field: string): string | null {
   const value = record[field];
   return typeof value === 'string' ? value : null;
 }
 
-function nullableNumber(record: Record<string, unknown>, field: string): number | null {
+export function nullableNumber(record: Record<string, unknown>, field: string): number | null {
   const value = record[field];
   return typeof value === 'number' ? value : null;
 }
