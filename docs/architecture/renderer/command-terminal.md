@@ -245,8 +245,10 @@ SessionManager's own events, in main:
   conversation. An id a board task or a workflow already owns is skipped: a `/resume` into a
   task's conversation is not a terminal's.
 - **A row is listed only once someone used the terminal.** `Session.hasUserInput` is set in main
-  from the input's content (`writeCarriesUserContent`, `src/shared/terminal-input-content.ts`, on
-  a `'user'` write, and `markUserInput` on a `TerminalSubmit.submitContent` paste): a keystroke, a
+  from the input's content. The pty host judges it (`writeCarriesUserContent`,
+  `src/shared/terminal-input-content.ts`, on a `'user'` write, whether it came on a renderer's own
+  port or from main) and reports the first one as a `userInput` event, which main turns into
+  `markUserInput`; a `TerminalSubmit.submitContent` paste calls `markUserInput` directly: a keystroke, a
   paste or a submit counts; xterm's DA and DSR replies,
   focus reports, mouse motion, the repaint nudge and the system's own pill writes do not. A
   resumed terminal is touched from birth. An untouched row is deleted when it ends, so a terminal
@@ -312,7 +314,7 @@ the resize, which on Windows is ConPTY's redraw of the old screen, so a cover ca
 one settled, since a click that does nothing for 200 ms reads as missed. The covers that replaced
 it showed three things instead of one, and one change, a little later, read better.
 
-### Decision: freeze, draw, swap (2026-10-25)
+### Decision: freeze, draw, swap (2026-10-25, superseded the same day by "hold the frame" below)
 
 Three covers came first, and each read as a flicker in a different way:
 

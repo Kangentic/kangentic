@@ -4,7 +4,6 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
-import { writeCarriesUserContent } from '../../shared/terminal-input-content';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -920,6 +919,11 @@ export class SessionManager extends EventEmitter {
       case 'promptDraft':
         if (event.draft === null) this.promptDraftMirror.delete(event.sessionId);
         else this.promptDraftMirror.set(event.sessionId, event.draft);
+        return;
+      case 'userInput':
+        // A renderer types on its own port to the host, so main hears of a
+        // human's first key or text here, not through write().
+        this.markUserInput(event.sessionId);
         return;
       case 'tap':
         // Raw output for a session someone subscribed to (subscribeDataTap):
@@ -2044,12 +2048,6 @@ export class SessionManager extends EventEmitter {
   write(sessionId: string, data: string, origin: WriteOrigin = 'system'): void {
     const session = this.registry.get(sessionId);
     if (!session?.pty || data.length === 0) return;
-    // xterm's own replies (device attributes, cursor position, focus and mouse
-    // reports) arrive here as 'user' too, so only a write that carries a key
-    // or text marks the session used.
-    if (origin === 'user' && !session.hasUserInput && writeCarriesUserContent(data)) {
-      this.markUserInput(sessionId);
-    }
     // Into the PTY's write queue in the host, which a renderer's keystrokes
     // share: 4 KB chunks, a bracketed paste kept whole, FIFO across every
     // writer, so a key typed during a paste can never land inside it.

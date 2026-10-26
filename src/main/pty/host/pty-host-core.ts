@@ -21,6 +21,7 @@ import type { ActivityState, AgentParser, ExitSequenceStep, StreamOutputParser }
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
 import { createWriteQueue, type WriteQueue } from '../write-queue';
 import { PromptDraftLedger, type WriteOrigin } from '../prompt-draft-ledger';
+import { writeCarriesUserContent } from '../../../shared/terminal-input-content';
 import { PtyBufferManager } from '../buffer/pty-buffer-manager';
 import { TranscriptWriter, type TranscriptSink } from '../buffer/transcript-writer';
 import { BackpressureController } from '../buffer/backpressure-controller';
@@ -201,6 +202,8 @@ interface HostSession {
   activity: ActivityState | undefined;
   /** The PTY currently feeding this session, for pause/resume and the settle. */
   livePtyId: number | null;
+  /** `userInput` was sent for this session. */
+  userInputReported: boolean;
 }
 
 /**
@@ -405,6 +408,7 @@ export class PtyHostCore {
       scanner: null,
       activity: undefined,
       livePtyId: params.ptyId,
+      userInputReported: false,
     });
     this.bufferManager.initSession(
       params.sessionId,
@@ -556,6 +560,10 @@ export class PtyHostCore {
     if (entry.exited || data.length === 0) return;
     this.stampInput(entry, data);
     this.recordDraft(entry.sessionId, data, origin);
+    // xterm's own replies (device attributes, cursor position, focus and mouse
+    // reports) arrive here as 'user' too, so only a write that carries a key
+    // or text marks the session used.
+    if (origin === 'user' && writeCarriesUserContent(data)) this.reportUserInput(entry.sessionId);
     entry.writeQueue ??= createWriteQueue(
       () => (entry.exited ? null : entry.pty),
       undefined,
@@ -577,6 +585,14 @@ export class PtyHostCore {
     this.promptDrafts.record(sessionId, data, origin);
     const after = this.promptDrafts.get(sessionId);
     if (after !== before) this.deps.emit({ type: 'promptDraft', sessionId, draft: after });
+  }
+
+  /** Tell main, once, that a human has used this session. */
+  private reportUserInput(sessionId: string): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.userInputReported) return;
+    session.userInputReported = true;
+    this.deps.emit({ type: 'userInput', sessionId });
   }
 
   private clearDraft(sessionId: string): void {

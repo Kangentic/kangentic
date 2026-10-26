@@ -77,7 +77,9 @@ Now each renderer holds its own port to the host and main never relays a keystro
 - **One write queue, in the host.** A renderer's keystrokes and main's writes (an injected command,
   a paste, dictation) share the PTY's queue (`write-queue.ts`), so a key never lands inside a large
   paste. The prompt-draft ledger records each write in queue order and the host reports changes
-  (`promptDraft`), which main mirrors for `getPendingDraft`. Keystroke injection asks the host
+  (`promptDraft`), which main mirrors for `getPendingDraft`. The host also reports the first write
+  that carries a human's key or text (`userInput`, once per session), which is how main learns a
+  Command Terminal was used when the keys never crossed it. Keystroke injection asks the host
   instead (`readPendingDraft`), so a key that reached the host on a port just before is counted.
   `drain()` is a host request. Every
   place main drops a session's PTY handle calls `sealUserInput()` first, so the host stops writing a
