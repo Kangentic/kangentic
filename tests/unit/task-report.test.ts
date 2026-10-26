@@ -12,6 +12,7 @@
  *   - a third `{ timeoutMs }` argument on an index read: the no-options test fails;
  *   - dropping the empty `projectId` guard: the empty-id test fails;
  *   - `commits: 20` changed: the limits test fails;
+ *   - the ledger read made unconditional: the skipped-ledger test fails;
  *   - the `finally { clearTimeout }` removed: the lingering-timer test fails.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -240,6 +241,22 @@ describe('readTaskReport index reads', () => {
       taskIds: [TASK_ID],
       limits: { commits: 20, files: null },
     });
+  });
+
+  it('asks task.knowledge for the commit limit a caller passes, and still every changed file', async () => {
+    await readTaskReport(fakeContext(), PROJECT_ID, TASK_ID, { commitLimit: 100 });
+    expect(hoisted.retrievalCall).toHaveBeenCalledWith('task.knowledge', {
+      projectId: PROJECT_ID,
+      taskIds: [TASK_ID],
+      limits: { commits: 100, files: null },
+    });
+  });
+
+  it('skips the turn ledger when the caller leaves it out, and reads the other two', async () => {
+    const report = await readTaskReport(fakeContext(), PROJECT_ID, TASK_ID, { includeLedger: false });
+    expect(methodsCalled().sort()).toEqual(['summary.forTask', 'task.knowledge']);
+    expect(report.models).toBeNull();
+    expect(report.knowledge).not.toBeNull();
   });
 
   it('asks the other two reads about this project and task', async () => {

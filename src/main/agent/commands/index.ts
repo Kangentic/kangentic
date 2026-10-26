@@ -17,6 +17,7 @@ import {
   handleDeleteBoardProfile,
 } from './profile-commands';
 import { handleSearchTasks, handleFindTask, handleGetCurrentTask } from './search-commands';
+import { handleGetTaskReport } from './task-report-commands';
 import { handleGetTaskStats, handleBoardSummary, handleListSessions, handleGetSessionHistory, handleGetColumnDetail } from './analytics-commands';
 import { handleGetUsageStats } from './usage-commands';
 import { handleListBacklog, handleCreateBacklogTask, handlePromoteBacklog, handleUpdateBacklogItem, handleDeleteBacklogItem } from './backlog-commands';
@@ -70,6 +71,7 @@ export const commandHandlers: Record<string, CommandHandler> = {
   list_tasks: handleListTasks,
   search_tasks: handleSearchTasks,
   find_task: handleFindTask,
+  get_task_report: handleGetTaskReport,
   get_current_task: handleGetCurrentTask,
   get_task_stats: handleGetTaskStats,
   get_usage_stats: handleGetUsageStats,

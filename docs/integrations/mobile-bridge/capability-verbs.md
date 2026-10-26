@@ -6,6 +6,7 @@ tags: [mobile, capabilities, verbs, board-tools]
 sources:
   - resource: packages/protocol/src/capabilities/verbs.ts
   - resource: packages/protocol/src/capabilities/board-tools.ts
+  - resource: packages/protocol/src/capabilities/task-report.ts
   - resource: packages/protocol/src/wire/framing.ts
   - resource: src/main/mobile-bridge/capability-router.ts
   - resource: src/main/mobile-bridge/prompt-options-probe.ts
@@ -82,3 +83,5 @@ The phone answers with raw keystrokes either way, but since 0.6.0 it no longer h
 - Everything not in `commandHandlers` at all: the `kangentic_browser_*` family, the dev-only `kangentic_devtools_*` family, the diagnostics tools (`tail_logs`, `get_recent_crashes`, ...), and the remaining cross-project tools (`list_projects`, unified `search`, `move_task_to_project`) are registered through entirely separate registries, so building the allowlist from `commandHandlers`'s keys excludes them for free, with no separate name-matching needed.
 
 A phone bootstraps its project list through `read-board` with no `projectId`, since `commandHandlers` has no `list_projects` entry.
+
+A phone opening a completed task reads its full report with `get_task_report` (`{ taskId, project }`). The result is typed by the protocol's `TaskReportWire` and narrowed with `parseTaskReportWire`: the route, the span, every linked commit and the per-file changes the desktop's completed view shows. The desktop caps its files, commits and stays and sends their counts, so the result stays small on the relay. See [kangentic_get_task_report](../mcp-server/task-read-tools.md#kangentic_get_task_report) for what each section holds.

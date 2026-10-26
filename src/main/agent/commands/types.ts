@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
-import type { AutomationRunAgainResult, BoardProfile, SessionSummary, Task, Swimlane } from '../../../shared/types';
+import type { AutomationRunAgainResult, BoardProfile, GitTaskChangesResult, SessionSummary, Task, TaskReport, Swimlane } from '../../../shared/types';
 import type { PRResolveOptions } from '../../pr/shared/pr-connector';
 import type { TaskKnowledge } from '../../retrieval/task-knowledge';
+import type { TaskReportReadOptions } from '../../ipc/helpers/task-report';
 
 export interface CommandContext {
   /**
@@ -168,6 +169,20 @@ export interface CommandContext {
    * suites hand-build a context; without it the handlers read it themselves.
    */
   listSessionSummaries?: () => Promise<Record<string, SessionSummary>>;
+  /**
+   * The completed task view's report for one task (`readTaskReport`), for
+   * `get_task_report`. Takes the task's UUID, never a display id. Optional
+   * because test suites hand-build a context; without it the tool refuses
+   * with a plain message.
+   */
+  readTaskReport?: (taskId: string, options: TaskReportReadOptions) => Promise<TaskReport>;
+  /**
+   * What the task changed, read from git (`readTaskChanges`, the view's
+   * Changes tab and Files card), for `get_task_report`. Takes the task's
+   * UUID. Throws when git cannot be read. Optional for the same reason as
+   * `readTaskReport`.
+   */
+  readTaskChanges?: (taskId: string) => Promise<GitTaskChangesResult>;
 }
 
 /** The index's knowledge of some tasks, as `readTaskKnowledge` returns it. */
