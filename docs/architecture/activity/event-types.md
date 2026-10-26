@@ -100,9 +100,9 @@ Claude, any MCP tool but Kangentic's own), or when that tool's marker already ar
   tool, or a new prompt. An idle released after the turn ended would mark an idle session as
   needing you.
 
-A workflow task whose plan approval is Automatic has its plans approved in every column of its
-route, so a tool prompt in such a task shows up to 1 s late there too; the hook itself answers
-only in plan mode.
+A workflow task whose plan approval is Automatic has its plans approved in every plan column of
+its route whose agent can approve plans, so a tool prompt in such a task shows up to 1 s late
+there too; the hook itself answers only in plan mode.
 
 ## Idle hints (waiting-for-input notifications)
 

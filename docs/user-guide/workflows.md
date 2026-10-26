@@ -121,7 +121,7 @@ allowed, still wait. When no plan column on the route runs an agent Kangentic ca
 for, the task shows Manual and Automatic is disabled. The control is there only while a plan column
 is still ahead of the task; once the task has passed it, or is in Done, it is gone. An agent can
 set it too: `planApproval` on a task in `kangentic_save_workflow` or `kangentic_add_workflow_task`,
-and `kangentic_update_task` for a task already on the board. Without an Automation agent, or in a
+and `kangentic_update_task` for a started workflow task that has not passed its plan column. Without an Automation agent, or in a
 column with no agent, you drag the card on yourself.
 
 **When a step does not finish.** A running workflow stops a task only for a decision that only you
