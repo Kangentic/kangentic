@@ -26,7 +26,16 @@ This is NOT `/release`. It never touches root's `package.json` version or `packa
 never triggers `release.yml`, and tags on the `protocol-v*` namespace instead of `v*` so the two
 tag sequences never collide.
 
+**Where it runs.** From the main checkout on `main`, or from a task worktree under
+`.kangentic/worktrees/<slug>/` whose branch has no commits of its own. Git keeps `main` checked out
+in one place only, so a worktree releases from its task branch. Pre-flight brings that branch to
+`origin/main`, and Step 6 pushes the release commit with `HEAD:main`. Either way the tag lands on
+the commit `main` points at.
+
 ## Step 0 -- Determine Bump Type
+
+Run Pre-flight Checks 1 to 4 below first. They settle where you are and bring `HEAD` to
+`origin/main`, which every log in this step reads from.
 
 1. **Find the previous protocol tag:** Run `git describe --tags --abbrev=0 --match "protocol-v*"`. Note whether this succeeds or fails (no matching tags = first protocol release).
 2. **Collect commits since the last protocol tag, scoped to the package:** Run `git log <previousTag>..HEAD --oneline --no-decorate -- packages/protocol/` (or `git log --oneline --no-decorate -- packages/protocol/` if no previous tag).
@@ -48,14 +57,26 @@ tag sequences never collide.
 
 ## Pre-flight Checks
 
-1. **Verify branch:** Run `git rev-parse --abbrev-ref HEAD`. Must be `main`. If not, stop with an error: "Release must run from the main branch."
+1. **Find where you are:** Run `git rev-parse --abbrev-ref HEAD`. `main` means the main checkout.
+   Any other branch means a task worktree: run `git rev-parse --show-toplevel`, strip
+   `.kangentic/worktrees/<slug>` from that path to get the project root, and keep it for Step 6.
+   `HEAD` (detached) is neither, so stop with: "Release must run from main or a task worktree's
+   branch."
 2. **Verify clean tree:** Run `git status --porcelain`. Must be empty. If not, stop.
 3. **Fetch latest:** Run `git fetch origin main`.
-4. **Verify up-to-date:** Run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local main is behind origin/main. Run `git pull` first."
+4. **Verify up-to-date:**
+   - On `main`: run `git diff HEAD origin/main --stat`. Must be empty. If not, stop with: "Local
+     main is behind origin/main. Run `git pull` first."
+   - On a task branch: run `git rev-list --count origin/main..HEAD`. Must read 0, because a
+     release ships only what is on `main`. If not, stop with: "This branch has commits that are
+     not on main. Land them first, or release from a worktree whose branch has none." Then run
+     `git merge --ff-only origin/main` to bring the branch to `main`. Check 2 already confirmed
+     the tree is clean.
 5. **Verify dependencies:** Run `node scripts/verify-node-modules.js`. Exit 0 means the installed
    tree already matches `package-lock.json`, so continue. On exit 1 or 2, run `npm ci` and re-run
    the verifier. Do not run `npm ci` unconditionally: it deletes `node_modules`, which the live
-   dev server is usually running Electron out of.
+   dev server is usually running Electron out of. A fresh worktree has no `node_modules`, so the
+   verifier fails there and `npm ci` installs it.
 6. **Verify changelog parity across the whole tag sequence.** This step exists because the
    sequence has already drifted once: eight versions reached npm with no entry, because the tags
    were hand-created on feature commits instead of through this skill, and Step 3 only ever
@@ -132,10 +153,16 @@ Run: `git tag -a protocol-vX.Y.Z -m "Release @kangentic/protocol vX.Y.Z"`
 
 Run these sequentially:
 
-1. `git push origin main` -- push the release commit
-2. `git push origin protocol-vX.Y.Z` -- push the tag (triggers `publish-protocol.yml`)
+1. `git push origin HEAD:main` pushes the release commit. From the main checkout it is the same
+   push as `git push origin main`. If `main` moved since the fetch, git rejects it as a
+   non-fast-forward.
+2. `git push origin protocol-vX.Y.Z` pushes the tag, which triggers `publish-protocol.yml`.
 
 **If either push fails**, report the error and stop. Do not force-push.
+
+3. From a worktree only, fast-forward the main checkout so it holds the release commit:
+   `git -C <projectRoot> pull --ff-only`. A failure here does not undo the release. Report it with
+   the output of `git -C <projectRoot> status -sb`, and never stash, reset or discard work there.
 
 ## Step 7 -- Report
 
@@ -143,6 +170,7 @@ Summarize the release:
 
 - Version: `@kangentic/protocol` vX.Y.Z
 - Tag: `protocol-vX.Y.Z`
+- Ran from: the main checkout, or a worktree (and whether Step 6 fast-forwarded the main checkout)
 - Commits included: N
 - Changelog entry: show the generated entry
 - GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions` -- the tag push triggers the "Publish @kangentic/protocol" workflow.
