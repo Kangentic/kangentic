@@ -8,7 +8,8 @@
  *
  * - Writes and acks made before the first port arrives are kept, in order, and
  *   sent once it does. A port replaced after a pty host restart takes the next
- *   ones; what was sent on the dead one went with that host, as its PTYs did.
+ *   ones; what was sent on the dead one went with that host, as its PTYs did,
+ *   and so did a replay answer the dead host owed on it.
  * - `getScrollback` asks main (`invokeScrollback`, behind any resize this
  *   renderer sent first) and resolves on the port's answer, which arrives after
  *   the output the host flushed before its sample. Nothing is queued or timed
@@ -36,6 +37,8 @@ export type SessionDataListener = (sessionId: string, data: string) => void;
 interface PendingScrollback {
   resolve(data: string): void;
   reject(error: Error): void;
+  /** Main said the host answered on this renderer's port, so the answer is owed there. */
+  answeredOnPort: boolean;
 }
 
 function isHostMessage(value: unknown): value is FromPtyHostPortMessage {
@@ -73,8 +76,10 @@ export class PtyPortClient {
       } catch {
         // Its host is gone already.
       }
-      // Those answers would have come from the host that is gone.
-      this.rejectPending(new Error('The pty host restarted before it answered'));
+      // An answer owed on the dead port went with its host. A request whose
+      // invoke is still out settles on its own: main fails it when its host
+      // was lost, and one the new host takes is answered on the new port.
+      this.rejectAnsweredOnPort(new Error('The pty host restarted before it answered'));
     }
     for (const message of this.unsent.splice(0)) port.postMessage(message);
   }
@@ -97,13 +102,17 @@ export class PtyPortClient {
   getScrollback(sessionId: string): Promise<string> {
     const requestId = this.nextRequestId++;
     return new Promise<string>((resolve, reject) => {
-      this.pendingScrollbacks.set(requestId, { resolve, reject });
+      this.pendingScrollbacks.set(requestId, { resolve, reject, answeredOnPort: false });
       this.invokeScrollback(sessionId, requestId).then(
         (result) => {
           // `{ sentToPort }` can arrive before the port's answer or after it,
           // so it settles nothing. Only data main sent itself does.
           const data = typeof result === 'string' ? result : result.sentToPort ? null : result.data;
-          if (data === null) return;
+          if (data === null) {
+            const owed = this.pendingScrollbacks.get(requestId);
+            if (owed) owed.answeredOnPort = true;
+            return;
+          }
           const pending = this.pendingScrollbacks.get(requestId);
           this.pendingScrollbacks.delete(requestId);
           pending?.resolve(data);
@@ -125,7 +134,16 @@ export class PtyPortClient {
   private onMessage(message: unknown): void {
     if (!isHostMessage(message)) return;
     if (message.type === 'data') {
-      for (const listener of this.listeners) listener(message.sessionId, message.data);
+      // Each listener on its own, as separate `ipcRenderer.on` handlers were:
+      // one that throws must not cost the others this chunk, and with it the
+      // ack that keeps their session's PTY running.
+      for (const listener of this.listeners) {
+        try {
+          listener(message.sessionId, message.data);
+        } catch (error) {
+          console.error('[pty-port] a terminal data listener threw:', error);
+        }
+      }
       return;
     }
     // An id this page never asked for (a reply meant for the page before a
@@ -137,9 +155,11 @@ export class PtyPortClient {
     else pending.reject(new Error(message.message));
   }
 
-  private rejectPending(error: Error): void {
-    const pending = [...this.pendingScrollbacks.values()];
-    this.pendingScrollbacks.clear();
-    for (const entry of pending) entry.reject(error);
+  private rejectAnsweredOnPort(error: Error): void {
+    for (const [requestId, entry] of [...this.pendingScrollbacks]) {
+      if (!entry.answeredOnPort) continue;
+      this.pendingScrollbacks.delete(requestId);
+      entry.reject(error);
+    }
   }
 }

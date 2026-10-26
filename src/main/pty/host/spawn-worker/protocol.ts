@@ -40,8 +40,16 @@ export type ToSpawnWorkerMessage =
 export type FromSpawnWorkerMessage =
   | { type: 'execResult'; id: number; result: HostExecResult }
   | { type: 'listProcessesResult'; id: number; rows: ProcessInfo[] }
-  /** A run's `cliSpawned`, `cliData`, `cliError`, `cliExit` or `cliClose`, for main as it is. */
+  /**
+   * A run's `cliSpawned`, `cliData`, `cliError`, `cliExit` or `cliClose`, for
+   * main as it is. Each one is cloned here and again on its way to main: a
+   * stream chunk may share a pooled buffer, so transferring it would cost the
+   * same copy.
+   */
   | { type: 'cliEvent'; event: Extract<PtyHostEvent, { type: `cli${string}` }> }
+  /** A run's pid, posted in the turn its spawn returned, ahead of its
+   *  `cliSpawned`. The terminal thread's own, never forwarded to main. */
+  | { type: 'cliStarted'; processId: number; pid: number }
   /**
    * A Windows tree kill of a run's pid started, and later its `taskkill`
    * exited. The terminal thread pinned the pid before it sent the stop and

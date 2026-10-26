@@ -651,6 +651,22 @@ describe('terminal inits are held while the user types', () => {
     expect(heldBehindAltGr).not.toHaveBeenCalled();
   });
 
+  it('a character typed with Option (Alt alone) still holds, while Alt with a non-character key is a shortcut', () => {
+    // macOS's Option types `@` on a German layout: altKey set, no AltGraph state.
+    const heldBehindOption = vi.fn();
+    noteTerminalKeydown({ key: '@', altKey: true, getModifierState: () => false });
+    mountHost(heldBehindOption);
+    flushAnimationFrame();
+    expect(heldBehindOption).not.toHaveBeenCalled();
+
+    resetTerminalInitQueue();
+    const altArrowOpens = vi.fn();
+    noteTerminalKeydown({ key: 'ArrowDown', altKey: true, getModifierState: () => false });
+    mountHost(altArrowOpens);
+    flushAnimationFrame();
+    expect(altArrowOpens).toHaveBeenCalledTimes(1);
+  });
+
   it('a pointer press ends the typing, so a terminal the click asks for is not held', () => {
     const fakeWindow = new EventTarget();
     vi.stubGlobal('window', fakeWindow);

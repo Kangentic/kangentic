@@ -146,11 +146,13 @@ export function killAllSessions<S extends ShutdownSession>(
       // An agent whose console close is its graceful exit gets the close alone,
       // at any age (see SessionManager.kill).
       const closeIsGraceful = session.consoleCloseIsGraceful === true;
-      if (!closeIsGraceful) writeExitSequence(session.pty, session.exitSequence);
       const ptyRef = session.pty;
       // Read before nulling: the drain needs the child pid, not the wrapper.
       const childPid = ptyRef.pid;
-      ptyRef.sealUserInput(); // a renderer's keystrokes stop reaching it, as in kill()
+      // Sealed first, as in kill(): a renderer's keystrokes stop reaching it
+      // before the exit sequence, which the seal lets through, is written.
+      ptyRef.sealUserInput();
+      if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
         // The registry's timer does the kill; the listeners are detached just

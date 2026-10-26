@@ -330,13 +330,16 @@ export class TerminalSubmitScheduler {
     };
 
     try {
+      // Read from the host's ledger, not main's mirror: a key the user typed
+      // just before this burst reached the host on the renderer's port.
+      const pendingDraft = await this.sessionManager.readPendingDraft(burst.sessionId);
       const activity = this.sessionManager.getActivityCache()[burst.sessionId];
       const result: SubmitKeystrokesResult = await this.terminalSubmit.submitKeystrokes(
         burst.sessionId,
         burst.commands,
         {
           freshlySpawned: burst.opts.freshlySpawned,
-          pendingDraft: this.sessionManager.getPendingDraft(burst.sessionId),
+          pendingDraft,
           // activity-state-ok: granular - only a genuinely thinking agent is
           // being interrupted, which is what we report to the user.
           interruptingTurn: activity === 'thinking',

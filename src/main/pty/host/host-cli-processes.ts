@@ -117,6 +117,12 @@ export class HostCliProcesses {
     for (const run of this.runs.values()) this.stopRun(run);
   }
 
+  /** A started run's pid, known as soon as the spawn returns: before its
+   *  `cliSpawned`, which waits for the child's `spawn` event. */
+  pidOf(processId: number): number | undefined {
+    return this.runs.get(processId)?.child.pid;
+  }
+
   /** Runs whose process started and has not exited yet. */
   get liveCount(): number {
     let count = 0;

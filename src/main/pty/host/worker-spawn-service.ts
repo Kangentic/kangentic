@@ -56,8 +56,11 @@ export interface WorkerSpawnServiceOptions extends SpawnServiceHooks {
 }
 
 interface WorkerRun {
+  /** Known from the worker's `cliStarted`, posted in the turn the spawn returned. */
   pid: number | null;
   exited: boolean;
+  /** A stop asked for before the pid was known, sent once it is so the pid can be pinned first. */
+  stopPending: boolean;
 }
 
 interface RunPin {
@@ -117,7 +120,7 @@ export class WorkerSpawnService implements HostSpawnService {
       this.ensureFallback().startCli(params);
       return;
     }
-    this.runs.set(params.processId, { pid: null, exited: false });
+    this.runs.set(params.processId, { pid: null, exited: false, stopPending: false });
     this.send(worker, { type: 'cliSpawn', params });
   }
 
@@ -144,6 +147,12 @@ export class WorkerSpawnService implements HostSpawnService {
     }
     const run = this.runs.get(processId);
     if (!run || !this.worker) return;
+    // The pid comes back one round trip after the start; the stop follows it,
+    // so a Windows tree kill never runs on a pid this thread has not pinned.
+    if (run.pid === null && !run.exited) {
+      run.stopPending = true;
+      return;
+    }
     this.pinBeforeStop(run);
     this.send(this.worker, { type: 'cliStop', processId });
   }
@@ -155,9 +164,11 @@ export class WorkerSpawnService implements HostSpawnService {
     this.send(this.worker, { type: 'cliStopAll' });
   }
 
+  /** Every run posted and not yet exited, pid known or not: the worker may
+   *  already have started it, and the host's shutdown must wait for it. */
   get liveCliCount(): number {
     let count = this.fallback?.liveCliCount ?? 0;
-    for (const run of this.runs.values()) if (run.pid !== null && !run.exited) count += 1;
+    for (const run of this.runs.values()) if (!run.exited) count += 1;
     return count;
   }
 
@@ -166,6 +177,9 @@ export class WorkerSpawnService implements HostSpawnService {
     this.fallback?.dispose();
     const worker = this.worker;
     this.worker = null;
+    // The worker's exit is ignored from here, so nothing else answers these.
+    this.failPendingRequests('The pty host spawn service was disposed');
+    this.runs.clear();
     for (const pid of [...this.pins.keys()]) this.releasePin(pid);
     if (worker) {
       try {
@@ -243,6 +257,9 @@ export class WorkerSpawnService implements HostSpawnService {
         this.trackRun(message.event);
         this.options.emit(message.event);
         return;
+      case 'cliStarted':
+        this.notePid(message.processId, message.pid);
+        return;
       case 'treeKillStarted': {
         const pin = this.pins.get(message.pid);
         if (pin) pin.treeKillRunning = true;
@@ -269,7 +286,7 @@ export class WorkerSpawnService implements HostSpawnService {
     if (!run) return;
     switch (event.type) {
       case 'cliSpawned':
-        run.pid = event.pid;
+        if (event.pid !== null) this.notePid(event.processId, event.pid);
         return;
       case 'cliExit':
         run.exited = true;
@@ -285,6 +302,27 @@ export class WorkerSpawnService implements HostSpawnService {
       default:
         return;
     }
+  }
+
+  /** A run's pid is known: from `cliStarted`, or its `cliSpawned` if that came first. */
+  private notePid(processId: number, pid: number): void {
+    const run = this.runs.get(processId);
+    if (!run || run.pid !== null) return;
+    run.pid = pid;
+    if (!run.stopPending) return;
+    run.stopPending = false;
+    if (!this.worker) return;
+    this.pinBeforeStop(run);
+    this.send(this.worker, { type: 'cliStop', processId });
+  }
+
+  private failPendingRequests(message: string): void {
+    for (const resolve of this.pendingExec.values()) {
+      resolve({ ok: false, error: { message, exitCode: null, killed: false, signal: null, stdout: '', stderr: '' } });
+    }
+    this.pendingExec.clear();
+    for (const resolve of this.pendingTables.values()) resolve([]);
+    this.pendingTables.clear();
   }
 
   /** Windows: hold the run's pid from before the stop is sent until its taskkill exits. */
@@ -317,17 +355,14 @@ export class WorkerSpawnService implements HostSpawnService {
     this.crashes += 1;
     console.warn(`[pty-host] the spawn worker exited (code ${exitCode}); ${this.crashes >= MAX_WORKER_CRASHES ? 'child processes start on the terminal thread from now on' : 'it starts again on the next use'}`);
     const lost = 'The pty host spawn worker exited';
-    for (const resolve of this.pendingExec.values()) {
-      resolve({ ok: false, error: { message: lost, exitCode: null, killed: false, signal: null, stdout: '', stderr: '' } });
-    }
-    this.pendingExec.clear();
-    for (const resolve of this.pendingTables.values()) resolve([]);
-    this.pendingTables.clear();
+    this.failPendingRequests(lost);
     for (const pid of [...this.pins.keys()]) this.releasePin(pid);
     for (const [processId, run] of this.runs) {
       // The run's process belongs to this process, not to the thread that
       // died, so it is still running with nothing reading it. Its tree is
-      // stopped by pid, as main stops a run a lost host left behind.
+      // stopped by pid, as main stops a run a lost host left behind. A pid is
+      // unknown only when the worker died in the turn it spawned the child,
+      // before its `cliStarted` left.
       if (run.pid !== null && !run.exited) killChildTreeByPid(run.pid);
       this.options.emit({ type: 'cliError', processId, error: { message: lost } });
       this.options.emit({ type: 'cliClose', processId, code: null, signal: null });

@@ -52,7 +52,9 @@ export function runToolThrough(service: HostSpawnService): (command: string, arg
       kind: 'execFile',
       file: command,
       args,
-      options: { env: childProcessEnv({ LC_ALL: 'C' }), timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true },
+      // `runTool` read stdout with no cap; execFile's default 1 MiB would fail a
+      // long `lsappinfo` listing and read as the tool being unavailable.
+      options: { env: childProcessEnv({ LC_ALL: 'C' }), timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
     });
     return result.ok ? result.stdout : null;
   };

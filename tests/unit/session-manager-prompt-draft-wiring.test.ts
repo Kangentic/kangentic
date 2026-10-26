@@ -1,17 +1,22 @@
 /**
- * Unit tests for the `PromptDraftLedger` WIRING inside `SessionManager`
+ * Unit tests for the `PromptDraftLedger` WIRING behind `SessionManager`
  * (src/main/pty/session-manager.ts), not the ledger class itself.
  *
  * `tests/unit/prompt-draft-ledger.test.ts` already covers `PromptDraftLedger`
- * in isolation. What is untested is the two call sites that make the class
- * matter in production:
+ * in isolation. The ledger runs in the pty host core (in process here), and
+ * these pin the path that makes it matter in production:
  *
- *   - `write()`'s `origin: WriteOrigin = 'system'` default, and the
- *     `this.promptDrafts.record(sessionId, data, origin)` call inside it.
- *   - the `'exit'` handler's `this.promptDrafts.clear(sessionId)`.
+ *   - `write()`'s `origin: WriteOrigin = 'system'` default, carried to the
+ *     host on its `enqueueWrite` command, where the ledger records it.
+ *   - the host's `promptDraft` event feeding main's mirror, which
+ *     `getPendingDraft` reads, and the mirror cleared when the PTY exits.
+ *   - `readPendingDraft`, which keystroke injection reads: it asks the host's
+ *     ledger (so a key typed on a renderer's own port just before an injection
+ *     counts, though main has not heard of it yet) and falls back to the mirror
+ *     when there is no live PTY or the host cannot answer.
  *
  * Every consumer test of auto_command injection mocks `SessionManager`
- * wholesale, so a revert of either line passes the entire suite silently.
+ * wholesale, so a break anywhere on that path passes the entire suite silently.
  * These tests instantiate a REAL `SessionManager` against a mocked
  * `node-pty`, following the harness established by
  * `session-manager-write-queue.test.ts` and `session-manager-data-tap.test.ts`.
@@ -46,6 +51,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as nodePty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import type { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
+import { createFakeRendererPort } from './helpers/fake-renderer-port';
 
 function createMockPty() {
   let dataHandler: ((data: string) => void) | null = null;
@@ -140,5 +147,119 @@ describe('SessionManager - PromptDraftLedger wiring', () => {
     triggerExit(0);
 
     expect(manager.getPendingDraft(session.id)).toBeNull();
+  });
+});
+
+describe('SessionManager - readPendingDraft', () => {
+  // A renderer's keystrokes reach the host on the renderer's own port, so main
+  // hears of a draft only from the host's `promptDraft` event. The in-process
+  // host used here delivers that event synchronously, which a real utility
+  // process never does: the mirror there trails the keystroke. Where a test
+  // needs that trailing mirror, it empties the mirror after the keystroke (the
+  // state of the event still being in flight) instead of racing real timing.
+  const RENDERER_ID = 1;
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  function hostClientOf(target: SessionManager): PtyHostClient {
+    return (target as unknown as { host: PtyHostClient }).host;
+  }
+
+  function draftMirrorOf(target: SessionManager): Map<string, string> {
+    return (target as unknown as { promptDraftMirror: Map<string, string> }).promptDraftMirror;
+  }
+
+  /** A renderer's own port, attached, from which the test types as the user would. */
+  function attachRendererPort() {
+    const rendererPort = createFakeRendererPort();
+    manager.attachRendererPort(RENDERER_ID, rendererPort.port);
+    return rendererPort;
+  }
+
+  it('returns a draft typed on the renderer\'s own port', async () => {
+    // The whole path in one: a keystroke on the port reaches the host's write
+    // queue as user input, the ledger records it, and the request returns it.
+    // A port write that skipped the ledger (origin not "user", or never queued)
+    // leaves the draft empty here.
+    const { session } = await spawnSessionWithMock(manager, 'task-read-draft-port');
+    const rendererPort = attachRendererPort();
+
+    rendererPort.send({ type: 'write', sessionId: session.id, data: 'half a thought' });
+
+    await expect(manager.readPendingDraft(session.id)).resolves.toBe('half a thought');
+  });
+
+  it('counts a keystroke whose promptDraft event main has not received yet', async () => {
+    const { session } = await spawnSessionWithMock(manager, 'task-read-draft-ahead-of-mirror');
+    const rendererPort = attachRendererPort();
+    const getPromptDraftSpy = vi.spyOn(hostClientOf(manager), 'getPromptDraft');
+
+    rendererPort.send({ type: 'write', sessionId: session.id, data: 'half a thought' });
+    draftMirrorOf(manager).clear();
+
+    // The premise: main's mirror knows nothing of the keystroke yet.
+    expect(manager.getPendingDraft(session.id)).toBeNull();
+    // Keystroke injection must still see it, or it would clear the prompt without
+    // reporting the text it discarded. Only the host's ledger holds it, so this
+    // fails if readPendingDraft reads the mirror instead of asking the host.
+    await expect(manager.readPendingDraft(session.id)).resolves.toBe('half a thought');
+    expect(getPromptDraftSpy).toHaveBeenCalledWith(session.id);
+  });
+
+  it('takes the host\'s empty answer over a stale mirror entry', async () => {
+    // The opposite lag: the user sent the draft and the host's ledger is empty,
+    // but the mirror still holds the old text because the clearing event has not
+    // landed. Injection must not report a draft the user already sent.
+    const { session } = await spawnSessionWithMock(manager, 'task-read-draft-stale-mirror');
+    draftMirrorOf(manager).set(session.id, 'sent a moment ago');
+
+    expect(manager.getPendingDraft(session.id)).toBe('sent a moment ago');
+    await expect(manager.readPendingDraft(session.id)).resolves.toBeNull();
+  });
+
+  it('falls back to the mirror, without asking the host, when the session has no live PTY', async () => {
+    const { session } = await spawnSessionWithMock(manager, 'task-read-draft-no-live-pty');
+    manager.kill(session.id, { immediate: true });
+    const getPromptDraftSpy = vi.spyOn(hostClientOf(manager), 'getPromptDraft');
+    // Set after the kill so the exit's own mirror clear cannot remove it, and read
+    // in the same tick: readPendingDraft decides on the row's PTY synchronously.
+    draftMirrorOf(manager).set(session.id, 'left in the mirror');
+
+    await expect(manager.readPendingDraft(session.id)).resolves.toBe('left in the mirror');
+    // The host would answer null for a dead PTY, so an implementation that asked
+    // it anyway would return null here and show up as a call.
+    expect(getPromptDraftSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolves to null for a session id it has never seen', async () => {
+    const getPromptDraftSpy = vi.spyOn(hostClientOf(manager), 'getPromptDraft');
+
+    await expect(manager.readPendingDraft('no-such-session')).resolves.toBeNull();
+    expect(getPromptDraftSpy).not.toHaveBeenCalled();
+  });
+
+  it('resolves to the mirror\'s value, not a rejection, when the host request fails', async () => {
+    const { session } = await spawnSessionWithMock(manager, 'task-read-draft-host-rejects');
+    const rendererPort = attachRendererPort();
+    rendererPort.send({ type: 'write', sessionId: session.id, data: 'half a thought' });
+    // The mirror holds the draft (the in-process host's event is synchronous).
+    expect(manager.getPendingDraft(session.id)).toBe('half a thought');
+    const getPromptDraftSpy = vi
+      .spyOn(hostClientOf(manager), 'getPromptDraft')
+      .mockRejectedValue(new Error('pty host is gone'));
+
+    // A caller that propagated the rejection would abort an auto_command
+    // injection over a transient host fault; one that returned null would clear
+    // a prompt it never counted the draft of.
+    await expect(manager.readPendingDraft(session.id)).resolves.toBe('half a thought');
+    expect(getPromptDraftSpy).toHaveBeenCalledWith(session.id);
   });
 });

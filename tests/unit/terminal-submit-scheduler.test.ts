@@ -54,6 +54,10 @@ class MockSessionManager extends EventEmitter {
     return this.drafts.get(id) ?? null;
   }
 
+  readPendingDraft(id: string): Promise<string | null> {
+    return Promise.resolve(this.getPendingDraft(id));
+  }
+
   emitActivity(id: string, state: ActivityState): void {
     this.activity[id] = state;
     this.emit('activity', id, state);

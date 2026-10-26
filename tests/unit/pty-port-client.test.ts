@@ -4,8 +4,9 @@
  * scrollback answer resolves before the output after it is dispatched, an
  * answer for a request this page never made is dropped, main's `{ sentToPort }`
  * settles nothing, a rejected request rejects, a port swap fails what the dead
- * host never answered, and keystrokes made before the first port reach the host
- * in order.
+ * host owed on its port and keeps a request still out, one throwing listener
+ * costs the others nothing, and keystrokes made before the first port reach the
+ * host in order.
  *
  * Tier: Unit.
  */
@@ -192,6 +193,9 @@ describe('PtyPortClient', () => {
     client.onData(listener);
 
     const pending = client.getScrollback('session-1');
+    // The old host answered on its port, and that answer went with it.
+    main.resolve({ sentToPort: true });
+    await Promise.resolve();
     const replacement = createEndpoint();
     client.attachPort(replacement);
 
@@ -204,5 +208,37 @@ describe('PtyPortClient', () => {
     client.write('session-1', 'k');
     expect(replacement.sent).toEqual([{ type: 'write', sessionId: 'session-1', data: 'k' }]);
     expect(oldEndpoint.sent).toEqual([]);
+  });
+
+  it('keeps a request whose invoke is still out across a port swap, and resolves it from the new port', async () => {
+    const main = deferredInvoke();
+    const client = new PtyPortClient(main.invoke);
+    client.attachPort(createEndpoint());
+
+    // Asked while the host restarted: the new host takes it and answers on the new port.
+    const pending = client.getScrollback('session-1');
+    const replacement = createEndpoint();
+    client.attachPort(replacement);
+    replacement.receive({ type: 'scrollback', requestId: main.calls[0].requestId, data: 'from the new host' });
+    main.resolve({ sentToPort: true });
+
+    await expect(pending).resolves.toBe('from the new host');
+  });
+
+  it('hands a chunk to every listener when an earlier one throws', () => {
+    const client = new PtyPortClient(vi.fn());
+    const endpoint = createEndpoint();
+    client.attachPort(endpoint);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    client.onData(() => {
+      throw new Error('disposed terminal');
+    });
+    const later = vi.fn();
+    client.onData(later);
+
+    endpoint.receive({ type: 'data', sessionId: 'session-1', data: 'chunk' });
+
+    expect(later).toHaveBeenCalledWith('session-1', 'chunk');
+    vi.restoreAllMocks();
   });
 });

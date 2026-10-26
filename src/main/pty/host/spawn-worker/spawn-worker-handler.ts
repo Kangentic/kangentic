@@ -71,9 +71,14 @@ export class SpawnWorkerHandler {
         this.probe?.dispose();
         this.probe = null;
         return;
-      case 'cliSpawn':
+      case 'cliSpawn': {
         this.cliProcesses.start(message.params);
+        // In the same turn as the spawn, so the terminal thread knows the pid
+        // even if this worker dies before the child's `spawn` event.
+        const pid = this.cliProcesses.pidOf(message.params.processId);
+        if (pid !== undefined) this.post({ type: 'cliStarted', processId: message.params.processId, pid });
         return;
+      }
       case 'cliWrite':
         this.cliProcesses.write(message.processId, message.data);
         return;

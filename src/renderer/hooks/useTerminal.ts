@@ -674,7 +674,7 @@ export function useTerminal(options: UseTerminalOptions) {
    *  settleScrollback, the one place every replay exit passes through. */
   const recheckPtyEchoRef = useRef<(() => void) | null>(null);
   /** Coalesces xterm onData bursts (paste, key-repeat, clipboard callback)
-   *  into one IPC write per microtask. */
+   *  into one port write per microtask. */
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
@@ -1319,10 +1319,10 @@ export function useTerminal(options: UseTerminalOptions) {
     // xterm consumed. Like the focus listener, it goes with the textarea on dispose.
     terminal.textarea?.addEventListener('keydown', noteTerminalKeydown, { capture: true, passive: true });
 
-    // Batch outgoing input into one IPC write per microtask. A paste or
+    // Batch outgoing input into one port write per microtask. A paste or
     // programmatic terminal.paste() often dispatches onData multiple times
-    // synchronously; concatenating those into a single ipcRenderer.invoke
-    // avoids N round-trips across the process boundary. PTY byte order is
+    // synchronously; concatenating those into a single message to the pty
+    // host avoids N crossings of the process boundary. PTY byte order is
     // preserved for sequential pty.write calls, so concatenation is safe.
     const probedSessionId = options.sessionId;
     const batcher = createWriteBatcher(

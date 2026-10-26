@@ -219,6 +219,10 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     // The id is read now: a destroyed webContents no longer answers for it.
     const rendererId = sender.id;
     const forget = (): void => {
+      // Both go, so a renderer that crashes and reloads again and again does
+      // not gather one `destroyed` listener per crash.
+      sender.removeListener('destroyed', forget);
+      sender.removeListener('render-process-gone', forget);
       context.sessionManager.clearFocusedSessionsFor(rendererId);
       context.sessionManager.detachRendererPort(rendererId);
       focusTeardownWatched.delete(rendererId);
@@ -237,8 +241,17 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
   const issueRendererPort = (target: Electron.WebContents): void => {
     if (target.isDestroyed()) return;
     const { port1, port2 } = new MessageChannelMain();
+    // The renderer's end goes first: a frame torn down between the check and
+    // the post throws here, and the host is then never handed an end nobody
+    // holds. Caught so a host restart's loop still reaches every other renderer.
+    try {
+      target.postMessage(IPC.PTY_PORT, null, [port2]);
+    } catch (error) {
+      console.warn(`[pty-port] could not hand renderer ${target.id} its port:`, error instanceof Error ? error.message : String(error));
+      port1.close();
+      return;
+    }
     context.sessionManager.attachRendererPort(target.id, port1);
-    target.postMessage(IPC.PTY_PORT, null, [port2]);
     watchRendererTeardown(target);
   };
   // A preload asks once per page load (a reload asks again).

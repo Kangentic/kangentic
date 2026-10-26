@@ -17,7 +17,7 @@ import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
 import { ROOT_PID_POLL_MS, ROOT_PID_WAIT_LIMIT_MS } from '../../src/main/pty/host/root-pid-gate';
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
-import { BACKPRESSURE_LOW_WATER, PENDING_HIGH_WATER, PENDING_LOW_WATER } from '../../src/main/pty/buffer/backpressure-controller';
+import { BACKPRESSURE_HIGH_WATER, BACKPRESSURE_LOW_WATER, PENDING_HIGH_WATER, PENDING_LOW_WATER } from '../../src/main/pty/buffer/backpressure-controller';
 import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
@@ -474,6 +474,125 @@ describe('PtyHostCore', () => {
       expect((answer as { data: string }).data).toContain('some output');
     });
 
+    describe('a scrollback answer goes only to the port that asked, while it is still the current one', () => {
+      const scrollbackMessages = (fake: FakeRendererPort) => fake.received.filter((message) => message.type === 'scrollback' || message.type === 'scrollbackFailed');
+
+      /** Hold the next resize-repaint settle open, so the sample is still pending while the test changes ports. */
+      function holdResizeSettle(core: PtyHostCore): { release(): void; fail(reason: unknown): void } {
+        const bufferManager = (core as unknown as { bufferManager: PtyBufferManager }).bufferManager;
+        let release: () => void = () => {};
+        let fail: (reason: unknown) => void = () => {};
+        const settled = new Promise<void>((resolve, reject) => {
+          release = resolve;
+          fail = reject;
+        });
+        vi.spyOn(bufferManager, 'waitForResizeRepaint').mockReturnValue(settled);
+        return { release: () => release(), fail: (reason) => fail(reason) };
+      }
+
+      it('answers on the asking port once the sample settles, when no other port took its place', async () => {
+        const { core, fake, port } = makeCore();
+        core.spawn(spawnParams());
+        fake.feed('held for the settle');
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 11 });
+        // Nothing leaves while the settle is open.
+        expect(scrollbackMessages(port)).toEqual([]);
+        settle.release();
+
+        await expect(pending).resolves.toEqual({ sentToPort: true });
+        expect(scrollbackMessages(port)).toEqual([expect.objectContaining({ type: 'scrollback', requestId: 11 })]);
+        expect((scrollbackMessages(port)[0] as Extract<FromPtyHostPortMessage, { type: 'scrollback' }>).data).toContain('held for the settle');
+      });
+
+      it('hands the sample back to main, and posts nothing, when a reload replaced the port while the sample settled', async () => {
+        const { core, fake } = makeCore();
+        core.spawn(spawnParams());
+        fake.feed('sampled across a reload');
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 1 });
+        // The reloaded page numbers its requests from 1 again, so an answer on its
+        // port could settle ITS request 1 with this one's data. The swap closes
+        // the asking port, so the new port is the only one that could receive it.
+        const reloaded = createFakeRendererPort();
+        core.attachRendererPort(TEST_RENDERER, reloaded.port);
+        settle.release();
+
+        const answer = await pending;
+        expect(answer).toMatchObject({ sentToPort: false });
+        expect((answer as { data: string }).data).toContain('sampled across a reload');
+        expect(scrollbackMessages(reloaded)).toEqual([]);
+      });
+
+      it('hands the sample back to main when the asking port closed while the sample settled', async () => {
+        const { core, fake, port } = makeCore();
+        core.spawn(spawnParams());
+        fake.feed('sampled after the page went away');
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 2 });
+        port.disconnect();
+        settle.release();
+
+        const answer = await pending;
+        expect(answer).toMatchObject({ sentToPort: false });
+        expect((answer as { data: string }).data).toContain('sampled after the page went away');
+      });
+
+      it('tells the asking port the sample failed, with the error\'s message, and answers main that it was sent', async () => {
+        const { core, port } = makeCore();
+        core.spawn(spawnParams());
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 5 });
+        settle.fail(new Error('replay sample failed'));
+
+        await expect(pending).resolves.toEqual({ sentToPort: true });
+        expect(port.received).toContainEqual({ type: 'scrollbackFailed', requestId: 5, message: 'replay sample failed' });
+        expect(port.received.some((message) => message.type === 'scrollback')).toBe(false);
+      });
+
+      it('words a failure that is not an Error as its string', async () => {
+        const { core, port } = makeCore();
+        core.spawn(spawnParams());
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 6 });
+        settle.fail('plain failure');
+
+        await expect(pending).resolves.toEqual({ sentToPort: true });
+        expect(port.received).toContainEqual({ type: 'scrollbackFailed', requestId: 6, message: 'plain failure' });
+      });
+
+      it('rejects to main when the sample fails and no port can take the failure', async () => {
+        const { core } = makeCore();
+        core.spawn(spawnParams());
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: 99, requestId: 3 });
+        settle.fail(new Error('replay sample failed'));
+
+        await expect(pending).rejects.toThrow('replay sample failed');
+      });
+
+      it('rejects to main, and posts nothing, when a reload replaced the asking port before the sample failed', async () => {
+        const { core } = makeCore();
+        core.spawn(spawnParams());
+        const settle = holdResizeSettle(core);
+
+        const pending = core.handleRequest('getScrollbackForRenderer', { sessionId: 'session-1', settle: true, rendererId: TEST_RENDERER, requestId: 1 });
+        const reloaded = createFakeRendererPort();
+        core.attachRendererPort(TEST_RENDERER, reloaded.port);
+        settle.fail(new Error('replay sample failed'));
+
+        // The reloaded page's own request 1 must not be failed by this one's error.
+        await expect(pending).rejects.toThrow('replay sample failed');
+        expect(scrollbackMessages(reloaded)).toEqual([]);
+      });
+    });
+
     it('keeps the prompt draft in the order the PTY gets the bytes, and tells main each change', () => {
       const { core, events, port } = makeCore();
       core.spawn(spawnParams());
@@ -500,6 +619,222 @@ describe('PtyHostCore', () => {
       fake.feed('to the reloaded page');
       await flush();
       expect(reloaded.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'to the reloaded page' }]);
+    });
+
+    it('closes the port a renderer\'s new port replaces, and keeps the new one open', () => {
+      const { core, port } = makeCore();
+      const replacement = createFakeRendererPort();
+
+      core.attachRendererPort(TEST_RENDERER, replacement.port);
+
+      expect(port.closed).toBe(true);
+      expect(replacement.closed).toBe(false);
+    });
+
+    it('does not close a port that is attached again as itself', () => {
+      const { core, port } = makeCore();
+
+      core.attachRendererPort(TEST_RENDERER, port.port);
+
+      expect(port.closed).toBe(false);
+    });
+
+    it('keeps a renderer\'s new port when closing the old one throws', async () => {
+      const { core, fake } = makeCore();
+      core.spawn(spawnParams());
+      const staleRenderer = 5;
+      const stale = createFakeRendererPort();
+      stale.port.close = () => {
+        throw new Error('already closed with its page');
+      };
+      core.attachRendererPort(staleRenderer, stale.port);
+      const next = createFakeRendererPort();
+
+      expect(() => core.attachRendererPort(staleRenderer, next.port)).not.toThrow();
+
+      core.handleCommand({ type: 'setRendererFocus', rendererId: staleRenderer, sessionIds: ['session-1'] });
+      fake.feed('to the new port');
+      await flush();
+      expect(next.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'to the new port' }]);
+    });
+  });
+
+  describe('a renderer\'s acks and the output it never received (in-flight accounting)', () => {
+    // Four 64 KB reads fill one flush slice, so each tick ships 256 KB.
+    const READ = 'x'.repeat(64 * 1024);
+    const SLICE_CHARS = READ.length * 4;
+    const TICKS_PAST_HIGH_WATER = Math.ceil(BACKPRESSURE_HIGH_WATER / SLICE_CHARS) * 2;
+
+    async function feedPastHighWater(fake: FakePty): Promise<void> {
+      for (let tick = 0; tick < TICKS_PAST_HIGH_WATER; tick++) {
+        for (let read = 0; read < 4; read++) fake.feed(READ);
+        await flush();
+      }
+    }
+
+    it('counts a flush toward backpressure when a port took it, and pauses the PTY past the high water', async () => {
+      const { core, fake } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+
+      await feedPastHighWater(fake);
+
+      const [pipeline] = core.getDiagnostics().pipeline;
+      expect(pipeline.inFlightBytes).toBeGreaterThanOrEqual(BACKPRESSURE_HIGH_WATER);
+      expect(pipeline.paused).toBe(true);
+      expect(fake.pty.pause).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not count a flush no port took (a reloading page still in the focus set), so it never pauses', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      // The page went away: its port closed, but main has not yet changed its focus set.
+      port.disconnect();
+
+      await feedPastHighWater(fake);
+
+      // Nothing was delivered, so nothing will ever be acknowledged. The same
+      // feed with a port attached (above) is what would have paused it.
+      expect(core.getDiagnostics().pipeline[0]).toMatchObject({ inFlightBytes: 0, paused: false, pendingBytes: 0 });
+      expect(fake.pty.pause).not.toHaveBeenCalled();
+    });
+
+    it('drops a negative ack, so it cannot raise a session\'s in-flight count', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed('x'.repeat(1000));
+      await flush();
+      const inFlight = () => core.getDiagnostics().pipeline[0].inFlightBytes;
+      expect(inFlight()).toBe(1000);
+
+      port.send({ type: 'ack', sessionId: 'session-1', bytes: -1_000_000 });
+      expect(inFlight()).toBe(1000);
+
+      // A bad ack that was kept would sit at a million: the next 100 KB would pause the PTY.
+      fake.feed('y'.repeat(100_000));
+      await flush();
+      expect(inFlight()).toBe(101_000);
+      expect(core.getDiagnostics().pipeline[0].paused).toBe(false);
+      expect(fake.pty.pause).not.toHaveBeenCalled();
+    });
+
+    it('drops an infinite ack, so it cannot zero a session\'s in-flight count', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed('x'.repeat(1000));
+      await flush();
+
+      port.send({ type: 'ack', sessionId: 'session-1', bytes: Number.POSITIVE_INFINITY });
+
+      expect(core.getDiagnostics().pipeline[0].inFlightBytes).toBe(1000);
+    });
+
+    it('applies a fractional ack, as a count that is not a whole number of code units is still a count', async () => {
+      const { core, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      fake.feed('x'.repeat(1000));
+      await flush();
+
+      port.send({ type: 'ack', sessionId: 'session-1', bytes: 0.5 });
+
+      expect(core.getDiagnostics().pipeline[0].inFlightBytes).toBe(999.5);
+    });
+  });
+
+  describe('the prompt draft dies with its PTY and its session, and getPromptDraft reads it live', () => {
+    const DRAFT = 'half a thought';
+    const drafts = (events: HostOutput[]) => events.filter((event) => event.type === 'promptDraft').map((event) => (event as { draft: string | null }).draft);
+    const draftOf = async (core: PtyHostCore, sessionId = 'session-1'): Promise<string | null> => core.handleRequest('getPromptDraft', { sessionId });
+
+    it('tells main the draft is gone when the PTY exits on its own', async () => {
+      const { core, events, fake, port } = makeCore();
+      core.spawn(spawnParams());
+      port.send({ type: 'write', sessionId: 'session-1', data: DRAFT });
+      expect(drafts(events)).toEqual([DRAFT]);
+
+      fake.exit(0);
+
+      expect(drafts(events)).toEqual([DRAFT, null]);
+      expect(await draftOf(core)).toBeNull();
+    });
+
+    it('tells main the draft is gone when main removes the session, while its PTY is still running', async () => {
+      const { core, events, port } = makeCore();
+      core.spawn(spawnParams());
+      port.send({ type: 'write', sessionId: 'session-1', data: DRAFT });
+      expect(drafts(events)).toEqual([DRAFT]);
+
+      core.handleCommand({ type: 'removeSession', sessionId: 'session-1' });
+
+      expect(drafts(events)).toEqual([DRAFT, null]);
+      expect(await draftOf(core)).toBeNull();
+    });
+
+    it('says nothing when a session with no draft exits', () => {
+      const { core, events, fake } = makeCore();
+      core.spawn(spawnParams());
+
+      fake.exit(0);
+
+      expect(drafts(events)).toEqual([]);
+    });
+
+    it('says nothing when a session with no draft is removed', () => {
+      const { core, events } = makeCore();
+      core.spawn(spawnParams());
+
+      core.handleCommand({ type: 'removeSession', sessionId: 'session-1' });
+
+      expect(drafts(events)).toEqual([]);
+    });
+
+    it('keeps the draft typed into a respawned session when the PTY it replaced exits late', async () => {
+      const replaced = createFakePty(4242);
+      const successor = createFakePty(4343);
+      const { core, events, spawnPty, port } = makeCore({ fake: replaced });
+      core.spawn(spawnParams({ ptyId: 1 }));
+      // A respawn under the same session id: the old PTY is still exiting.
+      spawnPty.mockReturnValueOnce(successor.pty);
+      core.spawn(spawnParams({ ptyId: 2 }));
+      port.send({ type: 'write', sessionId: 'session-1', data: DRAFT });
+
+      replaced.exit(0);
+
+      expect(drafts(events)).toEqual([DRAFT]);
+      expect(await draftOf(core)).toBe(DRAFT);
+    });
+
+    it('answers getPromptDraft with the ledger\'s current draft, and null once the prompt looks empty', async () => {
+      const { core, port } = makeCore();
+      core.spawn(spawnParams());
+      expect(await draftOf(core)).toBeNull();
+
+      port.send({ type: 'write', sessionId: 'session-1', data: DRAFT });
+      expect(await draftOf(core)).toBe(DRAFT);
+
+      // Backspace edits it; Enter submits it and leaves the prompt empty.
+      port.send({ type: 'write', sessionId: 'session-1', data: '\x7f' });
+      expect(await draftOf(core)).toBe('half a though');
+      port.send({ type: 'write', sessionId: 'session-1', data: '\r' });
+      expect(await draftOf(core)).toBeNull();
+    });
+
+    it('answers getPromptDraft per session', async () => {
+      const first = createFakePty(4242);
+      const second = createFakePty(4343);
+      const { core, spawnPty, port } = makeCore({ fake: first });
+      core.spawn(spawnParams({ ptyId: 1, sessionId: 'session-1' }));
+      spawnPty.mockReturnValueOnce(second.pty);
+      core.spawn(spawnParams({ ptyId: 2, sessionId: 'session-2' }));
+
+      port.send({ type: 'write', sessionId: 'session-2', data: 'for the second' });
+
+      expect(await draftOf(core, 'session-2')).toBe('for the second');
+      expect(await draftOf(core, 'session-1')).toBeNull();
     });
   });
 
@@ -1206,6 +1541,24 @@ describe('PtyHostCore', () => {
     core.handleCommand({ type: 'kill', ptyId: 1 });
     core.handleCommand({ type: 'kill', ptyId: 1 });
     expect(fake.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops what is still queued for a PTY when main kills it, so a large write does not keep draining into a dying shell', async () => {
+    const { core, fake } = makeCore();
+    core.spawn(spawnParams());
+    // Over one 4 KB chunk and with no paste markers: the first chunk is written at
+    // once and the rest wait for later loop turns.
+    core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: 'q'.repeat(20 * 1024), origin: 'system' });
+    expect(fake.write).toHaveBeenCalledTimes(1);
+
+    core.handleCommand({ type: 'kill', ptyId: 1 });
+    // The kill has not produced an exit yet (a ConPTY takes up to a second), so
+    // only the disposed queue keeps the rest from being written.
+    await vi.runAllTimersAsync();
+
+    expect(fake.kill).toHaveBeenCalledTimes(1);
+    expect(fake.write).toHaveBeenCalledTimes(1);
+    await expect(core.handleRequest('drainWrites', { ptyId: 1 })).resolves.toBe(true);
   });
 
   it('shutdown flushes the transcripts and kills nothing: main posts the kills, a young one after its grace', () => {

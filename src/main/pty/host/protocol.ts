@@ -284,6 +284,10 @@ export interface PtyHostRequestMap {
   };
   /** Resolve once the PTY's write queue has written everything queued so far. */
   drainWrites: { params: { ptyId: number }; result: true };
+  /** The session's unsent prompt text as the host's ledger holds it now, null
+   *  when the prompt looks empty. Fresher than main's `promptDraft` mirror: a
+   *  renderer's keystrokes reach the host on its port, not through main. */
+  getPromptDraft: { params: { sessionId: string }; result: string | null };
   /** The parsed-grid frame, with the same settle (the prompt-options probe). */
   getSerializedFrame: { params: { sessionId: string; settle: boolean }; result: string };
   /** The phone's seed frame, with the same settle (see SeedFrameResult).

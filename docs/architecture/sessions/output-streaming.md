@@ -67,17 +67,21 @@ Now each renderer holds its own port to the host and main never relays a keystro
   main only there.
 - **Output goes only where it is shown.** The host keeps each renderer's focus set
   (`setRendererFocus`) and sends a flush to the ports whose set holds the session. Acks come back on
-  the same port.
+  the same port. A flush no port took (a reloading page still in a focus set) does not count toward
+  backpressure, since nothing will ack it.
 - **One write queue, in the host.** A renderer's keystrokes and main's writes (an injected command,
   a paste, dictation) share the PTY's queue (`write-queue.ts`), so a key never lands inside a large
   paste. The prompt-draft ledger records each write in queue order and the host reports changes
-  (`promptDraft`), which main mirrors for `getPendingDraft`. `drain()` is a host request. Every
+  (`promptDraft`), which main mirrors for `getPendingDraft`. Keystroke injection asks the host
+  instead (`readPendingDraft`), so a key that reached the host on a port just before is counted.
+  `drain()` is a host request. Every
   place main drops a session's PTY handle calls `sealUserInput()` first, so the host stops writing a
   renderer's keystrokes into an agent that is exiting, while main's own exit sequence still goes
   through.
 - **The replay stays ordered.** `getScrollback` still goes through main, behind that renderer's
   resizes on main's ordered channel to the host. The host answers on the asking renderer's port, so
-  the answer follows the output it flushed before the sample. `useTerminal` asks for the scrollback
+  the answer follows the output it flushed before the sample. A port replaced while the sample
+  settled (a reload) gets no answer: the reloaded page numbers its requests from 1 again. `useTerminal` asks for the scrollback
   only once its grid request has resolved, and resolves the replay off the scrollback alone.
 - **No process starts on the host's I/O thread.** Every one-shot child, CLI run and process-table
   tool starts on the host's spawn worker (`src/main/pty/host/spawn-worker/`), a `worker_threads`

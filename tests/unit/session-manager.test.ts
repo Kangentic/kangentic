@@ -2948,6 +2948,10 @@ describe('Per-renderer focus scoping', () => {
     const RENDERER_2 = 2;
     const { session: sessionA, feedData: feedA } = await spawnSession('task-scope-a');
     const { session: sessionB, feedData: feedB } = await spawnSession('task-scope-b');
+    // Each renderer holds its port before it publishes focus, as the preload
+    // asks for one at load: output no port takes is never counted in flight.
+    manager.attachRendererPort(RENDERER_1, createFakeRendererPort().port);
+    manager.attachRendererPort(RENDERER_2, createFakeRendererPort().port);
 
     manager.setFocusedSessions([sessionA.id], RENDERER_1);
     manager.setFocusedSessions([sessionB.id], RENDERER_2);
@@ -2976,6 +2980,8 @@ describe('Per-renderer focus scoping', () => {
     const RENDERER_2 = 2;
     const { session: sessionA, feedData: feedA } = await spawnSession('task-scope-c');
     const { session: sessionB, feedData: feedB } = await spawnSession('task-scope-d');
+    manager.attachRendererPort(RENDERER_1, createFakeRendererPort().port);
+    manager.attachRendererPort(RENDERER_2, createFakeRendererPort().port);
 
     // Renderer 1 has both sessions visible; renderer 2 also has session B
     // (e.g. the same terminal shown in a detached monitor window).
