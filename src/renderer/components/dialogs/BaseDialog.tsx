@@ -67,7 +67,10 @@ interface BaseDialogProps {
   // Move focus into the dialog on open and keep Tab / Shift+Tab cycling within
   // it, restoring focus on close. Use for modals layered over another dialog
   // (e.g. a confirm). Do NOT use for a dialog that embeds a terminal, where Tab
-  // belongs to the PTY.
+  // belongs to the PTY. Open focus goes to a `data-initial-focus` descendant
+  // when there is one, else the first tabbable. Mark the element that way
+  // rather than giving it `autoFocus`: autoFocus lands before the trap records
+  // what had focus, so the close would have nothing to restore.
   trapFocus?: boolean;
   // Ignore Escape entirely while another surface is layered over this dialog and
   // owns the key. Escape listeners here and in the layered surface are both
@@ -179,8 +182,8 @@ export function BaseDialog({
     if (!content) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     if (!content.contains(document.activeElement)) {
-      const focusables = getFocusable(content);
-      (focusables[0] ?? content).focus();
+      const preferred = content.querySelector<HTMLElement>('[data-initial-focus]');
+      (preferred ?? getFocusable(content)[0] ?? content).focus();
     }
     return () => {
       if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus();
