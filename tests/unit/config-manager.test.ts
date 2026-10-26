@@ -513,6 +513,95 @@ describe('Config Manager -- terminal.* project-override migration', () => {
   });
 });
 
+describe('Config Manager -- agent.cliPaths project seed', () => {
+  // agent.cliPaths became project scoped (#286). A project with no paths of its
+  // own takes the global ones on its first read; Settings edits only the
+  // project's copy from then on.
+  function projectOverridesPath(projectDir: string): string {
+    return path.join(projectDir, '.kangentic', 'config.json');
+  }
+
+  function writeProjectOverrides(projectDir: string, overrides: Record<string, unknown>): void {
+    fs.mkdirSync(path.join(projectDir, '.kangentic'), { recursive: true });
+    fs.writeFileSync(projectOverridesPath(projectDir), JSON.stringify(overrides));
+  }
+
+  function writeGlobalCliPaths(cliPaths: Record<string, string | null>): void {
+    fs.writeFileSync(configPath, JSON.stringify({ agent: { cliPaths } }));
+  }
+
+  it('copies the configured global paths into a project that has none, keeping its other settings', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe', codex: null, gemini: '' });
+    const projectDir = path.join(tmpDir, 'proj-seed');
+    writeProjectOverrides(projectDir, { theme: 'forest', agent: { permissionMode: 'plan' } });
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides?.agent).toEqual({ permissionMode: 'plan', cliPaths: { claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' } });
+    expect(overrides?.theme).toBe('forest');
+    const raw = JSON.parse(fs.readFileSync(projectOverridesPath(projectDir), 'utf-8'));
+    expect(raw.agent.cliPaths).toEqual({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
+  });
+
+  it('leaves a project that already has paths of its own untouched, an empty map included', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
+    const ownPaths = path.join(tmpDir, 'proj-own');
+    const emptyPaths = path.join(tmpDir, 'proj-empty');
+    writeProjectOverrides(ownPaths, { agent: { cliPaths: { claude: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude' } } });
+    writeProjectOverrides(emptyPaths, { agent: { cliPaths: {} } });
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(projectOverridesPath(ownPaths), backdated, backdated);
+    fs.utimesSync(projectOverridesPath(emptyPaths), backdated, backdated);
+    const ownBefore = fs.statSync(projectOverridesPath(ownPaths)).mtimeMs;
+    const emptyBefore = fs.statSync(projectOverridesPath(emptyPaths)).mtimeMs;
+
+    const cm = await createConfigManager();
+    expect(cm.loadProjectOverrides(ownPaths)?.agent?.cliPaths).toEqual({ claude: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude' });
+    expect(cm.loadProjectOverrides(emptyPaths)?.agent?.cliPaths).toEqual({});
+
+    expect(fs.statSync(projectOverridesPath(ownPaths)).mtimeMs).toBe(ownBefore);
+    expect(fs.statSync(projectOverridesPath(emptyPaths)).mtimeMs).toBe(emptyBefore);
+  });
+
+  it('does not rewrite a project when no global path is configured', async () => {
+    writeGlobalCliPaths({ claude: null });
+    const projectDir = path.join(tmpDir, 'proj-no-global');
+    writeProjectOverrides(projectDir, { theme: 'sky' });
+    const backdated = new Date(Date.now() - 60_000);
+    fs.utimesSync(projectOverridesPath(projectDir), backdated, backdated);
+    const before = fs.statSync(projectOverridesPath(projectDir)).mtimeMs;
+
+    const cm = await createConfigManager();
+    const overrides = cm.loadProjectOverrides(projectDir);
+
+    expect(overrides).not.toHaveProperty('agent');
+    expect(fs.statSync(projectOverridesPath(projectDir)).mtimeMs).toBe(before);
+  });
+
+  it('seeds once: a later global change no longer reaches the project', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\old\\claude.exe' });
+    const projectDir = path.join(tmpDir, 'proj-once');
+    writeProjectOverrides(projectDir, {});
+
+    const cm = await createConfigManager();
+    cm.loadProjectOverrides(projectDir);
+    cm.save({ agent: { ...cm.load().agent, cliPaths: { claude: 'C:\\Users\\dev\\new\\claude.exe' } } });
+
+    expect(cm.loadProjectOverrides(projectDir)?.agent?.cliPaths).toEqual({ claude: 'C:\\Users\\dev\\old\\claude.exe' });
+    expect(cm.getEffectiveConfig(projectDir).agent.cliPaths.claude).toBe('C:\\Users\\dev\\old\\claude.exe');
+  });
+
+  it('lets a cleared project path auto-detect instead of falling back to the global value', async () => {
+    writeGlobalCliPaths({ claude: 'C:\\Users\\dev\\.local\\bin\\claude.exe' });
+    const projectDir = path.join(tmpDir, 'proj-cleared');
+    writeProjectOverrides(projectDir, { agent: { cliPaths: { claude: null } } });
+
+    const cm = await createConfigManager();
+    expect(cm.getEffectiveConfig(projectDir).agent.cliPaths.claude).toBeNull();
+  });
+});
+
 describe('Config Manager -- commandTerminalPanel replace semantics', () => {
   it('defaults to null, round-trips a panel rect, and a null write resets it', async () => {
     const cm = await createConfigManager();

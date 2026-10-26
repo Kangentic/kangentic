@@ -108,7 +108,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', section: 'Project defaults', keywords: ['allowlist', 'bypass', 'approve'] },
 
   // ── Agent > Agent CLI ──
-  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI path', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', section: 'Agent CLI', keywords: ['binary', 'executable'] },
+  { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI path', description: 'This project\'s path to the agent CLI (auto-detected if empty)', scope: 'project', section: 'Agent CLI', keywords: ['binary', 'executable', 'wsl', 'linux'] },
   // Keywords stay agent-agnostic: these rows render for ANY adapter that
   // declares `remoteExecution`, so naming one agent here would go stale the
   // moment a second one does (agent-adapters-boundary.md).
@@ -286,7 +286,6 @@ export const SETTINGS_BY_ID: Record<string, SettingDefinition> = Object.fromEntr
  * project tab fails until it is either moved or added here with a reason.
  */
 export const PROJECT_TAB_GLOBALS: Record<string, string> = {
-  'agent.cliPaths': 'Per-agent CLI path, edited against the project\'s selected agent; a second tab would need a duplicate agent picker.',
   'agent.launchOptions': 'Per-agent startup toggles, rendered only for the project\'s selected agent when it declares the capability.',
   'agent.executionServerUrl': 'Per-agent remote-execution server address, edited inline in the Agent tab\'s Execution block for the selected agent.',
   'agent.executionServerAuth': 'Per-agent remote-execution credentials, edited alongside executionServerUrl.',

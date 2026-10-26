@@ -8007,7 +8007,9 @@ export interface ElectronAPI {
   agents: {
     // forceRefresh bypasses the main-process cache and re-probes detection
     // (the Agent settings "re-detect" button); omit/false uses the cache.
-    list: (forceRefresh?: boolean) => Promise<AgentDetectionInfo[]>;
+    // projectPath detects against that project's CLI paths (the Agent tab
+    // editing a project other than the open one); omitted, the open project's.
+    list: (forceRefresh?: boolean, projectPath?: string) => Promise<AgentDetectionInfo[]>;
     /** Reachability probe for an agent's configured remote execution server
      *  ("Test connection" in the Agent settings tab). Reads the server
      *  record directly from config rather than accepting one as an argument,

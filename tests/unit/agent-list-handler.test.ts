@@ -501,6 +501,60 @@ describe('AGENT_LIST IPC handler - caching', () => {
   });
 });
 
+// CLI paths are per project (#286): the list is detected against the effective
+// paths of the project the caller names, else the open project's, and each
+// distinct set of paths keeps its own cached build.
+describe('AGENT_LIST IPC handler - per-project CLI paths', () => {
+  const PROJECT_A = '/mock/projects/a';
+  const PROJECT_B = '/mock/projects/b';
+  const CLI_PATHS_BY_PROJECT: Record<string, Record<string, string>> = {
+    [PROJECT_A]: { claude: '/opt/a/claude' },
+    [PROJECT_B]: { claude: '/opt/b/claude' },
+  };
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    mockRegistryAdapters = [];
+    resetAgentListForTests();
+    const context = makeContext();
+    context.currentProjectPath = PROJECT_A as unknown as null;
+    context.configManager.getEffectiveConfig = vi.fn((projectPath?: string) => ({
+      agent: { cliPaths: CLI_PATHS_BY_PROJECT[projectPath ?? ''] ?? {}, maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
+      terminal: { shell: null },
+    }));
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  function invokeAgentListFor(projectPath?: string): Promise<AgentDetectionInfo[]> {
+    const handler = capturedHandlers.get('agent:list');
+    if (!handler) throw new Error('agent:list handler not registered');
+    return handler(undefined, false, projectPath) as Promise<AgentDetectionInfo[]>;
+  }
+
+  it('detects against the open project when no project is named, and the named one otherwise', async () => {
+    const detect = vi.fn(async (overridePath?: string | null) => ({ found: true, path: overridePath ?? null, version: '1.0.0' }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    const openProject = await invokeAgentListFor();
+    const otherProject = await invokeAgentListFor(PROJECT_B);
+
+    expect(openProject[0].path).toBe('/opt/a/claude');
+    expect(otherProject[0].path).toBe('/opt/b/claude');
+  });
+
+  it('keeps one cached build per set of paths', async () => {
+    const detect = vi.fn(async (overridePath?: string | null) => ({ found: true, path: overridePath ?? null, version: '1.0.0' }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    await invokeAgentListFor(PROJECT_A);
+    await invokeAgentListFor(PROJECT_B);
+    await invokeAgentListFor(PROJECT_A);
+    await invokeAgentListFor(PROJECT_B);
+
+    expect(detect.mock.calls.map((call) => call[0])).toEqual(['/opt/a/claude', '/opt/b/claude']);
+  });
+});
+
 // The pickers union the ids the app learned from live telemetry
 // (config.discoveredModelsByAgent) into every list, but only discovery's own
 // ids had display names, so a learned-only id rendered raw. The handler asks

@@ -3634,12 +3634,12 @@
     },
 
     agents: {
-      // forceRefresh is accepted to match the real API surface but ignored:
-      // the mock always returns the fixture, fresh or cached alike.
-      list: async function (_forceRefresh, mainsOwnRead) {
+      // forceRefresh and projectPath are accepted to match the real API surface but
+      // ignored: the mock returns the same fixture for every project, fresh or cached.
+      list: async function (_forceRefresh, _projectPath, mainsOwnRead) {
         // Off unless a spec sets window.__mockAgentListRejects = true: every read the
         // renderer makes rejects (a detection that fails), so the config store's agent
-        // list stays unloaded. Main's own read (the second argument, passed by
+        // list stays unloaded. Main's own read (the third argument, passed by
         // mockWorkflowAgentRefusal) is not the renderer's and still answers.
         if (typeof window !== 'undefined' && window.__mockAgentListRejects && !mainsOwnRead) {
           throw new Error('Could not read the agent list');
@@ -5444,7 +5444,7 @@
         var choice = (config && config.workflows) || {};
         var setupNeeded = { session: null, unavailable: null, setupNeeded: true, startsOnRequest: false };
         if (!choice.agent) return setupNeeded;
-        var agents = await window.electronAPI.agents.list(false, true);
+        var agents = await window.electronAPI.agents.list(false, undefined, true);
         var candidate = agents.find(function (entry) { return entry.name === choice.agent; });
         if (!candidate || !candidate.supportsWorkflowAgent) return setupNeeded;
         var takesModel = Boolean(candidate.capabilities && candidate.capabilities.supportsModelOverride);
