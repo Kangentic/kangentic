@@ -80,7 +80,7 @@ export interface AgentDetectorConfig {
 
 /**
  * Shared CLI detector used by every agent adapter. Handles:
- * - Promise caching + in-flight dedup
+ * - Promise caching + in-flight dedup, per override path
  * - User-configured override path with failure reporting
  * - PATH-based discovery via `which()`, every match in order, not only the
  *   first: `which` checks that a shim file exists, never that it works, and
@@ -106,17 +106,22 @@ export interface AgentDetectorConfig {
  * and `path.join()` implicitly via the shared `execVersion()` helper.
  */
 export class AgentDetector {
-  private cached: AgentInfo | null = null;
-  private inflight: Promise<AgentInfo> | null = null;
+  /** Completed detections, keyed by the override they were asked about ('' for none). */
+  private readonly cached = new Map<string, AgentInfo>();
+  /** Detections still running, keyed the same way. */
+  private readonly inflight = new Map<string, Promise<AgentInfo>>();
+  /** The detection that filled the cache most recently, for callers holding no path. */
+  private latest: AgentInfo | null = null;
   /** Bumped by `invalidateCache`, so a detection that was running then caches nothing. */
   private generation = 0;
 
   constructor(private readonly config: AgentDetectorConfig) {}
 
   /**
-   * Resolve the CLI's path and version. Results are cached per
-   * instance; call `invalidateCache()` to force a re-check. Concurrent
-   * calls during an in-flight detection share the same promise so
+   * Resolve the CLI's path and version. Results are cached per override
+   * path, so two projects whose CLI paths differ each get their own CLI;
+   * call `invalidateCache()` to force a re-check. Concurrent calls for the
+   * same override during an in-flight detection share the same promise so
    * the CLI is only inspected once.
    *
    * A detection still running when the cache is invalidated answers its own
@@ -125,35 +130,49 @@ export class AgentDetector {
    * by the old path, and every spawn after it started the old CLI.
    */
   async detect(overridePath?: string | null): Promise<AgentInfo> {
-    if (this.cached) return this.cached;
-    if (this.inflight) return this.inflight;
+    const key = overridePath || '';
+    const cachedResult = this.cached.get(key);
+    if (cachedResult) return cachedResult;
+    const running = this.inflight.get(key);
+    if (running) return running;
 
     const generation = this.generation;
     const detection = this.performDetection(overridePath);
-    this.inflight = detection;
+    this.inflight.set(key, detection);
     try {
       const result = await detection;
-      if (generation === this.generation) this.cached = result;
+      if (generation === this.generation) {
+        this.cached.set(key, result);
+        this.latest = result;
+      }
       return result;
     } finally {
-      if (this.inflight === detection) this.inflight = null;
+      if (this.inflight.get(key) === detection) this.inflight.delete(key);
     }
   }
 
   /**
    * Return the cached CLI version string, or null if detection has
    * not run yet or if the CLI was not found. Does not trigger a new
-   * detection.
+   * detection. With `cliPath`, the version of the detection that found that
+   * path; without one, or when no detection found it (a shim swap can hand
+   * the builder a sibling path), the most recent detection's.
    */
-  getCachedVersion(): string | null {
-    return this.cached?.version ?? null;
+  getCachedVersion(cliPath?: string | null): string | null {
+    if (cliPath) {
+      for (const result of this.cached.values()) {
+        if (result.path === cliPath) return result.version ?? null;
+      }
+    }
+    return this.latest?.version ?? null;
   }
 
   /** Clear cached detection results so the next `detect()` call re-runs. */
   invalidateCache(): void {
     this.generation += 1;
-    this.cached = null;
-    this.inflight = null;
+    this.cached.clear();
+    this.inflight.clear();
+    this.latest = null;
   }
 
   private async performDetection(overridePath?: string | null): Promise<AgentInfo> {

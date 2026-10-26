@@ -96,7 +96,7 @@ export class QwenAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, model, effort, ...rest } = options;
-    const qwenOptions = { qwenPath: agentPath, model, effort, cliVersion: this.detector.getCachedVersion(), ...rest };
+    const qwenOptions = { qwenPath: agentPath, model, effort, cliVersion: this.detector.getCachedVersion(agentPath), ...rest };
     const command = this.commandBuilder.buildQwenCommand(qwenOptions);
     // Every spawn that writes the folder-shared .qwen/settings.json (an
     // events pipeline, or MCP wiring on a Qwen without --mcp-config) holds it
