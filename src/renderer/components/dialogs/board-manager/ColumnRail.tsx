@@ -12,7 +12,6 @@ import {
   verticalListSortingStrategy,
   useSortable,
   arrayMove,
-  sortableKeyboardCoordinates,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Tooltip } from '../../Tooltip';
@@ -20,6 +19,7 @@ import { IsolatedIcon } from '../../IsolatedBadge';
 import { RegistryIcon, useSwimlaneIconName } from '../../../utils/swimlane-icons';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import type { SwimlaneRole } from '../../../../shared/types';
 
 /** Sentinel id for the "All columns" overview entry. Shared with the dialog. */
@@ -195,8 +195,8 @@ export function ColumnRail({
   // lift the row, and an Enter in a field below would drop it. See
   // intent-keyboard-sensor.ts and keyboard-drag-intent.md.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   const overviewSelected = activeId === ALL_COLUMNS_ID;

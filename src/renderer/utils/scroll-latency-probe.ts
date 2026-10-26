@@ -22,12 +22,15 @@
 import type { RoundTripInput } from '../../shared/round-trip-input';
 import { sessionIdOfTerminalTarget } from './terminal-grid-registry';
 
-/** `wheel`: a DOM wheel event over a session's terminal. `report`: the mouse
- *  report xterm made of input. `send`: a paced report leaving for main.
- *  `arrive`: output for the session reaching the renderer. `parsed`: xterm
- *  finished parsing a slice of it. `painted`: the next animation frame after a
- *  parse, the frame xterm's own render was scheduled into. */
-export type RendererRoundTripStage = 'wheel' | 'report' | 'send' | 'arrive' | 'parsed' | 'painted';
+/** `wheel`: a DOM wheel event over a session's terminal. `key`: a keydown in a
+ *  session's terminal, stamped with the event's own time, when the browser
+ *  received the key, so time it waited behind a long frame before any handler
+ *  ran counts. `report`: the mouse report xterm made of input. `send`: a paced
+ *  report or a keystroke leaving for the pty host. `arrive`: output for the
+ *  session reaching the renderer. `parsed`: xterm finished parsing a slice of
+ *  it. `painted`: the next animation frame after a parse, the frame xterm's own
+ *  render was scheduled into. */
+export type RendererRoundTripStage = 'wheel' | 'key' | 'report' | 'send' | 'arrive' | 'parsed' | 'painted';
 
 export interface RendererRoundTripEvent {
   /** `performance.now()` in the renderer. */
@@ -56,7 +59,8 @@ const EVENT_RING_SIZE = 50_000;
 const MAX_ARM_MS = 120_000;
 
 // hmr-safe: a dev-only probe window. A Fast Refresh reset ends an open window
-// early, and the wheel listener below removes itself when its window closes.
+// early, and the wheel and keydown listeners below remove themselves when
+// their window closes.
 let armedAt: number | null = null;
 // hmr-safe: see armedAt.
 let armedUntil = 0;
@@ -65,7 +69,7 @@ let events: RendererRoundTripEvent[] = [];
 // hmr-safe: see armedAt.
 let droppedEvents = 0;
 // hmr-safe: see armedAt.
-let detachWheelListener: (() => void) | null = null;
+let detachInputListeners: (() => void) | null = null;
 
 function record(event: RendererRoundTripEvent): void {
   if (events.length >= EVENT_RING_SIZE) {
@@ -83,7 +87,7 @@ export function armScrollLatencyProbe(durationMs: number): { armedAt: number; ar
   armedUntil = armedAt + boundedMs;
   events = [];
   droppedEvents = 0;
-  detachWheelListener?.();
+  detachInputListeners?.();
   // Capture phase, passive: it observes the wheel before xterm handles it and
   // can never change what the wheel does.
   const onWheel = (event: WheelEvent): void => {
@@ -92,21 +96,35 @@ export function armScrollLatencyProbe(durationMs: number): { armedAt: number; ar
     const sessionId = sessionIdOfTerminalTarget(event.target);
     if (sessionId) record({ at, sessionId, stage: 'wheel' });
   };
+  // Same shape for a keydown, but stamped with the event's own time, which is
+  // when the browser received the key: a long frame the key waited behind runs
+  // before this listener, so `performance.now()` here would hide it.
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (performance.now() >= armedUntil) return;
+    // Only the keys `isSingleKeystroke` counts as a send (one printable
+    // character, or Backspace), so the k-th key pairs with the k-th send.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key.length !== 1 && event.key !== 'Backspace') return;
+    const sessionId = sessionIdOfTerminalTarget(event.target);
+    if (sessionId) record({ at: event.timeStamp, sessionId, stage: 'key' });
+  };
   document.addEventListener('wheel', onWheel, { capture: true, passive: true });
+  document.addEventListener('keydown', onKeyDown, { capture: true, passive: true });
   const timer = setTimeout(() => detach(), boundedMs);
   const detach = (): void => {
     clearTimeout(timer);
     document.removeEventListener('wheel', onWheel, { capture: true });
-    if (detachWheelListener === detach) detachWheelListener = null;
+    document.removeEventListener('keydown', onKeyDown, { capture: true });
+    if (detachInputListeners === detach) detachInputListeners = null;
   };
-  detachWheelListener = detach;
+  detachInputListeners = detach;
   return { armedAt, armedUntil };
 }
 
 /** Record one stage for a session while a window is open. */
 export function noteScrollLatencyStage(
   sessionId: string,
-  stage: Exclude<RendererRoundTripStage, 'wheel' | 'parsed' | 'painted'>,
+  stage: Exclude<RendererRoundTripStage, 'wheel' | 'key' | 'parsed' | 'painted'>,
   detail?: { chars?: number; queuedMs?: number; input?: RoundTripInput },
 ): void {
   if (!__KANGENTIC_DEV__) return;

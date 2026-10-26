@@ -244,6 +244,46 @@ describe('buildScrollLatencyReport', () => {
     expect(session.host?.firstOutputToFlush.p50Ms).toBe(0.1);
   });
 
+  it('times a key from its own event time, so a long frame it waited behind counts', () => {
+    // Two keys pressed at 100 and 150 wait behind a frame that ends at 300.
+    // Both handlers then run back to back, so the sends sit 1 ms apart.
+    const renderer: RendererRoundTripEvent[] = [
+      { at: 100, sessionId: SESSION, stage: 'key' },
+      { at: 150, sessionId: SESSION, stage: 'key' },
+      { at: 300, sessionId: SESSION, stage: 'send', queuedMs: 0, input: 'key' },
+      { at: 301, sessionId: SESSION, stage: 'send', queuedMs: 0, input: 'key' },
+      { at: 303, sessionId: SESSION, stage: 'arrive', chars: 20 },
+      { at: 303.2, sessionId: SESSION, stage: 'parsed', chars: 20 },
+      { at: 304, sessionId: SESSION, stage: 'arrive', chars: 20 },
+      { at: 304.2, sessionId: SESSION, stage: 'parsed', chars: 20 },
+      { at: 310, sessionId: SESSION, stage: 'painted' },
+    ];
+    const session = buildScrollLatencyReport(rendererReading(renderer), null, SESSION, 'key').sessions[0];
+    // From the send, the wait is invisible: both read about 10 ms.
+    expect(session.renderer.reportToPainted.maxMs).toBe(10);
+    // From the key, first in first out: the first key waited 200 ms, the second 151.
+    expect(session.renderer.keyToSend.count).toBe(2);
+    expect(session.renderer.keyToSend.maxMs).toBe(200);
+    expect(session.renderer.keyToSend.meanMs).toBe(175.5);
+    expect(session.renderer.keyToPainted.maxMs).toBe(210);
+    // Both keys painted 50 ms or more after they were pressed.
+    expect(session.renderer.slowKeys).toBe(2);
+    expect(session.summary).toContain('Key to paint');
+  });
+
+  it('pairs no key with a send it did not type, and leaves wheel reports unpaired', () => {
+    // A key 3 s before the send typed nothing that send carried.
+    const renderer: RendererRoundTripEvent[] = [
+      { at: 100, sessionId: SESSION, stage: 'key' },
+      { at: 3200, sessionId: SESSION, stage: 'send', queuedMs: 0, input: 'key' },
+      { at: 3202, sessionId: SESSION, stage: 'arrive', chars: 20 },
+    ];
+    const session = buildScrollLatencyReport(rendererReading(renderer), null, SESSION, 'key').sessions[0];
+    expect(session.renderer.keyToSend.count).toBe(0);
+    expect(session.renderer.slowKeys).toBe(0);
+    expect(session.summary).not.toContain('Key to paint');
+  });
+
   it('totals each session\'s output, flushes and backpressure pauses', () => {
     const host: HostRoundTripEvent[] = [
       { at: 1, sessionId: SESSION, stage: 'flush', chars: 100 },

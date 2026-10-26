@@ -20,6 +20,10 @@ sources:
   - resource: src/renderer/utils/repaint-nudge.ts
   - resource: src/renderer/utils/write-batcher.ts
   - resource: src/renderer/utils/scroll-latency-probe.ts
+  - resource: src/renderer/utils/terminal-typing.ts
+  - resource: src/renderer/utils/terminal-init-queue.ts
+  - resource: src/renderer/utils/dnd-sensor-options.ts
+  - resource: src/renderer/stores/board-store/structural-sharing.ts
   - resource: src/main/diagnostics/pty-round-trip-probe.ts
   - resource: src/renderer/utils/terminal-mount-registry.ts
   - resource: src/main/ipc/handlers/session-grid-persistence.ts
@@ -138,6 +142,45 @@ back to 0.8 ms and input-to-paint to 4.7 ms, but React's scheduler posts its wor
 six reorder drags then painted their drop 15 to 62 ms after release with seven long frames, against
 29 to 40 ms and none with the feature on. The feature stays on. VS Code's terminal also receives
 its output over a MessagePort.
+
+**The renderer's own work between keys.** A key's handler and its echo's paint both wait for the
+renderer's main thread, so a React commit or a terminal build that lands between two keys holds
+the second key. The latency tool times each key from its own `keydown` event time
+(`keyToSend`, `keyToPainted`, `slowKeys`), which counts that wait; a timer that starts at the
+handler cannot see it. Two costs landed between keys while agents worked:
+
+- **Every board reload re-rendered the whole app.** An agent's task update reloads the board, and
+  the reload handed `swimlanes`, `archivedTasks`, `shortcuts`, `automations` and the board
+  profiles new arrays even when nothing in them changed. `AppLayout` read `swimlanes` through the
+  onboarding hooks, each task window's detail host carried it in its context value, and every
+  `useSensor` call passed an inline options literal, which dnd-kit memoizes by identity, so each
+  board render rebuilt the context every card and column reads. Now an unchanged list keeps its
+  identity (`keepIfUnchanged` and `keepIfSameJson` in `structural-sharing.ts`), the onboarding
+  hooks select primitives, sensor options are module constants (`dnd-sensor-options.ts`), and the
+  sortable `items` arrays are keyed on their ids. Measured in dev with a React commit recorder, one
+  agent update went from 493 to 497 components in a 21 to 26 ms render, plus 93 more in a second
+  commit for the open task window, to 249 components in 14 to 17 ms in one commit. What still
+  re-renders is the changed card and its lane, plus the toolbar, the terminal panel and the status
+  bar, which read the whole task list.
+- **A spawned task's terminal was built between keys.** A build is 13 to 120 ms in dev and 21 to
+  42 ms in production. The init queue now holds it while a key was pressed in any terminal in the
+  last 500 ms (`terminal-typing.ts`, `terminal-init-queue.ts`). The stamp listens in the capture
+  phase because xterm stops propagation of every key it handles, in the capture pass on its own
+  textarea.
+
+Agents updating idle tasks every 2 s while the rig types, three runs per build, dev, the fixes
+toggled as one patch in the same preview:
+
+| Typing | `keyToPainted` p99 / max, before | after | Longest wait before the key's handler, before / after |
+|---|---|---|---|
+| fixed 100 ms cadence, 320 keys | 18.5-39.4 / 39.5-41.6 ms | 14.2-18.3 / 16.4-19.5 ms | 22.0-28.7 / 4.1-10.9 ms |
+| person-like bursts and pauses, 133 keys | 31.5-36.8 / 33.8-49.4 ms | 14.1-17.9 / 14.1-19.5 ms | 11.9-22.0 / 1.7-2.6 ms |
+
+Spawns did not separate per key in that preview, where a build cost only 13 to 17 ms: an agent
+creating two tasks gave a worst key of 14 to 22 ms either way. In a preview that had run for a
+while, a build cost 109 ms, and a key typed during it waited 170 ms before the hold. Across six
+drag-spawn runs per build, long frames outside the drag itself went from 11 (create 51 to 55 ms,
+spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
 
 ### Buffering and the scrollback ring
 

@@ -48,7 +48,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../src/renderer/stores/session-store', () => ({ useSessionStore: mocks.useSessionStore }));
 
 import { runDeferredTerminalInit } from '../../src/renderer/hooks/useDeferredTerminalInit';
-import { resetTerminalInitQueue, pendingTerminalInitCount } from '../../src/renderer/utils/terminal-init-queue';
+import {
+  resetTerminalInitQueue,
+  pendingTerminalInitCount,
+  ECHO_SETTLE_MS,
+  TYPING_HOLD_CAP_MS,
+  TYPING_HOLD_HARD_CAP_MS,
+  TYPING_QUIET_MS,
+} from '../../src/renderer/utils/terminal-init-queue';
+import { noteTerminalKeydown, resetTerminalTyping } from '../../src/renderer/utils/terminal-typing';
 import {
   beginBoardDrag,
   endBoardDrag,
@@ -106,6 +114,8 @@ beforeEach(() => {
   // The drag gate is module state too: a test that begins a drag and fails before ending
   // it must not hold every later test's inits.
   resetCoalescerForHmr();
+  // And the typing hold: a key noted by one test must not hold the next one's inits.
+  resetTerminalTyping();
   vi.stubGlobal('requestAnimationFrame', (callback: FrameCallback): number => {
     const handle = nextFrameHandle;
     nextFrameHandle += 1;
@@ -492,6 +502,185 @@ describe('terminal inits are held for a board drag', () => {
     flushAnimationFrame();
     flushAnimationFrame();
     expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The typing hold. A construction that lands between two keys holds the second key's echo
+ * for the whole frame, so the pump waits for a pause in the typing, capped so a user who
+ * never pauses still gets the terminal. Timers and the clock are faked together: the hold
+ * reads `performance.now()` and re-checks on a `setTimeout`.
+ */
+describe('terminal inits are held while the user types', () => {
+  function mountHost(initTerminal: () => void): () => void {
+    return runDeferredTerminalInit({
+      element: { offsetWidth: 800, offsetHeight: 300 },
+      initializedRef: { current: false },
+      initTerminal,
+    });
+  }
+
+  function typeKey(key = 'a'): void {
+    noteTerminalKeydown({ key });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+  });
+
+  afterEach(() => {
+    resetTerminalInitQueue();
+    resetTerminalTyping();
+    vi.useRealTimers();
+  });
+
+  it('does not construct between keys, and constructs at the first pause', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    expect(pendingTerminalInitCount()).toBe(1);
+
+    vi.advanceTimersByTime(TYPING_QUIET_MS - 1);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+    expect(pendingTerminalInitCount()).toBe(0);
+  });
+
+  it('a key pressed during the hold moves the pause later', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    vi.advanceTimersByTime(300);
+    typeKey();
+    // The retry armed for the first key fires here, finds the second key too recent, and
+    // re-arms for the rest of the second key's quiet window.
+    vi.advanceTimersByTime(TYPING_QUIET_MS - 300);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(300);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('typing that never pauses still gets the terminal at the cap', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    // A key every 200 ms, well inside the quiet window, for longer than the cap.
+    for (let elapsed = 200; elapsed < TYPING_HOLD_CAP_MS; elapsed += 200) {
+      vi.advanceTimersByTime(200);
+      typeKey();
+      flushAnimationFrame();
+      expect(initTerminal).not.toHaveBeenCalled();
+    }
+    vi.advanceTimersByTime(200);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('past the cap, the build waits for the last key\'s echo instead of landing on it', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    // A key every 100 ms up to and including the cap: the pump that finds the cap passed
+    // runs just after a key.
+    for (let elapsed = 100; elapsed <= TYPING_HOLD_CAP_MS; elapsed += 100) {
+      vi.advanceTimersByTime(100);
+      typeKey();
+      flushAnimationFrame();
+      expect(initTerminal).not.toHaveBeenCalled();
+    }
+    vi.advanceTimersByTime(ECHO_SETTLE_MS - 1);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('a held key, which autorepeats inside the echo gap, still gets the terminal at the hard cap', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    const autorepeatMs = 30;
+    for (let elapsed = autorepeatMs; elapsed < TYPING_HOLD_HARD_CAP_MS; elapsed += autorepeatMs) {
+      vi.advanceTimersByTime(autorepeatMs);
+      typeKey();
+      flushAnimationFrame();
+      expect(initTerminal).not.toHaveBeenCalled();
+    }
+    for (let extra = 0; extra < 4; extra += 1) {
+      vi.advanceTimersByTime(autorepeatMs);
+      typeKey();
+      flushAnimationFrame();
+    }
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('a bare modifier is not typing', () => {
+    const initTerminal = vi.fn();
+    typeKey('Shift');
+    typeKey('Control');
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('a shortcut ends the typing, so a terminal it opens is not held, while AltGr text still holds', () => {
+    const shortcutOpens = vi.fn();
+    typeKey();
+    noteTerminalKeydown({ key: 'P', ctrlKey: true });
+    mountHost(shortcutOpens);
+    flushAnimationFrame();
+    expect(shortcutOpens).toHaveBeenCalledTimes(1);
+
+    const heldBehindAltGr = vi.fn();
+    noteTerminalKeydown({ key: '@', ctrlKey: true, altKey: true, getModifierState: (modifier) => modifier === 'AltGraph' });
+    mountHost(heldBehindAltGr);
+    flushAnimationFrame();
+    expect(heldBehindAltGr).not.toHaveBeenCalled();
+  });
+
+  it('a pointer press ends the typing, so a terminal the click asks for is not held', () => {
+    const fakeWindow = new EventTarget();
+    vi.stubGlobal('window', fakeWindow);
+    const initTerminal = vi.fn();
+    typeKey();
+    fakeWindow.dispatchEvent(new Event('pointerdown'));
+    mountHost(initTerminal);
+    flushAnimationFrame();
+    expect(initTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('useTerminal stamps keys in the capture phase, where xterm cannot stop them first', () => {
+    // xterm binds keydown on its textarea in the capture pass and stops propagation for
+    // every key it consumes, so a bubble listener on the same textarea never runs: in the
+    // preview the stamp stayed empty through a whole typing run. No unit tier has a DOM to
+    // show that, so the registration is pinned as text.
+    const source = readFileSync(join(__dirname, '..', '..', 'src', 'renderer', 'hooks', 'useTerminal.ts'), 'utf-8');
+    expect(source).toMatch(/textarea\?\.addEventListener\('keydown', noteTerminalKeydown, \{ capture: true/);
+  });
+
+  it('a held init that is cancelled leaves nothing to build when the pause comes', () => {
+    const initTerminal = vi.fn();
+    typeKey();
+    const cancel = mountHost(initTerminal);
+    flushAnimationFrame();
+    cancel();
+    vi.advanceTimersByTime(TYPING_QUIET_MS);
+    flushAnimationFrame();
+    expect(initTerminal).not.toHaveBeenCalled();
+    expect(pendingTerminalInitCount()).toBe(0);
   });
 });
 

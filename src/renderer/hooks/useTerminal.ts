@@ -13,6 +13,7 @@ import { isSingleKeystroke } from '../../shared/round-trip-input';
 import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { onTerminalRefocus } from '../utils/focused-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
+import { noteTerminalKeydown } from '../utils/terminal-typing';
 import { readViewportLines, registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import {
   readSessionScrollRegion,
@@ -1311,6 +1312,12 @@ export function useTerminal(options: UseTerminalOptions) {
       const focusedSessionId = options.sessionId;
       terminal.textarea?.addEventListener('focus', () => noteTerminalFocus(focusedSessionId));
     }
+    // Each key typed here holds background terminal construction until the typing
+    // pauses (`terminal-init-queue.ts`), so a spawned pane is not built between two
+    // keys. Capture phase, because xterm handles keydown in the capture pass on this
+    // same textarea and stops propagation, so a bubble listener never sees a key
+    // xterm consumed. Like the focus listener, it goes with the textarea on dispose.
+    terminal.textarea?.addEventListener('keydown', noteTerminalKeydown, { capture: true, passive: true });
 
     // Batch outgoing input into one IPC write per microtask. A paste or
     // programmatic terminal.paste() often dispatches onData multiple times

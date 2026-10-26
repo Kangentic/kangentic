@@ -55,13 +55,42 @@ export function applyStructuralSharing(previousTasks: Task[], nextTasks: Task[])
  * Apply structural sharing to a freshly-fetched Swimlane list. `swimlanes.list()`
  * returns fresh JSON objects on every hydration, so without this the whole array
  * and every element churn identity, defeating every `Swimlane` memo even when no
- * column changed. Tasks already get this treatment; swimlanes did not until now.
+ * column changed.
+ *
+ * Unlike tasks, the previous ARRAY comes back too when no column changed. Nothing
+ * reads a new swimlanes array as "a reload happened", and a new one on every
+ * reload re-rendered everything that subscribes to it: every open task window
+ * (its detail host puts `swimlanes` in a context value) and, through the
+ * onboarding hook, the whole app, on every task update an agent made.
  */
 export function applySwimlaneStructuralSharing(
   previousSwimlanes: Swimlane[],
   nextSwimlanes: Swimlane[],
 ): Swimlane[] {
-  return shareByContents(previousSwimlanes, nextSwimlanes, swimlaneContentsMatch);
+  return keepIfUnchanged(previousSwimlanes, shareByContents(previousSwimlanes, nextSwimlanes, swimlaneContentsMatch));
+}
+
+/**
+ * The previous array when `next` holds the same elements in the same order (by
+ * reference, so call it on a structurally shared list), else `next`. A subscriber
+ * re-renders on a new array identity whatever it holds.
+ */
+export function keepIfUnchanged<T>(previous: T[], next: T[]): T[] {
+  if (previous.length !== next.length) return next;
+  for (let index = 0; index < next.length; index += 1) {
+    if (previous[index] !== next[index]) return next;
+  }
+  return previous;
+}
+
+/**
+ * The previous value when a reload returned the same data, else the new one. For
+ * the small lists a load replaces whole (shortcuts, automations, board profiles),
+ * each reloaded with every board load: comparing their JSON costs less than the
+ * re-render a new identity costs every subscriber.
+ */
+export function keepIfSameJson<T>(previous: T, next: T): T {
+  return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
 }
 
 /**

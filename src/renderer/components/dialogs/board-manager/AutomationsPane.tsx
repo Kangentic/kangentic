@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { Columns3Cog, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
-import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS, canTriggerRun } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
@@ -9,6 +9,7 @@ import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { Tooltip } from '../../Tooltip';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
+import { KEYBOARD_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { ToggleSwitch } from '../../settings/shared';
 import { AutomationIcon, AutomationMarks } from './automation-icons';
@@ -28,6 +29,10 @@ import {
  * setting's description, needs a clearer step down from its name.
  */
 const AUTOMATION_ROW_SENTENCE_CLASS = 'mt-[3px] text-xs text-fg-muted';
+
+/** A row drag starts after 4 px. A module constant, never an inline literal: see
+ *  dnd-sensor-options.ts. */
+const AUTOMATION_ROW_POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 4 } };
 /** The same line when it quotes a script, in the mono font. */
 const AUTOMATION_ROW_SENTENCE_CODE_CLASS = `${AUTOMATION_ROW_SENTENCE_CLASS} font-mono`;
 
@@ -143,8 +148,8 @@ export function AutomationsPane(props: AutomationsPaneProps) {
   // lift the row, and an Enter in a field of this dialog would drop it. See
   // intent-keyboard-sensor.ts and keyboard-drag-intent.md.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(IntentKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(PointerSensor, AUTOMATION_ROW_POINTER_SENSOR_OPTIONS),
+    useSensor(IntentKeyboardSensor, KEYBOARD_SENSOR_OPTIONS),
   );
 
   /**

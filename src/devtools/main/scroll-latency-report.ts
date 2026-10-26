@@ -60,6 +60,17 @@ export interface SessionScrollLatency {
     /** The input (a mouse report, or a keystroke) to the animation frame that
      *  paints the answer's frame. */
     reportToPainted: LatencyStats;
+    /** Keystrokes only: the key's own event time (when the browser received it)
+     *  to its send. Near zero unless the renderer was busy when the key came:
+     *  a long frame holds the key before any handler runs, and every leg
+     *  timed from the send misses that wait. */
+    keyToSend: LatencyStats;
+    /** Keystrokes only: the key's event time to the frame that paints its
+     *  answer, the whole wait a typist sees. */
+    keyToPainted: LatencyStats;
+    /** Keystrokes whose `keyToPainted` reached `SLOW_KEY_MS`. A count says how
+     *  often typing hitched, which one max cannot. */
+    slowKeys: number;
     /** IPC messages each answer arrived in. */
     answerArrivals: LatencyStats;
     /** The largest message's share of each answer's characters, median and
@@ -156,6 +167,9 @@ export interface ScrollLatencyReport {
 const WHEEL_MATCH_MS = 100;
 /** Output this long after the previous chunk is no longer part of the same answer. */
 const ANSWER_GAP_MS = 30;
+/** The echo target for typing (p99 at or under 50 ms); a key at or past it
+ *  counts in `slowKeys`. */
+const SLOW_KEY_MS = 50;
 
 function round(value: number): number {
   return Math.round(value * 10) / 10;
@@ -201,6 +215,7 @@ function timesOf<Event extends { at: number }>(events: readonly Event[]): number
 
 interface RendererLegs {
   wheels: number[];
+  keys: number[];
   reports: number[];
   sends: RendererRoundTripEvent[];
   arrivals: RendererRoundTripEvent[];
@@ -217,6 +232,9 @@ interface RendererRoundTrip {
   arrivalToParsed: number | null;
   parsedToPainted: number | null;
   reportToPainted: number | null;
+  /** Keystrokes only: the paired key's event time to the send, and to the paint. */
+  keyToSend: number | null;
+  keyToPainted: number | null;
   /** IPC messages the answer arrived in (see ANSWER_GAP_MS). */
   answerArrivals: number;
   /** The largest message's share of the answer's characters. */
@@ -280,6 +298,7 @@ function rendererLegsFor(events: readonly RendererRoundTripEvent[], sessionId: s
   const arrivals = forSession.filter((event) => event.stage === 'arrive');
   return {
     wheels: at('wheel'),
+    keys: at('key'),
     reports: at('report'),
     sends: forSession.filter((event) => event.stage === 'send' && inputOf(event) === input),
     arrivals,
@@ -287,6 +306,25 @@ function rendererLegsFor(events: readonly RendererRoundTripEvent[], sessionId: s
     parsed: at('parsed'),
     painted: at('painted'),
   };
+}
+
+/** A key older than this before its send is not that send's key: it typed nothing. */
+const KEY_MATCH_MS = 2000;
+
+/**
+ * Each send's key event time, or null. First in, first out: keys a long frame
+ * held back all reach their handlers after it, so the k-th waiting key is the
+ * k-th send, and pairing by nearness would hand the last key to every send.
+ */
+function keyTimesOfSends(legs: RendererLegs): Array<number | null> {
+  let keyIndex = 0;
+  return legs.sends.map((send) => {
+    while (keyIndex < legs.keys.length && legs.keys[keyIndex] < send.at - KEY_MATCH_MS) keyIndex += 1;
+    if (keyIndex >= legs.keys.length || legs.keys[keyIndex] > send.at) return null;
+    const keyAt = legs.keys[keyIndex];
+    keyIndex += 1;
+    return keyAt;
+  });
 }
 
 /**
@@ -300,6 +338,7 @@ function rendererLegsFor(events: readonly RendererRoundTripEvent[], sessionId: s
  * paint that shows nothing new.
  */
 function rendererRoundTrips(legs: RendererLegs): Array<RendererRoundTrip | null> {
+  const keyTimes = keyTimesOfSends(legs);
   return legs.sends.map((send, index) => {
     const arrivalIndex = firstIndexFrom(legs.arrivalTimes, send.at, true);
     if (arrivalIndex === -1) return null;
@@ -322,6 +361,7 @@ function rendererRoundTrips(legs: RendererLegs): Array<RendererRoundTrip | null>
     const paintedIndex = parsed === null ? -1 : firstIndexFrom(legs.painted, parsed, false);
     const painted = paintedIndex === -1 ? null : legs.painted[paintedIndex];
     const reportedAt = send.at - (send.queuedMs ?? 0);
+    const keyAt = keyTimes[index];
     return {
       sendAt: send.at,
       firstArrivalAt: firstArrival.at,
@@ -330,6 +370,8 @@ function rendererRoundTrips(legs: RendererLegs): Array<RendererRoundTrip | null>
       arrivalToParsed: parsed === null ? null : parsed - frame.at,
       parsedToPainted: parsed === null || painted === null ? null : painted - parsed,
       reportToPainted: painted === null ? null : painted - reportedAt,
+      keyToSend: keyAt === null ? null : send.at - keyAt,
+      keyToPainted: keyAt === null || painted === null ? null : painted - keyAt,
       answerArrivals: answer.length,
       frameShare: answerChars > 0 ? (frame.chars ?? 0) / answerChars : 1,
       tornPaints: tornPaintsOf(legs.painted, answer, answerChars),
@@ -471,6 +513,7 @@ function describe(
   sessionId: string,
   breakdown: SessionScrollLatency['breakdownMs'],
   kangenticShare: LatencyStats | null,
+  keyToPainted: LatencyStats,
 ): string {
   const total = breakdown.reportToPainted;
   if (total === null) return `${sessionId.slice(0, 8)}: no input was answered and painted in the window.`;
@@ -486,7 +529,10 @@ function describe(
   const kangentic = kangenticShare === null || kangenticShare.p50Ms === null
     ? 'Kangentic unmeasured (no host pairing)'
     : `Kangentic ${kangenticShare.p50Ms} ms (p95 ${kangenticShare.p95Ms}, p99 ${kangenticShare.p99Ms})`;
-  return `${sessionId.slice(0, 8)}: median input-to-paint ${total} ms; ${agent}; ${kangentic}, taken per input as input-to-paint minus that input's agent answer. Leg medians: ${parts}.`;
+  const key = keyToPainted.count > 0
+    ? ` Key to paint, from the key's own event time: p50 ${keyToPainted.p50Ms}, p99 ${keyToPainted.p99Ms}, max ${keyToPainted.maxMs} ms.`
+    : '';
+  return `${sessionId.slice(0, 8)}: median input-to-paint ${total} ms; ${agent}; ${kangentic}, taken per input as input-to-paint minus that input's agent answer. Leg medians: ${parts}.${key}`;
 }
 
 /**
@@ -580,6 +626,9 @@ export function buildScrollLatencyReport(
       arrivalToParsed: latencyStats(present(answered.map((trip) => trip.arrivalToParsed))),
       parsedToPainted: latencyStats(present(answered.map((trip) => trip.parsedToPainted))),
       reportToPainted: latencyStats(present(answered.map((trip) => trip.reportToPainted))),
+      keyToSend: latencyStats(present(answered.map((trip) => trip.keyToSend))),
+      keyToPainted: latencyStats(present(answered.map((trip) => trip.keyToPainted))),
+      slowKeys: present(answered.map((trip) => trip.keyToPainted)).filter((wait) => wait >= SLOW_KEY_MS).length,
       answerArrivals: latencyStats(answered.map((trip) => trip.answerArrivals)),
       frameShare: shareSummary(answered.map((trip) => trip.frameShare)),
       tornPaints: latencyStats(answered.map((trip) => trip.tornPaints)),
@@ -618,7 +667,7 @@ export function buildScrollLatencyReport(
       kangenticShare,
       pairing,
       breakdownMs,
-      summary: describe(target, breakdownMs, kangenticShare),
+      summary: describe(target, breakdownMs, kangenticShare, rendererStats.keyToPainted),
     };
   });
 

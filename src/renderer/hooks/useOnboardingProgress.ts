@@ -108,6 +108,42 @@ export function deriveOnboardingProgress(
   currentDefaults: OnboardingDefaults | null,
   completedSteps: ReadonlySet<OnboardingStepKey> = new Set(),
 ): OnboardingProgress {
+  return deriveFromBoardSignals(
+    {
+      hasSwimlanes: swimlanes.length > 0,
+      swimlaneSignature: buildSwimlaneSignature(swimlanes),
+      hasTask: tasks.length > 0,
+      hasTaskInAutoSpawnLane: hasTaskInAutoSpawnLane(tasks, swimlanes),
+    },
+    baseline,
+    currentDefaults,
+    completedSteps,
+  );
+}
+
+/** Whether any task sits in a lane that starts an agent: the board half of step 4. */
+export function hasTaskInAutoSpawnLane(tasks: Task[], swimlanes: Swimlane[]): boolean {
+  const autoSpawnLaneIds = new Set(
+    swimlanes.filter((lane) => lane.auto_spawn).map((lane) => lane.id),
+  );
+  return tasks.some((task) => autoSpawnLaneIds.has(task.swimlane_id));
+}
+
+/** Steps 2 to 4 need only these facts about the board, all primitives, so a store
+ *  selector for each changes only when its step could. */
+interface BoardSignals {
+  hasSwimlanes: boolean;
+  swimlaneSignature: string;
+  hasTask: boolean;
+  hasTaskInAutoSpawnLane: boolean;
+}
+
+function deriveFromBoardSignals(
+  boardSignals: BoardSignals,
+  baseline: OnboardingBaseline | undefined,
+  currentDefaults: OnboardingDefaults | null,
+  completedSteps: ReadonlySet<OnboardingStepKey>,
+): OnboardingProgress {
   const defaultsChosen = completedSteps.has('defaultsChosen') || (
     baseline !== undefined && currentDefaults !== null && (
       currentDefaults.defaultAgent !== baseline.defaultAgent
@@ -119,17 +155,14 @@ export function deriveOnboardingProgress(
 
   const boardShaped = completedSteps.has('boardShaped') || (
     baseline !== undefined
-    && swimlanes.length > 0
-    && buildSwimlaneSignature(swimlanes) !== baseline.swimlaneSignature
+    && boardSignals.hasSwimlanes
+    && boardSignals.swimlaneSignature !== baseline.swimlaneSignature
   );
 
-  const taskCreated = completedSteps.has('taskCreated') || tasks.length > 0;
+  const taskCreated = completedSteps.has('taskCreated') || boardSignals.hasTask;
 
-  const autoSpawnLaneIds = new Set(
-    swimlanes.filter((lane) => lane.auto_spawn).map((lane) => lane.id),
-  );
   const draggedToAutoSpawnLane = completedSteps.has('draggedToAutoSpawnLane')
-    || tasks.some((task) => autoSpawnLaneIds.has(task.swimlane_id));
+    || boardSignals.hasTaskInAutoSpawnLane;
 
   // No derived counterpart: an open window is a live signal, so the record IS the signal.
   const taskDetailOpened = completedSteps.has('taskDetailOpened');
@@ -151,8 +184,18 @@ export function deriveOnboardingProgress(
 /** Board state is already scoped to the current project, so no project id is needed for
  *  steps 3 to 5. Steps 1 and 2 read the current project's row plus global config. */
 export function useOnboardingProgress(): OnboardingProgress {
-  const tasks = useBoardStore((state) => state.tasks);
-  const swimlanes = useBoardStore((state) => state.swimlanes);
+  // Primitives, never the `tasks` or `swimlanes` arrays. AppLayout calls this hook, and
+  // every board reload hands both arrays a new identity (structural sharing keeps the
+  // elements, not the outer array), so reading either re-rendered the whole app on every
+  // task move, create, spawn and agent update: measured in dev, one agent update re-rendered
+  // 493 to 497 components that a keystroke's echo waited behind. The signature is a few
+  // lanes sorted and joined, cheap enough to rebuild on each store change.
+  const hasSwimlanes = useBoardStore((state) => state.swimlanes.length > 0);
+  const swimlaneSignature = useBoardStore((state) => buildSwimlaneSignature(state.swimlanes));
+  const hasTask = useBoardStore((state) => state.tasks.length > 0);
+  const hasTaskInAutoSpawnLaneNow = useBoardStore(
+    (state) => hasTaskInAutoSpawnLane(state.tasks, state.swimlanes),
+  );
   const currentProject = useProjectStore((state) => state.currentProject);
   const permissionMode = useConfigStore((state) => state.config.agent.permissionMode);
   const baselines = useConfigStore((state) => state.config.onboardingBaseline);
@@ -165,11 +208,9 @@ export function useOnboardingProgress(): OnboardingProgress {
     [stepsCompletedByProject, currentProject],
   );
 
-  // Memoized, and returning a stable object identity: `WalkthroughLayer` is mounted for the
-  // whole session and subscribes to `tasks` and `swimlanes`, so without this the derivation
-  // (which sorts and string-joins every lane via buildSwimlaneSignature) re-ran on every board
-  // tick. A fresh object each render also kept AppLayout's return-to-checklist effect, which
-  // lists this value as a dependency, from ever settling.
+  // Memoized, and returning a stable object identity: a fresh object each render kept
+  // AppLayout's return-to-checklist effect, which lists this value as a dependency, from
+  // ever settling.
   return useMemo(() => {
     const currentDefaults: OnboardingDefaults | null = currentProject
       ? {
@@ -180,12 +221,14 @@ export function useOnboardingProgress(): OnboardingProgress {
         }
       : null;
 
-    return deriveOnboardingProgress(
-      tasks,
-      swimlanes,
+    return deriveFromBoardSignals(
+      { hasSwimlanes, swimlaneSignature, hasTask, hasTaskInAutoSpawnLane: hasTaskInAutoSpawnLaneNow },
       currentProject ? baselines?.[currentProject.id] : undefined,
       currentDefaults,
       completedSteps,
     );
-  }, [tasks, swimlanes, currentProject, permissionMode, baselines, completedSteps]);
+  }, [
+    hasSwimlanes, swimlaneSignature, hasTask, hasTaskInAutoSpawnLaneNow,
+    currentProject, permissionMode, baselines, completedSteps,
+  ]);
 }

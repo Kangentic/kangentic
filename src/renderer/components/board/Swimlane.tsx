@@ -29,7 +29,11 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
 
   const widthClass = useColumnWidthClass();
 
-  const taskIds = useMemo(() => tasks.map((t) => t.id), [tasks]);
+  // Keyed on the ids, not on `tasks`: an edit to one card hands this lane a new
+  // array with the same ids, and a new `items` array changes the SortableContext
+  // value, which re-renders every card in the lane past TaskCard's React.memo.
+  const taskIdsKey = tasks.map((task) => task.id).join(',');
+  const taskIds = useMemo(() => (taskIdsKey === '' ? [] : taskIdsKey.split(',')), [taskIdsKey]);
 
   const role = swimlane.role;
   const isGhost = swimlane.is_ghost;

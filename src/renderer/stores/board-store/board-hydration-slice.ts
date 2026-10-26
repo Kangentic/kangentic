@@ -1,7 +1,7 @@
 import { type StateCreator } from 'zustand';
 import type { ShortcutConfig } from '../../../shared/types';
 import type { BoardStore } from './types';
-import { applyStructuralSharing, applySwimlaneStructuralSharing } from './structural-sharing';
+import { applyStructuralSharing, applySwimlaneStructuralSharing, keepIfSameJson, keepIfUnchanged } from './structural-sharing';
 import { applyTaskListPayload } from './lane-pins';
 import { ARCHIVED_PREVIEW_LIMIT } from './archived-tasks-slice';
 import { ensureIcons } from '../../utils/icon-registry';
@@ -77,9 +77,11 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
         swimlanes: applySwimlaneStructuralSharing(state.swimlanes, nextSwimlanes),
         // While a viewer holds the full archive, keep it (reconciled out-of-band
         // below); otherwise downgrade to the preview.
+        // The same array when the preview did not change, so the Done column does
+        // not re-render on every reload an agent's task update causes.
         archivedTasks: keepFull
           ? state.archivedTasks
-          : applyStructuralSharing(state.archivedTasks, archivedPreview.tasks),
+          : keepIfUnchanged(state.archivedTasks, applyStructuralSharing(state.archivedTasks, archivedPreview.tasks)),
         archivedFullyLoaded: keepFull,
         archivedTotalCount: archivedPreview.totalCount,
         loading: false,
@@ -106,7 +108,9 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
       const iconLoad = ensureIcons(shortcuts.map((shortcut) => shortcut.icon));
       if (iconLoad) await iconLoad;
       if (currentProjectId() !== projectId) return;
-      set({ shortcuts });
+      // Reloaded with every board load: an unchanged list keeps its identity, or
+      // every open task window (whose detail host carries it) re-renders each time.
+      set((state) => ({ shortcuts: keepIfSameJson(state.shortcuts, shortcuts) }));
     } catch {
       // Non-fatal: shortcuts are optional
     }

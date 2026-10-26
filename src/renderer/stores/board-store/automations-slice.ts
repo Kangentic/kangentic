@@ -7,6 +7,7 @@ import type {
 } from '../../../shared/types';
 import { runnableAutomationCounts, toDraft } from '../../components/dialogs/board-manager/automation-drafts';
 import { useProjectStore } from '../project-store';
+import { keepIfSameJson } from './structural-sharing';
 import type { BoardStore } from './types';
 
 /**
@@ -38,7 +39,9 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
   loadAutomations: async () => {
     try {
       const automations = await window.electronAPI.automations.list();
-      set({ automations, automationsLoaded: true });
+      // Reloaded with every board load: an unchanged list keeps its identity so the
+      // column headers' automation glyphs do not re-render each time.
+      set((state) => ({ automations: keepIfSameJson(state.automations, automations), automationsLoaded: true }));
     } catch (error) {
       // Keep the last known list rather than blanking the board's counts on a
       // transient failure, the same call the board profiles loader makes.
