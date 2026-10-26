@@ -101,8 +101,13 @@ describe('runTerminalLayoutChange', () => {
     // A change can reach its terminals through a render React runs in a task of
     // its own, so a still scope right after the click is not yet the result.
     const scope = fakeScope();
+    // The clock starts before the click opens the landing. Started after it,
+    // the reading drops whatever the click took, and a loaded runner read 493.6
+    // ms against the 495 ms floor.
+    const clickedAt = performance.now();
     runTerminalLayoutChange(asElement(scope), () => {});
-    const held = await landingDuration(scope);
+    await landingDuration(scope);
+    const held = performance.now() - clickedAt;
     expect(held).toBeGreaterThanOrEqual(LAYOUT_LANDING_IDLE_MS - 5);
     expect(held).toBeLessThan(LAYOUT_LANDING_CAP_MS);
   });
