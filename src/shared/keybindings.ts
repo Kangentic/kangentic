@@ -343,6 +343,20 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mouse:Middle',
     rebindable: true,
   },
+  // Shares Mod+S with boardManager.save, which is not rebindable and so is never
+  // a conflict target. The task window's shortcutsSuppressed gate hands the key
+  // to the Board Manager when it opens over the edit form. Not Mod+Enter, which
+  // is terminal.sendNewline, and a rebindable default on a terminal-consumed
+  // combo is a terminal-warn.
+  {
+    id: 'taskDetail.save',
+    label: 'Save edits',
+    description: 'Save the task edit form, the same as its Save button.',
+    group: 'Task Detail',
+    scope: 'task-dialog',
+    defaultCombo: 'Mod+S',
+    rebindable: true,
+  },
   {
     id: 'taskDetail.toggleBrowser',
     label: 'Toggle Browser pane',

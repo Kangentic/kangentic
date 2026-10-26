@@ -24,6 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -56,10 +57,14 @@ export function MonitorTaskDetailHost({
   // long as a detail was open. The generation only moves when the DB-resident
   // half of some row actually changed.
   const snapshotGeneration = useMonitorStore((state) => state.snapshotGeneration);
-  // Surfaces over this overlay that take the keyboard: Settings, and the
-  // Command Terminal panel, which binds Mod+Shift+M and Mod+Shift+W itself.
+  // Surfaces over this overlay that take the keyboard: Settings, the Command
+  // Terminal panel, which binds Mod+Shift+M and Mod+Shift+W itself, and the
+  // Board Manager, which a paused task's edit form opens from its profile
+  // pencil and which saves on Mod+S. The pop-out monitor loads no current
+  // project, so its pencil stays disabled and this flag stays false there.
   const settingsOpen = useConfigStore((state) => state.settingsOpen);
   const commandTerminalOpen = useSessionStore((state) => state.commandBarVisible);
+  const boardManagerOpen = useBoardStore((state) => state.boardManagerOpen);
 
   /** Bumped per fetch so a slow response cannot overwrite a newer one: a
    *  snapshot push can re-fire the effect below while an earlier fetch is
@@ -119,7 +124,7 @@ export function MonitorTaskDetailHost({
 
   if (!bundle) return null;
   return (
-    <MonitorTaskDetailHostValue bundle={bundle} refresh={refreshAfterWrite} shortcutsSuppressed={settingsOpen || commandTerminalOpen}>
+    <MonitorTaskDetailHostValue bundle={bundle} refresh={refreshAfterWrite} shortcutsSuppressed={boardManagerOpen || settingsOpen || commandTerminalOpen}>
       {children}
     </MonitorTaskDetailHostValue>
   );

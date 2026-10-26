@@ -535,7 +535,7 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await page.keyboard.press('Escape');
     await expect(settingsPanel).toBeHidden();
     await page.keyboard.press('Escape');
-    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    const confirmHeading = page.locator('[data-testid="task-detail-unsaved-confirm"]');
     await expect(confirmHeading).toBeVisible();
     await page.locator('button:has-text("Discard")').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
@@ -2198,7 +2198,7 @@ test.describe('NewTaskDialog run-mode choice (profiles fixture)', () => {
     await profilePage.locator('[data-testid="task-advanced-toggle"]').click();
 
     await profilePage.keyboard.press('Escape');
-    const confirmHeading = profilePage.locator('h3:has-text("Discard unsaved changes?")');
+    const confirmHeading = profilePage.locator('[data-testid="task-detail-unsaved-confirm"]');
     await expect(confirmHeading).toBeVisible({ timeout: 3000 });
 
     // The window itself must still be mounted behind the confirm - Escape

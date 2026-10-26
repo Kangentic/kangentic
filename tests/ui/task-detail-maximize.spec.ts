@@ -1377,7 +1377,7 @@ test.describe('Task Detail: maximize / restore', () => {
     // Escape on a dirty edit form shows the discard confirm ON TOP, with the
     // edit dialog still mounted/visible behind it (not replaced).
     await page.keyboard.press('Escape');
-    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    const confirmHeading = page.locator('[data-testid="task-detail-unsaved-confirm"]');
     await expect(confirmHeading).toBeVisible();
     await expect(dialog).toBeVisible();
 

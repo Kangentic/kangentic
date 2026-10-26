@@ -195,7 +195,7 @@ These are global-only settings that apply to the entire app.
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way. |
 | Auto-Resume Agents on Restart | Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine. |
 | Stop Leftover Processes | Stop what an agent left running in its folder when its task is done, moved back to To Do, or deleted, or when its Command Terminal ends. Off, nothing is stopped and the toast still lists what kept running. |
-| Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. Closing a window does not kill its session. |
+| Close on Outside Click | Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. An edit form with unsaved changes asks to save first. Closing a window does not kill its session. |
 | Restore Window Position | Remember window size and position between launches |
 
 The Board tab has its own Auto-apply board config changes switch. See [Board Settings](#board-settings).

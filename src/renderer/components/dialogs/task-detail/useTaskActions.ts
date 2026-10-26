@@ -42,6 +42,16 @@ function reportActionFailure(
   });
 }
 
+interface SaveOptions {
+  /**
+   * Close the window after a successful save even when a session would keep it
+   * open. The unsaved-edits prompt's Save sets it. The user asked to close, so
+   * saving must not leave them on the terminal instead. The Save button and
+   * Ctrl+S leave it unset.
+   */
+  closeAfterSave?: boolean;
+}
+
 /**
  * Orchestration hook for the task-detail surface (TaskDetailWindow). Owns:
  *
@@ -351,6 +361,7 @@ export function useTaskActions(input: {
     worktreeChanged: boolean,
     enablingWorktree: boolean,
     trimmedBranch: string,
+    options: SaveOptions,
   ) => {
     // In-flight guard: a double-click or rapid keyboard activation must not fire
     // a second updateTask/switchBranch before the first resolves. The Save button
@@ -448,10 +459,23 @@ export function useTaskActions(input: {
             payload.branch_name = trimmedCustomBranch || null;
           }
         }
-        await host.updateTask(payload);
+        try {
+          await host.updateTask(payload);
+        } catch (error) {
+          // The form stays open with the edits intact. Without the toast the
+          // rejection reached only the global `unhandledrejection` listener,
+          // and a Save from the unsaved-edits prompt left no trace at all.
+          console.error('updateTask failed:', error);
+          useToastStore.getState().addToast({
+            title: "Couldn't save task",
+            message: asSentence(describeIpcError(error, '')),
+            variant: 'warning',
+          });
+          return;
+        }
       }
 
-      if (!input.session) {
+      if (!input.session || options.closeAfterSave) {
         input.onClose();
       } else {
         input.setIsEditing(false);
@@ -461,7 +485,7 @@ export function useTaskActions(input: {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (options: SaveOptions = {}) => {
     const trimmedBranch = input.branchConfig.baseBranch.trim();
     const originalBranch = input.task.base_branch || '';
     const branchChanged = trimmedBranch !== originalBranch;
@@ -473,13 +497,13 @@ export function useTaskActions(input: {
 
     if (enablingWorktree && input.hasSessionContext) {
       pendingSaveRef.current = async () => {
-        await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch);
+        await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch, options);
       };
       setShowEnableWorktreeConfirm(true);
       return;
     }
 
-    await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch);
+    await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch, options);
   };
 
   const executeSendToBacklog = async () => {
