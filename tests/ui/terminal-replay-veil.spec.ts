@@ -229,8 +229,10 @@ test.describe('TerminalTab replay veil', () => {
     // Both IPCs the replay path depends on are held open so the test can drive
     // two distinct settles deterministically: resize gates the FIRST (cold,
     // suppressed-scrollback) settle; the second reload (triggered below by the
-    // ready transition) is gated on both a fresh resize and the first real
-    // getScrollback call.
+    // ready transition) asks for the scrollback only once its fresh resize has
+    // resolved (the sample must follow the resize on main's ordered channel), so
+    // it is gated on the resize first and then on the first real getScrollback
+    // call.
     const delayedIpcScript = `
       window.__mockResizeResolvers = [];
       window.electronAPI.sessions.resize = function () {
@@ -273,23 +275,34 @@ test.describe('TerminalTab replay veil', () => {
 
       // Ready transition: fires TerminalTab's wasReadyRef effect, which calls
       // reloadScrollback() - a genuine second settle, distinct from the mount-time
-      // one. getScrollback is called for the FIRST time here (the mount-time
-      // fetch was suppressed while cold), so its resolver count is an
-      // unambiguous "the second reload has started" signal.
+      // one. Its fresh resize is the first signal that the second reload has
+      // started. getScrollback follows only after that resize resolves, and it
+      // is called for the FIRST time then (the mount-time fetch was suppressed
+      // while cold).
       await markFirstOutput(page, fixture.sessionId);
       await expect
-        .poll(async () => page.evaluate(() => window.__mockScrollbackResolvers.length), { timeout: 5000 })
+        .poll(async () => page.evaluate(() => window.__mockResizeResolvers.length), { timeout: 5000 })
         .toBeGreaterThan(0);
 
-      // (c, mid-flight) The second reload is in flight; the veil must not have
-      // reappeared - replaySettled has no reset path once true.
+      // (c, mid-flight, resize pending) The second reload is in flight; the veil
+      // must not have reappeared - replaySettled has no reset path once true.
       await expect(veil).toHaveCount(0);
 
-      // Resolve the second reload's resize + scrollback.
+      // Resolve the second reload's resize, which releases its scrollback request.
       await page.evaluate(() => {
         const resizeResolvers = (window as unknown as { __mockResizeResolvers: Array<() => void> })
           .__mockResizeResolvers.splice(0);
         resizeResolvers.forEach((resolve) => resolve());
+      });
+      await expect
+        .poll(async () => page.evaluate(() => window.__mockScrollbackResolvers.length), { timeout: 5000 })
+        .toBeGreaterThan(0);
+
+      // (c, mid-flight, scrollback pending) Still absent while the sample is out.
+      await expect(veil).toHaveCount(0);
+
+      // Resolve the second reload's scrollback.
+      await page.evaluate(() => {
         const scrollbackResolvers = (window as unknown as { __mockScrollbackResolvers: Array<(value: string) => void> })
           .__mockScrollbackResolvers.splice(0);
         scrollbackResolvers.forEach((resolve) => resolve(''));
