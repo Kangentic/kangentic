@@ -112,8 +112,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const setExpandedWindow = layerStore((state) => state.setExpandedWindow);
   const canExpand = layerStore((state) => Object.keys(state.windows).length > 1);
   const isExpanded = layerStore((state) => state.expandedWindowId === windowId);
-  // Expand and Restore resize terminals: the panel holds still until they have
-  // repainted, then shows the new layout in one paint.
+  // Expand and Restore resize terminals: the new layout shows at once, and each
+  // terminal holds its frame until it has repainted.
   const changeLayout = useCallback((change: () => void) => {
     runTerminalLayoutChange(terminalLayoutScopeOf(document.querySelector(`[data-testid="window-frame-${windowId}"]`)), change);
   }, [windowId]);
@@ -508,11 +508,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     if (stopping) return;
     setStopping(true);
     await killCommandTerminalInSlot(slot);
-    // The rest re-tile into its space: the panel holds still until they repainted.
+    // The rest re-tile into its space, holding their frames until they repaint.
     changeLayout(() => closeWindow(windowId));
-    // This runs on essentially every Stop, not just the rare path, ahead of the
-    // close (which the frozen panel applies a frame or two later). Usually it is a
-    // harmless setState just ahead of that unmount. It is load-bearing only when
+    // This runs on essentially every Stop, not just the rare path, right after the
+    // close. Usually it is a harmless setState just ahead of that unmount. It is load-bearing only when
     // the close is a no-op (an id the store no longer holds, which closeWindow
     // returns early on), where no unmount ever follows and the button would
     // otherwise be stranded disabled with a spinner and no way back.

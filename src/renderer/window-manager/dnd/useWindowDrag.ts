@@ -163,10 +163,10 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     const enforceMin = (): void =>
       store.getState().enforceMinPaneSize(layer.minSize.width, layer.minSize.height, drag.overlay.width, drag.overlay.height);
 
-    // A drop that docks, snaps or maximizes resizes the window: the layer holds
-    // still (the window where the pointer left it) until its terminal has
-    // repainted at the new size, then shows the result in one paint. So the
-    // transform comes off inside that change, not before it.
+    // A drop that docks, snaps or maximizes resizes the window, so it runs as a
+    // layout change: the terminal holds its frame until the agent has
+    // repainted at the new size. The transform comes off inside that change, so
+    // the refit it causes lands inside it too.
     if (drag.activated && !drag.groupMove && (drag.dropTarget !== null || drag.snapEdge !== null)) {
       const dropTarget = drag.dropTarget;
       const snapEdge = drag.snapEdge;

@@ -71,8 +71,8 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       if (layer.shouldParkOnClose?.(current)) parkWindow(current.id);
       else closeWindow(current.id);
     };
-    // A tiled window's partners take its space: the layer holds still until
-    // their terminals have repainted at their new size.
+    // A tiled window's partners take its space, and their terminals hold their
+    // frames until their agents have repainted at the new size.
     if (current.state === 'tiled') runTerminalLayoutChange(terminalLayoutScopeOf(frameRef.current), parkOrDrop);
     else parkOrDrop();
   }, [layerStore, layer, parkWindow, closeWindow, managedWindow.id]);

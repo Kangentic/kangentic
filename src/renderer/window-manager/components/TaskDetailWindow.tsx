@@ -447,9 +447,9 @@ export function TaskDetailWindow({
     requestCloseFrozen();
   }, [requestCloseFrozen]);
 
-  // The user's own layout changes resize this window's terminal: each runs under
-  // a frozen layer that shows the result once the agent has repainted at the new
-  // size (`terminal-layout-transition.ts`).
+  // The user's own layout changes resize this window's terminal: each lands at
+  // once, and the terminal holds its last frame at the new size until the
+  // agent has repainted (`terminal-layout-transition.ts`).
   const changeLayout = useCallback((change: () => void) => {
     runTerminalLayoutChange(terminalLayoutScopeOf(document.querySelector(`[data-testid="window-frame-${windowId}"]`)), change);
   }, [windowId]);

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Output streaming
-description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, the layout transition, the manager-resize gate, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
+description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, the frame hold, the manager-resize gate, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
 tags: [terminal, output, scrollback, replay, geometry]
 sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
@@ -20,6 +20,8 @@ sources:
   - resource: src/renderer/utils/repaint-nudge.ts
   - resource: src/renderer/utils/terminal-layout-transition.ts
   - resource: src/renderer/utils/terminal-repaint-wait.ts
+  - resource: src/renderer/utils/incoming-write-queue.ts
+  - resource: src/renderer/hooks/useTerminalRefit.ts
   - resource: src/renderer/window-manager/terminal/manager-resize-gate.ts
   - resource: src/renderer/utils/write-batcher.ts
   - resource: src/renderer/utils/scroll-latency-probe.ts
@@ -328,44 +330,62 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   so the text does not sit flush against the pane's edges. Gated by
   `tests/e2e/terminal-fit-invariant.spec.ts` (one distinct grid width per open, and the grid never
   wider than its viewport) and `tests/unit/fit-addon.test.ts`.
-- **A user's layout change shows its terminals once, finished (the layout transition).** A grid
-  change shows the old frame on the new grid until the agent redraws: lines cut or wrapped and the
-  input box mid-pane, then dropped to the bottom (measured on Claude Code 2.1.310 on Windows: ConPTY
-  redraws the old screen within 45 ms, the agent's frame lands 98 to 181 ms after the resize). So a
-  user's gesture that resizes terminals goes through `runTerminalLayoutChange`
-  (`terminal-layout-transition.ts`): a maximize or restore, a keyboard snap, a drop that docks or
-  maximizes, a released edge, seam or footprint drag, closing a tiled window, a task window's panel
-  toggles, the Command Terminal panel's maximize and released resize, Expand and Restore, adding,
-  resuming or stopping a Command Terminal, and the bottom panel's released height drag. It freezes
-  the nearest `data-terminal-layout-scope` (a window layer's overlay, the Command Terminal panel
-  area, the bottom panel) in an element-scoped View Transition, so the scope keeps its last frame
-  on screen while everything outside it draws. Inside the update callback the change commits and
-  every terminal under the scope refits and sends its PTY resize at once (`useTerminalRefit` skips
-  its debounce). Each terminal whose grid changed opens a repaint wait (`terminal-repaint-wait.ts`).
-  It ends 20 ms after the first output chunk that finishes a synchronized update (DEC 2026) at least
-  90 ms after the send: measured with Claude Code in the desktop app, ConPTY's redraws of the old
-  screen (which carry the same markers) all came within 65 ms, the agent's first frame at the new
-  grid at 126 to 155 ms, and the one or two frames after it had identical text. Output with no such
-  frame (no ConPTY on macOS and Linux) keeps the first rule: no sooner than 190 ms after the send,
-  then 40 ms of quiet output. Either way it ends by 500 ms whatever the output does, a refused or
-  held answer releases it, and with no send within 600 ms it lifts anyway. The scope holds until those waits end and two frames pass with no terminal pane or grid
-  under it moving, capped at 700 ms. One still frame was not enough: a change reaches its
-  terminals in hops a frame apart, and the swap showed a maximized panel with its terminals still
-  at the old size. Then the browser shows the new state and the default crossfade is finished at
-  once, so the swap is a cut. A transparent shield over the scope takes the pointer until the cut,
-  because a click goes to the new layout the user cannot see yet (measured: a press on the old rail
-  stopped a terminal through the Running row's Stop that Expand had just laid there). Keys still
-  reach the focused terminal. A second change on a frozen scope joins it, and a watchdog takes the
-  shield and the scope's marker down 1700 ms after the start if the browser never reports the
-  transition finished. Nothing is copied and nothing runs outside a transition. The change runs at
-  once, unfrozen, while a dialog is open in the scope, while the window is hidden (a hidden page
-  draws no frames and runs its timers about once a second, which held a freeze open for up to
-  2.3 s), for a change an agent or main makes, and where the browser has no scoped View
-  Transitions. Gated by
-  `tests/unit/terminal-layout-transition.test.ts`, `tests/unit/terminal-repaint-wait.test.ts`, and
-  the screencast cases in `command-terminal.spec.ts` and `task-detail-maximize.spec.ts`, which
-  classify every compositor frame as before, between or settled and fail on a crossfade, an
-  in-between layout, or a click that reaches the unseen layout.
+- **A user's layout change shows at once, each terminal holding its frame until the agent's is in
+  (the frame hold).** A grid change shows the old frame reflowed onto the new grid (lines cut or
+  wrapped, the input box mid-pane), then ConPTY's redraw of the old screen, then the agent's frame:
+  the double paint this removes (measured on Claude Code 2.1.310 on Windows: ConPTY redraws within
+  45 ms, the agent's frame lands 98 to 181 ms after the resize). So a user's gesture that resizes
+  terminals goes through `runTerminalLayoutChange` (`terminal-layout-transition.ts`): a maximize or
+  restore, a keyboard snap, a drop that docks or maximizes, a released edge, seam or footprint
+  drag, closing a tiled window, a task window's panel toggles, the Command Terminal panel's maximize
+  and released resize, Expand and Restore, adding, resuming or stopping a Command Terminal, each
+  step of a Command Terminal swap drag's preview and its cancel, and the bottom panel's released
+  height drag. The change runs at once and opens a landing on the nearest
+  `data-terminal-layout-scope` (a window layer's overlay, the Command Terminal panel area, the
+  bottom panel): for at least 150 ms, then until two frames pass with no terminal pane or grid
+  under it moving (capped at 700 ms), every host refits at once (`useTerminalRefit` skips its
+  debounce) and a terminal whose grid would change holds its frame instead (`useTerminal`). The
+  minimum is there because a change can reach its terminals through a render React runs in a task
+  of its own: on a loaded runner the Command Terminal panel's re-tile came more than two frames
+  after the click, after a frame-count landing had closed. A held terminal keeps xterm's grid, its
+  drawn screen and the agent's output (in the incoming queue), and marks its host
+  `data-terminal-frame-hold`. Where the frame still fills its new box (the box shrank both ways),
+  it stays on screen pinned to the bottom (`translateY` on `.xterm-screen`), because an agent keeps
+  its input box and newest output on the bottom rows; pinned to the top, a restore showed the
+  banner with the input box cut off. Where it no longer fills the box (the box grew either way), it
+  is not drawn at all (`opacity: 0`): the old text sat narrow and low in a maximized window. The
+  element clips, so a frame larger than its box does not spill over what sits beside it. After
+  one still frame the terminal sends the grid its box fits, once: a refit during the hold re-aims
+  it against the same base, and a send waits a frame so a grid about to move again is not sent. It
+  opens a repaint wait (`terminal-repaint-wait.ts`), which ends 20 ms after the first output chunk
+  that finishes a synchronized update (DEC 2026) at least 90 ms after the send: measured with
+  Claude Code in the desktop app, ConPTY's redraws of the old screen (which carry the same markers)
+  all came within 65 ms, the agent's first frame at the new grid at 126 to 155 ms, and the one or
+  two frames after it had identical text. Output with no such frame (no ConPTY on macOS and Linux)
+  keeps the first rule: no sooner than 190 ms after the send, then 40 ms of quiet output. Either
+  way it ends by 500 ms whatever the output does, and a refused or held answer releases it. The
+  hold then ends in the gap between two frames: right after a paint, xterm resizes to the grid the
+  PTY already has without a second send, the held output is parsed (the queue's `settled`), and
+  the screen is shown on the next frame, after xterm's renderer has drawn it, so the next painted
+  frame is the agent's. The screen is hidden while that runs, so output too large to parse before
+  the next paint shows an empty terminal for a frame, never the old frame reflowed. A frame in a
+  box that grew fades in from the background over 80 ms (an instant cut with Animations off). An
+  element-scoped View Transition on the terminal's host did this first, and the screen came back
+  from it blank for one or two frames at the cut, on the GPU as in software. Nothing holds the
+  pointer, and keys reach the focused terminal throughout. A hold ends without waiting (dropped,
+  the plain fit takes over) for a replay, a held grid, a terminal that leaves view, or a session
+  change; one still open 2 s after its last change, or whose send throws, ends the same way, since
+  a hold keeps its terminal's output back. There is no landing while the window is hidden, for a
+  change an agent or main makes (a restore or project switch included, so the fade never replays
+  on arrival), or for a hidden, parked or covered terminal, which refits as it always has. Gated by
+  `tests/unit/terminal-layout-transition.test.ts`, `tests/unit/terminal-repaint-wait.test.ts`,
+  `tests/unit/incoming-write-queue.test.ts` (the queue's `settled`), and the screencast cases in
+  `command-terminal.spec.ts` and `task-detail-maximize.spec.ts`: a change shows at most one
+  picture per terminal between before and after, never ConPTY's early redraw; a box that grows
+  shows no old text, and its frame fades in with Animations on; a box that shrinks keeps its
+  input box on screen in every frame, with no frame painted while its screen is hidden (the
+  dev trace's `framesHidden`); a swap preview holds and sends one resize per step; plus the
+  one-resize, held-output, cap and recovery cases beside them.
 - **A window drag holds every window terminal's refit, and closes itself (the manager-resize
   gate).** The window manager's resizers (a window edge, a tile seam, a tiled group's outer edge,
   the Command Terminal panel's edges) move frames imperatively per pointer frame, so each opens a

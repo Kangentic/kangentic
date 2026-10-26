@@ -605,8 +605,8 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   useExpandWhileGridDoesNotFit(gridFits, terminalCount);
   const atCap = useCommandTerminalAtCap(projectId);
   const terminalsStarting = useTerminalsStarting(projectId);
-  // A terminal added or stopped re-tiles the others: the panel holds still until
-  // they have repainted at their new size (`terminal-layout-transition.ts`).
+  // A terminal added or stopped re-tiles the others, which hold their frames in
+  // their new tiles until they have repainted (`terminal-layout-transition.ts`).
   const changeLayout = useCallback((change: () => void) => {
     runTerminalLayoutChange(terminalLayoutScopeOf(terminalArea), change);
   }, [terminalArea]);

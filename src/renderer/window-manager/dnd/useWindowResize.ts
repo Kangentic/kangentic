@@ -231,9 +231,9 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
       commitResize(resize);
       return;
     }
-    // The terminal shows its new frame with the window's new size, not a beat
-    // after it: the commit and the gesture's end (which sends the held refit)
-    // run under a frozen layer that shows the result once the agent repainted.
+    // The commit and the gesture's end (which sends the held refit) run as one
+    // layout change, so the terminal holds its frame from the frame it lands
+    // rather than reflowing it onto the new grid a beat later.
     runTerminalLayoutChange(terminalLayoutScopeOf(frame), () => {
       commitResize(resize);
       gesture.end();

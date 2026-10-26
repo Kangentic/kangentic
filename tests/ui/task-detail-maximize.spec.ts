@@ -23,7 +23,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, recordLayoutTransition, expectOneSwap } from './helpers';
+import { waitForViteReady, gotoVite, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery, pictureStages, brightPixelsIn } from './helpers';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -149,7 +149,32 @@ test.afterAll(async () => {
 });
 
 test.describe('Task Detail: the terminal through a maximize', () => {
-  test('maximize shows the terminal once, finished: one frozen picture, then one swap', async () => {
+  /** Open the task's window with its agent on screen, its terminal full of text, the cursor hidden (it blinks) and motion off. */
+  async function openStillTerminal(ownPage: Page): Promise<void> {
+    await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
+    await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
+    // The agent on screen, so its launch overlay lifts.
+    await ownPage.evaluate((sessionId) => {
+      (window as unknown as {
+        __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
+      }).__zustandStores.session.getState().markFirstOutput(sessionId);
+    }, SESSION_ID);
+    await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
+    await ownPage.evaluate((sessionId) => {
+      let screen = '';
+      for (let row = 0; row < 24; row += 1) screen += `frame text line ${row} `.padEnd(100, '.') + '\r\n';
+      (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData(sessionId, `${screen}\x1b[?25l`);
+      document.documentElement.classList.add('no-motion');
+    }, SESSION_ID);
+    await ownPage.waitForTimeout(800);
+  }
+
+  /** The PTY resizes the renderer asked for since `since` (ms since epoch), by origin. */
+  const resizeOrigins = (ownPage: Page, since: number) => ownPage.evaluate((from) => (window as unknown as {
+    __kangenticTerminalTrace: () => Array<{ ts: number; event: string; detail?: { origin?: string } }>;
+  }).__kangenticTerminalTrace().filter((event) => event.ts >= from && event.event === 'resize-request').map((event) => event.detail?.origin), since);
+
+  test('maximize shows at once with the terminal holding its frame, then the new one: one PTY resize', async () => {
     // Its own browser plus a screencast whose frames are decoded in the page:
     // measured at 9 to 14 s locally, too close to the 15 s default for CI.
     test.setTimeout(45000);
@@ -157,32 +182,15 @@ test.describe('Task Detail: the terminal through a maximize', () => {
     const own = await launchWithState(preConfig);
     try {
       const ownPage = own.page;
-      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
-      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
-      // The agent on screen, so its launch overlay lifts.
-      await ownPage.evaluate((sessionId) => {
-        (window as unknown as {
-          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
-        }).__zustandStores.session.getState().markFirstOutput(sessionId);
-      }, SESSION_ID);
-      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
-      // A line of text, the cursor hidden (it blinks) and motion off: only the
-      // maximize can move a pixel in the layer.
-      await ownPage.evaluate((sessionId) => {
-        (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData(sessionId, 'frame text line\r\n\x1b[?25l');
-        document.documentElement.classList.add('no-motion');
-      }, SESSION_ID);
-      await ownPage.waitForTimeout(800);
-
-      const resizeCount = () => ownPage.evaluate((sessionId) => (
-        window as unknown as { electronAPI: { sessions: { __resizeCalls: Array<{ sessionId: string }> } } }
-      ).electronAPI.sessions.__resizeCalls.filter((call) => call.sessionId === sessionId).length, SESSION_ID);
-      const resizesBefore = await resizeCount();
-      const recording = await recordLayoutTransition(ownPage, '[data-testid="window-overlay"]', () =>
+      await openStillTerminal(ownPage);
+      const since = Date.now();
+      const recording = await recordLayoutChange(ownPage, '[data-testid="window-overlay"]', () =>
         ownPage.locator('[data-testid="task-detail-maximize"]').click());
-      expectOneSwap(recording);
-      // The PTY was resized under the freeze, and the window is maximized.
-      expect(await resizeCount()).toBeGreaterThan(resizesBefore);
+      expectHoldThenDraw(recording);
+      // The PTY was resized once, for the grid the maximized window fits, and the
+      // hold's own resize at its end sent nothing more.
+      expect(await resizeOrigins(ownPage, since)).toEqual(['frame-hold']);
+      await expectNoFrameHoldRecovery(ownPage, since);
       await expect(ownPage.locator('[data-testid^="window-frame-"]').filter({
         has: ownPage.locator('[data-testid="task-detail-dialog"]'),
       })).toHaveClass(/rounded-none/);
@@ -191,38 +199,33 @@ test.describe('Task Detail: the terminal through a maximize', () => {
     }
   });
 
-  test('an agent whose finished frame lands 130 ms after the resize is shown at once, drawn: one swap, no floor', async () => {
+  test('an agent whose finished frame lands 130 ms after the resize ends the hold on that frame, drawn whole', async () => {
     // The repaint wait ends 20 ms after the agent's first finished frame (a
-    // synchronized update) instead of waiting out its 190 ms floor. Cutting that
-    // soon is only right if xterm has drawn the frame by the swap, which only the
-    // compositor's own frames can show.
+    // synchronized update) instead of waiting out its 190 ms floor. Drawing it
+    // that soon is only right if xterm has drawn the frame by then, which only
+    // the compositor's own frames can show.
     test.setTimeout(45000);
     const own = await launchWithState(preConfig);
     try {
       const ownPage = own.page;
-      await ownPage.locator('[data-swimlane-name="Code Review"]').locator('text=Maximize Task').first().click();
-      await ownPage.locator('[data-testid="task-detail-dialog"] .xterm-screen').waitFor({ timeout: 10000 });
-      await ownPage.evaluate((sessionId) => {
-        (window as unknown as {
-          __zustandStores: { session: { getState: () => { markFirstOutput: (id: string) => void } } };
-        }).__zustandStores.session.getState().markFirstOutput(sessionId);
-      }, SESSION_ID);
-      await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
-      // The agent: every PTY resize is answered 130 ms later by a whole frame at
-      // the new grid inside a synchronized update, the way it arrives through
-      // ConPTY. The frame's text depends on the grid, so a frame drawn at the old
-      // size reads as a different picture.
+      await openStillTerminal(ownPage);
+      // The agent, the way a resize arrives through ConPTY: first ConPTY's own
+      // redraw of the screen, 30 ms after the send (here a cleared screen with
+      // three lines, the flash this whole change exists to keep off screen), then
+      // the agent's whole frame at the new grid 130 ms after it, inside a
+      // synchronized update. The frame's text depends on the grid, so a frame
+      // drawn at the old size reads as a different picture.
       await ownPage.evaluate((sessionId) => {
         const holder = window as unknown as {
           electronAPI: { sessions: { resize: (id: string, cols: number, rows: number) => Promise<unknown> } };
           __mockFireSessionData: (id: string, data: string) => void;
-          __agentResizeSentAt: number[];
         };
-        holder.__agentResizeSentAt = [];
         const original = holder.electronAPI.sessions.resize;
         holder.electronAPI.sessions.resize = (id, cols, rows) => {
           if (id === sessionId) {
-            holder.__agentResizeSentAt.push(Date.now() / 1000);
+            setTimeout(() => {
+              holder.__mockFireSessionData(id, '\x1b[H\x1b[2Jredraw 1\r\nredraw 2\r\nredraw 3\r\n');
+            }, 30);
             setTimeout(() => {
               let screen = '';
               for (let row = 0; row < rows - 1; row += 1) screen += `${cols}x${rows} row ${row} `.padEnd(cols - 2, '.') + '\r\n';
@@ -231,14 +234,18 @@ test.describe('Task Detail: the terminal through a maximize', () => {
           }
           return original(id, cols, rows);
         };
-        document.documentElement.classList.add('no-motion');
-        holder.__mockFireSessionData(sessionId, 'frame text line\r\n\x1b[?25l');
       }, SESSION_ID);
-      await ownPage.waitForTimeout(800);
 
-      const recording = await recordLayoutTransition(ownPage, '[data-testid="window-overlay"]', () =>
+      const since = Date.now();
+      const recording = await recordLayoutChange(ownPage, '[data-testid="window-overlay"]', () =>
         ownPage.locator('[data-testid="task-detail-maximize"]').click());
-      expectOneSwap(recording);
+      // Three pictures: before, the kept frame in the maximized window, and the
+      // agent's frame whole. Never ConPTY's early redraw, and never the old frame
+      // reflowed onto the new grid before the agent's.
+      expectHoldThenDraw(recording);
+      expect(pictureStages(recording).length).toBe(3);
+      expect(await resizeOrigins(ownPage, since)).toEqual(['frame-hold']);
+      await expectNoFrameHoldRecovery(ownPage, since);
       // The fast path decided it: the wait settled on the agent's frame, not on
       // the floor or the quiet beat. Asserted on the decision rather than the
       // clock: headless software GL takes a third of a second to draw a full
@@ -252,6 +259,273 @@ test.describe('Task Detail: the terminal through a maximize', () => {
         __kangenticTerminalGridRows: (id: string) => Array<{ cols: number; viewportRows: string[] }>;
       }).__kangenticTerminalGridRows(sessionId)[0], SESSION_ID);
       expect(rows?.viewportRows.some((row) => row.startsWith(`${rows.cols}x`))).toBe(true);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  /**
+   * A full-screen agent the way Claude Code draws one: a banner on the top rows,
+   * the input box on the bottom rows, nothing between, and every PTY resize
+   * answered by ConPTY's early redraw at 30 ms and the agent's whole frame at the
+   * new grid at 130 ms. Draws its first frame at the terminal's current grid.
+   */
+  async function fullScreenAgent(ownPage: Page): Promise<void> {
+    await ownPage.evaluate((sessionId) => {
+      const holder = window as unknown as {
+        electronAPI: { sessions: { resize: (id: string, cols: number, rows: number) => Promise<unknown> } };
+        __mockFireSessionData: (id: string, data: string) => void;
+        __kangenticTerminalGridRows: (id: string) => Array<{ cols: number; viewportRows: string[] }>;
+      };
+      const screenFor = (cols: number, rows: number) => '\x1b[?2026h\x1b[H\x1b[2J'
+        + '\x1b[1;1HClaude Code v2.1.310 banner line one'
+        + '\x1b[2;1HHaiku with low effort banner line two'
+        + `\x1b[${rows - 3};1H` + '='.repeat(cols - 1)
+        + `\x1b[${rows - 2};1H> type here, the input box`
+        + `\x1b[${rows - 1};1H` + '='.repeat(cols - 1)
+        + `\x1b[${rows};1H>> accept edits on\x1b[?25l\x1b[?2026l`;
+      const original = holder.electronAPI.sessions.resize;
+      holder.electronAPI.sessions.resize = (id, cols, rows) => {
+        if (id === sessionId) {
+          setTimeout(() => holder.__mockFireSessionData(id, '\x1b[H\x1b[2Jredraw\r\n'), 30);
+          setTimeout(() => holder.__mockFireSessionData(id, screenFor(cols, rows)), 130);
+        }
+        return original(id, cols, rows);
+      };
+      const grid = holder.__kangenticTerminalGridRows(sessionId)[0];
+      holder.__mockFireSessionData(sessionId, screenFor(grid.cols, grid.viewportRows.length));
+    }, SESSION_ID);
+    await ownPage.waitForTimeout(500);
+  }
+
+  /**
+   * The task window terminal's box in page pixels, and its top and bottom rows.
+   * Inset from the host's edges: a picture 240 px wide rounds a region outward,
+   * which took in a row of the window header's border, and the scrollbar's
+   * column at the right edge is drawn whether or not the screen is shown.
+   */
+  async function terminalRegions(ownPage: Page): Promise<{ whole: { x: number; y: number; width: number; height: number }; top: { x: number; y: number; width: number; height: number }; bottom: { x: number; y: number; width: number; height: number } }> {
+    const host = await ownPage.locator('[data-testid="task-detail-dialog"] [data-terminal-host]').boundingBox();
+    if (!host) throw new Error('no terminal host');
+    const inset = 16;
+    const box = { x: host.x + inset, y: host.y + inset, width: host.width - inset - 32, height: host.height - inset * 2 };
+    const band = box.height * 0.12;
+    return {
+      whole: box,
+      top: { x: box.x, y: box.y, width: box.width, height: band },
+      bottom: { x: box.x, y: box.y + box.height - band, width: box.width, height: band },
+    };
+  }
+
+  test('a terminal whose box grows draws no old text in it until the agent\'s frame is in', async () => {
+    // The old frame no longer fills a box that grew, and drawn there it sat
+    // narrow and low in the maximized window, so it is not drawn at all.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      await fullScreenAgent(ownPage);
+      const recording = await recordLayoutChange(ownPage, '[data-testid="window-overlay"]', () =>
+        ownPage.locator('[data-testid="task-detail-maximize"]').click());
+      expectHoldThenDraw(recording);
+      // From the frame the window maximized on, the terminal shows nothing, then
+      // the agent's frame, and nothing else (not ConPTY's early redraw).
+      const { whole } = await terminalRegions(ownPage);
+      const changedAt = pictureStages(recording)[1].at;
+      const shown = recording.frames.filter((frame) => frame.at >= changedAt).map((frame) => brightPixelsIn(recording, frame.picture, whole));
+      const finalText = shown.at(-1) ?? 0;
+      const summary = shown.join(' ');
+      expect(finalText, summary).toBeGreaterThan(50);
+      const firstDrawn = shown.findIndex((bright) => bright >= 10);
+      expect(firstDrawn, summary).toBeGreaterThan(0);
+      expect(shown.slice(firstDrawn).every((bright) => Math.abs(bright - finalText) <= finalText * 0.1), summary).toBe(true);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('a terminal whose box shrinks keeps its bottom rows, the input box, where the agent\'s frame puts them', async () => {
+    // An agent keeps its input box on the bottom rows, so a frame that still
+    // fills its box is pinned to the bottom. Pinned to the top, a restore showed
+    // the banner with the input box cut off until the agent's frame put it back.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      await fullScreenAgent(ownPage);
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      await expectNoFrameHold(ownPage);
+      await ownPage.waitForTimeout(500);
+      const recording = await recordLayoutChange(ownPage, '[data-testid="window-overlay"]', () =>
+        ownPage.locator('[data-testid="task-detail-maximize"]').click());
+      expectHoldThenDraw(recording);
+      // From the frame the window restored on: the input box on the bottom rows
+      // in every frame, the top empty while the frame is held, then filled.
+      const { top, bottom } = await terminalRegions(ownPage);
+      const changedAt = pictureStages(recording)[1].at;
+      const shown = recording.frames.filter((frame) => frame.at >= changedAt).map((frame) => ({
+        bottom: brightPixelsIn(recording, frame.picture, bottom),
+        top: brightPixelsIn(recording, frame.picture, top),
+      }));
+      const summary = shown.map((frame) => `${frame.top}/${frame.bottom}`).join(' ');
+      expect(shown.every((frame) => frame.bottom > 20), summary).toBe(true);
+      const firstFilled = shown.findIndex((frame) => frame.top >= 10);
+      // Held at least a frame, then filled for good.
+      expect(firstFilled, summary).toBeGreaterThan(0);
+      expect(shown.slice(firstFilled).every((frame) => frame.top >= 10), summary).toBe(true);
+      // The swap painted no frame with the screen hidden.
+      const finished = await ownPage.evaluate(() => (window as unknown as {
+        __kangenticTerminalTrace: () => Array<{ event: string; detail?: { framesHidden?: number } }>;
+      }).__kangenticTerminalTrace().filter((event) => event.event === 'frame-hold-finished').at(-1)?.detail);
+      expect(finished?.framesHidden).toBe(0);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('a frame in a box that grew fades in, and one in a box that shrank does not, with Animations on', async () => {
+    // The only test with motion on: every other one sets `.no-motion`, under which
+    // the fade is an instant cut.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      await fullScreenAgent(ownPage);
+      await ownPage.evaluate(() => document.documentElement.classList.remove('no-motion'));
+      // The animations on the terminal's screen the moment its hold ends, read
+      // as the hold's mark comes off the host.
+      const animationsWhenHoldEnds = () => ownPage.evaluate(() => new Promise<Array<{ duration: number; opacity: boolean }>>((resolve) => {
+        let held = false;
+        new MutationObserver((records, observer) => {
+          if (document.querySelector('[data-terminal-frame-hold]')) {
+            held = true;
+            return;
+          }
+          if (!held) return;
+          observer.disconnect();
+          const screen = document.querySelector('[data-testid="task-detail-dialog"] .xterm-screen');
+          resolve((screen?.getAnimations() ?? []).map((animation) => {
+            const effect = animation.effect as KeyframeEffect;
+            return { duration: Number(effect.getTiming().duration), opacity: Object.keys(effect.getKeyframes()[0] ?? {}).includes('opacity') };
+          }));
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+      }));
+
+      const onMaximize = animationsWhenHoldEnds();
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      expect(await onMaximize).toEqual([{ duration: 80, opacity: true }]);
+      await expectNoFrameHold(ownPage);
+      await ownPage.waitForTimeout(300);
+
+      const onRestore = animationsWhenHoldEnds();
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      expect(await onRestore).toEqual([]);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('a frame hold whose resize throws ends at once and the terminal refits: its output is never held for good', async () => {
+    // A frame hold keeps the agent's output back until it ends, so a throw on the
+    // way to its end must not strand it. Measured once in the desktop app: a
+    // dev-mode update left the terminals holding with their output held.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      await ownPage.evaluate(() => {
+        const sessions = (window as unknown as {
+          electronAPI: { sessions: { resize: (id: string, cols: number, rows: number) => Promise<unknown> } };
+        }).electronAPI.sessions;
+        const original = sessions.resize;
+        let thrown = false;
+        sessions.resize = (id, cols, rows) => {
+          if (!thrown) {
+            thrown = true;
+            throw new Error('resize failed');
+          }
+          return original(id, cols, rows);
+        };
+      });
+      await ownPage.locator('[data-testid="task-detail-maximize"]').click();
+      await expectNoFrameHold(ownPage);
+      const trace = await ownPage.evaluate(() => (window as unknown as {
+        __kangenticTerminalTrace: () => Array<{ event: string; detail?: { reason?: string } }>;
+      }).__kangenticTerminalTrace().filter((event) => event.event === 'frame-hold-dropped').map((event) => event.detail?.reason));
+      expect(trace).toContain('send-failed');
+      // The terminal took the maximized grid as a plain refit, and its output flows.
+      await ownPage.evaluate((sessionId) => {
+        (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData(sessionId, 'after the throw\r\n');
+      }, SESSION_ID);
+      await expect.poll(async () => {
+        const rows = await ownPage.evaluate((sessionId) => (window as unknown as {
+          __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[] }>;
+        }).__kangenticTerminalGridRows(sessionId)[0], SESSION_ID);
+        return rows?.viewportRows.some((row) => row.startsWith('after the throw')) ?? false;
+      }, { timeout: 3000 }).toBe(true);
+    } finally {
+      await own.browser.close();
+    }
+  });
+
+  test('output that never stops still ends the hold by the cap, and every byte of it is drawn', async () => {
+    // The agent's output is held while its frame is. A stream that never goes
+    // quiet must not keep the hold open for good: the repaint wait's cap ends it,
+    // and what was held is drawn when it ends, not dropped.
+    test.setTimeout(45000);
+    const own = await launchWithState(preConfig);
+    try {
+      const ownPage = own.page;
+      await openStillTerminal(ownPage);
+      await ownPage.evaluate((sessionId) => {
+        const holder = window as unknown as {
+          __mockFireSessionData: (id: string, data: string) => void;
+          __streamTimer: ReturnType<typeof setInterval>;
+          __streamCount: number;
+        };
+        holder.__streamCount = 0;
+        holder.__streamTimer = setInterval(() => {
+          holder.__streamCount += 1;
+          holder.__mockFireSessionData(sessionId, `stream ${holder.__streamCount}\r\n`);
+        }, 10);
+      }, SESSION_ID);
+      const streamSince = Date.now();
+      const heldFor = await ownPage.evaluate(() => new Promise<number>((resolve) => {
+        let heldAt = 0;
+        new MutationObserver(() => {
+          const holding = document.querySelector('[data-terminal-frame-hold]') !== null;
+          if (holding && heldAt === 0) heldAt = performance.now();
+          if (!holding && heldAt !== 0) resolve(performance.now() - heldAt);
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+        document.querySelector<HTMLElement>('[data-testid="task-detail-maximize"]')?.click();
+      }));
+      // Not before the wait's 500 ms cap, and ended well before a stuck hold
+      // would show (the send waits a frame, and headless draws slowly).
+      expect(heldFor).toBeGreaterThanOrEqual(450);
+      expect(heldFor).toBeLessThanOrEqual(2000);
+      // The cap ended it, not the watchdog.
+      await expectNoFrameHoldRecovery(ownPage, streamSince);
+      const sent = await ownPage.evaluate(() => {
+        const holder = window as unknown as { __streamTimer: ReturnType<typeof setInterval>; __streamCount: number };
+        clearInterval(holder.__streamTimer);
+        return holder.__streamCount;
+      });
+      // The last line streamed shows, and the lines on screen run without a gap:
+      // nothing held was dropped.
+      const streamedLines = async () => {
+        const rows = await ownPage.evaluate((sessionId) => (window as unknown as {
+          __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[] }>;
+        }).__kangenticTerminalGridRows(sessionId)[0], SESSION_ID);
+        return (rows?.viewportRows ?? []).map((row) => /^stream (\d+)/.exec(row)?.[1]).filter((line): line is string => line !== undefined).map(Number);
+      };
+      await expect.poll(async () => (await streamedLines()).at(-1), { timeout: 3000 }).toBe(sent);
+      const lines = await streamedLines();
+      expect(lines.length).toBeGreaterThan(20);
+      expect(lines.every((line, index) => index === 0 || line === lines[index - 1] + 1)).toBe(true);
     } finally {
       await own.browser.close();
     }
@@ -363,7 +637,7 @@ test.describe('Task Detail: window shortcuts with the Command Terminal open over
       await expect(panel).toBeVisible();
       await ownPage.keyboard.press('Control+Shift+M');
       await expect(panel).toHaveAttribute('data-maximized', 'true');
-      await expect(ownPage.locator('[data-testid="command-terminal-panel-area"]')).not.toHaveAttribute('data-terminal-layout-transition', 'open', { timeout: 3000 });
+      await expectNoFrameHold(ownPage);
       await expect(taskFrame).toHaveClass(/rounded-lg/);
 
       await ownPage.keyboard.press('Control+Shift+W');

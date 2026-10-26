@@ -588,8 +588,8 @@ export function AppLayout() {
                         ref={terminalPanelContainerRef}
                         data-testid="terminal-panel-container"
                         data-collapsed={terminal.collapsed ? 'true' : 'false'}
-                        // A released height drag freezes the panel until its terminal
-                        // repainted (`terminal-layout-transition.ts`).
+                        // A released height drag lands here: the terminal holds its
+                        // frame until it has repainted (`terminal-layout-transition.ts`).
                         data-terminal-layout-scope=""
                         style={{ height: terminalPanelHeight }}
                         className={`flex-shrink-0 overflow-hidden ${

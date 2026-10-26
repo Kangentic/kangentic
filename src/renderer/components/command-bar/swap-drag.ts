@@ -13,13 +13,15 @@
  * under the pointer is a picture and not a terminal. The frames are moved with
  * inline styles saved first and put back exactly, since React keeps setting
  * only the style values that change. A preview changes sizes in single steps,
- * never per pointer frame, so each step refits at once (one resize per
- * terminal). The preview is part of a live gesture, so it does not freeze the
- * panel the way a released layout change does (`terminal-layout-transition.ts`):
- * a frozen panel would also hold the pointer the drag is following.
+ * never per pointer frame, so each step is a layout change of its own
+ * (`terminal-layout-transition.ts`), as the cancel and the commit are: each
+ * terminal it resizes keeps its last frame (or, in a tile bigger than it, shows
+ * nothing) until its agent has repainted, then draws the new frame once, and
+ * sends one resize per step.
  */
 
 import { scheduleWindowTerminalResize } from '../../window-manager/terminal/resize-coalescer';
+import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 
 /** How far the pointer travels before a press on a header becomes a drag. */
 const DRAG_THRESHOLD_PX = 5;
@@ -103,10 +105,10 @@ function placeAt(element: HTMLElement, box: Box): void {
   element.style.height = `${box.height}px`;
 }
 
-/** Refit the terminals in `frames` to the boxes they now have. */
+/** Refit the terminals in `frames` to the boxes they now have, as a layout change. */
 function refitTerminals(frames: readonly HTMLElement[]): void {
   if (frames.length === 0) return;
-  scheduleWindowTerminalResize();
+  runTerminalLayoutChange(terminalLayoutScopeOf(frames[0]), scheduleWindowTerminalResize);
 }
 
 /**
@@ -344,8 +346,10 @@ export function startCommandTerminalSwapDrag(event: React.PointerEvent, options:
       // The commit puts each frame where the preview had it, so a previewed
       // swap needs no refit: its terminals are already at their new sizes. A
       // release that beat the preview (the picture still on its way) is resized
-      // by the commit itself, and each terminal's refit holds its own frame.
-      options.swap(options.windowId, landedOn);
+      // by the commit itself, which runs as a layout change for that case.
+      const swap = (): void => options.swap(options.windowId, landedOn);
+      if (dragged) runTerminalLayoutChange(terminalLayoutScopeOf(dragged.frame), swap);
+      else swap();
       return;
     }
     // Put back, so a previewed pair refits to its own tiles again.

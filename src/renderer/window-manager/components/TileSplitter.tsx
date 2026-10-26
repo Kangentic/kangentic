@@ -93,7 +93,7 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     }
     // Commit once: the re-render sets the same rects React just had imperatively
     // overwritten (identical values -> no jump) and each terminal fits a single
-    // time, under a frozen layer that shows them once their agents repainted.
+    // time, holding its frame until its agent has repainted.
     runTerminalLayoutChange(terminalLayoutScopeOf(overlayRef.current), () => {
       commitSeamRatio(seam.splitId, seam.index, ratio);
       drag.gesture.end();

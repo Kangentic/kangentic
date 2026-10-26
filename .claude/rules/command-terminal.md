@@ -74,18 +74,20 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   whose Stop ends one. Being the panel's size already, a switch through a Running row resizes
   nothing. Expand and Restore do jump sizes, and until the agent repaints the terminal shows its
   old frame on the new grid (the footer mid-panel, then dropped). The panel adds nothing of its
-  own for that: a user's Expand or Restore runs as a layout transition over the panel area
-  (`runTerminalLayoutChange`, `terminal-layout-transition.ts`), which keeps the panel's last
-  frame on screen until every terminal it resized has its agent's new frame drawn and then shows
-  the result in one cut, here as for a maximize, a task window or the bottom panel. Only a user's
-  gesture freezes; a change main or an agent makes refits as it lands. Never add a
-  Command-Terminal-only veil beside it. A header drag swaps
+  own for that: a user's Expand or Restore is a layout change over the panel area
+  (`runTerminalLayoutChange`, `terminal-layout-transition.ts`), which shows the new layout at
+  once while each terminal it resized holds its last frame until its agent's frame is in, then
+  draws that frame once, here as for a maximize, a task window or the bottom panel: on screen,
+  pinned to the bottom, where the frame still fills its new box, and not drawn where the box grew.
+  Nothing holds the pointer meanwhile. Only a user's gesture holds; a change main or an agent
+  makes refits as it lands. Never add a Command-Terminal-only veil beside it.
+  A header drag swaps
   two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
   taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
   around the grab point at the picture's own scale, and the real frames preview the swap in each
   other's tiles by saved-and-restored inline styles. The preview refits both terminals to the
-  tiles they show in, unfrozen, since a frozen panel would also hold the pointer the drag
-  follows, so it looks the way the drop will once their agents repaint, and the landing tile is held as an empty terminal (the terminal background inside an
+  tiles they show in, each step a layout change of its own that holds their frames, so it looks
+  the way the drop will once their agents repaint, and the landing tile is held as an empty terminal (the terminal background inside an
   accent ring) by an element of its own above the frame, so the dragged terminal is not on screen
   twice; the drop removes the picture and commits `swapWindows` at once, resizing nothing more,
   and a cancel refits them
@@ -249,11 +251,16 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
   `tests/unit/terminal-repaint-wait.test.ts` replays the four measured runs through the repaint
-  wait's lift rule, `tests/unit/terminal-layout-transition.test.ts` pins the freeze (the change
-  run once, the join, the hold for a repaint and for a pane still moving, the cap, the shield and
-  the watchdog), `command-terminal.spec.ts` pins from the compositor's own frames that Expand,
-  Restore and the panel's maximize show one frozen picture and then one swap, and that a click
-  during the freeze reaches nothing, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
+  wait's lift rule, `tests/unit/terminal-layout-transition.test.ts` pins the landing (the change
+  run once and at once, the join, the minimum, the hold for a pane still moving, the cap),
+  `command-terminal.spec.ts` pins
+  from the compositor's own frames that Expand, Restore and the panel's maximize show at once with
+  each terminal holding its frame and then drawing the new one, with one PTY resize per terminal,
+  that a held terminal's output is drawn when the hold ends, that a swap preview holds and sends
+  one resize per step, and that a click right after Expand reaches the layout on screen;
+  `task-detail-maximize.spec.ts` pins that a box that grows shows no old text and fades its new
+  frame in, and one that shrinks keeps its input box on screen in every frame with no frame
+  painted hidden, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
   the end of a gesture and the gesture it closes when no owner saw the release. The unseen-release
   case in `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts` drive it
   in the real app.

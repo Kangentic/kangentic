@@ -28,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, toastCountRightNow, recordLayoutTransition, expectOneSwap } from './helpers';
+import { waitForViteReady, gotoVite, toastCountRightNow, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery, TERMINAL_FRAME_HOLD_SELECTOR } from './helpers';
 
 // Each describe is isolated per worker (separate process; page.goto() in beforeEach resets
 // state), so the file's tests can fan out across the UI workers safely.
@@ -2404,32 +2404,35 @@ test.describe('Command Terminal', () => {
     await page.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
   }
 
-  /** The panel's layout-change scope: it freezes while a layout change waits for the terminals to repaint. */
+  /** The panel's layout-change scope: a user's change lands in it, and its terminals hold their frames until they repaint. */
   const PANEL_SCOPE = '[data-testid="command-terminal-panel-area"]';
 
-  /** Record every layout transition the panel opens from now on: a final read cannot see one that opened and closed. */
-  const watchTransitions = (page: Page) => page.evaluate((selector) => {
-    const holder = window as unknown as { __layoutTransitions: Array<{ opened: number; closed: number | null }> };
-    holder.__layoutTransitions = [];
+  /**
+   * Record every frame hold the panel's terminals go through from now on, as the
+   * span while any of them holds one: a final read cannot see one that came
+   * and went.
+   */
+  const watchFrameHolds = (page: Page) => page.evaluate(({ selector, holdSelector }) => {
+    const holder = window as unknown as { __frameHolds: Array<{ held: number; drawn: number | null }> };
+    holder.__frameHolds = [];
     const scope = document.querySelector(selector);
     if (!scope) throw new Error('no panel area');
     new MutationObserver(() => {
-      // Frozen while `open`; `shown` is the cut to the new state.
-      const open = scope.getAttribute('data-terminal-layout-transition') === 'open';
-      const last = holder.__layoutTransitions.at(-1);
-      if (open && (!last || last.closed !== null)) holder.__layoutTransitions.push({ opened: performance.now(), closed: null });
-      if (!open && last && last.closed === null) last.closed = performance.now();
-    }).observe(scope, { attributes: true, attributeFilter: ['data-terminal-layout-transition'] });
-  }, PANEL_SCOPE);
-  const transitions = (page: Page) => page.evaluate(() =>
-    (window as unknown as { __layoutTransitions: Array<{ opened: number; closed: number | null }> }).__layoutTransitions);
-  const transitionClosed = (page: Page) =>
-    expect(page.locator(PANEL_SCOPE)).not.toHaveAttribute('data-terminal-layout-transition', 'open', { timeout: 3000 });
+      const holding = scope.querySelector(holdSelector) !== null;
+      const last = holder.__frameHolds.at(-1);
+      if (holding && (!last || last.drawn !== null)) holder.__frameHolds.push({ held: performance.now(), drawn: null });
+      if (!holding && last && last.drawn === null) last.drawn = performance.now();
+    }).observe(scope, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+  }, { selector: PANEL_SCOPE, holdSelector: TERMINAL_FRAME_HOLD_SELECTOR });
+  const frameHolds = (page: Page) => page.evaluate(() =>
+    (window as unknown as { __frameHolds: Array<{ held: number; drawn: number | null }> }).__frameHolds);
 
-  /** A line of text in each terminal, the cursor hidden (it blinks) and motion off: only a layout change can move a pixel. */
+  /** A screen of text in each terminal, the cursor hidden (it blinks) and motion off: only a layout change can move a pixel. */
   const stillTerminals = (page: Page, sessionIds: string[]) => page.evaluate((ids) => {
     const fire = (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData;
-    for (const id of ids) fire(id, 'frame text line\r\n\x1b[?25l');
+    let screen = '';
+    for (let row = 0; row < 16; row += 1) screen += `frame text line ${row} `.padEnd(60, '.') + '\r\n';
+    for (const id of ids) fire(id, `${screen}\x1b[?25l`);
     document.documentElement.classList.add('no-motion');
   }, sessionIds);
 
@@ -2600,8 +2603,8 @@ test.describe('Command Terminal', () => {
     async function openTwoReady(page: Page): Promise<{ first: string; second: string }> {
       await openTerminals(page, 2);
       const sessions = await markTerminalsReady(page, ['slot-1', 'slot-2']);
-      // Adding the second terminal re-tiled the first under a frozen panel: let it swap first.
-      await transitionClosed(page);
+      // Adding the second terminal re-tiled the first, which held its frame: let it draw first.
+      await expectNoFrameHold(page);
       return { first: sessions['slot-1'], second: sessions['slot-2'] };
     }
 
@@ -2650,8 +2653,8 @@ test.describe('Command Terminal', () => {
         const dragged = await tileWidth(page, 'slot-1');
 
         // The seam is not left holding the lost drag: the next one moves it, once
-        // the commit's freeze has swapped (a press during it is swallowed).
-        await transitionClosed(page);
+        // the commit's terminals have drawn their new frames.
+        await expectNoFrameHold(page);
         const seam = await page.locator('[data-testid^="tile-splitter-"]').boundingBox();
         if (!seam) throw new Error('no seam');
         const seamX = seam.x + seam.width / 2;
@@ -2666,7 +2669,7 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('switching which terminal is expanded resizes nothing and freezes nothing', async () => {
+    test('switching which terminal is expanded resizes nothing and holds no frame', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
@@ -2676,96 +2679,95 @@ test.describe('Command Terminal', () => {
         const expandedBox = await frameOf(page, 'slot-1').boundingBox();
         const behindBox = await frameOf(page, 'slot-2').boundingBox();
         expect(Math.abs((behindBox?.width ?? 0) - (expandedBox?.width ?? 0))).toBeLessThanOrEqual(3);
-        await transitionClosed(page);
+        await expectNoFrameHold(page);
         await settleResizes(page);
-        await watchTransitions(page);
+        await watchFrameHolds(page);
 
         await page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-2"]')
           .getByTestId('command-terminal-running-expand').click();
         await expect(frameOf(page, 'slot-2')).toHaveAttribute('data-expanded', 'true');
         await settleFrames(page, 20);
         expect(await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length)).toBe(0);
-        expect(await transitions(page)).toEqual([]);
+        expect(await frameHolds(page)).toEqual([]);
       } finally {
         await browser.close();
       }
     });
 
-    test('Expand and Restore hold the panel still until the agents\' output goes quiet', async () => {
+    test('Expand and Restore hold a terminal\'s output with its frame until it goes quiet, then draw it', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first } = await openTwoReady(page);
-        await watchTransitions(page);
+        const since = Date.now();
+        await watchFrameHolds(page);
 
-        // Expand: the panel freezes, the PTY is resized inside it, and it holds
+        // Expand: the terminal holds its frame, its PTY is resized, and it holds
         // through the agent's output until a quiet beat after the last of it. The
-        // output is timed from the freeze, as an agent's repaint is timed from the resize.
-        await page.evaluate(({ sessionId, selector }) => {
+        // output is timed from the hold, as an agent's repaint is
+        // timed from the resize.
+        await page.evaluate(({ sessionId, holdSelector }) => {
           const fire = (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData;
-          const scope = document.querySelector(selector);
-          if (!scope) throw new Error('no panel area');
           const observer = new MutationObserver(() => {
-            if (!scope.hasAttribute('data-terminal-layout-transition')) return;
+            if (!document.querySelector(holdSelector)) return;
             observer.disconnect();
             // Output every 10 ms from 100 to 400 ms: never quiet for the 40 ms beat until it stops.
-            for (let at = 100; at <= 400; at += 10) setTimeout(() => fire(sessionId, 'x'), at);
+            for (let at = 100; at <= 400; at += 10) setTimeout(() => fire(sessionId, at === 400 ? 'last held output\r\n' : 'x'), at);
           });
-          observer.observe(scope, { attributes: true, attributeFilter: ['data-terminal-layout-transition'] });
-        }, { sessionId: first, selector: PANEL_SCOPE });
+          observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+        }, { sessionId: first, holdSelector: TERMINAL_FRAME_HOLD_SELECTOR });
         await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
-        await expect.poll(async () => (await transitions(page))[0]?.closed ?? null, { timeout: 3000 }).not.toBeNull();
-        const [expand] = await transitions(page);
-        const held = (expand.closed ?? 0) - expand.opened;
-        // Held well past the 190 ms floor while the output kept coming (with no
-        // output it lets go near 200 ms), and never past the 700 ms cap. The
-        // exact rule is the unit test's; this pins that the output reaches it.
-        expect(held).toBeGreaterThanOrEqual(300);
-        expect(held).toBeLessThanOrEqual(800);
+        // The change shows at once: the panel is expanded while the terminal still holds its frame.
         await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        await expect.poll(async () => (await frameHolds(page))[0]?.drawn ?? null, { timeout: 3000 }).not.toBeNull();
+        const [expand] = await frameHolds(page);
+        const held = (expand.drawn ?? 0) - expand.held;
+        // Held well past the 190 ms floor while the output kept coming (with no
+        // output it lets go near 200 ms), and ended by the cap. The exact rule is
+        // the unit test's; this pins that the output reaches it.
+        expect(held).toBeGreaterThanOrEqual(300);
+        expect(held).toBeLessThanOrEqual(1500);
+        // What was held is drawn when the hold ends.
+        await expect.poll(async () => {
+          const rows = await page.evaluate((sessionId) => (window as unknown as {
+            __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[] }>;
+          }).__kangenticTerminalGridRows(sessionId)[0], first);
+          return rows?.viewportRows.some((row) => row.includes('last held output')) ?? false;
+        }, { timeout: 3000 }).toBe(true);
 
-        // Restore: every terminal goes back into its tile, under one freeze.
+        // Restore: every terminal goes back into its tile, holding its frame until it repaints.
         await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
-        await expect.poll(async () => (await transitions(page)).length, { timeout: 3000 }).toBe(2);
+        await expect.poll(async () => (await frameHolds(page)).length, { timeout: 3000 }).toBe(2);
         await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0);
-        await transitionClosed(page);
+        await expectNoFrameHold(page);
+        await expectNoFrameHoldRecovery(page, since);
       } finally {
         await browser.close();
       }
     });
 
-    test('a click while the panel is frozen never reaches the layout it has not shown yet', async () => {
-      // Under the frozen picture the new layout is already live, and a click goes
-      // to it: after Expand the rail holds a Running row whose Stop nobody can see
-      // yet. Without the shield over the frozen panel, a press there stops that terminal.
+    test('a click right after Expand reaches the layout on screen: nothing holds the pointer', async () => {
+      // The freeze this replaced showed the old layout over a live new one, so it
+      // took the pointer until its swap. A frame hold shows the new layout at once,
+      // so a press on the Running row's Stop, there on the next frame, stops that
+      // terminal while the expanded one still holds its frame.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
-        const expandFirst = page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand');
-        // Learn where the Running row's Stop will be, then put the grid back.
-        await expandFirst.click();
-        await transitionClosed(page);
-        const stop = await page.getByTestId('command-terminal-running-stop').boundingBox();
-        if (!stop) throw new Error('no Running Stop');
-        await expandFirst.click();
-        await transitionClosed(page);
-        await expect(page.getByTestId('command-terminal-running')).toHaveCount(0);
-
-        // Expand again. Once the change has landed under the frozen picture (the
-        // Running row is in the page, not yet on screen), press where its Stop is.
-        await expandFirst.click();
-        await expect(page.getByTestId('command-terminal-running-stop')).toBeAttached();
-        await expect(page.locator(PANEL_SCOPE)).toHaveAttribute('data-terminal-layout-transition', 'open');
-        await page.mouse.click(stop.x + stop.width / 2, stop.y + stop.height / 2);
-        await transitionClosed(page);
-        await settleFrames(page, 20);
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
-        await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        const stop = page.getByTestId('command-terminal-running-stop');
+        await expect(stop).toBeVisible();
+        const stopBox = await stop.boundingBox();
+        if (!stopBox) throw new Error('no Running Stop');
+        // Pressed as soon as the row is laid out, with no wait for the terminal to
+        // draw its new frame. The freeze held this press on its shield.
+        await page.mouse.click(stopBox.x + stopBox.width / 2, stopBox.y + stopBox.height / 2);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
       } finally {
         await browser.close();
       }
     });
 
-    test('Expand and Restore show the terminals once, finished: one frozen picture, then one swap', async () => {
+    test('Expand and Restore show at once, each terminal holding its frame, then the new one, with one PTY resize each', async () => {
       // Its own browser plus a screencast whose frames are decoded in the page:
       // measured at 9 to 14 s locally, too close to the 15 s default for CI.
       test.setTimeout(45000);
@@ -2774,22 +2776,28 @@ test.describe('Command Terminal', () => {
         const { first, second } = await openTwoReady(page);
         await stillTerminals(page, [first, second]);
         await settleFrames(page, 10);
+        await settleResizes(page);
+        const since = Date.now();
 
-        const expand = await recordLayoutTransition(page, PANEL_SCOPE, () =>
+        const expand = await recordLayoutChange(page, PANEL_SCOPE, () =>
           page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click());
-        expectOneSwap(expand);
+        expectHoldThenDraw(expand, 2);
         await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+        expect(await resizesOf(page, first)).toHaveLength(1);
 
-        const restore = await recordLayoutTransition(page, PANEL_SCOPE, () =>
+        await settleResizes(page);
+        const restore = await recordLayoutChange(page, PANEL_SCOPE, () =>
           page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click());
-        expectOneSwap(restore);
+        expectHoldThenDraw(restore, 2);
         await expect(page.locator('[data-testid^="window-frame-"][data-expanded]')).toHaveCount(0);
+        expect(await resizesOf(page, first)).toHaveLength(1);
+        await expectNoFrameHoldRecovery(page, since);
       } finally {
         await browser.close();
       }
     });
 
-    test('maximizing the panel shows its terminals once, finished: one frozen picture, then one swap', async () => {
+    test('maximizing the panel shows at once, its terminals holding their frames, then the new ones, with one PTY resize each', async () => {
       // Its own browser plus a screencast whose frames are decoded in the page:
       // measured at 9 to 14 s locally, too close to the 15 s default for CI.
       test.setTimeout(45000);
@@ -2798,12 +2806,16 @@ test.describe('Command Terminal', () => {
         const { first, second } = await openTwoReady(page);
         await stillTerminals(page, [first, second]);
         await settleFrames(page, 10);
-        const resizesBefore = (await resizesOf(page, first)).length;
-        const recording = await recordLayoutTransition(page, PANEL_SCOPE, () =>
+        await settleResizes(page);
+        const since = Date.now();
+        const recording = await recordLayoutChange(page, PANEL_SCOPE, () =>
           page.getByTestId('command-terminal-panel-maximize').click());
-        expectOneSwap(recording);
-        // The terminals were refit and their PTYs resized under the freeze.
-        expect((await resizesOf(page, first)).length).toBeGreaterThan(resizesBefore);
+        expectHoldThenDraw(recording, 2);
+        // The change reaches the terminals in hops a frame apart, and each sends
+        // the grid it lands on once.
+        expect(await resizesOf(page, first)).toHaveLength(1);
+        expect(await resizesOf(page, second)).toHaveLength(1);
+        await expectNoFrameHoldRecovery(page, since);
         await expect(page.getByTestId('command-terminal-panel')).toHaveAttribute('data-maximized', 'true');
       } finally {
         await browser.close();
@@ -2826,9 +2838,9 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(opened, { timeout: 5000 });
       }
       await expect.poll(async () => (await commandTileLayout(page))?.slots.length ?? 0, { timeout: 3000 }).toBe(2);
-      // Each Add re-tiled the others under a frozen panel, and a raw press during
-      // a freeze is swallowed: let the last one swap before a drag starts.
-      await transitionClosed(page);
+      // Each Add re-tiled the others, which held their frames: let the last of
+      // them draw before a drag starts.
+      await expectNoFrameHold(page);
     }
 
     /** The slots in reading order, from the store's tile tree. */
@@ -2877,6 +2889,7 @@ test.describe('Command Terminal', () => {
           canvas.height = 4;
           (window as unknown as { __mockCaptureRegion: string }).__mockCaptureRegion = canvas.toDataURL('image/jpeg');
         });
+        await watchFrameHolds(page);
 
         await pressOnHeader(page, 'slot-3');
         await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
@@ -2920,13 +2933,19 @@ test.describe('Command Terminal', () => {
         expect(Math.abs((previewBox?.height ?? 0) - sourceBox.height)).toBeLessThanOrEqual(3);
         // Both previewing terminals are refit to the tiles they now show in, so
         // the preview is the result (terminal 3 taller than terminal 1 now). The
-        // preview is a live gesture, so it never freezes the panel.
+        // preview is a layout change of its own, so each terminal it resizes keeps
+        // its frame until its agent has repainted, then draws the new one.
         await expect.poll(async () => {
           const dragged = (await resizesOf(page, sessions['slot-3'])).at(-1);
           const displaced = (await resizesOf(page, sessions['slot-1'])).at(-1);
           return dragged && displaced ? dragged.rows > displaced.rows : false;
         }, { timeout: 3000 }).toBe(true);
-        await expect(page.getByTestId('command-terminal-panel-area')).not.toHaveAttribute('data-terminal-layout-transition', 'open');
+        await expectNoFrameHold(page);
+        // The preview held them: a refit that reflowed instead would never mark one.
+        expect((await frameHolds(page)).length).toBeGreaterThan(0);
+        // One resize each for the step: the preview sends no grid twice.
+        expect(await resizesOf(page, sessions['slot-3'])).toHaveLength(1);
+        expect(await resizesOf(page, sessions['slot-1'])).toHaveLength(1);
         // Nothing is committed until the release.
         expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
 

@@ -1,7 +1,7 @@
 /**
  * When a terminal's agent has repainted after its grid changed, as a promise a
- * layout transition waits on (`terminal-layout-transition.ts`) before it shows
- * the new layout.
+ * terminal holding its frame waits on before it draws the new one
+ * (`terminal-layout-transition.ts`).
  *
  * Main's repaint settle cannot be the signal: it settles on the first screen
  * clear after the resize, and on Windows that is ConPTY's redraw of the OLD
@@ -33,10 +33,10 @@
  * before 90 ms, gets the earlier rule: a floor past the latest frame measured, then
  * until the output has been quiet for a beat, timed from the LAST PTY resize
  * sent (`notePtyResize`). Against the four runs above that settles between 212
- * and 253 ms. A slower agent degrades to the new layout showing a beat before
+ * and 253 ms. A slower agent degrades to the terminal drawing a beat before
  * its frame, never a wait that hangs: the cap ends it whatever the output does.
  *
- * Nothing here runs outside a transition: a wait opens only when one asks.
+ * Nothing here runs outside a frame hold: a wait opens only when one asks.
  */
 
 import { traceTerminalRenderer } from './terminal-grid-registry';
@@ -106,7 +106,7 @@ export function createTerminalRepaintWait(): TerminalRepaintWait {
     if (timer) clearTimeout(timer);
     timer = null;
   };
-  /** Why a wait ended, traced so a slow swap in the field names its cause. */
+  /** Why a wait ended, traced so a slow frame hold in the field names its cause. */
   const settle = (reason: 'frame' | 'quiet' | 'cap' | 'unsent' | 'released' | 'disposed'): void => {
     clearTimer();
     if (settleOpen) {
@@ -123,6 +123,7 @@ export function createTerminalRepaintWait(): TerminalRepaintWait {
     sentAt = null;
     finishedFrameAt = null;
     resolve?.();
+
   };
   const schedule = (): void => {
     clearTimer();
