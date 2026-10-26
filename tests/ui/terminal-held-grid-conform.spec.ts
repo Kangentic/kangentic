@@ -436,9 +436,6 @@ test('a held grid that walks past the old budget of four steps is still taken', 
     // Mount two: main keeps a grid one column wider than the pane's natural fit. Same rows, so the
     // width alone sets the walk (a smaller font only ever shortens a cell).
     const held = { cols: natural.cols + 1, rows: natural.rows };
-    const resizeCallsBefore = await page.evaluate(() => (
-      (window as unknown as { electronAPI: { sessions: { __resizeCalls: unknown[] } } }).electronAPI.sessions.__resizeCalls.length
-    ));
     await page.evaluate((grid) => {
       (window as unknown as TestWindow).__mockResizeResult = { colsChanged: false, refused: true, held: grid };
     }, held);
@@ -452,21 +449,22 @@ test('a held grid that walks past the old budget of four steps is still taken', 
       return grid && grid.cols === held.cols && grid.rows === held.rows ? 'taken' : 'waiting';
     }, { timeout: 10000 }).toBe('taken');
 
-    // The pane did not move between the mounts: the first grid the second terminal asked main for is
-    // the first one's natural fit, so "one column wider" still means one column past this pane's fit.
-    const firstRequest = await page.evaluate((skip) => (
-      (window as unknown as { electronAPI: { sessions: { __resizeCalls: Array<{ cols: number; rows: number }> } } })
-        .electronAPI.sessions.__resizeCalls[skip]
-    ), resizeCallsBefore);
-    expect(firstRequest).toMatchObject(natural);
+    // The pane did not move between the mounts, so "one column wider" still means one column past
+    // this pane's fit. Read off the settled pane, not off the second mount's first resize request:
+    // a terminal fits once as it mounts, and on a loaded runner that request was sized from a pane
+    // still laying out (194 columns by 11 rows, against a natural 131 by 35).
+    const pane = await measurePane(page);
+    expect(Math.abs(pane.availableWidth - pristine.availableWidth)).toBeLessThanOrEqual(1);
+    expect(Math.abs(pane.availableHeight - pristine.availableHeight)).toBeLessThanOrEqual(1);
 
     // The walk's length, from what the page reports. The proposal is the documented one: the
     // largest quarter-pixel size at which the held grid would fit if the cell scaled with the font,
     // from the cell drawn at the configured size and the box left after padding and the gutter.
-    const pane = await measurePane(page);
     const conforms = await readEvents(page, 'conform');
     expect(conforms.length).toBeGreaterThan(0);
-    const conformedFontSize = conforms[0].detail?.fontSize as number;
+    // The last conform is the settled pane's. The first can belong to a pane still laying out
+    // (a mount fits once as it mounts), which walks a different distance.
+    const conformedFontSize = conforms[conforms.length - 1].detail?.fontSize as number;
     const scaleToFit = Math.min(
       pane.availableWidth / (held.cols * pristine.cellWidth),
       pane.availableHeight / (held.rows * pristine.cellHeight),

@@ -453,6 +453,14 @@ Four more things were settled on the way:
   the Command Terminal panel's terminals re-tiled under load, because that re-tile runs in a React
   render of its own after the layer's resize observer, so they reflowed instead of holding (about
   1 run in 20 in the UI tier, none in 55 after).
+- A landing also waits for a terminal's own fit, up to 500 ms. The 150 ms minimum held on a
+  developer machine, but CI's UI tier failed the panel's maximize twice in a row: its boxes had
+  moved and held still, the landing closed at about 170 ms, and the terminals' fit came after it.
+  Reproduced on Linux pinned to two cores (4 of 6 runs failed), the trace showed the landing
+  closing with no fit in it. `useTerminal` now reports each container fit that lands in a landing,
+  and the landing does not settle on stillness until one has. Six repeats of that test, the
+  held-grid conform test and the tiled edge-drag test then passed on two cores, and the four
+  related UI specs (166 tests) passed there with no retries.
 - The send waits one still frame, so a grid about to move again is not sent. On a task window that
   costs nothing measurable: the send goes out 1 to 3 ms after the hold starts, because the change
   lands before that frame's callbacks run.

@@ -9,7 +9,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isTerminalLayoutLandingFor,
   LAYOUT_LANDING_CAP_MS,
+  LAYOUT_LANDING_IDLE_MS,
   LAYOUT_LANDING_MIN_MS,
+  noteTerminalFitInLanding,
   runTerminalLayoutChange,
 } from '../../src/renderer/utils/terminal-layout-transition';
 
@@ -95,14 +97,63 @@ describe('runTerminalLayoutChange', () => {
     expect(isTerminalLayoutLandingFor(scope.terminal as Element)).toBe(false);
   });
 
-  it('holds the landing for its minimum, though nothing under the scope moves', async () => {
+  it('keeps a landing open to its idle ceiling while no terminal has fitted in it', async () => {
     // A change can reach its terminals through a render React runs in a task of
     // its own, so a still scope right after the click is not yet the result.
     const scope = fakeScope();
     runTerminalLayoutChange(asElement(scope), () => {});
     const held = await landingDuration(scope);
-    expect(held).toBeGreaterThanOrEqual(LAYOUT_LANDING_MIN_MS - 5);
+    expect(held).toBeGreaterThanOrEqual(LAYOUT_LANDING_IDLE_MS - 5);
     expect(held).toBeLessThan(LAYOUT_LANDING_CAP_MS);
+  });
+
+  it('keeps a landing open for a terminal fit that comes long after the click, then ends soon after it', async () => {
+    // The Command Terminal panel's maximize reached its terminals more than
+    // 150 ms after the click on a loaded runner (4 of 6 runs on two cores). The
+    // scope's boxes had moved and held still, the landing closed, and the
+    // terminals reflowed instead of holding their frames.
+    const scope = fakeScope();
+    const clickedAt = performance.now();
+    let fittedAt: number | null = null;
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(() => {
+      if (performance.now() - clickedAt < 20) scope.paneBoxes = [{ left: 0, top: 0, width: 900, height: 600 }];
+      if (fittedAt === null && performance.now() - clickedAt > 300) {
+        fittedAt = performance.now();
+        noteTerminalFitInLanding(scope.terminal as Element);
+      }
+      callback();
+    }, 5));
+    runTerminalLayoutChange(asElement(scope), () => {});
+    await landingDuration(scope);
+    // The fit found the landing open, and the landing closed near the minimum after it,
+    // not at the idle ceiling.
+    expect(fittedAt).not.toBeNull();
+    expect(performance.now() - fittedAt!).toBeLessThan(LAYOUT_LANDING_MIN_MS + 100);
+  });
+
+  it('ends near its minimum once a terminal has fitted and the scope holds still', async () => {
+    const scope = fakeScope();
+    let fitted = false;
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(() => {
+      if (!fitted) {
+        fitted = true;
+        noteTerminalFitInLanding(scope.terminal as Element);
+      }
+      callback();
+    }, 5));
+    runTerminalLayoutChange(asElement(scope), () => {});
+    const held = await landingDuration(scope);
+    expect(held).toBeGreaterThanOrEqual(LAYOUT_LANDING_MIN_MS - 5);
+    expect(held).toBeLessThan(LAYOUT_LANDING_IDLE_MS - 100);
+  });
+
+  it('counts a fit only toward a landing whose scope holds the terminal', async () => {
+    const scope = fakeScope();
+    runTerminalLayoutChange(asElement(scope), () => {});
+    noteTerminalFitInLanding({} as Element);
+    noteTerminalFitInLanding(null);
+    const held = await landingDuration(scope);
+    expect(held).toBeGreaterThanOrEqual(LAYOUT_LANDING_IDLE_MS - 5);
   });
 
   it('holds while a terminal pane under the scope is still moving, and ends two still frames after', async () => {

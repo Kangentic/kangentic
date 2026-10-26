@@ -252,7 +252,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
   `tests/unit/terminal-repaint-wait.test.ts` replays the four measured runs through the repaint
   wait's lift rule, `tests/unit/terminal-layout-transition.test.ts` pins the landing (the change
-  run once and at once, the join, the minimum, the hold for a pane still moving, the cap),
+  run once and at once, the join, the minimum, the wait for a terminal's first fit, the hold for a
+  pane still moving, the cap),
   `command-terminal.spec.ts` pins
   from the compositor's own frames that Expand, Restore and the panel's maximize show at once with
   each terminal holding its frame and then drawing the new one, with one PTY resize per terminal,

@@ -344,12 +344,14 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   step of a Command Terminal swap drag's preview and its cancel, and the bottom panel's released
   height drag. The change runs at once and opens a landing on the nearest
   `data-terminal-layout-scope` (a window layer's overlay, the Command Terminal panel area, the
-  bottom panel): for at least 150 ms, then until two frames pass with no terminal pane or grid
-  under it moving (capped at 700 ms), every host refits at once (`useTerminalRefit` skips its
-  debounce) and a terminal whose grid would change holds its frame instead (`useTerminal`). The
-  minimum is there because a change can reach its terminals through a render React runs in a task
-  of its own: on a loaded runner the Command Terminal panel's re-tile came more than two frames
-  after the click, after a frame-count landing had closed. A held terminal keeps xterm's grid, its
+  bottom panel): once a terminal under it has fitted (`noteTerminalFitInLanding`), for at least
+  150 ms and until two frames pass with no terminal pane or grid under it moving; until one has, up
+  to 500 ms (capped at 700 ms in all), every host refits at once (`useTerminalRefit` skips its
+  debounce) and a terminal whose grid would change holds its frame instead (`useTerminal`). Waiting
+  for a fit is there because a change can reach its terminals through a render React runs in a task
+  of its own: on a loaded runner the Command Terminal panel's re-tile came more than two frames, and
+  later more than 150 ms, after the click (4 of 6 runs on two cores), after a landing that ended on
+  a still layout had closed. A held terminal keeps xterm's grid, its
   drawn screen and the agent's output (in the incoming queue), and marks its host
   `data-terminal-frame-hold`. Where the frame still fills its new box (the box shrank both ways),
   it stays on screen pinned to the bottom (`translateY` on `.xterm-screen`), because an agent keeps
