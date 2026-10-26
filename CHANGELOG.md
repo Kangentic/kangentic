@@ -6,6 +6,62 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.50.0] - 2026-10-26
+
+### Features
+- Hold each terminal's frame through a layout change instead of freezing the window (b50adf46)
+- Show a layout change once, finished, and stop re-rendering the app on a maximize (51df59f7)
+- Hold each terminal's picture through Expand and Restore (47323e05)
+- Native terminal defaults, an 8px inset and a 650px Command Terminal floor (850c2168)
+- Name earlier rows by their first prompt and move Add terminal up (ebb2042a)
+- Collapse the Test Harness to a beaker by its header row (2195af8f)
+- List and resume earlier Command Terminal conversations from a phone (67282452)
+- Open the panel in a window of its own (56270e50)
+- Swap two terminals by dragging a header (2feb6da7)
+- Expand a terminal over the others, with a Running list (e2afad3f)
+- One panel with a rail that resumes earlier conversations (a1ee7b10)
+- Record ended conversations and resume them by id (e78fc628)
+- Keep typing and echo off main and the host's I/O thread (459e681c)
+- Recover a running workflow step that does not finish (24c54853)
+- Close a task's windows when its work ends (0548f73f)
+
+### Fixes
+- Retry a ConPTY whose output never connected, and say why (01de525c)
+- Name the shorter root pid gate backstop a retry gets (5cda4acb)
+- Hold a landing open until a terminal has fitted, and steady three UI tests (cfd4e92a)
+- Learn a terminal was used from the pty host (d59a6716)
+- Resume fallback, frame hold race and mid-drag refit (8bb261fd)
+- Live panel resize, flat expand switches, a simpler swap drag (2cf4c42b)
+- Keep Open in new window off while a terminal starts (05f17759)
+- Exempt Command Terminals from the When idle pause (6a8732de)
+- Harden the pty ports, the spawn worker and the quit seal (65cae3e9)
+- Close the idle agent paused toast once its agents are resumed (7d8df7b1)
+- Start a row's Frequency over when a person moves the task (47183b1b)
+- Drop the empty review ledger commit at the Merge realign (fefea585)
+- Cut terminal input latency and bound the pending output buffer (5ce7131f)
+- Mount a popped-out pane, close a failed detach's window, and let close_pane reach it (c1c1d029)
+- Skip every detached guest on recovery and pin pop-out tests (9362cb82)
+
+### Other
+- Match the Stop button's tooltip to its real copy (b2dea393)
+- Document the panel, Earlier, expand, swap and its own window (3c5910db)
+- A layout saved before the panel opens tiled and reattaches (b068c174)
+- Follow the replay veil spec to the ordered scrollback request (4f5923e5)
+- Cover the macOS tool seam and dev git caller attribution (97600630)
+- Name slowKeys in the latency tool docs and list the spawn worker sources (1d1918df)
+- Pin the seal on kill and suspend, and record the pass (c67d5c65)
+- Keep typing clear of board reloads and terminal builds (55193c2f)
+- Wait for the paused toast to leave without a retrying zero count (cd174796)
+- Stop naming the eval harness in the step condition test (22ddeeaa)
+- Cover recovery's failure paths and bound a busy session (e216732c)
+- Cover workflow recovery wiring and the stalled toast (323b113d)
+- Share one table of the origins a person moves by (e230f9b4)
+- Remove the Word delete on Backspace setting (84da1056)
+- Add the .cmd wrapper for mock-claude-scroll (9ad39c4d)
+- Pin the output-path wiring and move misplaced tests (9bbbcf0f)
+- Measure the wrapped diff rows against the unwrapped baseline (0cac2fd2)
+- Pin project-delete window closing at runtime (5fb9d888)
+
 ## [v0.49.0] - 2026-10-23
 
 ### Features

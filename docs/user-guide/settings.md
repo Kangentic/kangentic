@@ -71,6 +71,8 @@ Applies to every project (Settings > Terminal, not a per-project override):
 | Font Family | Terminal font, picked from your detected system fonts via an autocomplete field |
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
 
+Font and cursor start where your platform's own terminal does: Cascadia Mono with a bar cursor on Windows, Adwaita Mono with a block cursor on Linux, and Menlo with a block cursor on macOS, all at 14px. An install still on the old shared default moves to these once; a font or size you picked is kept. Every terminal has an 8px inset on its left, top and bottom. The per-platform values are in [App config](../settings/app-config.md).
+
 ## Board Settings
 
 Applies to every project (Settings > Board, not a per-project override). Two cards: **Board layout** and **Config sync**.
