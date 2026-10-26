@@ -19,6 +19,11 @@ const { installSpawnHelper } = require('./install-spawn-helper');
 // unavailable on them and never forks the embed worker there.
 const EMBEDDING_RUNTIME_GAPS = require('../src/shared/embedding-runtime-gaps.json');
 
+/** onnxruntime-node's binary directory for one target, in an unpacked tree. */
+function onnxruntimeBinaryDir(unpackedRoot, platform, targetArch) {
+  return path.join(unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, targetArch);
+}
+
 /**
  * Whether the embed worker probe can run on this target. The worker requires
  * onnxruntime-node at module scope, which loads
@@ -36,9 +41,7 @@ const EMBEDDING_RUNTIME_GAPS = require('../src/shared/embedding-runtime-gaps.jso
  */
 function embedWorkerProbePlan({ unpackedRoot, platform, targetArch, gaps = EMBEDDING_RUNTIME_GAPS, log = console.log }) {
   const target = `${platform}-${targetArch}`;
-  const bindingPath = path.join(
-    unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, targetArch, 'onnxruntime_binding.node',
-  );
+  const bindingPath = path.join(onnxruntimeBinaryDir(unpackedRoot, platform, targetArch), 'onnxruntime_binding.node');
   if (fs.existsSync(bindingPath)) return 'probe';
   if (gaps.includes(target)) {
     log(
@@ -86,6 +89,37 @@ function stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch, log = 
     fs.rmSync(path.join(prebuildsDir, entry), { recursive: true, force: true });
   }
   log(`[afterPack] better-sqlite3: kept prebuilds/${keep}, removed ${removed.length} other prebuild(s)`);
+}
+
+/**
+ * The libraries onnxruntime-node's install script adds on Linux x64 for its CUDA and TensorRT
+ * execution providers, downloaded from nuget.org (microsoft.ml.onnxruntime.gpu.linux). Nothing
+ * loads them: on Linux the embed worker runs on WebGPU or CPU
+ * (src/main/retrieval/embedder/embed-client.ts).
+ */
+const ONNXRUNTIME_CUDA_PROVIDER_LIBRARIES = [
+  'libonnxruntime_providers_cuda.so',
+  'libonnxruntime_providers_shared.so',
+  'libonnxruntime_providers_tensorrt.so',
+];
+
+/**
+ * Every workflow whose npm ci runs install scripts sets `ONNXRUNTIME_NODE_INSTALL: skip` (pinned by
+ * tests/unit/ci-workflow-hygiene.test.ts), so a release build finds none of them. A tree installed
+ * without the skip, such as a local `npm run make:linux`, would still ship them, so this removes
+ * them from the target's binary directory, leaving the CPU runtime and the binding. Runs on every
+ * target and logs which branch it took, so the build log shows what the package carries.
+ */
+function stripOnnxruntimeCudaProviders({ unpackedRoot, platform, targetArch, log = console.log }) {
+  const target = `bin/napi-v6/${platform}/${targetArch}`;
+  const binaryDir = onnxruntimeBinaryDir(unpackedRoot, platform, targetArch);
+  const present =ONNXRUNTIME_CUDA_PROVIDER_LIBRARIES.filter((name) => fs.existsSync(path.join(binaryDir, name)));
+  if (present.length === 0) {
+    log(`[afterPack] onnxruntime-node: no CUDA provider libraries in ${target}, nothing to strip`);
+    return;
+  }
+  for (const name of present) fs.rmSync(path.join(binaryDir, name), { force: true });
+  log(`[afterPack] onnxruntime-node: removed ${present.join(', ')} from ${target}, which nothing loads`);
 }
 
 /** How long `flipFusesWhenBinaryIdle` waits for the binary to be released: 40 tries, 250 ms apart. */
@@ -182,6 +216,12 @@ module.exports = async function afterPack(context) {
     stripBetterSqlitePrebuilds({ unpackedRoot, platform, targetArch });
   }
 
+  // Before the embed worker probe below, so it proves the worker loads from the
+  // tree that ships.
+  if (targetArch) {
+    stripOnnxruntimeCudaProviders({ unpackedRoot, platform, targetArch });
+  }
+
   // Replace node-pty's macOS spawn-helper with Kangentic's build, which clears
   // the inherited mach exception ports before it execs a terminal's program,
   // and prove it on this host before the build is signed. It also writes the
@@ -259,4 +299,5 @@ module.exports = async function afterPack(context) {
 
 module.exports.flipFusesWhenBinaryIdle = flipFusesWhenBinaryIdle;
 module.exports.stripBetterSqlitePrebuilds = stripBetterSqlitePrebuilds;
+module.exports.stripOnnxruntimeCudaProviders = stripOnnxruntimeCudaProviders;
 module.exports.embedWorkerProbePlan = embedWorkerProbePlan;

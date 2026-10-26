@@ -216,8 +216,11 @@ examples, not the rule:
 - `"beforeAll" hook timeout of 15000ms exceeded` inside `launchPage()` (v0.42.0).
 - A bare `Test timeout of 15000ms exceeded` with no Expected/Received block (v0.43.0).
 - `page.goto: Navigation ... is interrupted by another navigation to` the same URL, inside
-  `launchPage` (v0.48.0). `navigateToVite` in `tests/ui/helpers.ts` now retries that form, so a
-  repeat means it happened on three attempts in a row.
+  `launchPage` (v0.48.0) and on three gotos in a row in a `beforeAll` (v0.50.0). `navigateToVite`
+  in `tests/ui/vite-navigation-retry.ts` now adopts the navigation that took the goto's place
+  instead of racing it, and logs a `[gotoVite]` line naming what navigated the page. Before you call a repeat
+  environmental, read that line and the run's `[WebServer]` lines: Vite's stdout is piped now, so a
+  reload or re-optimization shows there.
 
 Re-running the full suite a third time to chase a clean local exit is not diligence. It is a
 ten-minute coin flip that cannot tell you anything the four checks above have not already answered.

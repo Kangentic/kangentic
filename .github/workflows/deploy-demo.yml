@@ -38,6 +38,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# A called workflow does not inherit release.yml's env, so it sets its own: no CUDA download
+# from nuget.org in npm ci. The note at the top of ci.yml has the details.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   build:
     runs-on: ubuntu-24.04

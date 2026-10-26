@@ -14,6 +14,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# On Linux x64, onnxruntime-node's install script downloads its CUDA, TensorRT and
+# provider-bridge libraries (microsoft.ml.onnxruntime.gpu.linux) from nuget.org. Nothing
+# loads them: Linux embeds on WebGPU or CPU (src/main/retrieval/embedder/embed-client.ts),
+# and the package already ships the CPU runtime. That download timed out the v0.50.0
+# release's E2E shard, which never reached a test. Windows and macOS download nothing
+# either way. Every workflow whose npm ci runs install scripts sets this, and
+# tests/unit/ci-workflow-hygiene.test.ts pins it.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 # CI architecture:
 # - ONE always-on `checks` job runs lint, typecheck and build serially, with each
 #   step reporting independently (see the job for why that wiring is required).
@@ -53,13 +63,16 @@ concurrency:
 # or publish-protocol run eats into it.
 #
 # node_modules is cached under one shared lockfile-keyed key, so npm ci runs only
-# on a lockfile change. The key also names the Node major (`node24`): a tree
-# installed under another Node and npm is not this one, and keeping the old key
-# would restore it and never run npm ci on the new pair. Change the prefix in all
-# six jobs together when node-version moves. Node 24 (npm 11) runs the root
-# package's own postinstall, which is what fetches the Electron binary now that
-# Electron 42+ has no install script of its own; npm 11 only WARNS about a
-# dependency script allowScripts does not cover, where npm 12 blocks it.
+# on a lockfile change. The key also names the Node major (`node24`) and the
+# install's shape (`nocuda`, the ONNXRUNTIME_NODE_INSTALL skip above): a tree
+# installed under another Node and npm, or with other install flags, is not this
+# one, and keeping the old key would restore it and never run npm ci on the new
+# install. Change the prefix in all six jobs together when either moves
+# (tests/unit/ci-workflow-hygiene.test.ts fails on keys that disagree). Node 24
+# (npm 11) runs the root package's own postinstall, which is what fetches the
+# Electron binary now that Electron 42+ has no install script of its own; npm 11
+# only WARNS about a dependency script allowScripts does not cover, where npm 12
+# blocks it.
 # setup-node deliberately does NOT set `cache: npm`: that
 # restores a ~366 MB ~/.npm tree which only `npm ci` reads, and `npm ci` only runs
 # on a node_modules cache MISS, so on the warm path it was ~5.3s of dead weight
@@ -131,7 +144,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -204,7 +217,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -250,7 +263,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -289,7 +302,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -339,7 +352,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci
@@ -435,7 +448,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: node_modules
-          key: ${{ runner.os }}-node24-node-modules-${{ hashFiles('package-lock.json') }}
+          key: ${{ runner.os }}-node24-nocuda-node-modules-${{ hashFiles('package-lock.json') }}
       - name: Install dependencies (npm ci, with the Electron binary)
         if: steps.cache-node-modules.outputs.cache-hit != 'true'
         run: npm ci

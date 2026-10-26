@@ -237,7 +237,12 @@ before the job runs, and the gate does not fail on an asset it does not list.
 
 Every leg builds on a runner of its own arch, never cross-built: npm installs only the host's
 per-arch native packages (sherpa-onnx, sqlite-vec, koffi, sharp), and `build/afterPack.js` loads
-the native modules with the packaged Electron binary.
+the native modules with the packaged Electron binary. On the Linux x64 leg, onnxruntime-node's
+install script would also download its CUDA, TensorRT and provider-bridge libraries from
+nuget.org. `release.yml` sets `ONNXRUNTIME_NODE_INSTALL: skip`, because Linux embeds on WebGPU or
+CPU and never loads them, so the build does not depend on that download. `build/afterPack.js`
+removes any that an install without the skip left and logs which branch it took, so the x64
+packages never ship them.
 
 | Runner | Platform | Artifacts |
 |--------|----------|-----------|

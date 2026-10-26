@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// Three pins on .github/workflows/*.yml that nothing else watches.
+// Four pins on .github/workflows/*.yml that nothing else watches.
 //
 // 1. Every Linux runner is pinned to Ubuntu 24.04. The node_modules and Playwright cache keys start
 //    with `runner.os`, which reads `Linux` on every Ubuntu release, so a job that drifts to a
@@ -20,6 +20,14 @@ import path from 'node:path';
 //    its check green. The project keeps no flaky tests, and before the flag a flake reached main
 //    and was caught only by /release scanning the whole run log. release.yml is out of scope on
 //    purpose: its poster captures' retry is how a slow shot lands.
+//
+// 4. Every workflow whose `npm ci` runs install scripts sets `ONNXRUNTIME_NODE_INSTALL: skip` in its
+//    top-level `env:`, and every node_modules cache key in ci.yml is the same string. On Linux x64
+//    onnxruntime-node's install script downloads CUDA libraries from nuget.org that nothing loads,
+//    and that download timed out the v0.50.0 release's E2E shard before any test ran. Top-level,
+//    because a job-level env covers only its own job and a called workflow inherits nothing. The
+//    key check holds ci.yml's note that the prefix changes in all six jobs together: a job left on
+//    an old key restores a tree installed another way.
 //
 // The collectors read the YAML with line-anchored regexes, like release-workflow-gates.test.ts,
 // because js-yaml is only a transitive dependency. A collector that quietly matches nothing would
@@ -726,5 +734,196 @@ describe('deploy-demo.yml Playwright runs fail on a flaky test', () => {
     const regressed = replaceExactly(deploySource, `npm run test:demo -- ${FAIL_ON_FLAKY_FLAG}`, 'npm run test:demo');
     const violations = findRunsThatLetFlakesPass(collectPlaywrightRuns(regressed, playwrightScripts));
     expect(violations.map((run) => run.viaScript)).toEqual(['test:demo']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Pin 4: onnxruntime-node's CUDA download is skipped, and ci.yml's node_modules keys agree
+// ---------------------------------------------------------------------------------------------
+
+const ONNXRUNTIME_INSTALL_VARIABLE = 'ONNXRUNTIME_NODE_INSTALL';
+
+interface NpmCiRun {
+  line: number;
+  command: string;
+}
+
+/**
+ * Every line of a workflow that runs `npm ci`, as a `run:` value or a line of a block-scalar body.
+ * A step `name:` that only mentions npm ci is not a run, and comment lines are skipped.
+ */
+function collectNpmCiRuns(source: string): NpmCiRun[] {
+  const runs: NpmCiRun[] = [];
+  normalizeLineEndings(source).split('\n').forEach((rawLine, lineIndex) => {
+    if (isBlankOrComment(rawLine)) return;
+    const command = rawLine.replace(/^\s*(-\s+)?(run:\s*)?/, '').trim();
+    if (/^npm ci\b/.test(command)) runs.push({ line: lineIndex + 1, command });
+  });
+  return runs;
+}
+
+/** The runs whose install scripts execute, which is where onnxruntime-node's download happens. */
+function collectScriptedNpmCiRuns(source: string): NpmCiRun[] {
+  return collectNpmCiRuns(source).filter((run) => !run.command.split(/\s+/).includes('--ignore-scripts'));
+}
+
+/**
+ * The variables of the workflow's top-level `env:` block, or null when it has none. Throws on an
+ * inline mapping, which the line reader below cannot see into.
+ */
+function readTopLevelEnv(file: string, source: string): Map<string, string> | null {
+  const lines = normalizeLineEndings(source).split('\n');
+  const envLineIndex = lines.findIndex((line) => /^env:/.test(line));
+  if (envLineIndex === -1) return null;
+  if (cleanScalar(lines[envLineIndex].slice('env:'.length)) !== '') {
+    throw new Error(`${file}:${envLineIndex + 1} writes the top-level env: inline. Teach readTopLevelEnv that shape.`);
+  }
+  const variables = new Map<string, string>();
+  for (let nextIndex = envLineIndex + 1; nextIndex < lines.length; nextIndex++) {
+    const nextLine = lines[nextIndex];
+    if (isBlankOrComment(nextLine)) continue;
+    if (!/^\s/.test(nextLine)) break;
+    const variable = /^\s+([A-Za-z_][\w]*):\s*(.*)$/.exec(nextLine);
+    if (!variable) {
+      throw new Error(`${file}:${nextIndex + 1} is inside the top-level env: but is not a NAME: value line. Teach readTopLevelEnv that shape.`);
+    }
+    variables.set(variable[1], cleanScalar(variable[2]));
+  }
+  return variables;
+}
+
+interface MissingSkip {
+  file: string;
+  npmCiLines: number[];
+  found: string | null;
+}
+
+function findWorkflowsMissingOnnxruntimeSkip(workflows: WorkflowFile[]): MissingSkip[] {
+  return workflows.flatMap((workflow) => {
+    const runs = collectScriptedNpmCiRuns(workflow.source);
+    if (runs.length === 0) return [];
+    const found = readTopLevelEnv(workflow.name, workflow.source)?.get(ONNXRUNTIME_INSTALL_VARIABLE) ?? null;
+    return found === 'skip' ? [] : [{ file: workflow.name, npmCiLines: runs.map((run) => run.line), found }];
+  });
+}
+
+function formatMissingSkips(missing: MissingSkip[]): string {
+  const rows = missing.map((entry) => `  ${entry.file} (npm ci on line ${entry.npmCiLines.join(', ')}) has ${entry.found === null ? 'no top-level setting' : `"${entry.found}"`}`);
+  return [
+    `Every workflow whose npm ci runs install scripts must set ${ONNXRUNTIME_INSTALL_VARIABLE}: skip in its top-level env:. Missing:`,
+    ...rows,
+    'Without it onnxruntime-node downloads CUDA libraries from nuget.org on Linux x64 that the app never loads.',
+    'See the note above the env: block at the top of .github/workflows/ci.yml.',
+  ].join('\n');
+}
+
+interface CacheKey {
+  line: number;
+  key: string;
+}
+
+/** Every cache `key:` that names node_modules. */
+function collectNodeModulesCacheKeys(source: string): CacheKey[] {
+  const keys: CacheKey[] = [];
+  normalizeLineEndings(source).split('\n').forEach((rawLine, lineIndex) => {
+    if (isBlankOrComment(rawLine)) return;
+    const keyMatch = /^\s*key:\s*(.*)$/.exec(rawLine);
+    if (keyMatch && keyMatch[1].includes('node-modules')) keys.push({ line: lineIndex + 1, key: cleanScalar(keyMatch[1]) });
+  });
+  return keys;
+}
+
+describe('onnxruntime-node CUDA download is skipped in every workflow that runs install scripts', () => {
+  it('finds the scripted npm ci runs it is meant to guard, and exempts --ignore-scripts', () => {
+    const workflows = readWorkflows();
+    const scripted = workflows.filter((workflow) => collectScriptedNpmCiRuns(workflow.source).length > 0).map((workflow) => workflow.name);
+    expect(scripted).toEqual(expect.arrayContaining(['ci.yml', 'release.yml', 'package-smoke.yml', 'deploy-demo.yml']));
+    expect(collectScriptedNpmCiRuns(readWorkflowSource('ci.yml')).length, 'ci.yml has one npm ci per job that caches node_modules').toBeGreaterThanOrEqual(6);
+    for (const exempt of ['task-reap-real-processes.yml', 'macos-spawn-helper.yml']) {
+      const source = readWorkflowSource(exempt);
+      expect(collectNpmCiRuns(source).length, `${exempt} no longer runs npm ci, so it no longer proves the exemption`).toBeGreaterThan(0);
+      expect(collectScriptedNpmCiRuns(source)).toEqual([]);
+    }
+  });
+
+  it('every one of them sets the skip in its top-level env', () => {
+    const missing = findWorkflowsMissingOnnxruntimeSkip(readWorkflows());
+    expect(missing, formatMissingSkips(missing)).toEqual([]);
+  });
+
+  it.each(['ci.yml', 'release.yml'])('catches the skip dropped from the real %s', (workflowName) => {
+    const regressed = replaceExactly(readWorkflowSource(workflowName), `  ${ONNXRUNTIME_INSTALL_VARIABLE}: skip\n`, '');
+    const missing = findWorkflowsMissingOnnxruntimeSkip([{ name: workflowName, source: regressed }]);
+    expect(missing.map((entry) => [entry.file, entry.found])).toEqual([[workflowName, null]]);
+  });
+
+  it('flags a skip set only on a job, and a value other than skip', () => {
+    const jobLevelOnly = [
+      'jobs:',
+      '  build:',
+      '    env:',
+      `      ${ONNXRUNTIME_INSTALL_VARIABLE}: skip`,
+      '    steps:',
+      '      - name: Install dependencies (npm ci)',
+      '        run: npm ci',
+    ].join('\n');
+    expect(findWorkflowsMissingOnnxruntimeSkip([{ name: 'job-level.yml', source: jobLevelOnly }])).toEqual([
+      { file: 'job-level.yml', npmCiLines: [7], found: null },
+    ]);
+    const otherValue = `env:\n  ${ONNXRUNTIME_INSTALL_VARIABLE}: cuda12\njobs:\n  build:\n    steps:\n      - run: npm ci\n`;
+    expect(findWorkflowsMissingOnnxruntimeSkip([{ name: 'other-value.yml', source: otherValue }])).toEqual([
+      { file: 'other-value.yml', npmCiLines: [6], found: 'cuda12' },
+    ]);
+  });
+
+  it('reads npm ci in a block-scalar run, and ignores step names and comments that mention it', () => {
+    const source = [
+      '      - name: Install dependencies (npm ci, with the Electron binary)',
+      '        run: |',
+      '          echo installing',
+      '          npm ci',
+      '      # npm ci is only mentioned here',
+      '      - run: npm ci --ignore-scripts',
+    ].join('\n');
+    expect(collectNpmCiRuns(source).map((run) => run.line)).toEqual([4, 6]);
+    expect(collectScriptedNpmCiRuns(source).map((run) => run.line)).toEqual([4]);
+  });
+
+  it('throws on a top-level env shape it cannot read, rather than reading nothing', () => {
+    expect(() => readTopLevelEnv('synthetic.yml', `env: { ${ONNXRUNTIME_INSTALL_VARIABLE}: skip }\n`)).toThrow(
+      /synthetic\.yml:1 writes the top-level env: inline/,
+    );
+    expect(() => readTopLevelEnv('synthetic.yml', 'env:\n  - not a mapping\njobs:\n')).toThrow(
+      /synthetic\.yml:2 is inside the top-level env:/,
+    );
+  });
+});
+
+describe('ci.yml node_modules cache keys agree', () => {
+  const ciSource = readWorkflowSource('ci.yml');
+
+  it('finds one node_modules key per cached node_modules path (proves the collector still matches)', () => {
+    const cachedPaths = ciSource.split('\n').filter((line) => /^\s*path:\s*node_modules\s*$/.test(line)).length;
+    expect(cachedPaths).toBeGreaterThanOrEqual(6);
+    expect(collectNodeModulesCacheKeys(ciSource)).toHaveLength(cachedPaths);
+  });
+
+  it('uses the same key in every job', () => {
+    const distinct = [...new Set(collectNodeModulesCacheKeys(ciSource).map((entry) => entry.key))];
+    expect(
+      distinct,
+      'ci.yml caches node_modules under more than one key. Change the prefix in every job together (see the note at the top of ci.yml).',
+    ).toHaveLength(1);
+  });
+
+  it('catches one job left on an old prefix', () => {
+    // Changes only the first key line, found by the collector, so this case outlives the next
+    // prefix change instead of carrying a copy of ci.yml's step.
+    const lines = ciSource.split('\n');
+    const [firstKey] = collectNodeModulesCacheKeys(ciSource);
+    lines[firstKey.line - 1] = lines[firstKey.line - 1].replace('node-modules-', 'stale-node-modules-');
+    const regressed = lines.join('\n');
+    expect(regressed).not.toBe(ciSource);
+    expect(new Set(collectNodeModulesCacheKeys(regressed).map((entry) => entry.key)).size).toBe(2);
   });
 });

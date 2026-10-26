@@ -1,4 +1,6 @@
-import { chromium, errors, expect, type Browser, type Locator, type Page, type Request, type Response } from '@playwright/test';
+import {
+  chromium, errors, expect, type Browser, type CDPSession, type ConsoleMessage, type Locator, type Page, type Request, type Response,
+} from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
@@ -12,7 +14,7 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 // that reaches window despite the funnel wrapper.
 import { BENIGN_RENDERER_ERRORS, isBenignRendererError } from '../../src/shared/benign-renderer-errors';
 import { MONACO_HANDLED_ERROR_LOG_TAG } from '../../src/renderer/monaco-error-funnel';
-import { isRetryableViteNavigationError } from './vite-navigation-retry';
+import { navigateToVite } from './vite-navigation-retry';
 export { BENIGN_RENDERER_ERRORS, isBenignRendererError };
 
 /**
@@ -89,8 +91,8 @@ export async function waitForViteReady(url: string = VITE_URL, timeoutMs = 30000
 const VITE_GOTO_ATTEMPTS = 3;
 
 /**
- * `page.goto` against the Vite dev server, retrying only a navigation that never reached it or that a
- * reload cut short.
+ * `page.goto` against the Vite dev server, retrying only a navigation that never reached it, and
+ * adopting one that another navigation to the same url superseded.
  *
  * Seen in a full 3-worker UI run: waitForViteReady's fetch probe got its 200, then Chromium's
  * navigation a moment later failed with `net::ERR_CONNECTION_REFUSED`, while the same server went
@@ -103,29 +105,56 @@ const VITE_GOTO_ATTEMPTS = 3;
  * project-move.spec.ts's beforeAll, with nothing in the server log and the spec passing alone, so it
  * is retried too.
  *
- * A navigation can also be "interrupted by another navigation to" the SAME url: something reloaded
- * the page while its first load was still running. The v0.48.0 release's local UI run hit that form
- * in toast-behavior.spec.ts, 248 ms into launchPage, with no reload, optimizer or HMR line in the
- * Vite server log and the spec passing alone, so it is retried too. Chromium reports the url
- * normalized (`http://localhost:5174/` for a VITE_URL with no trailing slash), so the match uses
- * `new URL(url).href`. A page that really reloads itself on boot reloads on every attempt and still
- * fails after the last one.
+ * A navigation can also be "interrupted by another navigation to" the SAME url. Playwright throws
+ * that only when a different document committed without error before goto's own (the frame's goto
+ * in playwright-core's coreBundle.js), so the page is already at the url, and another goto would
+ * start a third navigation that races the one in flight. navigateToVite
+ * (tests/ui/vite-navigation-retry.ts) adopts that navigation instead. It waits, bounded, for a load
+ * that fired after the goto began, so a page already at the url is never judged by its old
+ * document, and hands the page to the mount check below. It goes back to goto only when the adopted
+ * navigation never loads or ends somewhere else. The same takeover reaches goto as
+ * `net::ERR_ABORTED at <url>` when Chromium reports the goto's navigation cancelled before the other
+ * document commits, which a reload of the same url while the goto is pending produces. Chromium
+ * reports the url normalized (`http://localhost:5174/` for a VITE_URL with no trailing slash), so the
+ * match uses `new URL(url).href`. The v0.48.0 release's local UI run hit this form in
+ * toast-behavior.spec.ts, and v0.50.0's hit it on three gotos in a row in
+ * task-card-agent-trail.spec.ts, ending on a blank page. Both read the Vite log as showing no reload
+ * or optimizer line. The log could not have shown one. Playwright drops a webServer's stdout unless
+ * told to pipe it, and Vite writes those lines to stdout. playwright.config.ts pipes it now, and
+ * every attempt navigateToVite retries or adopts logs what navigated the page, so the next
+ * occurrence names who issued the second navigation. Ruled out while chasing v0.50.0's (2026-10-26),
+ * so a repeat need not run these again: a cold dependency cache, a second Vite server forcing a
+ * re-optimize of the shared cache mid-run (220 of 220 passed), two pinned cores (270 of 270), and an
+ * IPv4 and IPv6 split (Vite binds only `::1` on Windows, and Chromium reaches it there directly).
+ * Two full UI runs never hit the form.
  *
  * No assertion is ever retried, since none of these forms means the app loaded. Any other
- * navigation error, and any of these forms on the last attempt, is rethrown.
+ * navigation error is rethrown, and so is any of these forms on the last attempt unless the
+ * navigation that superseded it was adopted.
  *
  * A fourth form reaches the app but never mounts it. The v0.46.0 release's local UI run failed
  * search-palette.spec.ts:335 on a page whose load event fired and whose #root stayed empty for 15 s,
  * while every other test in the file booted the same way in about a second. Load fires after the
  * entry's module graph has run or failed, so an empty root that long after load is a boot that
- * died, most likely on a module request that failed. gotoVite reloads such a page once, after
- * logging the requests that failed or never finished so the next occurrence names its cause. The
+ * died on a module request that failed. gotoVite reloads such a page once, after logging the
+ * requests that failed or never finished. Two full local UI runs on 2026-10-26 measured it: 5 boots
+ * died on a module request the live Vite server refused (`net::ERR_CONNECTION_REFUSED`) or failed
+ * (`net::ERR_FAILED`) while it served every other test, and the reload recovered all 5. The
  * caller's own wait for the app judges the second boot, so a boot that was only slow still passes.
  */
 export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void> {
+  const navigations = await trackBootNavigations(page);
   const bootRequests = trackBootRequests(page);
   try {
-    await navigateToVite(page, url);
+    await navigateToVite(page, url, {
+      attempts: VITE_GOTO_ATTEMPTS,
+      adoptTimeoutMs: VITE_ADOPTED_LOAD_TIMEOUT_MS,
+      loadCount: navigations.loadCount,
+      isTimeoutError: (error) => error instanceof errors.TimeoutError,
+      waitForServer: () => waitForViteReady(url),
+      describeNavigations: navigations.describe,
+      warn: (line) => console.warn(line),
+    });
     if (await appMounted(page, VITE_BOOT_MOUNT_GRACE_MS)) return;
     console.warn(
       `[gotoVite] the app did not mount within ${VITE_BOOT_MOUNT_GRACE_MS} ms of load, reloading once. ${bootRequests.describe()}`,
@@ -133,6 +162,7 @@ export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void
     await page.reload();
   } finally {
     bootRequests.dispose();
+    await navigations.dispose();
   }
 }
 
@@ -143,16 +173,70 @@ export async function gotoVite(page: Page, url: string = VITE_URL): Promise<void
  */
 const VITE_BOOT_MOUNT_GRACE_MS = 5000;
 
-async function navigateToVite(page: Page, url: string): Promise<void> {
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      await page.goto(url);
-      return;
-    } catch (error) {
-      if (!isRetryableViteNavigationError(error, url) || attempt >= VITE_GOTO_ATTEMPTS) throw error;
-      await waitForViteReady(url);
-    }
+/**
+ * How long navigateToVite waits for a navigation it adopted to reach load before it goes back to
+ * goto. A healthy boot reaches load in about a second. The UI project's 15 s budget, a beforeAll's
+ * included, has to hold this, gotoVite's mount grace and the caller's own wait for the app, so a
+ * document that never loads must not take the rest of it as a bare hook timeout.
+ */
+const VITE_ADOPTED_LOAD_TIMEOUT_MS = 4000;
+
+/**
+ * Records how the page navigated during gotoVite, so a goto that something else superseded says
+ * what did: every navigation the main frame started, browser or page initiated, with Chromium's
+ * type (`differentDocument`, `reload`) and loader id; every navigation the page itself asked for,
+ * with its reason (`scriptInitiated`, `reload`, `metaTagRefresh`); every commit; every load; and the
+ * Vite client's own console lines, such as its "server connection lost" before a reconnect reload.
+ * The CDP half is best effort: a session that cannot attach leaves the rest. The load count never
+ * depends on CDP, because navigateToVite adopts a superseded goto only after a load the count saw.
+ */
+async function trackBootNavigations(
+  page: Page,
+): Promise<{ describe: () => string; loadCount: () => number; dispose: () => Promise<void> }> {
+  const startedAt = Date.now();
+  const events: string[] = [];
+  const record = (text: string): void => {
+    events.push(`+${Date.now() - startedAt}ms ${text}`);
+  };
+  const onConsole = (message: ConsoleMessage): void => {
+    const text = message.text();
+    if (text.startsWith('[vite]') || text.startsWith('[hmr]')) record(`console ${text.split('\n')[0]}`);
+  };
+  let loads = 0;
+  const onLoad = (): void => {
+    loads += 1;
+    record(`load ${page.url()}`);
+  };
+  page.on('console', onConsole);
+  page.on('load', onLoad);
+  let session: CDPSession | null = null;
+  try {
+    session = await page.context().newCDPSession(page);
+    const { frameTree } = await session.send('Page.getFrameTree');
+    const mainFrameId = frameTree.frame.id;
+    session.on('Page.frameStartedNavigating', (event) => {
+      if (event.frameId === mainFrameId) record(`started ${event.navigationType} ${event.url} loader ${event.loaderId.slice(0, 8)}`);
+    });
+    session.on('Page.frameRequestedNavigation', (event) => {
+      if (event.frameId === mainFrameId) record(`page asked for ${event.reason} ${event.url}`);
+    });
+    session.on('Page.frameNavigated', (event) => {
+      if (event.frame.id === mainFrameId) record(`committed ${event.frame.url} loader ${event.frame.loaderId.slice(0, 8)}`);
+    });
+    await session.send('Page.enable');
+  } catch {
+    await session?.detach().catch(() => undefined);
+    session = null;
   }
+  return {
+    describe: () => `Navigations: ${events.length > 0 ? events.join('; ') : 'none recorded'}.`,
+    loadCount: () => loads,
+    dispose: async () => {
+      page.off('console', onConsole);
+      page.off('load', onLoad);
+      await session?.detach().catch(() => undefined);
+    },
+  };
 }
 
 /**

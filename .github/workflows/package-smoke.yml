@@ -67,6 +67,11 @@ concurrency:
   group: package-smoke-${{ github.ref }}
   cancel-in-progress: true
 
+# Packages exactly what release.yml ships, so it skips onnxruntime-node's Linux x64 CUDA
+# download the same way. The note at the top of ci.yml has the details.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   smoke:
     name: Package smoke (${{ matrix.os }})

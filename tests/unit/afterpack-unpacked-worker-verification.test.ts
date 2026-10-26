@@ -143,11 +143,13 @@ function installFakeElectronFuses(): {
  *  propagates the verifier's failure rather than swallowing it.
  *  `onRetrievalLoadProbe`, when given, runs at the moment the retrieval load
  *  probe is called, so a test can look at the unpacked tree as that probe would
- *  see it. */
+ *  see it. `onEmbedWorkerProbe` does the same for the embed worker's call (the
+ *  one with no moduleNames). */
 function installFakeVerifyUnpackedWorker(
   throwError?: Error,
   loadProbeError?: Error,
   onRetrievalLoadProbe?: () => void,
+  onEmbedWorkerProbe?: () => void,
 ): {
   calls: FakeVerifyUnpackedWorkerCall[];
   restore: () => void;
@@ -156,6 +158,7 @@ function installFakeVerifyUnpackedWorker(
   const fakeModule = {
     verifyUnpackedWorkerModules: ({ unpackedRoot, moduleNames }: { unpackedRoot: string; moduleNames?: string[] }): void => {
       calls.push(moduleNames ? { unpackedRoot, moduleNames } : { unpackedRoot });
+      if (!moduleNames) onEmbedWorkerProbe?.();
       if (throwError) throw throwError;
     },
     verifyRetrievalWorkerLoads: ({ unpackedRoot, electronBinaryPath }: { unpackedRoot: string; electronBinaryPath: string }): void => {
@@ -250,6 +253,12 @@ type AfterPackFunction = ((context: FakeAfterPackContext) => Promise<void>) & {
     targetArch: string;
     log?: (line: string) => void;
   }) => void;
+  stripOnnxruntimeCudaProviders: (options: {
+    unpackedRoot: string;
+    platform: string;
+    targetArch: string;
+    log?: (line: string) => void;
+  }) => void;
   embedWorkerProbePlan: (options: {
     unpackedRoot: string;
     platform: string;
@@ -259,10 +268,15 @@ type AfterPackFunction = ((context: FakeAfterPackContext) => Promise<void>) & {
   }) => 'probe' | 'skip';
 };
 
+/** onnxruntime-node's binary directory for one target, where afterPack.js reads it. */
+function onnxruntimeBinaryDir(unpackedRoot: string, platform: string, arch: string): string {
+  return path.join(unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, arch);
+}
+
 /** Writes the onnxruntime-node binding the embed worker probe checks for, where a packed tree
  *  carries it, so afterPack runs that probe rather than skipping or refusing it. */
 function writeOnnxBinding(unpackedRoot: string, platform: string, arch: string): void {
-  const directory = path.join(unpackedRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v6', platform, arch);
+  const directory = onnxruntimeBinaryDir(unpackedRoot, platform, arch);
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, 'onnxruntime_binding.node'), 'binding');
 }
@@ -770,4 +784,82 @@ describe('afterPack: running the better-sqlite3 prebuild strip on the packed tre
       }
     },
   );
+});
+
+/** What onnxruntime-node's Linux x64 directory holds after an install that did not skip the CUDA
+ *  download: the two files the package ships, and the three its install script adds. */
+const ONNXRUNTIME_SHIPPED = ['libonnxruntime.so.1', 'onnxruntime_binding.node'];
+const ONNXRUNTIME_CUDA_DOWNLOADED = [
+  'libonnxruntime_providers_cuda.so',
+  'libonnxruntime_providers_shared.so',
+  'libonnxruntime_providers_tensorrt.so',
+];
+
+function writeOnnxruntimeLinuxBinaries(unpackedRoot: string, names: string[]): string {
+  const binaryDir = onnxruntimeBinaryDir(unpackedRoot, 'linux', 'x64');
+  fs.mkdirSync(binaryDir, { recursive: true });
+  for (const name of names) fs.writeFileSync(path.join(binaryDir, name), 'binary');
+  return binaryDir;
+}
+
+describe('afterPack: stripping onnxruntime-node CUDA provider libraries', () => {
+  // Every workflow skips the download, so these cover a tree installed without the skip, such as
+  // a local `npm run make:linux`. They run the real strip against a throwaway unpacked tree.
+  let unpackedRoot: string;
+
+  beforeEach(() => {
+    unpackedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-onnxruntime-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(unpackedRoot, { recursive: true, force: true });
+  });
+
+  it('removes the three CUDA libraries, keeps the CPU runtime and the binding, and names what it removed', async () => {
+    const binaryDir = writeOnnxruntimeLinuxBinaries(unpackedRoot, [...ONNXRUNTIME_SHIPPED, ...ONNXRUNTIME_CUDA_DOWNLOADED]);
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+    afterPack.stripOnnxruntimeCudaProviders({ unpackedRoot, platform: 'linux', targetArch: 'x64', log: (line) => lines.push(line) });
+
+    expect(fs.readdirSync(binaryDir).sort()).toEqual(ONNXRUNTIME_SHIPPED);
+    expect(lines).toEqual([
+      `[afterPack] onnxruntime-node: removed ${ONNXRUNTIME_CUDA_DOWNLOADED.join(', ')} from bin/napi-v6/linux/x64, which nothing loads`,
+    ]);
+  });
+
+  it('touches nothing, and says so, when the install skipped the download', async () => {
+    const binaryDir = writeOnnxruntimeLinuxBinaries(unpackedRoot, ONNXRUNTIME_SHIPPED);
+    const afterPack = await importAfterPack();
+    const lines: string[] = [];
+    afterPack.stripOnnxruntimeCudaProviders({ unpackedRoot, platform: 'linux', targetArch: 'x64', log: (line) => lines.push(line) });
+
+    expect(fs.readdirSync(binaryDir).sort()).toEqual(ONNXRUNTIME_SHIPPED);
+    expect(lines).toEqual(['[afterPack] onnxruntime-node: no CUDA provider libraries in bin/napi-v6/linux/x64, nothing to strip']);
+  });
+
+  it('runs on afterPack\'s packed Linux x64 tree before the embed worker probe, so the probe proves the tree that ships', async () => {
+    const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'afterpack-onnxruntime-packed-'));
+    temporaryOutDirs.push(appOutDir);
+    const packedRoot = path.join(appOutDir, 'resources', 'app.asar.unpacked');
+    const binaryDir = writeOnnxruntimeLinuxBinaries(packedRoot, [...ONNXRUNTIME_SHIPPED, ...ONNXRUNTIME_CUDA_DOWNLOADED]);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    let seenByEmbedProbe: string[] = [];
+    const fakeFuses = installFakeElectronFuses();
+    const fakeVerify = installFakeVerifyUnpackedWorker(undefined, undefined, undefined, () => {
+      seenByEmbedProbe = fs.readdirSync(binaryDir).sort();
+    });
+    const fakeSpawnHelper = installFakeInstallSpawnHelper();
+    try {
+      const afterPack = await importAfterPack();
+      await afterPack(buildFakeContext({ platform: 'linux', appOutDir, arch: 1 }));
+
+      expect(seenByEmbedProbe).toEqual(ONNXRUNTIME_SHIPPED);
+      expect(fs.readdirSync(binaryDir).sort()).toEqual(ONNXRUNTIME_SHIPPED);
+    } finally {
+      vi.restoreAllMocks();
+      fakeFuses.restore();
+      fakeVerify.restore();
+      fakeSpawnHelper.restore();
+    }
+  });
 });

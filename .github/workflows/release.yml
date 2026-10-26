@@ -14,6 +14,12 @@ on:
 permissions:
   contents: write
 
+# onnxruntime-node's CUDA download on Linux x64 is skipped: the app embeds on WebGPU or CPU
+# there and never loads those libraries, so the packages stop shipping them and the build stops
+# depending on nuget.org. The note at the top of ci.yml has the details.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   # When triggered manually, create and push the tag first.
   create-tag:

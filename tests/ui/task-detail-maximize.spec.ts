@@ -482,50 +482,77 @@ test.describe('Task Detail: the terminal through a maximize', () => {
     try {
       const ownPage = own.page;
       await openStillTerminal(ownPage);
-      await ownPage.evaluate((sessionId) => {
-        const holder = window as unknown as {
-          __mockFireSessionData: (id: string, data: string) => void;
-          __streamTimer: ReturnType<typeof setInterval>;
-          __streamCount: number;
-        };
+      // The stream writes a line every 10 ms for as long as the page gets the CPU to, so how many
+      // lines it writes belongs to the runner: a loaded 2-core CI runner wrote 20 across the whole
+      // hold, where an idle one writes about 50. Every count below is read from what was sent, never
+      // assumed from the rate. The stream stops itself a few lines after the hold ends, so the
+      // screen shows held output and the live lines that followed it.
+      const linesAfterRelease = 5;
+      type StreamHolder = {
+        __mockFireSessionData: (id: string, data: string) => void;
+        __streamTimer: ReturnType<typeof setInterval>;
+        __streamCount: number;
+        __streamReleasedAt: number | null;
+      };
+      await ownPage.evaluate(({ sessionId, afterRelease }) => {
+        const holder = window as unknown as StreamHolder;
         holder.__streamCount = 0;
+        holder.__streamReleasedAt = null;
         holder.__streamTimer = setInterval(() => {
+          if (holder.__streamReleasedAt !== null && holder.__streamCount >= holder.__streamReleasedAt + afterRelease) {
+            clearInterval(holder.__streamTimer);
+            return;
+          }
           holder.__streamCount += 1;
           holder.__mockFireSessionData(sessionId, `stream ${holder.__streamCount}\r\n`);
         }, 10);
-      }, SESSION_ID);
+      }, { sessionId: SESSION_ID, afterRelease: linesAfterRelease });
       const streamSince = Date.now();
-      const heldFor = await ownPage.evaluate((hold) => new Promise<number>((resolve) => {
+      // The observer runs as a microtask of the change that put the hold's mark on or took it off,
+      // before the stream's next tick, so each count is exactly what had been sent at that moment.
+      const hold = await ownPage.evaluate((holdMark) => new Promise<{ heldFor: number; sentWhenHeld: number; sentWhenReleased: number }>((resolve) => {
+        const holder = window as unknown as StreamHolder;
         let heldAt = 0;
+        let sentWhenHeld = 0;
         new MutationObserver(() => {
-          const holding = document.querySelector(hold.selector) !== null;
-          if (holding && heldAt === 0) heldAt = performance.now();
-          if (!holding && heldAt !== 0) resolve(performance.now() - heldAt);
-        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [hold.attribute] });
+          const holding = document.querySelector(holdMark.selector) !== null;
+          if (holding && heldAt === 0) {
+            heldAt = performance.now();
+            sentWhenHeld = holder.__streamCount;
+          }
+          if (!holding && heldAt !== 0 && holder.__streamReleasedAt === null) {
+            holder.__streamReleasedAt = holder.__streamCount;
+            resolve({ heldFor: performance.now() - heldAt, sentWhenHeld, sentWhenReleased: holder.__streamCount });
+          }
+        }).observe(document.body, { subtree: true, attributes: true, attributeFilter: [holdMark.attribute] });
         document.querySelector<HTMLElement>('[data-testid="task-detail-maximize"]')?.click();
       }), { selector: TERMINAL_FRAME_HOLD_SELECTOR, attribute: TERMINAL_FRAME_HOLD_ATTRIBUTE });
       // Not before the wait's 500 ms cap, and ended well before a stuck hold
       // would show (the send waits a frame, and headless draws slowly).
-      expect(heldFor).toBeGreaterThanOrEqual(450);
-      expect(heldFor).toBeLessThanOrEqual(2000);
+      expect(hold.heldFor).toBeGreaterThanOrEqual(450);
+      expect(hold.heldFor).toBeLessThanOrEqual(2000);
+      // Output arrived while the hold was up, so there was output for it to hold.
+      expect(hold.sentWhenReleased).toBeGreaterThan(hold.sentWhenHeld);
       // The cap ended it, not the watchdog.
       await expectNoFrameHoldRecovery(ownPage, streamSince);
-      const sent = await ownPage.evaluate(() => {
-        const holder = window as unknown as { __streamTimer: ReturnType<typeof setInterval>; __streamCount: number };
-        clearInterval(holder.__streamTimer);
-        return holder.__streamCount;
-      });
-      // The last line streamed shows, and the lines on screen run without a gap:
-      // nothing held was dropped.
-      const streamedLines = async () => {
-        const rows = await ownPage.evaluate((sessionId) => (window as unknown as {
-          __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[] }>;
+      const sent = hold.sentWhenReleased + linesAfterRelease;
+      const readScreen = async () => {
+        const grid = await ownPage.evaluate((sessionId) => (window as unknown as {
+          __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[]; cursorRow: number | null }>;
         }).__kangenticTerminalGridRows(sessionId)[0], SESSION_ID);
-        return (rows?.viewportRows ?? []).map((row) => /^stream (\d+)/.exec(row)?.[1]).filter((line): line is string => line !== undefined).map(Number);
+        const lines = (grid?.viewportRows ?? []).map((row) => /^stream (\d+)/.exec(row)?.[1]).filter((line): line is string => line !== undefined).map(Number);
+        return { lines, cursorRow: grid?.cursorRow ?? null };
       };
-      await expect.poll(async () => (await streamedLines()).at(-1), { timeout: 3000 }).toBe(sent);
-      const lines = await streamedLines();
-      expect(lines.length).toBeGreaterThan(20);
+      // The last line streamed shows, so the stream has stopped and everything is drawn.
+      await expect.poll(async () => (await readScreen()).lines.at(-1), { timeout: 3000 }).toBe(sent);
+      const { lines, cursorRow } = await readScreen();
+      if (cursorRow === null) throw new Error('The terminal grid reported no cursor row.');
+      // Every row above the cursor is a streamed line, or every streamed line is on screen. A flush
+      // that dropped the head of what was held leaves fewer.
+      expect(lines.length).toBe(Math.min(sent, cursorRow));
+      // The lines on screen reach back into what the hold kept back, and run without a gap across
+      // the moment it ended: nothing held was dropped, and none of it was drawn out of order.
+      expect(lines[0]).toBeLessThanOrEqual(hold.sentWhenReleased);
       expect(lines.every((line, index) => index === 0 || line === lines[index - 1] + 1)).toBe(true);
     } finally {
       await own.browser.close();
