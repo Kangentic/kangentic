@@ -48,6 +48,7 @@ import {
   YOUNG_SINCE_SPAWN_MS,
 } from '../../src/main/pty/lifecycle/deferred-kill';
 import { AGENT_EXIT_REQUEST_TIMEOUT_MS, type AgentExitWaitResult } from '../../src/main/pty/host/exited-root-wait';
+import { createFakeRendererPort } from './helpers/fake-renderer-port';
 
 const EXIT_SEQUENCE = ['\x03', '/exit\r'];
 
@@ -876,5 +877,50 @@ describe('retireAgentlessSession on a young session', () => {
     expect(mockPty.kill).toHaveBeenCalledTimes(1);
     expect(row.status).toBe('exited');
     expect(row.exitCode).toBe(0);
+  });
+});
+
+describe('a renderer\'s keystrokes once main has dropped the PTY handle', () => {
+  // A renderer types on its own port to the pty host, not through main, so main
+  // nulling `session.pty` no longer stops its keys. kill() and the suspend's
+  // clearPty seal the PTY first (sealUserInput). Red-green: dropping the
+  // sealUserInput() call in either site lets the typed text reach the PTY.
+  const RENDERER_ID = 7;
+
+  it('kill() of a young session: the exit sequence lands, later keys do not', async () => {
+    const manager = new SessionManager();
+    const { session, mockPty } = await spawnSession(manager, 'task-seal-kill');
+    const port = createFakeRendererPort();
+    manager.attachRendererPort(RENDERER_ID, port.port);
+
+    // Control: the port reaches this PTY while main holds the handle.
+    port.send({ type: 'write', sessionId: session.id, data: 'typed before' });
+    expect(mockPty.write.mock.calls.map((call) => call[0])).toContain('typed before');
+    const writesBeforeKill = mockPty.write.mock.calls.length;
+
+    manager.kill(session.id);
+    port.send({ type: 'write', sessionId: session.id, data: 'typed after the kill' });
+
+    expect(writesAfter(mockPty, writesBeforeKill)).toEqual(EXIT_SEQUENCE);
+  });
+
+  it('suspend(): keys typed after the grace ends and the handle drops do not reach the PTY', async () => {
+    const manager = new SessionManager();
+    const { session, mockPty } = await spawnSession(manager, 'task-seal-suspend');
+    // The kill lands with no exit of its own, so only the seal can stop the keys.
+    mockPty.kill.mockImplementation(() => undefined);
+    const port = createFakeRendererPort();
+    manager.attachRendererPort(RENDERER_ID, port.port);
+
+    void manager.suspend(session.id);
+    // Past the natural-exit wait: clearPty seals and nulls, then the force-kill.
+    await vi.advanceTimersByTimeAsync(KILL_GRACE_MS + 1);
+    expect(registryRow(manager, session.id)?.pty).toBeNull();
+    expect(mockPty.kill).toHaveBeenCalled();
+    const writesAfterClear = mockPty.write.mock.calls.length;
+
+    port.send({ type: 'write', sessionId: session.id, data: 'typed after the suspend' });
+
+    expect(writesAfter(mockPty, writesAfterClear)).toEqual([]);
   });
 });

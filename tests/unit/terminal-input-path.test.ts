@@ -132,6 +132,10 @@ describe('terminal input and echo never cross main', () => {
   });
 
   it('every kill path seals the PTY to the renderers\' keystrokes before it drops the handle', () => {
+    // A text window, not control flow: the seal must sit within the three lines
+    // above each `.pty = null`, so a reorder that moves it further up fails
+    // here although it still runs first. The behavior is pinned by
+    // session-manager-deferred-kill.test.ts and session-shutdown-flow.test.ts.
     // The exit handler drops a PTY that is already gone: the host closed its
     // write path when the process exited, so there is nothing left to seal.
     const allowed = new Set(['src/main/pty/lifecycle/session-spawn-flow.ts#exit']);
