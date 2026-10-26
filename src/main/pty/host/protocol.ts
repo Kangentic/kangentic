@@ -65,6 +65,10 @@ export interface PtyHostSpawnParams {
   /** The task the PTY runs for (its `KANGENTIC_TASK_ID` tag), so a task reap
    *  can wait for what its exited shell left running (`exited-root-wait.ts`). */
   taskId?: string | null;
+  /** Main's `Date.now()` as it sent the request. The time the request waited
+   *  for the host's loop counts against main's budget for the answer, so a
+   *  retry's window counts it too (`retryWindowMs`). */
+  sentAtMs?: number;
 }
 
 /** A thrown error, flattened for the wire. */
@@ -164,6 +168,10 @@ export type PtyHostCommand =
   | { type: 'finalizeTranscript'; sessionId: string }
   /** The session left main's registry: drop everything the host keeps for it. */
   | { type: 'removeSession'; sessionId: string }
+  /** A teardown cancelled the session's spawn while it waited on the host. A
+   *  ConPTY of it whose output never connected is not spawned again
+   *  (`root-pid-gate.ts`); main stops whatever the answer brings back. */
+  | { type: 'cancelSpawn'; sessionId: string }
   /** Seed a session's ring with no PTY behind it (a failed spawn's diagnostic). */
   | { type: 'initSession'; sessionId: string; scrollback: string; cols: number }
   /** Start an agent CLI run. A command, so main has its handle at once; a

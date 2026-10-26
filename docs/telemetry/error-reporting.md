@@ -391,6 +391,18 @@ in one Sentry org, one triage surface.
   5 s, it writes `[retrieval-worker] event loop held 5 s in <step>` straight to stderr, naming the
   `timeSyncWork` span that was running (or `outside any labelled step` when none was), so the line
   is in the stderr tail by the 15 s kill.
+- **A ConPTY whose output never connected is its own issue.** Sentry groups a `pty_spawn` report
+  by the error's type and the code line of each in-app frame, and ignores the message (DESKTOP-23's
+  grouping info). So `recordSpawnFailure` (`src/main/pty/spawn/pty-spawn.ts`) reports that shape
+  from its own line as `PtyOutputNotConnectedError`, with `errno: PTY_OUTPUT_NOT_CONNECTED`. A real
+  CreateProcessW failure keeps the plain `Error` and the line every earlier `pty_spawn` issue was
+  grouped on. Rewording that line, or any other frame's line on the spawn-failure path, regroups
+  them all. A report with no errno is tagged `errno: none`. The message names the attempt's time
+  and the longest stall of the pty host's event loop while it waited (`RootPidGate.longestStallMs`).
+  An attempt of about 5000 ms is node-pty's connect timeout, and a fast failure is the conout
+  worker's own error. A stall past 5 s on a timeout is a lead, not a measured cause: it fits the
+  timeout firing while the host's loop was held with the worker's ready message still unread. A
+  short stall on a timeout points at the worker instead.
 - **Host memory pressure carries a `host_memory` context on every event** (`setHostMemoryContext`,
   `src/main/diagnostics/host-memory.ts`; DESKTOP-16 was a renderer OOM where the crashing process
   held 179 MB while the host had 2.15 MB of Windows commit remaining out of an 89.8 GB limit - a

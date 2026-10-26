@@ -34,8 +34,9 @@ const FAILED_SESSION_COLS = 120;
 /**
  * Handle a thrown `pty.spawn()` call. The platform-specific failure
  * modes (missing shell binary, invalid cwd, posix_spawnp permission
- * issues on the embedded spawn-helper binary) are classified by
- * `diagnoseSpawnFailure`; this module wraps that with:
+ * issues on the embedded spawn-helper binary, a ConPTY whose output never
+ * connected) are classified by `diagnoseSpawnFailure`; this module wraps
+ * that with:
  *
  *   - structured log line
  *   - metric emission via recordSpawnFailure
@@ -68,9 +69,8 @@ export function handleSpawnFailure(
 
   // Append actionable guidance to scrollback (empty suffix if no
   // known recipe for this error shape).
-  let diagnosticScrollback = previousScrollback;
-  if (diagnostic.scrollbackSuffix) {
-    diagnosticScrollback += diagnostic.scrollbackSuffix;
+  const diagnosticScrollback = previousScrollback + diagnostic.scrollbackSuffix;
+  if (diagnostic.kind === 'posix-spawnp') {
     console.error(`[PTY] posix_spawnp failed for shell "${shellExe}" in "${effectiveCwd}". Likely missing +x on spawn-helper.`);
   }
 

@@ -16,17 +16,19 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../src/main/pty/spawn/pty-spawn', () => ({
-  diagnoseSpawnFailure: () => ({
+  diagnoseSpawnFailure: vi.fn(() => ({
+    kind: 'other',
     errorMessage: 'File not found: ',
     scrollbackSuffix: '',
     errno: '',
     cwdExists: true,
     shellExists: false,
-  }),
+  })),
   recordSpawnFailure: vi.fn(),
 }));
 
 import { handleSpawnFailure, type SpawnAttempt, type SpawnFailureContext } from '../../src/main/pty/spawn/spawn-failure-handler';
+import { diagnoseSpawnFailure } from '../../src/main/pty/spawn/pty-spawn';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import type { Session } from '../../src/shared/types';
 
@@ -95,5 +97,69 @@ describe('handleSpawnFailure', () => {
     expect(emitted.map((entry) => entry.event)).toEqual(['session-changed', 'exit']);
     expect(emitted[0].args[1] as Session).toMatchObject({ taskId: 'task-1', status: 'exited' });
     expect((emitted[0].args[1] as Session).transient).toBeFalsy();
+  });
+
+  it('shows a ConPTY whose output never connected its own hint, and logs no posix_spawnp line for it', () => {
+    const hint = '\r\nError: The terminal did not start because its output never connected\r\n';
+    vi.mocked(diagnoseSpawnFailure).mockReturnValueOnce({
+      kind: 'output-not-connected',
+      errorMessage: 'Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)',
+      scrollbackSuffix: hint,
+      errno: 'PTY_OUTPUT_NOT_CONNECTED',
+      cwdExists: true,
+      shellExists: true,
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      handleSpawnFailure(new Error('Terminal output never connected after 5012 ms, longest pty host stall 4870 ms (ConPTY error code: -1)'), { ...makeAttempt(), previousScrollback: 'carried bytes' }, context);
+
+      expect(context.host.post).toHaveBeenCalledWith({ type: 'initSession', sessionId: 'failed-session-id', scrollback: `carried bytes${hint}`, cols: 120 });
+      // The "spawn failed" line itself is still logged; the posix recipe is not.
+      expect(consoleError).toHaveBeenCalledTimes(1);
+      expect(consoleError.mock.calls.flat().join(' ')).not.toContain('posix_spawnp');
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('logs the missing spawn-helper recipe for a posix_spawnp failure, and seeds the ring with the carried scrollback plus its hint', () => {
+    const hint = '\r\nError: the terminal helper could not be started, check that spawn-helper is executable\r\n';
+    vi.mocked(diagnoseSpawnFailure).mockReturnValueOnce({
+      kind: 'posix-spawnp',
+      errorMessage: 'posix_spawnp failed.',
+      scrollbackSuffix: hint,
+      errno: '',
+      cwdExists: true,
+      shellExists: true,
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      handleSpawnFailure(new Error('posix_spawnp failed.'), { ...makeAttempt(), previousScrollback: 'carried bytes' }, context);
+
+      // The shell and cwd in the line are the attempt's, so it names what was tried.
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('[PTY] posix_spawnp failed for shell "pwsh" in "/home/dev/project". Likely missing +x on spawn-helper.'));
+      // Beside the plain "spawn failed" line every failure logs.
+      expect(consoleError).toHaveBeenCalledTimes(2);
+      expect(context.host.post).toHaveBeenCalledWith({ type: 'initSession', sessionId: 'failed-session-id', scrollback: `carried bytes${hint}`, cols: 120 });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('seeds the ring with the carried scrollback alone when the diagnosis has no hint to add', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { context } = makeContext();
+    try {
+      // The default diagnosis is kind 'other' with an empty suffix.
+      handleSpawnFailure(new Error('File not found: '), { ...makeAttempt(), previousScrollback: 'carried bytes' }, context);
+
+      expect(context.host.post).toHaveBeenCalledWith({ type: 'initSession', sessionId: 'failed-session-id', scrollback: 'carried bytes', cols: 120 });
+      // An 'other' failure logs only the plain line, no posix recipe.
+      expect(consoleError).toHaveBeenCalledTimes(1);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

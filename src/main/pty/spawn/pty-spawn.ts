@@ -6,6 +6,7 @@ import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { parseWslShellSpec } from '../process-tag/task-process-tag';
 import { childProcessEnv } from '../../shared/child-env';
+import { PTY_OUTPUT_NOT_CONNECTED_CODE } from '../host/root-pid-gate';
 
 /** Shell executable + args, split from a user-facing shell spec. */
 export interface ShellInvocation {
@@ -285,12 +286,20 @@ export function resolveSpawnCwd(input: {
 }
 
 /**
+ * The spawn failures with their own guidance: node-pty's spawn-helper
+ * missing its execute bit (`posix_spawnp`), and a ConPTY whose output never
+ * connected, so its process never started (`root-pid-gate.ts`).
+ */
+export type SpawnFailureKind = 'posix-spawnp' | 'output-not-connected' | 'other';
+
+/**
  * Diagnostic payload for a PTY spawn failure. Callers use the
  * scrollback suffix to show actionable guidance in the terminal panel
  * instead of a blank screen, and fire the analytics event via
  * `recordSpawnFailure`.
  */
 export interface SpawnFailureDiagnostic {
+  kind: SpawnFailureKind;
   /** Human-readable error message from the thrown error. */
   errorMessage: string;
   /** ANSI-formatted text to append to scrollback. Empty if no special hint applies. */
@@ -306,7 +315,10 @@ export interface SpawnFailureDiagnostic {
 /**
  * Inspect a thrown error from `pty.spawn` and build a diagnostic
  * payload. Handles the common `posix_spawnp` failure caused by
- * node-pty's spawn-helper binary missing the executable bit.
+ * node-pty's spawn-helper binary missing the executable bit, and a ConPTY
+ * whose output never connected on a machine too busy to answer node-pty in
+ * time (the pty host spawns that one once more first, when main's budget
+ * leaves room).
  *
  * Pure (no logging or side effects) so callers can test and also so
  * they can sequence the logging themselves (session-manager wants to
@@ -325,9 +337,20 @@ export function diagnoseSpawnFailure(params: {
 
   const cwdExists = fs.existsSync(params.originalCwd);
   const shellExists = fs.existsSync(params.shellExe);
+  let kind: SpawnFailureKind = 'other';
+  if (errnoCode === PTY_OUTPUT_NOT_CONNECTED_CODE) kind = 'output-not-connected';
+  else if (errorMessage.includes('posix_spawnp')) kind = 'posix-spawnp';
 
   let scrollbackSuffix = '';
-  if (errorMessage.includes('posix_spawnp')) {
+  if (kind === 'output-not-connected') {
+    scrollbackSuffix = [
+      '',
+      '\x1b[1;31mError: The terminal did not start because its output never connected\x1b[0m',
+      '',
+      'This computer was too busy to start it in time. Start it again to retry.',
+      '',
+    ].join('\r\n');
+  } else if (kind === 'posix-spawnp') {
     const isPackaged = params.shellExe.includes('app.asar') || params.effectiveCwd.includes('app.asar');
     const fixInstructions = isPackaged
       ? '  Reinstalling the app should resolve this.'
@@ -346,7 +369,7 @@ export function diagnoseSpawnFailure(params: {
     ].join('\r\n');
   }
 
-  return { errorMessage, scrollbackSuffix, errno, cwdExists, shellExists };
+  return { kind, errorMessage, scrollbackSuffix, errno, cwdExists, shellExists };
 }
 
 /**
@@ -369,14 +392,31 @@ export function recordSpawnFailure(params: {
     platform: process.platform,
     arch: process.arch,
   });
-  // Handled failure: forward to Sentry with the diagnostic as tags so spawn
-  // failures group by errno/shell and are diagnosable beyond a count. The
-  // message is the sanitized form (paths already stripped upstream of Sentry's
-  // own normalization, since this string is hand-assembled, not a stack).
-  reportHandledError(new Error(sanitizeErrorMessage(params.diagnostic.errorMessage)), {
+  // Handled failure: forward to Sentry with the diagnostic as tags, so spawn
+  // failures can be searched by errno and shell. The message is the sanitized
+  // form (paths already stripped upstream of Sentry's own normalization, since
+  // this string is hand-assembled, not a stack).
+  //
+  // Sentry groups these reports by the error's type and each in-app frame's
+  // line of code, never by the message (DESKTOP-23's grouping info). So a
+  // ConPTY whose output never connected is reported from its own line, under
+  // its own type, to open its own issue rather than share one with a real
+  // CreateProcessW failure.
+  const tags = {
     source: 'pty_spawn',
-    errno: params.diagnostic.errno ?? 'none',
+    errno: params.diagnostic.errno || 'none',
     shellExists: String(params.diagnostic.shellExists),
     cwdExists: String(params.diagnostic.cwdExists),
+  };
+  if (params.diagnostic.kind === 'output-not-connected') {
+    const notConnected = new Error(sanitizeErrorMessage(params.diagnostic.errorMessage));
+    notConnected.name = 'PtyOutputNotConnectedError';
+    reportHandledError(notConnected, tags);
+    return;
+  }
+  // The text of the next line is hashed into the grouping of every other
+  // spawn-failure issue: rewording it opens a new issue for each of them.
+  reportHandledError(new Error(sanitizeErrorMessage(params.diagnostic.errorMessage)), {
+    ...tags,
   });
 }

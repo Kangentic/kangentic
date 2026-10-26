@@ -16,13 +16,49 @@
  * has its handle before any event for the PTY arrives.
  *
  * A PTY that exits while its pid is still 0 never started a process. node-pty
- * reports CreateProcessW's failure, or its own 5 s connect timeout, as an exit
- * carrying the error code. That spawn is answered as failed, the way node-pty
- * 1.1.0 threw it.
+ * reports CreateProcessW's failure as an exit carrying its Win32 code (2, 5,
+ * 193), and that spawn is answered as failed, the way node-pty 1.1.0 threw it.
+ *
+ * An exit carrying -1 is different: the output connection never came up, so
+ * CreateProcessW never ran (`WindowsPtyAgent._failPtyConnection`). Its cause is
+ * node-pty's own connect timeout or its conout worker's error, and node-pty has
+ * already closed the pseudoconsole. On a machine too busy to answer in 5 s
+ * (Sentry DESKTOP-23) the host spawns such a PTY once more (`retryWindowMs`)
+ * before it answers.
  */
 
 /** How often the pid is read while no output has arrived to prompt a read. */
 export const ROOT_PID_POLL_MS = 10;
+
+/**
+ * node-pty's `CONNECTION_TIMEOUT` (`windowsPtyAgent.js`): how long it waits
+ * for the conout worker before it fails the PTY with -1. `WindowsTerminal`
+ * builds its agent without options, so it cannot be raised.
+ */
+export const NODE_PTY_CONNECT_TIMEOUT_MS = 5_000;
+
+/**
+ * How long main waits for the host to answer a spawn or a raw spawn
+ * (`PtyHostClient`). The retry window below is sized against it, so both
+ * attempts answer before main gives up and kills the ptyId.
+ */
+export const SPAWN_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Kept back from main's budget for the answer's trip to main. */
+export const SPAWN_ANSWER_MARGIN_MS = 1_000;
+
+/**
+ * The shortest window a retry is started with: node-pty's full connect timeout
+ * and a second. A shorter one would let the gate's backstop race node-pty's
+ * own timer and answer "started, pid 0" for a PTY about to fail.
+ */
+export const SPAWN_RETRY_MIN_WINDOW_MS = NODE_PTY_CONNECT_TIMEOUT_MS + 1_000;
+
+/** The exit code node-pty gives a PTY whose output connection never came up. */
+export const OUTPUT_NOT_CONNECTED_EXIT_CODE = -1;
+
+/** The `code` of the error such a spawn is answered with. It crosses to main on `PtyHostError.code`. */
+export const PTY_OUTPUT_NOT_CONNECTED_CODE = 'PTY_OUTPUT_NOT_CONNECTED';
 
 /**
  * Backstop only. node-pty's own connect timeout (5 s) ends a PTY that never
@@ -40,28 +76,67 @@ export type RootPidOutcome =
   | { kind: 'failed'; exitCode: number }
   | { kind: 'timedOut' };
 
-/** The error a spawn is answered with when its process never started. */
-export function processNotStartedError(exitCode: number): Error {
-  // node-pty 1.1.0's own text for this failure, so the spawn-failure path and
-  // its grouping in error reports read the same as before.
+/**
+ * The error a spawn is answered with when its process never started.
+ * `elapsedMs` is the attempt's time from its spawn: about 5000 is node-pty's
+ * connect timeout, a fast failure is the conout worker's own error.
+ * `longestStallMs` is the gate's `longestStallMs`, which tells a held host
+ * loop from a late worker.
+ */
+export function processNotStartedError(exitCode: number, elapsedMs: number, longestStallMs: number): Error {
+  if (exitCode === OUTPUT_NOT_CONNECTED_EXIT_CODE) {
+    const error: NodeJS.ErrnoException = new Error(`Terminal output never connected after ${elapsedMs} ms, longest pty host stall ${longestStallMs} ms (ConPTY error code: -1)`);
+    error.code = PTY_OUTPUT_NOT_CONNECTED_CODE;
+    return error;
+  }
+  // node-pty 1.1.0's own text for a CreateProcessW failure, so logs and the
+  // error report's title read the same as before.
   return new Error(`Cannot create process, error code: ${exitCode}`);
+}
+
+/**
+ * The backstop a retry's gate gets, or null when there is no time for one.
+ * `elapsedMs` runs from main's send of the request: the time it waited for the
+ * host's loop, then the first attempt's. The window is what is left of main's
+ * budget less the answer's margin, so the retry answers before main gives up;
+ * a first attempt that ran node-pty's full timeout straight away leaves 9 s.
+ * Past 8 s there is no full connect timeout left, and no retry. A third attempt
+ * never fits. A loop held during the retry runs its gate's timer late, and
+ * that answer can still miss main's budget; main then fails the spawn.
+ */
+export function retryWindowMs(elapsedMs: number): number | null {
+  const windowMs = Math.min(ROOT_PID_WAIT_LIMIT_MS, SPAWN_REQUEST_TIMEOUT_MS - SPAWN_ANSWER_MARGIN_MS - elapsedMs);
+  return windowMs >= SPAWN_RETRY_MIN_WINDOW_MS ? windowMs : null;
 }
 
 export class RootPidGate {
   /** Settles once: the pid is set, the PTY exited first, or the backstop ran out. */
   readonly outcome: Promise<RootPidOutcome>;
+  /**
+   * The longest the host's event loop went between two of this gate's turns
+   * (each 10 ms poll, and the exit) while the spawn waited. A stall past
+   * node-pty's 5 s timeout says the timeout may have fired only because the
+   * loop was held, with the conout worker's ready message still unread; a
+   * short one says the worker itself was late (Sentry DESKTOP-23).
+   */
+  longestStallMs = 0;
+  private lastTurnAtMs = Date.now();
   private settle: (outcome: RootPidOutcome) => void = () => undefined;
   private settled = false;
   private held: Array<() => void> | null = [];
   private readonly pollTimer: ReturnType<typeof setInterval>;
   private readonly limitTimer: ReturnType<typeof setTimeout>;
 
-  constructor(private readonly pty: { readonly pid: number }) {
+  /** `limitMs` is the backstop; a retry passes the time it has left (`retryWindowMs`). */
+  constructor(private readonly pty: { readonly pid: number }, limitMs: number = ROOT_PID_WAIT_LIMIT_MS) {
     this.outcome = new Promise((resolve) => {
       this.settle = resolve;
     });
-    this.pollTimer = setInterval(() => this.readPid(), ROOT_PID_POLL_MS);
-    this.limitTimer = setTimeout(() => this.finish({ kind: 'timedOut' }), ROOT_PID_WAIT_LIMIT_MS);
+    this.pollTimer = setInterval(() => {
+      this.noteTurn();
+      this.readPid();
+    }, ROOT_PID_POLL_MS);
+    this.limitTimer = setTimeout(() => this.finish({ kind: 'timedOut' }), limitMs);
     this.pollTimer.unref?.();
     this.limitTimer.unref?.();
   }
@@ -90,6 +165,8 @@ export class RootPidGate {
         return;
       }
       this.held.push(() => handle(exitCode, signal));
+      if (this.settled) return;
+      this.noteTurn();
       if (!this.readPid()) this.finish({ kind: 'failed', exitCode });
     };
   }
@@ -125,6 +202,13 @@ export class RootPidGate {
   /** The spawn failed: nothing held is handled. */
   discard(): void {
     this.held = null;
+  }
+
+  /** Measure the gap since the gate's last turn, while the spawn still waits. */
+  private noteTurn(): void {
+    const now = Date.now();
+    this.longestStallMs = Math.max(this.longestStallMs, now - this.lastTurnAtMs);
+    this.lastTurnAtMs = now;
   }
 
   private readPid(): boolean {

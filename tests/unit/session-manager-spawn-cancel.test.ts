@@ -22,7 +22,7 @@
  * Tier: Unit. Node-pty is mocked; the host core runs in this process behind a
  * transport that holds the `spawn` request until the test releases it.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -62,7 +62,7 @@ import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
 import { InProcessPtyHostTransport, type PtyHostLifecycleListener } from '../../src/main/pty/host/pty-host-client';
-import type { PtyHostMethod, PtyHostRequestMap } from '../../src/main/pty/host/protocol';
+import type { PtyHostCommand, PtyHostMethod, PtyHostRequestMap } from '../../src/main/pty/host/protocol';
 import type { AgentParser, Session } from '../../src/shared/types';
 import { isAbortError } from '../../src/shared/abort-utils';
 
@@ -158,6 +158,24 @@ function spawnsInFlight(manager: SessionManager): Map<string, unknown> {
   return inFlight as Map<string, unknown>;
 }
 
+/** The `cancelSpawn` commands the manager has posted to the host since `postSpy`
+ *  was installed on the transport (the client's `post` calls it at call time). */
+function cancelSpawnPosts(postSpy: MockInstance<(command: PtyHostCommand) => void>): PtyHostCommand[] {
+  return postSpy.mock.calls.map(([command]) => command).filter((command) => command.type === 'cancelSpawn');
+}
+
+/** The public teardowns aimed at one session id. Each reaches `cancelSpawnInFlight`
+ *  (`remove` through `kill`), so each must tell the host. */
+const SINGLE_SESSION_TEARDOWNS = {
+  kill: async (manager: SessionManager, sessionId: string): Promise<void> => {
+    manager.kill(sessionId);
+  },
+  remove: async (manager: SessionManager, sessionId: string): Promise<void> => {
+    manager.remove(sessionId);
+  },
+  suspend: (manager: SessionManager, sessionId: string): Promise<void> => manager.suspend(sessionId),
+};
+
 /** Let promise continuations run until `done` holds, without advancing timers. */
 async function flushUntil(done: () => boolean, turns = 200): Promise<void> {
   for (let turn = 0; turn < turns && !done(); turn++) await Promise.resolve();
@@ -201,6 +219,9 @@ async function promotionHeldAtTheHost(manager: SessionManager, transport: HeldSp
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued `mockReturnValueOnce` PTYs, so a test that
+  // failed before using its own would hand them to the next one.
+  vi.mocked(pty.spawn).mockReset();
   shutdownSwitch.shuttingDown = false;
   vi.useFakeTimers();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-spawn-cancel-'));
@@ -676,6 +697,175 @@ describe('SessionManager: a teardown while a direct spawn is in flight', () => {
     // Defined first: a renamed field would otherwise read as an empty map.
     expect(inFlight).toBeInstanceOf(Map);
     expect(inFlight?.size).toBe(0);
+  });
+});
+
+describe('SessionManager: a teardown while the host waits on a ConPTY whose output never connected', () => {
+  // The host spawns such a PTY once more before it answers (root-pid-gate.ts),
+  // which would hold a teardown waiting on the spawn to settle through a whole
+  // second attempt. The cancel reaches the host (`cancelSpawn`), so it does not.
+
+  /** A ConPTY stand-in: pid 0 until its output connects, which it never does. */
+  function createUnconnectedPty() {
+    let exitListener: ((event: { exitCode: number }) => void) | null = null;
+    return {
+      pid: 0,
+      cols: 120,
+      rows: 30,
+      onData: vi.fn(() => ({ dispose: () => undefined })),
+      onExit: vi.fn((listener: (event: { exitCode: number }) => void) => {
+        exitListener = listener;
+        return { dispose: () => { exitListener = null; } };
+      }),
+      write: vi.fn(),
+      resize: vi.fn(),
+      kill: vi.fn(),
+      /** node-pty's connect timeout: an exit carrying -1 with the pid still 0. */
+      failToConnect: (): void => exitListener?.({ exitCode: -1 }),
+    };
+  }
+
+  it('a task-wide remove keeps the host from spawning it again, and settles with the first attempt', async () => {
+    const { manager } = makeManager();
+    const unconnected = createUnconnectedPty();
+    vi.mocked(pty.spawn).mockReturnValue(unconnected as unknown as pty.IPty);
+    const spawning = manager.spawn({ id: 'direct-session', taskId: 'task-direct', command: '', cwd: tmpDir });
+    const outcome = spawning.then(() => 'resolved', (error: unknown) => error);
+    await flushUntil(() => vi.mocked(pty.spawn).mock.calls.length === 1);
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+
+    let settled = false;
+    void manager.removeByTaskId('task-direct').then(() => {
+      settled = true;
+    });
+    unconnected.failToConnect();
+    await flush();
+
+    // Red-green: without the cancel reaching the host, a second spawn starts here.
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+    expect(isAbortError(await outcome)).toBe(true);
+    await flush();
+    expect(settled).toBe(true);
+    expect(registryRow(manager, 'direct-session')).toBeUndefined();
+  });
+
+  // The single-session path (`cancelSpawnInFlight`), as the test above is the
+  // task-wide one. Not `remove`: it also posts `removeSession`, and the host
+  // declines a retry for a session it no longer holds, so a `remove` would show
+  // no second attempt with the cancel gone. Its cancel is pinned below instead.
+  it.each(['kill', 'suspend'] as const)('a single-session %s keeps the host from spawning it again, and tells it once', async (teardown) => {
+    const { manager, transport } = makeManager();
+    const unconnected = createUnconnectedPty();
+    vi.mocked(pty.spawn).mockReturnValue(unconnected as unknown as pty.IPty);
+    const spawning = manager.spawn({ id: 'direct-session', taskId: 'task-direct', command: '', cwd: tmpDir });
+    const outcome = spawning.then(() => 'resolved', (error: unknown) => error);
+    await flushUntil(() => vi.mocked(pty.spawn).mock.calls.length === 1);
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+    const post = vi.spyOn(transport, 'post');
+
+    const tornDown = SINGLE_SESSION_TEARDOWNS[teardown](manager, 'direct-session');
+    expect(cancelSpawnPosts(post)).toEqual([{ type: 'cancelSpawn', sessionId: 'direct-session' }]);
+    unconnected.failToConnect();
+    await flush();
+
+    // Red-green: without the cancel reaching the host, a second spawn starts here.
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+    expect(isAbortError(await outcome)).toBe(true);
+    await tornDown;
+    expect(registryRow(manager, 'direct-session')).toBeUndefined();
+  });
+
+  it('control: with no teardown the host spawns it once more', async () => {
+    const { manager } = makeManager();
+    const first = createUnconnectedPty();
+    const second = createUnconnectedPty();
+    vi.mocked(pty.spawn).mockReturnValueOnce(first as unknown as pty.IPty).mockReturnValueOnce(second as unknown as pty.IPty);
+    const spawning = manager.spawn({ id: 'direct-session', taskId: 'task-direct', command: '', cwd: tmpDir });
+    await flushUntil(() => vi.mocked(pty.spawn).mock.calls.length === 1);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      first.failToConnect();
+      await flushUntil(() => vi.mocked(pty.spawn).mock.calls.length === 2);
+      expect(pty.spawn).toHaveBeenCalledTimes(2);
+
+      // The second attempt fails the same way: the spawn ends as a failed one.
+      second.failToConnect();
+      const session = await spawning;
+      expect(session.status).toBe('exited');
+    } finally {
+      warn.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+});
+
+describe('SessionManager: the host hears of a cancelled spawn once, and only for that spawn', () => {
+  // `markSpawnCancelled` posts `cancelSpawn` at most once per spawn, however many
+  // teardown paths reach it: `removeByTaskId` alone reaches it twice, before and
+  // after its removal loop. The post is read off the transport the manager posts
+  // through; `pty.spawn` counts cannot see it for a PTY that connects.
+
+  it.each(['kill', 'remove', 'suspend'] as const)('a single-session %s posts cancelSpawn for that session and not for another spawn in flight', async (teardown) => {
+    const { manager, transport } = makeManager();
+    const { directPty } = await holdDirectSpawn(manager, transport, 651);
+    const bystanderPty = createMockPty(652);
+    // The held spawns reach the host in the order they were sent. A queue the
+    // implementation drains, not `mockReturnValueOnce`, so a failed run cannot
+    // leave an unused PTY queued for the next test.
+    const startedPtys = [directPty, bystanderPty];
+    vi.mocked(pty.spawn).mockImplementation(() => startedPtys.shift() as unknown as pty.IPty);
+    void manager.spawn({ id: 'bystander-session', taskId: 'task-bystander', command: '', cwd: tmpDir });
+    await flushUntil(() => transport.heldSpawns === 2);
+    expect(transport.heldSpawns).toBe(2);
+    const post = vi.spyOn(transport, 'post');
+
+    const tornDown = SINGLE_SESSION_TEARDOWNS[teardown](manager, 'direct-session');
+
+    expect(cancelSpawnPosts(post)).toEqual([{ type: 'cancelSpawn', sessionId: 'direct-session' }]);
+
+    transport.releaseSpawns();
+    await flush();
+    directPty.exit();
+    await flush();
+    await tornDown;
+    // The other spawn was not cancelled in the manager either: it registered and runs.
+    expect(registryRow(manager, 'bystander-session')?.status).toBe('running');
+    expect(registryRow(manager, 'direct-session')).toBeUndefined();
+  });
+
+  it('posts one cancelSpawn when a task-wide remove reaches the spawn on both of its cancels', async () => {
+    const { manager, transport } = makeManager();
+    const { directPty } = await holdDirectSpawn(manager, transport, 661);
+    const post = vi.spyOn(transport, 'post');
+
+    const removing = manager.removeByTaskId('task-direct');
+
+    expect(cancelSpawnPosts(post)).toEqual([{ type: 'cancelSpawn', sessionId: 'direct-session' }]);
+
+    transport.releaseSpawns();
+    await flush();
+    directPty.exit();
+    await flush();
+    await removing;
+  });
+
+  it('posts one cancelSpawn when a single-session kill, a task-wide remove and a task-wide kill all reach the same spawn', async () => {
+    const { manager, transport } = makeManager();
+    const { directPty } = await holdDirectSpawn(manager, transport, 662);
+    const post = vi.spyOn(transport, 'post');
+
+    manager.kill('direct-session');
+    const removing = manager.removeByTaskId('task-direct');
+    manager.killByTaskId('task-direct');
+
+    expect(cancelSpawnPosts(post)).toEqual([{ type: 'cancelSpawn', sessionId: 'direct-session' }]);
+
+    transport.releaseSpawns();
+    await flush();
+    directPty.exit();
+    await flush();
+    await removing;
   });
 });
 
