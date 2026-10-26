@@ -163,6 +163,11 @@ export default defineConfig({
     port: vitePort,
     reuseExistingServer: reuseServer,
     timeout: 60000,
+    // Playwright drops a webServer's stdout by default, and Vite writes every line that explains a
+    // page reloading itself to stdout: "page reload", "new dependencies optimized" and "server
+    // restarted". Two release runs read a log without them as proof that nothing reloaded (see
+    // gotoVite in tests/ui/helpers.ts). Piped, they print as [WebServer] lines in every run.
+    stdout: 'pipe',
   },
   // On CI: `list` only, so each shard's job log prints a line per test as it runs.
   // The per-shard logs ARE the results - there is no merged-report job (see

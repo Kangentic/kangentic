@@ -26,6 +26,10 @@ permissions:
   contents: read
   id-token: write
 
+# No CUDA download from nuget.org in npm ci. The note at the top of ci.yml has the details.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   publish-protocol:
     # Distinct from (and shorter than) the workflow name above, since GitHub

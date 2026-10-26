@@ -56,6 +56,8 @@ env:
   # Pinned, and checked against the digest GitHub publishes for the asset.
   NUSHELL_VERSION: '0.116.0'
   NUSHELL_SHA256: '9f73a6913f9515a621bd916dc91d7f3e0494e488161c2d686f6b98ffa0555945'
+  # No CUDA download from nuget.org in npm ci. The note at the top of ci.yml has the details.
+  ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
   posix-shells:

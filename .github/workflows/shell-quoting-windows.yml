@@ -103,6 +103,12 @@ concurrency:
   group: shell-quoting-windows-${{ github.ref }}
   cancel-in-progress: true
 
+# A no-op on Windows, where onnxruntime-node downloads nothing. Set anyway because every
+# workflow whose npm ci runs install scripts sets it, which is the rule the hygiene test
+# checks. The note at the top of ci.yml has the details.
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
 jobs:
   windows-shells:
     name: shell quoting against real Windows shells
