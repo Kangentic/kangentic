@@ -369,10 +369,15 @@ export function registerSystemHandlers(context: IpcContext): void {
   // See src/main/agent/agent-list.ts. The labels for telemetry-learned model
   // ids go on per call, outside the cache, so a newly learned id is named on
   // the next request without a rebuild.
-  ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean): Promise<AgentDetectionInfo[]> => {
-    const config = context.configManager.load();
-    const agents = await listAgents(config.agent.cliPaths, forceRefresh ?? false);
-    return nameLearnedModels(agents, config.discoveredModelsByAgent);
+  // CLI paths are per project: the list is detected against the effective paths
+  // of the project the caller names (the Agent tab editing another project), else
+  // the open project's. With no project open it falls back to the global values.
+  ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean, projectPath?: string): Promise<AgentDetectionInfo[]> => {
+    const globalConfig = context.configManager.load();
+    const targetProjectPath = projectPath ?? context.currentProjectPath ?? undefined;
+    const effectiveConfig = targetProjectPath ? context.configManager.getEffectiveConfig(targetProjectPath) : globalConfig;
+    const agents = await listAgents(effectiveConfig.agent.cliPaths, forceRefresh ?? false);
+    return nameLearnedModels(agents, globalConfig.discoveredModelsByAgent);
   });
 
   // "Test connection" in the Agent settings tab. Reads the server record

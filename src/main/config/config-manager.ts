@@ -509,6 +509,27 @@ export class ConfigManager {
       rewritten = true;
     }
 
+    // One-time migration: agent.cliPaths became project scoped (#286). A project
+    // with no paths of its own takes the global ones, which Settings no longer
+    // edits. Seeding on the project's first read rather than once for every
+    // project at upgrade means a project whose folder is offline then still gets
+    // its copy whenever it next opens.
+    const overrideAgent = overrides.agent;
+    const agentOverrides = overrideAgent !== null && typeof overrideAgent === 'object' && !Array.isArray(overrideAgent)
+      ? overrideAgent as Record<string, unknown>
+      : undefined;
+    if (!agentOverrides || !('cliPaths' in agentOverrides)) {
+      const globalCliPaths = this.load().agent.cliPaths ?? {};
+      const seededCliPaths = Object.fromEntries(
+        Object.entries(globalCliPaths).filter(([, cliPath]) => typeof cliPath === 'string' && cliPath.length > 0),
+      );
+      if (Object.keys(seededCliPaths).length > 0) {
+        overrides.agent = { ...(agentOverrides ?? {}), cliPaths: seededCliPaths };
+        this.saveProjectOverrides(projectPath, overrides as Partial<AppConfig>);
+        rewritten = true;
+      }
+    }
+
     // One-time migration: the git refresh intervals became switches, and
     // prEvaluateBranchPolicies went away (see legacy-git-keys.ts).
     const overrideGit = overrides.git as Record<string, unknown> | undefined;

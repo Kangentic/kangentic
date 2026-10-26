@@ -463,7 +463,7 @@ const api: ElectronAPI = {
   },
 
   agents: {
-    list: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.AGENT_LIST, forceRefresh),
+    list: (forceRefresh?: boolean, projectPath?: string) => ipcRenderer.invoke(IPC.AGENT_LIST, forceRefresh, projectPath),
     probeExecutionServer: (agentName: string) => ipcRenderer.invoke(IPC.AGENT_PROBE_EXECUTION_SERVER, agentName),
   },
 

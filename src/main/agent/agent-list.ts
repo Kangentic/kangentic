@@ -8,22 +8,49 @@
  * `discoverCapabilities`), which spawns subprocesses and reads session history.
  * Re-running that on every open is what froze the UI.
  *
- * This module builds the inventory once and caches the whole result, collapsing
- * concurrent bootstrap callers onto a single build (see `createCachedSingleton`).
- * There is no TTL: the cache is cleared on agent-config change
- * (`invalidateAgentListCache`, wired into the `CONFIG_SET` handler) or by an
- * explicit `forceRefresh` (the Agent settings "re-detect" button), which also
- * re-probes detection so an externally-installed/authenticated CLI is picked up.
+ * This module builds the inventory once per set of CLI paths and caches the
+ * whole result, collapsing concurrent bootstrap callers onto a single build
+ * (see `createCachedSingleton`). CLI paths are per project, so two projects
+ * pointing an agent at different CLIs get different inventories, and projects
+ * with the same paths share one. There is no TTL: the caches are cleared on
+ * agent-config change (`invalidateAgentListCache`, wired into the `CONFIG_SET`
+ * handler) or by an explicit `forceRefresh` (the Agent settings "re-detect"
+ * button), which also re-probes detection so an externally-installed or
+ * authenticated CLI is picked up.
  */
 
-import { createCachedSingleton } from '../shared/cached-singleton';
+import { createCachedSingleton, type CachedSingleton } from '../shared/cached-singleton';
 import { agentRegistry } from './agent-registry';
 import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
 import type { AgentDetectionInfo } from '../../shared/types';
 
 type CliPathOverrides = Record<string, string | null | undefined>;
 
-const agentListCache = createCachedSingleton<AgentDetectionInfo[]>();
+/** One cached inventory per distinct set of configured CLI paths. */
+const agentListCaches = new Map<string, CachedSingleton<AgentDetectionInfo[]>>();
+
+/** A stable key for a set of CLI paths: the configured ones, sorted by agent. */
+function cliPathsKey(cliPathOverrides: CliPathOverrides): string {
+  const configured = Object.entries(cliPathOverrides)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+    .sort(([firstAgent], [secondAgent]) => firstAgent.localeCompare(secondAgent));
+  return JSON.stringify(configured);
+}
+
+function agentListCacheFor(cliPathOverrides: CliPathOverrides): CachedSingleton<AgentDetectionInfo[]> {
+  const key = cliPathsKey(cliPathOverrides);
+  let cache = agentListCaches.get(key);
+  if (!cache) {
+    cache = createCachedSingleton<AgentDetectionInfo[]>();
+    agentListCaches.set(key, cache);
+  }
+  return cache;
+}
+
+function invalidateAllAgentListCaches(): void {
+  for (const cache of agentListCaches.values()) cache.invalidate();
+  agentListCaches.clear();
+}
 
 async function buildAgentList(
   cliPathOverrides: CliPathOverrides,
@@ -91,8 +118,10 @@ export async function listAgents(
     for (const agentName of agentRegistry.list()) {
       agentRegistry.getOrThrow(agentName).invalidateDetectionCache();
     }
+    // Every inventory was built from the detections just dropped.
+    invalidateAllAgentListCaches();
   }
-  return agentListCache.get(() => buildAgentList(cliPathOverrides, forceRefresh), forceRefresh);
+  return agentListCacheFor(cliPathOverrides).get(() => buildAgentList(cliPathOverrides, forceRefresh), forceRefresh);
 }
 
 /**
@@ -134,12 +163,12 @@ export function nameLearnedModels(
   });
 }
 
-/** Clear the cached inventory so the next `listAgents` rebuilds it. */
+/** Clear every cached inventory so the next `listAgents` rebuilds it. */
 export function invalidateAgentListCache(): void {
-  agentListCache.invalidate();
+  invalidateAllAgentListCaches();
 }
 
-/** Test-only: clear the cache between cases. */
+/** Test-only: clear the caches between cases. */
 export function resetAgentListForTests(): void {
-  agentListCache.invalidate();
+  invalidateAllAgentListCaches();
 }

@@ -242,4 +242,41 @@ test.describe('AgentTab - re-detect button wires forceRefresh=true', () => {
       { timeout: 3000, intervals: [200, 200, 300, 300] },
     ).toBeGreaterThanOrEqual(1);
   });
+
+  test('the CLI path field saves to this project, never to the global config, and refreshes the list', async () => {
+    // agent.cliPaths is project scoped (#286): there is no scope switch, so the
+    // field writes the open project's override and leaves every other project alone.
+    ({ browser, page } = await launchFreshPage());
+    const projectSlug = 'agent-tab-cli-path-project';
+    await createProjectAndWaitForBoard(page, projectSlug);
+    await waitForBootstrapComplete(page);
+    await instrumentAgentListCalls(page);
+
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Agent', exact: true }).click();
+    const cliPathInput = page.getByTestId('agent-cli-path-claude');
+    await cliPathInput.waitFor({ state: 'visible', timeout: 3000 });
+    await cliPathInput.fill('/opt/project/claude');
+
+    await expect.poll(
+      async () => page.evaluate(async (projectPath: string) => {
+        const overrides = await window.electronAPI.config.getProjectOverridesByPath(projectPath);
+        return overrides?.agent?.cliPaths?.claude ?? null;
+      }, `/mock/projects/${projectSlug}`),
+      { timeout: 3000, intervals: [100, 200, 300] },
+    ).toBe('/opt/project/claude');
+
+    const globalClaudePath = await page.evaluate(async () => {
+      const globalConfig = await window.electronAPI.config.getGlobal();
+      return globalConfig.agent.cliPaths.claude ?? null;
+    });
+    expect(globalClaudePath).toBeNull();
+
+    await expect.poll(
+      async () => (await readAgentListCalls(page)).callCount,
+      { timeout: 3000, intervals: [200, 200, 300, 300] },
+    ).toBeGreaterThanOrEqual(1);
+
+    await closeSettings(page);
+  });
 });

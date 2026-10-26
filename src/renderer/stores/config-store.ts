@@ -656,6 +656,12 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
           : get().projectOverrides ?? capturedProjectOverrides ?? {};
         const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
         const result = await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
+        // CLI paths are per project: a path change reloads the agent inventory, as a
+        // global agent write does in updateConfig. Unforced, so it never re-probes a
+        // CLI whose path did not change.
+        if (partial.agent?.cliPaths) {
+          get().loadAgentList().catch(() => undefined);
+        }
         // Only the project still being edited gets the optimistic local update, the same
         // guard `loadProjectOverrides` uses. The disk write above is what matters and has
         // already happened; this `set` just saves the open panel a refetch. Unguarded, a

@@ -22,7 +22,6 @@ export function AgentTab({ config, globalConfig, agentList }: {
   globalConfig: AppConfig;
   agentList: AgentDetectionInfo[];
 }) {
-  const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
   // The project the panel is editing (the switcher's pick), which is the one
   // `updateProject` writes to. Not `currentProject`, the board's project.
@@ -31,9 +30,32 @@ export function AgentTab({ config, globalConfig, agentList }: {
   const setDefaultModel = useProjectStore((state) => state.setDefaultModel);
   const setDefaultEffort = useProjectStore((state) => state.setDefaultEffort);
   const refreshAgentList = useConfigStore((state) => state.loadAgentList);
+  const currentProjectPath = useProjectStore((state) => state.currentProject?.path ?? null);
   const [refreshing, setRefreshing] = useState(false);
   const [copiedAgent, setCopiedAgent] = useState<string | null>(null);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // CLI paths are per project, and the store's list is detected against the open
+  // project's. While the panel edits another project, this tab fetches that
+  // project's own, so a path's status matches the project it was typed for.
+  const [editedProjectAgentList, setEditedProjectAgentList] = useState<{ projectPath: string; agents: AgentDetectionInfo[] } | null>(null);
+  const [agentListRefreshCount, setAgentListRefreshCount] = useState(0);
+  const editedProjectPath = project?.path ?? null;
+  const editingOtherProject = editedProjectPath !== null && editedProjectPath !== currentProjectPath;
+  const editedCliPaths = config.agent.cliPaths;
+  useEffect(() => {
+    if (!editingOtherProject || !editedProjectPath) return undefined;
+    let cancelled = false;
+    window.electronAPI.agents.list(false, editedProjectPath)
+      .then((agents) => {
+        if (!cancelled) setEditedProjectAgentList({ projectPath: editedProjectPath, agents });
+      })
+      .catch(() => { /* keep showing the open project's list */ });
+    return () => { cancelled = true; };
+    // editedCliPaths and agentListRefreshCount are refetch triggers, not read in the body.
+  }, [editingOtherProject, editedProjectPath, editedCliPaths, agentListRefreshCount]);
+  const shownAgentList = editingOtherProject && editedProjectAgentList?.projectPath === editedProjectPath
+    ? editedProjectAgentList.agents
+    : agentList;
 
   useEffect(() => () => {
     if (copyTimeout.current) clearTimeout(copyTimeout.current);
@@ -55,13 +77,14 @@ export function AgentTab({ config, globalConfig, agentList }: {
     // Force a fresh probe: the user clicks this to pick up a CLI they just
     // installed or signed into, which the cached result would not reflect.
     await Promise.all([minimumDelay, refreshAgentList(true)]);
+    setAgentListRefreshCount((count) => count + 1);
     setRefreshing(false);
   };
 
   const effectiveAgent = project?.default_agent ?? DEFAULT_AGENT;
-  const agentPermissions: AgentPermissionEntry[] = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
-  const detectedAgents = useMemo(() => agentList.filter((agent) => agent.found), [agentList]);
-  const undetectedAgents = useMemo(() => agentList.filter((agent) => !agent.found), [agentList]);
+  const agentPermissions: AgentPermissionEntry[] = shownAgentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
+  const detectedAgents = useMemo(() => shownAgentList.filter((agent) => agent.found), [shownAgentList]);
+  const undetectedAgents = useMemo(() => shownAgentList.filter((agent) => !agent.found), [shownAgentList]);
 
   const {
     models: defaultModelOptions,
@@ -79,7 +102,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
     // Switch to the new agent's recommended default permission mode. The path is
     // this render's, captured at the gesture. The switcher can move the panel
     // during the await above, and the mode belongs with the agent just written.
-    const newDefault = getAgentDefaultPermission(agentList, agentName);
+    const newDefault = getAgentDefaultPermission(shownAgentList, agentName);
     if (newDefault !== config.agent.permissionMode) {
       updateProject({ agent: { permissionMode: newDefault } }, project.path);
     }
@@ -112,7 +135,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
           value={effectiveAgent}
           onChange={handleDefaultAgentChange}
           options={
-            agentList.length > 0
+            shownAgentList.length > 0
               ? [...detectedAgents, ...undetectedAgents].map((agent) => ({ value: agent.name, label: agent.displayName ?? agent.name }))
               : [{ value: DEFAULT_AGENT, label: agentDisplayName(DEFAULT_AGENT) }]
           }
@@ -166,7 +189,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
         description="Where the agent's command-line tool runs, and how it starts."
         searchIds={['agent.cliPaths', 'agent.executionMode', 'agent.executionServerUrl', 'agent.executionServerAuth', 'agent.executionWorkingDirectory', 'agent.launchOptions']}
       >
-      {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
+      {shownAgentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
         const loginCommand = agentLoginCommand(agent.name);
         const unauthenticated = agent.found && agent.authenticated === false;
         return (
@@ -190,18 +213,20 @@ export function AgentTab({ config, globalConfig, agentList }: {
           >
             <div className="relative">
               {/* Per-keystroke, and this is the panel's most expensive field: a cliPaths
-                  write also invalidates every agent's detection cache and re-runs
-                  agents.list(), which probes each CLI. It is NOT a SettingTextInput
-                  because the re-detect button beside it re-probes the PERSISTED path, so
-                  a commit-on-blur boundary would race that refresh against the write the
-                  blur started. Fixing it needs the commit to be awaitable, not just
-                  deferred. See SettingTextInput's docblock. */}
+                  write re-runs agents.list() for the new path, which probes the CLI. It
+                  is NOT a SettingTextInput because the re-detect button beside it
+                  re-probes the PERSISTED path, so a commit-on-blur boundary would race
+                  that refresh against the write the blur started. Fixing it needs the
+                  commit to be awaitable, not just deferred. See SettingTextInput's
+                  docblock. The path is this project's own (no scope switch): an empty
+                  field auto-detects rather than falling back to another value. */}
               <input
                 type="text"
-                value={globalConfig.agent.cliPaths[agent.name] || ''}
-                onChange={(event) => updateGlobal({ agent: { cliPaths: { ...globalConfig.agent.cliPaths, [agent.name]: event.target.value || null } } })}
+                value={config.agent.cliPaths[agent.name] || ''}
+                onChange={(event) => updateProject({ agent: { cliPaths: { [agent.name]: event.target.value || null } } })}
                 placeholder={agent.found ? (agent.path ?? undefined) : 'Enter path manually'}
                 className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
+                data-testid={`agent-cli-path-${agent.name}`}
               />
               <Tooltip label={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}>
                 <button
