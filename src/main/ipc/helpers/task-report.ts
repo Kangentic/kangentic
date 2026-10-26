@@ -27,6 +27,18 @@ const INDEX_WAIT_MS = 8_000;
 const LAST_MESSAGE_TIMEOUT_MS = 15_000;
 /** Runs from a single automation-runs page: the log keeps at most a few hundred rows. */
 const AUTOMATION_RUNS_READ = 1_000;
+/** The linked commits the view's Commits card lists; it says "20 of N" past that. */
+const DEFAULT_COMMIT_LIMIT = 20;
+
+/**
+ * What a caller other than the view reads. The phone's report
+ * (`get_task_report`) lists more commits and has no Usage tab, so it skips
+ * the turn ledger.
+ */
+export interface TaskReportReadOptions {
+  commitLimit?: number;
+  includeLedger?: boolean;
+}
 
 /**
  * Null on any failure, or once the view has waited `INDEX_WAIT_MS`: a worker
@@ -51,7 +63,9 @@ async function readFromIndex<Result>(read: () => Promise<Result>): Promise<Resul
 }
 
 /** Read every row the report needs, then assemble it. */
-export async function readTaskReport(context: IpcContext, projectId: string, taskId: string): Promise<TaskReport> {
+export async function readTaskReport(context: IpcContext, projectId: string, taskId: string, options: TaskReportReadOptions = {}): Promise<TaskReport> {
+  const commitLimit = options.commitLimit ?? DEFAULT_COMMIT_LIMIT;
+  const includeLedger = options.includeLedger ?? true;
   const repos = getProjectRepos(context, projectId);
   const sessionRepo = new SessionRepository(getProjectDb(projectId));
   const sessions = sessionRepo.listTaskReportRecords(taskId);
@@ -73,8 +87,8 @@ export async function readTaskReport(context: IpcContext, projectId: string, tas
   // files. With indexing off it is not read at all, as MCP's task reads do.
   const [ledger, knowledgeByTask, summaryText] = indexingOn
     ? await Promise.all([
-      readFromIndex(() => retrievalClient.call('usage.taskModels', { projectId, taskId })),
-      readFromIndex(() => retrievalClient.call('task.knowledge', { projectId, taskIds: [taskId], limits: { commits: 20, files: null } })),
+      includeLedger ? readFromIndex(() => retrievalClient.call('usage.taskModels', { projectId, taskId })) : null,
+      readFromIndex(() => retrievalClient.call('task.knowledge', { projectId, taskIds: [taskId], limits: { commits: commitLimit, files: null } })),
       readFromIndex(() => retrievalClient.call('summary.forTask', { projectId, taskId })),
     ])
     : [null, null, null];

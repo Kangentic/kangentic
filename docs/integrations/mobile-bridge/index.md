@@ -18,4 +18,4 @@
 ## Connection and history
 
 * [Relay transport](relay-transport.md) - The desktop's outbound WebSocket client to the blind relay: slot wire contract, undici versus Chromium stack choice, backoff, forced redial and dial watchdog, power and unlock wake handling, a table for reading each mobile-bridge log line, and what a relay operator can still observe.
-* [Scope and protocol history](scope.md) - What shipped in each bridge phase and protocol release from 0.2.0 to 0.20.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the built but unreleased workflow fields, and what stays out of scope.
+* [Scope and protocol history](scope.md) - What shipped in each bridge phase and protocol release from 0.2.0 to 0.21.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the built but unreleased task report read, and what stays out of scope.

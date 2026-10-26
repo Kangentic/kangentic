@@ -65,6 +65,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_list_tasks', label: 'List Tasks', blurb: 'browse tasks, optionally filtered by column', category: 'tasks' },
   { name: 'kangentic_search_tasks', label: 'Search Tasks', blurb: 'keyword search across board and backlog tasks', category: 'tasks' },
   { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number, with its summary, linked commits, and changed files', category: 'tasks' },
+  { name: 'kangentic_get_task_report', label: 'Task Report', blurb: 'a task\'s route through the columns, its span, every linked commit, and each changed file with its lines', category: 'tasks' },
   { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch, with its branch, PR, and what the Knowledge Graph knows about it', category: 'tasks' },
   { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, lines changed, and the subagent-type breakdown per task', category: 'tasks' },
   { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, model, effort, permission mode, run mode, priority, labels, base branch, worktree, attachments, and whether column automations run for it', category: 'tasks' },

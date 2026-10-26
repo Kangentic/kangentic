@@ -184,6 +184,17 @@ export {
 } from './capabilities/board-tools';
 
 export {
+  parseTaskReportWire,
+  type TaskReportWire,
+  type TaskReportRouteColumnWire,
+  type TaskReportVisitWire,
+  type TaskReportCommitWire,
+  type TaskReportChangesWire,
+  type TaskReportChangesEmptyReasonWire,
+  type TaskReportSummaryStateWire,
+} from './capabilities/task-report';
+
+export {
   isBridgeEvent,
   parseActivityEventPayload,
   type BridgeEvent,

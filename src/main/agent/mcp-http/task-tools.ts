@@ -563,6 +563,20 @@ export function registerTaskTools(
     },
   );
 
+  // --- kangentic_get_task_report ---
+  server.registerTool(
+    'kangentic_get_task_report',
+    {
+      description: 'A task\'s completed-view report as JSON: its route (time and stays per column), start and end, every commit linked to it, and each changed file with status and lines added and removed. Lists are capped and carry their full counts. Pass `project` to read a task in a different project.',
+      inputSchema: z.object({
+        taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('get_task_report', { taskId }, ctx, 'Failed to get task report')),
+  );
+
   // --- kangentic_get_current_task ---
   // Intentionally does NOT accept `project`. This tool resolves the task
   // that owns the agent's own CWD/branch, which is by definition in the

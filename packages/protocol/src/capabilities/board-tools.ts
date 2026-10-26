@@ -16,6 +16,9 @@
 export const BOARD_TOOL_READ_NAMES = [
   'search_tasks',
   'find_task',
+  // A task's completed view: route, span, every linked commit and per-file
+  // changes. Its result type is TaskReportWire (capabilities/task-report.ts).
+  'get_task_report',
   'get_current_task',
   'get_task_stats',
   'get_usage_stats',

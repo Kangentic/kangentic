@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Scope and protocol history
-description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.20.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the built but unreleased workflow fields, and what stays out of scope.
+description: What shipped in each bridge phase and protocol release from 0.2.0 to 0.21.0 with the reason for each change, including the derived pairing slot in 0.12.0 and the start, pause and command-terminal verbs, the workflow fields, the built but unreleased task report read, and what stays out of scope.
 tags: [mobile, protocol, history, roadmap]
 sources:
   - resource: packages/protocol/CHANGELOG.md
@@ -142,13 +142,20 @@ One section per bridge phase and protocol release, oldest first, each saying wha
 - Why: the phone's Board header gets a Terminals button and its Agents feed lists terminals beside task agents. The approved design keeps the phone to the default branch with no branch, model or effort control, and grants the verb on pair like the rest.
 - The phone-side Terminals button, sheet, session screen and notification routing are the mobile app's own change, gated on this package publishing.
 
-## Built, awaiting the next protocol release: workflows: linked tasks that run through their boards by themselves
+## Protocol 0.21.0: workflows, linked tasks that run through their boards by themselves
 
 - Protocol: `BoardTaskWire.workflow?: BoardTaskWorkflowWire | null`, the task's workflow as its card draws it: `id`, `title`, the home `project_id` (which may not be the board's), `state` (`running` / `paused` / `draft` / `done`; an unknown value reads as running), `color_slot` (1 to 6, the desktop's categorical chart color), `route` (the column ids it visits, in board order), `waiting_for` (the unfinished tasks it waits for, named as the card's footer names them, "#413"), `lock_reason` (while only its workflow may move the card, the desktop's own sentence for a refused move; null when a hand may move it), and `gate_target_id` (while a running workflow's task waits in a column no agent can judge, the one column a hand may move it to, which is how the person reports the step done). The two never both hold: a gated card is not locked, as on the desktop board, where a locked card drags only within its own column (`isLockedOnBoard`), but it moves only to `gate_target_id`. No card moves into To Do. Optional, as `pr_merge_readiness` is: `parseBoardTaskWire` reads an absent or malformed value as null (`parseBoardTaskWorkflowWire`), so an older desktop and a broken workflow both cost the card its strip, never the board. Additive; `PROTOCOL_VERSION` stays '3'.
 - Protocol: `list_workflows` and `get_workflow` join `BOARD_TOOL_READ_NAMES`, and `pause_workflow` and `resume_workflow` join `BOARD_TOOL_WRITE_NAMES` (see [Board Tool Surface](capability-verbs.md#board-tool-surface) for the workflow tools left off).
 - Protocol: `workflow-complete` appended to `PUSH_CATEGORIES` (see [Push Notifications](push-notifications.md)).
 - Desktop: `read-board` computes each board's workflow facts once per snapshot (`handlers/workflow-wire.ts`) from the same summaries the desktop board draws its cards from, so the phone's lock and footer cannot disagree with the desktop's. A board with no workflow task reads nothing extra. `move-task` refuses a locked card before it commits and `start-session` refuses a paused workflow's task, both with the desktop's sentence (see [Capability Verbs](capability-verbs.md#capability-verbs-1)).
-- The phone-side rendering (the strip and lock on its cards, explaining or hiding the moves the lock refuses, the Pause and Resume actions, the push's channel) is the mobile app's own change, gated on this package publishing.
+- The phone-side rendering (the strip and lock on its cards, explaining or hiding the moves the lock refuses, the Pause and Resume actions, the push's channel) is the mobile app's own change.
+
+## Built, awaiting the next protocol release: a completed task's full report
+
+- Protocol: `get_task_report` joins `BOARD_TOOL_READ_NAMES`. Its result type is `TaskReportWire` (`capabilities/task-report.ts`), with the phone-side guard `parseTaskReportWire`: the route (each working column's total time and stays, with `visitCount`), the span (`startedAt`, `endedAt`), the linked commits with `commitCount`, the per-file changes from git (`DiffFileWire` entries with `fileCount`, and `totals` only when one range holds the whole change), `changesError` when git could not be read, and the summary state. Additive; `PROTOCOL_VERSION` stays '3'.
+- Desktop: `handlers/board-tool.ts` needs no change. The new `commandHandlers` entry (`src/main/agent/commands/task-report-commands.ts`) calls the completed task view's own reads through two `CommandContext` callbacks, so the phone and the desktop view show the same route, span and files. Agents read it as `kangentic_get_task_report`. The files, commits and stays are capped (200, 100 and 50 per column) and carry their counts; the Usage tab's ledger is left out.
+- Why: `find_task` gives a phone the summary, three commits and eight file paths. The desktop's completed view also shows the route, each file's status and lines, and every commit, and its span comes from the task's moves, which a phone could only approximate from session rows.
+- Rendering the Route and the per-file lines in the phone's completed Summary is the mobile app's own change, gated on this package publishing.
 
 ## Out of scope: later phases
 

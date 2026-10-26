@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Task read tools
-description: "Read-only MCP tools for tasks and board totals: list_tasks ordinal positions, find_task by display ID, branch or PR number with Knowledge Graph lines, get_current_task from a worktree, board_summary label vocabulary, and get_task_stats and get_usage_stats cost, token and subagent fan-out figures."
+description: "Read-only MCP tools for tasks and board totals: list_tasks ordinal positions, find_task by display ID, branch or PR number with Knowledge Graph lines, get_task_report's route, commits and per-file changes, get_current_task from a worktree, board_summary label vocabulary, and get_task_stats and get_usage_stats cost, token and subagent fan-out figures."
 tags: [mcp, tasks, stats, usage]
 sources:
   - resource: src/main/agent/mcp-http/task-tools.ts
@@ -9,6 +9,7 @@ sources:
   - resource: src/main/agent/mcp-http/usage-tools.ts
   - resource: src/main/agent/commands/inventory-commands.ts
   - resource: src/main/agent/commands/search-commands.ts
+  - resource: src/main/agent/commands/task-report-commands.ts
   - resource: src/main/agent/commands/analytics-commands.ts
   - resource: src/main/agent/commands/usage-commands.ts
   - resource: src/main/agent/commands/task-knowledge-lines.ts
@@ -63,6 +64,25 @@ Under each of the first five matched board tasks the message carries what the Kn
 Past five matches one line says to look a task up by `displayId` for its details. With the index off (`knowledgeGraph.indexingEnabled`) one line says so and nothing is read. `data.tasks[].knowledge` carries the same fields.
 
 A task whose column automations are disabled says `automations disabled` in its task line, and `data.tasks[].automationsDisabled` is `true`; the line says nothing about automations otherwise.
+
+## kangentic_get_task_report
+
+Read what a task's completed view shows that `kangentic_find_task` does not, as JSON in the protocol's `TaskReportWire` shape (`packages/protocol/src/capabilities/task-report.ts`). The phone reads the same result through `board-tool-read` with `tool: "get_task_report"`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | Numeric display ID (e.g. `"42"`) or full UUID. |
+| `project` | string | No | Project name or UUID, to read a task in a different project. |
+
+The handler (`src/main/agent/commands/task-report-commands.ts`) calls the view's own two reads, `readTaskReport` and `readTaskChanges`, through `CommandContext` callbacks, and runs them together:
+
+- **Route.** Each working column the task stayed in, in board order, with its total time and its stays (`visits`, oldest first, at most 50 per column, with `visitCount`).
+- **Span.** `startedAt` is the earlier of the first move into a working column and the first session start; `endedAt` is the last move into Done, else the last session end.
+- **Commits.** The commits the index links to the task, newest first, at most 100, with `commitCount`. Both are null when the index is off or could not be read.
+- **Changes.** Each changed file from git, biggest change first, with status, lines added and removed, and `binary`, at most 200 with `fileCount`. `totals` is set only when one span of history holds the whole change, which is when the view's header strip prefers it. A git failure costs this section only. `changes` is then null and `changesError` says why.
+- **Summary state.** Whether a summary is written (with its text), pending, switched off, or not readable because indexing is off.
+
+The turn ledger the Usage tab reads is left out. An unknown task returns an error naming the id.
 
 ## kangentic_get_current_task
 

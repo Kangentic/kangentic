@@ -12,6 +12,8 @@ import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { closeTaskWindows } from '../ipc/helpers/task-windows';
 import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
+import { readTaskReport } from '../ipc/helpers/task-report';
+import { readTaskChanges } from '../ipc/handlers/git-diff';
 import { applyTaskSettingsToLiveSession } from '../ipc/handlers/task-runtime-override';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../git/worktree-manager';
@@ -360,6 +362,12 @@ export function buildCommandContextForProject(
     },
 
     listSessionSummaries: () => retrievalClient.call('sessions.summaries', { projectId }),
+
+    // The completed task view's own two reads, so `get_task_report` shows
+    // what the view shows. The report carries no git commits, so the git
+    // read skips their web links.
+    readTaskReport: (taskId, options) => readTaskReport(ipcContext, projectId, taskId, options),
+    readTaskChanges: (taskId) => readTaskChanges(ipcContext, { projectId, taskId }, { commitWebLinks: false }),
   };
 }
 
