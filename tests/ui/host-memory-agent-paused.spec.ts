@@ -22,7 +22,7 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { launchPage } from './helpers';
+import { launchPage, toastCountRightNow } from './helpers';
 import type { HostMemoryAgentPausedEvent } from '../../src/shared/types';
 
 test.describe.configure({ mode: 'parallel' });
@@ -327,7 +327,9 @@ test.describe('Agents paused for low memory', () => {
       await expect(toast.getByTestId('toast-body')).toHaveText('Kangentic paused it to free memory.');
 
       await upsertRunning('task-2');
-      await expect(toast).toHaveCount(0);
+      // Polled, not retried by the matcher: the toast is persistent and was just
+      // seen up, so waiting for it to leave is the assertion.
+      await expect.poll(() => toastCountRightNow(page)).toBe(0);
     } finally {
       await browser.close();
     }
@@ -369,7 +371,7 @@ test.describe('Agents paused for low memory', () => {
       const row = dialog.getByTestId('paused-for-memory-row');
       await row.getByTestId('paused-for-memory-resume').click();
 
-      await expect(page.getByTestId('toast')).toHaveCount(0);
+      await expect.poll(() => toastCountRightNow(page)).toBe(0);
       await expect(dialog).toBeVisible();
       await expect(row).toHaveAttribute('data-state', 'running');
       await expect(row.getByTestId('paused-for-memory-running')).toHaveText('Running');
