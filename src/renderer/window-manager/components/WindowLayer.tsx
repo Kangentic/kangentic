@@ -194,9 +194,9 @@ function WindowManagerSurface({
   return createPortal(
     <>
       {bridges}
-      {/* A layout change in this layer freezes the overlay until its terminals
-          repaint (`terminal-layout-transition.ts`). A host-arranged layer (the
-          Command Terminal) freezes its host instead, which holds its rail too. */}
+      {/* A layout change in this layer lands in the overlay, whose terminals
+          hold their frames until they repaint (`terminal-layout-transition.ts`). A
+          host-arranged layer (the Command Terminal) lands in its host instead. */}
       <div
         ref={overlayRef}
         data-testid={overlayTestId}

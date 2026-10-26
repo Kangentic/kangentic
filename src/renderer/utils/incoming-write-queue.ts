@@ -56,6 +56,13 @@ export interface IncomingWriteQueue {
    * (see the stale-held-byte note in useTerminal.ts).
    */
   reset(): number;
+  /**
+   * Resolves once every byte pushed so far has been parsed by xterm (or
+   * dropped): at once when nothing is buffered or in flight. A held queue does
+   * not settle until it is kicked. Used by the end of a frame hold, which shows
+   * the agent's held frame only once xterm has taken all of it in.
+   */
+  settled(): Promise<void>;
 }
 
 export interface IncomingWriteQueueOptions {
@@ -91,6 +98,14 @@ export function createIncomingWriteQueue(
   const chunkSize = options.chunkSize ?? DEFAULT_INCOMING_CHUNK;
   let buffer = '';
   let draining = false;
+  let settledWaiters: Array<() => void> = [];
+
+  const notifySettled = (): void => {
+    if (settledWaiters.length === 0) return;
+    const waiters = settledWaiters;
+    settledWaiters = [];
+    for (const resolve of waiters) resolve();
+  };
 
   const drain = (): void => {
     const term = options.getTerminal();
@@ -102,10 +117,12 @@ export function createIncomingWriteQueue(
       buffer = '';
       draining = false;
       if (dropped > 0) options.ack(dropped);
+      notifySettled();
       return;
     }
     if (buffer.length === 0) {
       draining = false;
+      notifySettled();
       return;
     }
     if (options.shouldHold?.()) {
@@ -155,7 +172,12 @@ export function createIncomingWriteQueue(
       buffer = '';
       draining = false;
       if (dropped > 0) options.ack(dropped);
+      notifySettled();
       return dropped;
+    },
+    settled(): Promise<void> {
+      if (!draining && buffer.length === 0) return Promise.resolve();
+      return new Promise<void>((resolve) => { settledWaiters.push(resolve); });
     },
   };
 }

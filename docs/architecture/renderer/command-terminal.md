@@ -299,12 +299,13 @@ a Running row then changes no size and sends no resize. The first build kept the
 rects so they would not refit at all; that is what made every switch a visible jump.
 
 Expand and Restore still jump sizes, Restore every terminal at once. The panel no longer covers
-that itself: a user's Expand or Restore runs as a layout transition over the panel area (see
-[Output streaming](../sessions/output-streaming.md), the layout transition). The panel keeps its
-last frame on screen until every terminal the change resized has its agent's new frame drawn, then
-shows the result in one cut. Its repaint rule is the one first written for this panel: no sooner
-than 190 ms after the PTY resize, then once the output has been quiet for 40 ms, and by 500 ms
-whatever the output does, which against the four runs lifts between 212 and 253 ms. Main's repaint
+that itself: a user's Expand or Restore is a layout change over the panel area (see
+[Output streaming](../sessions/output-streaming.md), the frame hold). The new layout shows at
+once, and each terminal it resized holds its last frame until its agent's new frame is in, then
+draws that frame once. The repaint rule's fallback is the one first written for
+this panel: no sooner than 190 ms after the PTY resize, then once the output has been quiet for
+40 ms, and by 500 ms whatever the output does, which against the four runs lifts between 212 and
+253 ms. Main's repaint
 settle was tried first as the signal and is wrong here: it settles on the first screen clear after
 the resize, which on Windows is ConPTY's redraw of the old screen, so a cover came down at about
 25 ms and the jump showed anyway. An earlier build rejected holding the old picture until the new
@@ -388,6 +389,81 @@ both). The maximize commit is now 93 components in 7 to 8 ms, the PTY resize goe
 after the click, the layout save re-renders 14 components in about 1 ms, and the swap lands 172 ms
 after the click (p95 183), against 291 ms at the start. What is left is the agent's own redraw.
 
+### Decision: hold the frame (2026-10-25)
+
+The freeze above was superseded the same day. With the swap at 180 ms, the change itself had
+become the lag: a click on maximize left the window where it was for 180 ms, which read as the
+app not responding. The agent's redraw cannot get faster, so the window now moves at once, and
+each terminal it resized holds its last frame until the agent's frame for the new grid is in
+(`terminal-layout-transition.ts` and `useTerminal`). Only the double paint is removed: the old
+frame reflowed onto the new grid, then ConPTY's redraw, then the agent's frame. The scope-wide
+freeze, its click shield and its watchdog are gone, so nothing holds the pointer while an agent
+repaints.
+
+What a held terminal shows was settled by eye, one option at a time, in the desktop app:
+
+- The old frame stretched to the new box: the text showed enlarged on a maximize and squeezed on
+  a restore, which read as very odd.
+- The old frame at its own size, pinned to the top left: a restore showed the banner with the
+  input box cut off below the window's edge until the agent's frame put it back, which read as a
+  flash.
+- Pinned to the bottom: right for a restore, since an agent keeps its input box and newest output
+  on the bottom rows and those stay where the frame will put them. On a maximize the old text sat
+  narrow and low in the grown window, in a place it would not stay.
+
+So the rule is: a frame that still fills its new box (the box shrank both ways) stays on screen
+pinned to the bottom, and one that no longer fills it (the box grew either way) is not drawn. The
+terminal shows its background until the agent's frame is in, which then fades in over 80 ms
+rather than landing as a hard pop (an instant cut with Animations off). Nothing ever shows in a
+place it will not stay.
+
+How the hold ends was settled by measurement. The first build ended it under an element-scoped
+View Transition on the terminal's host, so the old frame would never show reflowed. A screencast
+check of a restore, recorded frame by frame over the terminal's bottom rows, found the host blank
+for one or two frames at the cut, in headless Chromium's software renderer and again with WebGL
+on the GPU (ANGLE on D3D11, the desktop app's backend). The terminal's screen element stayed
+intersecting the viewport throughout, so xterm's renderer never paused; the blank was the
+transition's. Now the hold ends in the gap between two frames: right after a paint, xterm resizes
+and parses the held output in about a millisecond, and the screen is shown on the next frame,
+after the renderer has drawn it, so the next painted frame is the agent's. The same check shows
+no frame between the held one and the agent's, in software and on the GPU.
+
+In the desktop app (Electron 45 on the GPU, live Claude Code agents, 10 changes each, measured
+from the click with the page's own clock). These runs are from the build that stretched the
+frame: the change, the landing and the send are the same in this one, but the end of the hold
+(the paint-gap swap and the fade) is newer and was timed only in the UI tier:
+
+| | Screen changes | New frame on screen | PTY resizes per terminal |
+|---|---|---|---|
+| Task window maximize and restore, freeze | 177 to 193 ms | the same moment | 1 |
+| Task window maximize and restore | 7 to 10 ms | 162 to 184 ms | 1 |
+| Task window Changes toggle | 7 to 15 ms | 146 to 244 ms | 1 |
+| Command Terminal panel maximize and restore | 13 to 16 ms | 182 to 208 ms | 1 |
+| Expand and Restore | 13 to 17 ms | 167 to 189 ms | 1 |
+
+Every change ended on the agent's finished frame, and the longest frame gap in these runs was
+22 ms. A drag release (a window edge, the bottom panel's height) was checked in the UI tier only:
+one hold, one PTY resize after the release, no recovery.
+
+Four more things were settled on the way:
+
+- A landing stays open at least 150 ms. A frame-count rule alone (two still frames) closed before
+  the Command Terminal panel's terminals re-tiled under load, because that re-tile runs in a React
+  render of its own after the layer's resize observer, so they reflowed instead of holding (about
+  1 run in 20 in the UI tier, none in 55 after).
+- The send waits one still frame, so a grid about to move again is not sent. On a task window that
+  costs nothing measurable: the send goes out 1 to 3 ms after the hold starts, because the change
+  lands before that frame's callbacks run.
+- Flushing the layer's resize-observer update synchronously, so the Command Terminal panel's
+  terminals hold in the same frame the panel grows rather than one frame later, made every number
+  worse in the desktop app (the panel moved at 15 to 23 ms against 12 to 15, and the frame gap rose
+  to 50 ms), so the panel still paints its old tiles for one frame.
+- A hold keeps its terminal's output back, so it is never left open: a replay, a held grid, a
+  terminal leaving view, or a session change ends it at once, and so does a throw on the way to
+  its end or 2 s with no change. The throw is not hypothetical. A dev-mode update replaced the
+  repaint wait's module under live terminals, whose wait objects then lacked a new method, and
+  both Command Terminals stayed held with their output back until a reload.
+
 **Swap** drags a terminal by its header onto another's tile (`swap-drag.ts`). A picture of the
 pressed terminal follows the pointer, upright: main captures the window's pixels inside the
 terminal's rect on the press, before anything moves (`window:captureRegion`,
@@ -407,9 +483,9 @@ real frame, tilted 1.5 degrees, over a grey stand-in card in the landing tile; t
 every glyph and the grey read as unrelated to the black terminals, so both went.
 
 The preview refits both terminals to the tiles they show in, so the panel looks the way the drop
-will once their agents repaint. It runs unfrozen: the preview is part of a live gesture, and a
-frozen panel would also hold the pointer the drag is following, so a terminal it refits shows its
-old frame on the new grid for the 100 to 180 ms its agent takes. The second build held those resizes to the drop under the manager-resize gate,
+will once their agents repaint. Each step is a layout change of its own, as the cancel and the
+commit are, so a terminal it resizes holds its frame for the 100 to 180 ms its agent takes and
+then draws the new one once, with one PTY resize per step. The second build held those resizes to the drop under the manager-resize gate,
 and the preview then showed each terminal at its old size: the input box mid-tile in the taller
 one and cut off in the shorter. A preview changes sizes in single steps, never per pointer frame,
 so it needs no gate. The landing tile is held as an empty terminal: the terminals' own background

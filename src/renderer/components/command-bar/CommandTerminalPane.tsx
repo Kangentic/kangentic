@@ -178,8 +178,8 @@ export function CommandTerminalPane({ sessionId, isMaximized, ready, launchLabel
 
   return (
     // `data-terminal-host`: the pane the arrival-focus visibility check measures against.
-    // A jump in size (Expand, Restore, the panel maximized) runs under a frozen
-    // panel that shows the terminal once its agent has repainted at the new size
+    // A jump in size (Expand, Restore, the panel maximized) keeps the terminal's
+    // last frame until its agent has repainted at the new size
     // (`terminal-layout-transition.ts`).
     <div className="relative h-full" data-testid="command-bar-terminal-pane" data-terminal-host data-session-id={sessionId}>
       <FileDropOverlay {...fileDrop} />

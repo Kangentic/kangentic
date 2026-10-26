@@ -3,7 +3,8 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
-import { terminalLayoutTransitionFor } from '../utils/terminal-layout-transition';
+import { isTerminalLayoutLandingFor } from '../utils/terminal-layout-transition';
+import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
@@ -139,6 +140,54 @@ const ECHO_REASSERT_DEBOUNCE_MS = 150;
  *  Comfortably above a healthy replay (repaint-settle caps at 400ms, plus a
  *  512KB chunked write) and far below a pathological hang. */
 const SCROLLBACK_WATCHDOG_MS = 5000;
+
+/**
+ * A frame hold ends by this long after its PTY resize was sent, whatever main
+ * or the agent do. The repaint wait settles by 500 ms on its own
+ * (`REPAINT_WAIT_MAX_MS`), so this only ends a hold whose resize was never
+ * answered: a hold left open would keep its terminal's output back for good.
+ */
+const FRAME_HOLD_CAP_MS = 1000;
+/**
+ * How long the end of a frame hold waits for xterm to take in the output held
+ * during it before it shows the result. An agent's frame is one chunk well
+ * under this; output that never stops is shown as far as it has been parsed.
+ */
+const FRAME_HOLD_DRAW_MAX_MS = 100;
+/**
+ * The latest a frame hold may still be open after its last change, whatever
+ * went wrong: past it the hold ends and the terminal refits as it always has.
+ * A hold keeps its terminal's output back, so one left open by a throw on the
+ * way to its end (measured once, after a dev-mode update replaced the repaint
+ * wait's module under live terminals) would keep it back for good.
+ */
+const FRAME_HOLD_WATCHDOG_MS = FRAME_HOLD_CAP_MS + 1000;
+/**
+ * A terminal whose box grew shows nothing until the agent's frame is in, then
+ * fades that frame in from its background over this long, so the frame does
+ * not land as a hard pop. Off with Animations off.
+ */
+const GROW_FADE_IN_MS = 80;
+/** On a terminal's host while it holds its last frame, until the agent's new frame is on screen. */
+export const TERMINAL_FRAME_HOLD_ATTRIBUTE = 'data-terminal-frame-hold';
+
+interface TerminalGrid {
+  cols: number;
+  rows: number;
+}
+
+interface FrameHold {
+  /** The grid xterm keeps, and draws, until the hold ends. */
+  base: TerminalGrid;
+  /** The grid the terminal's new box fits. */
+  target: TerminalGrid;
+  /** The grid last asked of the PTY during this hold, or null before the first send. */
+  sent: TerminalGrid | null;
+  sendSequence: number;
+}
+
+const sameGrid = (first: TerminalGrid, second: TerminalGrid): boolean =>
+  first.cols === second.cols && first.rows === second.rows;
 
 /** How many times a stuck replay may be re-issued before the watchdog gives up
  *  and only unblocks the queue. One is enough for the real failure (a replay
@@ -686,8 +735,29 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
-  /** When the agent has repainted after a grid change, for a layout transition to wait on (`terminal-repaint-wait.ts`). */
+  /** When the agent has repainted after a grid change, for a frame hold to end on (`terminal-repaint-wait.ts`). */
   const repaintWaitRef = useRef<TerminalRepaintWait | null>(null);
+  /**
+   * A grid change whose terminal keeps its last frame, as drawn, while the PTY
+   * repaints at the target grid (`terminal-layout-transition.ts`). xterm keeps
+   * the base grid until the hold ends. `sent` is the grid last asked of the PTY
+   * during this hold, and `sendSequence` names that request: only its answer
+   * may end the hold.
+   */
+  const frameHoldRef = useRef<FrameHold | null>(null);
+  /** Keeps the agent's output back while a frame is held; the end of the hold draws it. */
+  const holdOutputRef = useRef(false);
+  /** The end of a hold's own resize: the PTY already has that grid, so onResize sends nothing. */
+  const skipNextResizeSendRef = useRef(false);
+  /** The pending send of a hold's grid, which waits for one still frame. */
+  const frameHoldSendFrameRef = useRef<number | null>(null);
+  const frameHoldSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Ends a hold still open `FRAME_HOLD_WATCHDOG_MS` after its last change. */
+  const frameHoldWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** `fitTerminal`, for a hold's recovery, which is declared before it. Updated on every commit. */
+  const fitTerminalRef = useRef<((origin: string, probe: boolean) => FitOutcome) | null>(null);
+  /** Resolves once the incoming-write queue has handed xterm everything it held (set by the queue effect below). */
+  const incomingSettledRef = useRef<(() => Promise<void>) | null>(null);
   const unregisterDevtoolsTerminalRef = useRef<(() => void) | null>(null);
   /** Drops this session from the renderer's MOUNTED set (terminal-mount-registry),
    *  which is what lets main park an unheld PTY at the resting grid. */
@@ -911,7 +981,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const requestGrid = useCallback((sessionId: string, cols: number, rows: number, origin: string): Promise<SessionResizeResult | undefined> => {
     traceTerminalRenderer(sessionId, 'resize-request', { cols, rows, origin });
     const generation = ++gridRequestGenerationRef.current;
-    // The agent's repaint, which a layout transition waits on, is timed from this send.
+    // The agent's repaint, which a frame hold ends on, is timed from this send.
     repaintWaitRef.current?.notePtyResize();
     return window.electronAPI.sessions.resize(sessionId, cols, rows).then((result) => {
       if (sessionIdRef.current !== sessionId || !xtermRef.current) return result;
@@ -947,6 +1017,269 @@ export function useTerminal(options: UseTerminalOptions) {
     });
   }, [conformToHeldGrid, releaseHeldGrid]);
 
+  /** Cancel a hold's pending send, if one is waiting for its still frame, and its watchdog. */
+  const cancelFrameHoldSend = useCallback((): void => {
+    if (frameHoldSendFrameRef.current !== null) cancelAnimationFrame(frameHoldSendFrameRef.current);
+    if (frameHoldSendTimerRef.current) clearTimeout(frameHoldSendTimerRef.current);
+    if (frameHoldWatchdogRef.current) clearTimeout(frameHoldWatchdogRef.current);
+    frameHoldSendFrameRef.current = null;
+    frameHoldSendTimerRef.current = null;
+    frameHoldWatchdogRef.current = null;
+  }, []);
+
+  /** Put a held terminal's element back the way a plain terminal has it, leaving the screen hidden when `keepHidden`. */
+  const clearFrameHoldStyle = useCallback((terminal: Terminal, keepHidden = false): void => {
+    if (terminal.element) terminal.element.style.overflow = '';
+    const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen');
+    if (screen) {
+      screen.style.transform = '';
+      if (!keepHidden) screen.style.opacity = '';
+    }
+  }, []);
+
+  /**
+   * End a frame hold without waiting for the agent: the held frame shows as
+   * xterm drew it and the held output is drawn on the grid xterm kept. For a
+   * refit the hold cannot take (a replay, a held grid, a terminal leaving view)
+   * and for a session change. The caller's own fit then takes the container's
+   * grid and sends it as usual.
+   */
+  const dropFrameHold = useCallback((reason: string): void => {
+    if (!frameHoldRef.current) return;
+    cancelFrameHoldSend();
+    frameHoldRef.current = null;
+    const terminal = xtermRef.current;
+    if (terminal) {
+      clearFrameHoldStyle(terminal);
+      terminal.element?.closest('[data-terminal-host]')?.removeAttribute(TERMINAL_FRAME_HOLD_ATTRIBUTE);
+    }
+    holdOutputRef.current = false;
+    incomingResumeRef.current?.();
+    traceTerminalRenderer(sessionIdRef.current, 'frame-hold-dropped', { reason });
+  }, [cancelFrameHoldSend, clearFrameHoldStyle]);
+
+  /**
+   * End a frame hold that went wrong and refit as a plain terminal does,
+   * through the held-grid-aware fit (declared below, so reached through a ref)
+   * with an origin that cannot hold again: with no held grid, xterm takes the
+   * container's grid and sends it; with one, it conforms to main's grid.
+   */
+  const recoverFrameHold = useCallback((reason: string): void => {
+    if (!frameHoldRef.current) return;
+    dropFrameHold(reason);
+    fitTerminalRef.current?.('frame-hold-recover', false);
+  }, [dropFrameHold]);
+
+  /**
+   * End a frame hold once the agent's frame at its grid is in: resize xterm to
+   * the grid the PTY already has (no second send) and draw the held output, so
+   * the old frame never shows reflowed onto the new grid. `sendSequence` names
+   * the request this answers; a later send or a re-aim makes it stale.
+   */
+  const finishFrameHold = useCallback(async (sendSequence: number, answer: SessionResizeResult | undefined): Promise<void> => {
+    const isCurrent = (): boolean => {
+      const hold = frameHoldRef.current;
+      return hold !== null && hold.sendSequence === sendSequence && hold.sent !== null && sameGrid(hold.target, hold.sent);
+    };
+    const terminal = xtermRef.current;
+    if (!terminal || !isCurrent()) return;
+    // Right after a frame has been painted, so the resize, the parse of the held
+    // output and the renderer's next frame all land before the next paint: the
+    // first frame painted after the resize is the agent's. A View Transition on
+    // the terminal's host was used for this first, and the screen came back from
+    // it blank for a frame or two at the cut, on the GPU as in software.
+    await new Promise<void>((resolve) => {
+      const fallback = setTimeout(resolve, 50);
+      requestAnimationFrame(() => {
+        clearTimeout(fallback);
+        setTimeout(resolve, 0);
+      });
+    });
+    // A refit meanwhile re-aimed the hold, whose own send ends it later.
+    const hold = frameHoldRef.current;
+    if (!hold || !isCurrent()) return;
+    const host = terminal.element?.closest<HTMLElement>('[data-terminal-host]') ?? null;
+    const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen') ?? null;
+    // A box that grew held nothing on screen; its frame fades in.
+    const grew = screen?.style.opacity === '0';
+    // Main kept another grid (a phone's, the mobile sub-floor guard): xterm stays
+    // on the PTY's grid and the hold's own conform, if any, is already applied.
+    // An answer that never came is taken as accepted, since the send went out.
+    const accepted = answer === undefined || (!answer.refused && !answer.held);
+    traceTerminalRenderer(sessionIdRef.current, 'frame-hold-finish-start', { accepted });
+    // Hidden while xterm resizes and parses, so an output too large to parse
+    // before the next paint shows an empty terminal for a frame, never its old
+    // frame reflowed onto the new grid.
+    if (screen) screen.style.opacity = '0';
+    // Dev-only: how many frames painted with the screen hidden before it showed
+    // again. 0 is the swap working; more on a box that shrank is a blank flash.
+    const hiddenFrames = { count: -1, counting: __KANGENTIC_DEV__ };
+    if (hiddenFrames.counting) {
+      const countFrame = (): void => {
+        if (!hiddenFrames.counting) return;
+        hiddenFrames.count += 1;
+        requestAnimationFrame(countFrame);
+      };
+      requestAnimationFrame(countFrame);
+    }
+    clearFrameHoldStyle(terminal, true);
+    frameHoldRef.current = null;
+    const wasAtBottom = isAtBottomRef.current;
+    if (accepted && !sameGrid(hold.target, { cols: terminal.cols, rows: terminal.rows })) {
+      skipNextResizeSendRef.current = true;
+      try {
+        terminal.resize(hold.target.cols, hold.target.rows);
+      } finally {
+        skipNextResizeSendRef.current = false;
+      }
+      if (terminal.options.fontSize === configuredFontRef.current) {
+        naturalCellRef.current = fitAddonRef.current?.measureCell() ?? naturalCellRef.current;
+      }
+    }
+    if (wasAtBottom) terminal.scrollToBottom();
+    holdOutputRef.current = false;
+    incomingResumeRef.current?.();
+    let drawTimer: ReturnType<typeof setTimeout> | null = null;
+    await Promise.race([
+      incomingSettledRef.current?.() ?? Promise.resolve(),
+      new Promise<void>((resolve) => { drawTimer = setTimeout(resolve, FRAME_HOLD_DRAW_MAX_MS); }),
+    ]);
+    if (drawTimer) clearTimeout(drawTimer);
+    // Parsing the output asked xterm's renderer for its next frame; a callback
+    // asked for now runs after the renderer's in that frame, so the screen shows
+    // in the same paint as the canvas it drew (or after 50 ms in a window that
+    // draws none).
+    await new Promise<void>((resolve) => {
+      const fallback = setTimeout(resolve, 50);
+      requestAnimationFrame(() => {
+        clearTimeout(fallback);
+        resolve();
+      });
+    });
+    hiddenFrames.counting = false;
+    if (screen) {
+      screen.style.opacity = '';
+      // A frame in a box that grew comes in from the terminal's background
+      // rather than at once.
+      if (grew && !motionReduced()) screen.animate([{ opacity: 0 }, { opacity: 1 }], { duration: GROW_FADE_IN_MS, easing: 'ease-out' });
+    }
+    if (!frameHoldRef.current) host?.removeAttribute(TERMINAL_FRAME_HOLD_ATTRIBUTE);
+    traceTerminalRenderer(sessionIdRef.current, 'frame-hold-finished', () => ({ accepted, grew, framesHidden: Math.max(0, hiddenFrames.count) }));
+  }, [clearFrameHoldStyle]);
+
+  /**
+   * Ask the PTY for a frame hold's grid, unless it already has it. Runs after one
+   * still frame: a change reaches a terminal in hops, and every grid sent is an
+   * agent redraw, so a grid that is about to move again is not sent.
+   */
+  const sendFrameHoldGrid = useCallback((): void => {
+    const hold = frameHoldRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!hold || !sessionId) return;
+    const asked = hold.sent ?? hold.base;
+    if (sameGrid(hold.target, asked)) {
+      // Back to the grid the PTY has. Nothing was sent, so the old frame is
+      // current; otherwise that grid's answer is still on its way and ends it.
+      if (!hold.sent) dropFrameHold('unchanged');
+      return;
+    }
+    const sendSequence = hold.sendSequence + 1;
+    frameHoldRef.current = { ...hold, sent: hold.target, sendSequence };
+    try {
+      // The wait opens before the send, which is what times the agent's repaint.
+      const repaintWait = repaintWaitRef.current;
+      const repainted = repaintWait?.begin() ?? Promise.resolve();
+      const answered = requestGrid(sessionId, hold.target.cols, hold.target.rows, 'frame-hold');
+      let capTimer: ReturnType<typeof setTimeout> | null = null;
+      const capped = new Promise<undefined>((resolve) => { capTimer = setTimeout(() => resolve(undefined), FRAME_HOLD_CAP_MS); });
+      // The repaint landed and main answered, or the cap.
+      void Promise.race([
+        Promise.all([repainted, answered]).then(([, answer]) => answer, () => undefined),
+        capped,
+      ])
+        .finally(() => {
+          if (capTimer) clearTimeout(capTimer);
+        })
+        .then((answer) => finishFrameHold(sendSequence, answer))
+        .catch((error: unknown) => {
+          console.error('[useTerminal] a frame hold could not end', error);
+          recoverFrameHold('finish-failed');
+        });
+    } catch (error) {
+      console.error('[useTerminal] a frame hold could not send its grid', error);
+      recoverFrameHold('send-failed');
+    }
+  }, [dropFrameHold, recoverFrameHold, requestGrid, finishFrameHold]);
+
+  /**
+   * Show a grid change without a reflowed frame. xterm keeps its grid and its
+   * drawn screen, shown where it still fits its new box and hidden where it does
+   * not; after one still frame the PTY gets the grid, and the agent's output is
+   * held until its frame at that grid is in. A refit during the hold re-aims it
+   * against the same base.
+   */
+  const holdFrame = useCallback((target: TerminalGrid): void => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+    const previous = frameHoldRef.current;
+    const hold: FrameHold = {
+      base: previous?.base ?? { cols: terminal.cols, rows: terminal.rows },
+      target,
+      sent: previous?.sent ?? null,
+      sendSequence: previous?.sendSequence ?? 0,
+    };
+    frameHoldRef.current = hold;
+    holdOutputRef.current = true;
+    // Nothing is drawn in the wrong place. A frame that still fills its new box
+    // (the box shrank) stays as it is drawn, at its own size, pinned to the
+    // bottom: an agent keeps its input box and newest output on the bottom rows,
+    // so those stay where they will be and only the top is cut off (pinned to
+    // the top, a restore showed the banner with the input box cut off until the
+    // agent's frame put it back). A frame that no longer fills it (the box grew
+    // either way) is not drawn at all until the agent's frame is in: the old text
+    // sat narrow and low in the maximized window. The element clips, so a frame
+    // larger than its box does not spill over what sits beside it.
+    if (terminal.element) terminal.element.style.overflow = 'hidden';
+    const screen = terminal.element?.querySelector<HTMLElement>('.xterm-screen');
+    if (screen) {
+      const fills = target.cols <= hold.base.cols && target.rows <= hold.base.rows;
+      const cellHeight = fitAddonRef.current?.measureCell()?.height ?? 0;
+      screen.style.opacity = fills ? '' : '0';
+      screen.style.transform = fills && cellHeight > 0 ? `translateY(${(target.rows - hold.base.rows) * cellHeight}px)` : '';
+    }
+    terminal.element?.closest('[data-terminal-host]')?.setAttribute(TERMINAL_FRAME_HOLD_ATTRIBUTE, '');
+    traceTerminalRenderer(sessionIdRef.current, 'frame-hold', { fromCols: hold.base.cols, fromRows: hold.base.rows, cols: target.cols, rows: target.rows });
+    // The next frame's observers deliver any hop still to come; a task queued
+    // from that frame's callbacks runs after it.
+    cancelFrameHoldSend();
+    frameHoldSendFrameRef.current = requestAnimationFrame(() => {
+      frameHoldSendFrameRef.current = null;
+      frameHoldSendTimerRef.current = setTimeout(() => {
+        frameHoldSendTimerRef.current = null;
+        sendFrameHoldGrid();
+      }, 0);
+    });
+    frameHoldWatchdogRef.current = setTimeout(() => {
+      frameHoldWatchdogRef.current = null;
+      recoverFrameHold('watchdog');
+    }, FRAME_HOLD_WATCHDOG_MS);
+  }, [cancelFrameHoldSend, recoverFrameHold, sendFrameHoldGrid]);
+
+  /** Whether a refit of this terminal may hold its frame rather than reflow it. */
+  const canHoldFrame = useCallback((element: HTMLElement): boolean => {
+    const sessionId = sessionIdRef.current;
+    return sessionId !== null
+      && repaintWaitRef.current !== null
+      // The mount and a replay have their own veil, the launch overlay covers
+      // the terminal, and nobody sees a hidden or parked one.
+      && !scrollbackPendingRef.current
+      && !suppressDataRef.current
+      && document.visibilityState !== 'hidden'
+      && element.offsetWidth > 0
+      && !element.closest('[aria-hidden="true"]')
+      && !isTerminalParked(sessionId);
+  }, []);
+
   /**
    * Every fit goes through here. Unheld, it is the container fit. Held, the
    * terminal keeps main's grid and re-derives the font for the container's
@@ -960,29 +1293,28 @@ export function useTerminal(options: UseTerminalOptions) {
     if (!fitAddon || !terminal) return { applied: false, reason: 'no-element' };
     const held = heldGridRef.current;
     if (!held) {
-      // The container fit is the one every host's refit goes through. Inside a
-      // layout transition (a maximize, Expand, a released drag: the scope stays
-      // frozen while it runs), a grid change holds the transition until the
-      // agent has repainted at the new grid. Never during the mount or a replay
-      // (their own veil covers those), under the launch overlay, or for a
-      // terminal nobody can see. Outside a transition this costs nothing.
-      if (origin === 'fit' && !scrollbackPendingRef.current && !suppressDataRef.current) {
-        const element = terminal.element;
-        const transition = terminalLayoutTransitionFor(element ?? null);
-        const repaintWait = repaintWaitRef.current;
-        if (transition && repaintWait && element && element.offsetWidth > 0 && !element.closest('[aria-hidden="true"]')) {
-          const proposed = fitAddon.proposeDimensions();
-          if (proposed && (proposed.cols !== terminal.cols || proposed.rows !== terminal.rows)) {
-            transition.awaitRepaint(repaintWait.begin());
-          }
-        }
+      // The container fit is the one every host's refit goes through. While a
+      // user's layout change lands (a maximize, Expand, a released drag), a grid
+      // change holds the terminal's last frame as drawn instead of reflowing it,
+      // and so does any refit while it holds one. Outside a
+      // landing this costs nothing.
+      const element = terminal.element;
+      if (origin === 'fit' && element && (frameHoldRef.current || isTerminalLayoutLandingFor(element)) && canHoldFrame(element)) {
+        const proposed = fitAddon.proposeDimensions();
+        const aimed = frameHoldRef.current?.target ?? { cols: terminal.cols, rows: terminal.rows };
+        if (proposed && !sameGrid(proposed, aimed)) holdFrame({ cols: proposed.cols, rows: proposed.rows });
+        if (frameHoldRef.current) return { applied: true, cols: terminal.cols, rows: terminal.rows };
       }
+      // Any other fit takes the container's grid as usual.
+      dropFrameHold(origin);
       const outcome = fitAddon.fit();
       if (outcome.applied && terminal.options.fontSize === configuredFontRef.current) {
         naturalCellRef.current = fitAddon.measureCell();
       }
       return outcome;
     }
+    // A held terminal conforms to main's grid, which needs no agent repaint.
+    dropFrameHold('held');
     const sessionId = sessionIdRef.current;
     if (probe && sessionId && naturalCellRef.current) {
       const natural = fitAddon.proposeDimensionsForCell(naturalCellRef.current);
@@ -993,7 +1325,10 @@ export function useTerminal(options: UseTerminalOptions) {
       return fitAddon.fit();
     }
     return { applied: true, cols: held.cols, rows: held.rows };
-  }, [conformToHeldGrid, releaseHeldGrid, requestGrid]);
+  }, [dropFrameHold, canHoldFrame, conformToHeldGrid, releaseHeldGrid, requestGrid, holdFrame]);
+  useLayoutEffect(() => {
+    fitTerminalRef.current = fitTerminal;
+  }, [fitTerminal]);
 
   /**
    * The renderer swapped (WebGL attached, lost, budget-suspended, or resumed),
@@ -1479,6 +1814,8 @@ export function useTerminal(options: UseTerminalOptions) {
       // TUI only redraws once after resizing settles.
       const sid = options.sessionId;
       terminal.onResize(({ cols, rows }) => {
+        // The end of a frame hold resizes to the grid the PTY already has.
+        if (skipNextResizeSendRef.current) return;
         if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
         resizeTimerRef.current = setTimeout(() => {
           resizeTimerRef.current = null;
@@ -1691,12 +2028,13 @@ export function useTerminal(options: UseTerminalOptions) {
       // at the source and `kick()` dumped the whole accumulated burst on drop - landing
       // exactly on the optimistic move, the FlyingCard and persistCompletion. Streaming
       // steadily through the drag is both smoother and cheaper than stall-then-burst.
-      shouldHold: () => scrollbackPendingRef.current,
+      shouldHold: () => scrollbackPendingRef.current || holdOutputRef.current,
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
       onSliceParsed: __KANGENTIC_DEV__ ? (chars) => noteScrollLatencyParsed(sessionId, chars) : undefined,
     });
     incomingResumeRef.current = () => queue.kick();
     incomingResetRef.current = () => queue.reset();
+    incomingSettledRef.current = () => queue.settled();
 
     // Post-interaction repaint nudge (see repaint-nudge.ts). Created alongside
     // the queue so it shares the session's lifetime, and reached from the input
@@ -1740,11 +2078,14 @@ export function useTerminal(options: UseTerminalOptions) {
       cleanupRef.current = null;
       incomingResumeRef.current = null;
       incomingResetRef.current = null;
+      incomingSettledRef.current = null;
+      // A frame hold belongs to this session's grid; its held output goes with the queue.
+      dropFrameHold('session-change');
       queue.reset();
       repaintNudge.dispose();
       repaintNudgeRef.current = null;
     };
-  }, [options.sessionId]);
+  }, [options.sessionId, dropFrameHold]);
 
   /** The corrective half of the width-drift self-heal (scheduled by the
    *  SESSION_PTY_RESIZED listener effect below): re-fit to the live container,
@@ -1764,6 +2105,12 @@ export function useTerminal(options: UseTerminalOptions) {
       const reason: PtyEchoSkipReason = parked ? 'parked' : 'replay-in-flight';
       if (isPtyEchoDeferredToReplaySettle(reason)) ptyEchoRecheckOwedRef.current = true;
       traceTerminalRenderer(sessionId, 'echo-reassert-deferred', { reason });
+      return;
+    }
+    // A frame hold sends the grid its box fits once its box holds still, so the
+    // PTY is about to agree with it.
+    if (frameHoldRef.current) {
+      traceTerminalRenderer(sessionId, 'echo-reassert-deferred', { reason: 'frame-hold' });
       return;
     }
     // Re-fit first: the container may have moved during the debounce, and our
@@ -1841,6 +2188,12 @@ export function useTerminal(options: UseTerminalOptions) {
       // Not initialized yet: the mount replay fits and resizes at the settled
       // geometry on its own.
       if (!terminal) return;
+      // A terminal holding its frame keeps xterm behind main's grid on purpose
+      // until the hold ends; re-asserting it would send the old grid back.
+      if (frameHoldRef.current) {
+        traceTerminalRenderer(sessionId, 'pty-resize-echo', { cols: echo.cols, rows: echo.rows, trigger, action: 'skip', reason: 'frame-hold' });
+        return;
+      }
       const decision = resolvePtyEchoReassert({
         echoedCols: echo.cols,
         echoedRows: echo.rows,
@@ -1969,6 +2322,10 @@ export function useTerminal(options: UseTerminalOptions) {
       }
       repaintWaitRef.current?.dispose();
       repaintWaitRef.current = null;
+      // A frame hold dies with its terminal.
+      cancelFrameHoldSend();
+      frameHoldRef.current = null;
+      holdOutputRef.current = false;
       // Tear down WebGL (cancel any pending re-init retry, drop the report entry)
       // before disposing the terminal it is attached to.
       disposeWebglRef.current?.();

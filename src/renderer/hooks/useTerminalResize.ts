@@ -332,8 +332,8 @@ export function useTerminalResize(
       onRelease: () => {
         // Only the height, for the same reason as the collapse toggle's write.
         window.electronAPI.config.set({ terminal: { panelHeight: latestHeightRef.current } });
-        // The final refit runs under a frozen panel, which shows the terminal once
-        // its agent has repainted at the new height (`terminal-layout-transition.ts`).
+        // The final refit is a layout change: the terminal holds its frame at the
+        // new height until its agent has repainted (`terminal-layout-transition.ts`).
         runTerminalLayoutChange(document.querySelector<HTMLElement>('[data-testid="terminal-panel-container"]'), () => {
           setIsResizing(false);
           // Explicit refit signal. The debounced ResizeObserver also handles this,

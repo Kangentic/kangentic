@@ -597,47 +597,100 @@ export async function settleFrames(page: Page, frames = 2): Promise<void> {
   }), frames);
 }
 
-/** What the screen showed of a layout transition's scope, frame by frame. */
-export interface LayoutTransitionRecording {
+/** What the screen showed of a layout change's scope, frame by frame. */
+export interface LayoutChangeRecording {
   /** Every frame the compositor produced: when, and the scope's pixels as a small grayscale image. */
   frames: Array<{ at: number; picture: Uint8Array }>;
-  /** Wall-clock seconds the scope's transition opened and closed (null if it never did). */
-  openedAt: number | null;
-  closedAt: number | null;
+  /** Wall-clock seconds the action started. */
+  actedAt: number;
+  /** Wall-clock seconds the first terminal in the scope held its frame and the last one's new frame was on screen (null if none held one). */
+  heldAt: number | null;
+  drawnAt: number | null;
+  /** The scope's box in page pixels, which every picture covers, and the pictures' size. */
+  scopeBox: { x: number; y: number; width: number; height: number };
+  pictureWidth: number;
+  pictureHeight: number;
+}
+
+/**
+ * How many pixels of `picture` inside `rect` (page pixels, inside the scope)
+ * are bright enough to be text. At the pictures' 240 px width a line of 14 px
+ * text averages to a faint gray (30 to 60 of 255) over a terminal background
+ * near 11, so the cut sits between them, and a rect a terminal shows nothing in
+ * counts close to none.
+ */
+export function brightPixelsIn(recording: LayoutChangeRecording, picture: Uint8Array, rect: { x: number; y: number; width: number; height: number }): number {
+  const scale = recording.pictureWidth / recording.scopeBox.width;
+  const left = Math.max(0, Math.floor((rect.x - recording.scopeBox.x) * scale));
+  const top = Math.max(0, Math.floor((rect.y - recording.scopeBox.y) * scale));
+  const right = Math.min(recording.pictureWidth, Math.ceil((rect.x + rect.width - recording.scopeBox.x) * scale));
+  const bottom = Math.min(recording.pictureHeight, Math.ceil((rect.y + rect.height - recording.scopeBox.y) * scale));
+  let bright = 0;
+  for (let row = top; row < bottom; row += 1) {
+    for (let column = left; column < right; column += 1) {
+      if (picture[row * recording.pictureWidth + column] > 28) bright += 1;
+    }
+  }
+  return bright;
 }
 
 /** The width the scope is reduced to for comparing pictures: text antialiasing averages out, layout does not. */
 const PICTURE_WIDTH = 240;
 
+/** On a terminal's host while it holds its last frame (`TERMINAL_FRAME_HOLD_ATTRIBUTE` in useTerminal.ts). */
+export const TERMINAL_FRAME_HOLD_SELECTOR = '[data-terminal-frame-hold]';
+
+/** Wait until no terminal anywhere holds its frame: every layout change has drawn its new frames. */
+export async function expectNoFrameHold(page: Page, timeout = 3000): Promise<void> {
+  await expect(page.locator(TERMINAL_FRAME_HOLD_SELECTOR)).toHaveCount(0, { timeout });
+}
+
+/**
+ * No frame hold since `since` (ms since epoch) ended through a recovery: its
+ * watchdog, or a throw on the way to its end. Those rescue a terminal from
+ * being held for good, so a test on the normal path would pass through them and
+ * never see the path break.
+ */
+export async function expectNoFrameHoldRecovery(page: Page, since: number): Promise<void> {
+  const recoveries = await page.evaluate((from) => (window as unknown as {
+    __kangenticTerminalTrace: () => Array<{ ts: number; event: string; detail?: { reason?: string } }>;
+  }).__kangenticTerminalTrace()
+    .filter((event) => event.ts >= from && event.event === 'frame-hold-dropped')
+    .map((event) => event.detail?.reason)
+    .filter((reason) => reason === 'watchdog' || reason === 'send-failed' || reason === 'finish-failed'), since);
+  expect(recoveries).toEqual([]);
+}
+
 /**
  * Record what the screen shows of `scopeSelector` while `action` runs a
  * layout change (`terminal-layout-transition.ts`). Frames come from CDP's
  * screencast, which reports the compositor's own frames: a screenshot forces a
- * fresh one and would not see the freeze. Each frame is cut to the scope's box,
- * so whatever draws outside it does not count, and reduced to a small grayscale
- * picture. The reduction matters: the browser draws the frozen picture as a
- * texture whose text antialiasing differs from the live page by a few edge
- * pixels, which an exact comparison would call a change.
+ * fresh one and would not see a frame between two others. Each frame is cut to
+ * the scope's box, so whatever draws outside it does not count, and reduced to
+ * a small grayscale picture. The reduction matters: the browser draws a frozen
+ * picture as a texture whose text antialiasing differs from the live page by a
+ * few edge pixels, which an exact comparison would call a change.
  *
- * Callers hide the terminal cursor (DECTCEM) and set `.no-motion` first, so the
- * only thing that can change the scope is the change itself.
+ * Callers hide the terminal cursor (DECTCEM), fill the terminals with text and
+ * set `.no-motion` first, so the only thing that can change the scope is the
+ * change itself.
  */
-export async function recordLayoutTransition(
+export async function recordLayoutChange(
   page: Page,
   scopeSelector: string,
   action: () => Promise<void>,
-): Promise<LayoutTransitionRecording> {
+): Promise<LayoutChangeRecording> {
   const box = await page.locator(scopeSelector).boundingBox();
   if (!box) throw new Error(`no box for ${scopeSelector}`);
-  await page.evaluate((selector) => {
+  await page.evaluate(({ selector, holdSelector }) => {
     const scope = document.querySelector(selector);
     if (!scope) throw new Error(`no ${selector}`);
     // A frame pump outside every scope: a 4px dot in the title bar's corner that
     // never stops changing, so the compositor keeps producing frames (a still
-    // page produces none) and the freeze has frames to be seen in. Script-driven,
-    // so `.no-motion` does not stop it.
+    // page produces none) and a held picture has frames to be seen in.
+    // Script-driven, so `.no-motion` does not stop it.
     const pump = document.createElement('div');
-    pump.dataset.testid = 'layout-transition-frame-pump';
+    pump.dataset.testid = 'layout-change-frame-pump';
     pump.style.cssText = 'position:fixed;left:0;top:0;width:4px;height:4px;z-index:2147483647;pointer-events:none;background:#fff';
     document.body.appendChild(pump);
     let lit = false;
@@ -648,21 +701,17 @@ export async function recordLayoutTransition(
       requestAnimationFrame(pumpFrame);
     };
     requestAnimationFrame(pumpFrame);
-    const times: { opened: number | null; closed: number | null } = { opened: null, closed: null };
-    (window as unknown as { __layoutTransitionTimes: typeof times }).__layoutTransitionTimes = times;
-    const observer = new MutationObserver(() => {
-      // Frozen while `open`; `shown` is the cut to the new state.
-      const open = scope.getAttribute('data-terminal-layout-transition') === 'open';
-      if (open && times.opened === null) times.opened = Date.now() / 1000;
-      if (!open && times.opened !== null && times.closed === null) {
-        times.closed = Date.now() / 1000;
-        observer.disconnect();
-      }
-    });
-    observer.observe(scope, { attributes: true, attributeFilter: ['data-terminal-layout-transition'] });
-  }, scopeSelector);
+    const times: { held: number | null; drawn: number | null } = { held: null, drawn: null };
+    (window as unknown as { __layoutChangeTimes: typeof times }).__layoutChangeTimes = times;
+    new MutationObserver(() => {
+      const heldNow = scope.querySelectorAll(holdSelector).length;
+      if (heldNow > 0 && times.held === null) times.held = Date.now() / 1000;
+      if (heldNow === 0 && times.held !== null) times.drawn = Date.now() / 1000;
+      else if (heldNow > 0) times.drawn = null;
+    }).observe(scope, { subtree: true, attributes: true, attributeFilter: ['data-terminal-frame-hold'] });
+  }, { selector: scopeSelector, holdSelector: TERMINAL_FRAME_HOLD_SELECTOR });
   const readTimes = () => page.evaluate(() =>
-    (window as unknown as { __layoutTransitionTimes: { opened: number | null; closed: number | null } }).__layoutTransitionTimes);
+    (window as unknown as { __layoutChangeTimes: { held: number | null; drawn: number | null } }).__layoutChangeTimes);
 
   const cdp = await page.context().newCDPSession(page);
   const captured: Array<{ at: number; data: string }> = [];
@@ -674,12 +723,14 @@ export async function recordLayoutTransition(
   // and full-size PNGs made one recording take most of a test's time budget.
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 960, maxHeight: 960, everyNthFrame: 1 });
   await page.waitForTimeout(250);
+  const actedAt = Date.now() / 1000;
   await action();
-  await expect.poll(async () => (await readTimes()).closed, { timeout: 5000 }).not.toBeNull();
+  await expect.poll(async () => (await readTimes()).held, { timeout: 5000 }).not.toBeNull();
+  await expect.poll(async () => (await readTimes()).drawn, { timeout: 5000 }).not.toBeNull();
   await page.waitForTimeout(400);
   await cdp.send('Page.stopScreencast');
   await cdp.detach();
-  await page.evaluate(() => document.querySelector('[data-testid="layout-transition-frame-pump"]')?.remove());
+  await page.evaluate(() => document.querySelector('[data-testid="layout-change-frame-pump"]')?.remove());
 
   const area = { x: box.x, y: box.y, width: box.width, height: box.height };
   const pictures = await page.evaluate(async ({ images, region, pictureWidth }) => {
@@ -710,8 +761,12 @@ export async function recordLayoutTransition(
   const times = await readTimes();
   return {
     frames: captured.map((frame, index) => ({ at: frame.at, picture: new Uint8Array(Buffer.from(pictures[index], 'base64')) })),
-    openedAt: times.opened,
-    closedAt: times.closed,
+    actedAt,
+    heldAt: times.held,
+    drawnAt: times.drawn,
+    scopeBox: area,
+    pictureWidth: PICTURE_WIDTH,
+    pictureHeight: Math.max(1, Math.round(area.height * (PICTURE_WIDTH / area.width))),
   };
 }
 
@@ -732,59 +787,61 @@ export function pictureDistance(first: Uint8Array, second: Uint8Array): number {
 }
 
 /**
- * Below this mean difference two pictures are the same. The frozen picture is a
+ * Below this mean difference two pictures are the same. A frozen picture is a
  * texture whose text antialiasing differs from the live page by about 0.1 gray
  * levels on average (measured on Expand, panel maximize and window maximize).
  */
 const PICTURE_NOISE_MEAN = 0.5;
 
 /**
- * Which of the two pictures around a change a frame shows: `before`, `settled`,
- * or `between` when it is near neither. Near means near on BOTH measures, each
- * taken relative to the size of the change itself. The pixel count sees a small
- * change in high contrast (an Expand moves a few lines of text); the mean sees a
- * blend, which moves most pixels by less than the count's threshold (measured: a
- * crossfade frame of the panel maximize counted 0.09 of the change but sat a
- * whole change away on the mean).
+ * The run of distinct pictures a recording shows, in order: consecutive frames
+ * that show the same picture are one stage. Same means same on BOTH measures,
+ * each taken relative to the size of the whole change. The pixel count sees a
+ * small change in high contrast; the mean sees a blend, which moves most pixels
+ * by less than the count's threshold.
  */
-export function classifyFrame(picture: Uint8Array, before: Uint8Array, settled: Uint8Array): 'before' | 'settled' | 'between' {
-  const changeCount = pictureChange(before, settled);
-  const changeMean = pictureDistance(before, settled);
-  const near = (reference: Uint8Array) => pictureChange(reference, picture) < changeCount / 4
-    && pictureDistance(reference, picture) < Math.max(PICTURE_NOISE_MEAN, changeMean / 4);
-  if (near(before)) return 'before';
-  if (near(settled)) return 'settled';
-  return 'between';
+export function pictureStages(recording: LayoutChangeRecording): Array<{ at: number; picture: Uint8Array }> {
+  const { frames, actedAt } = recording;
+  const before = frames.filter((frame) => frame.at < actedAt).at(-1);
+  const final = frames.at(-1);
+  if (!before || !final) throw new Error('no frames around the layout change');
+  const changeCount = pictureChange(before.picture, final.picture);
+  const changeMean = pictureDistance(before.picture, final.picture);
+  const same = (first: Uint8Array, second: Uint8Array) => pictureChange(first, second) < changeCount / 8
+    && pictureDistance(first, second) < Math.max(PICTURE_NOISE_MEAN, changeMean / 8);
+  const stages: Array<{ at: number; picture: Uint8Array }> = [];
+  for (const frame of frames.filter((candidate) => candidate.at >= before.at)) {
+    const last = stages.at(-1);
+    if (!last || !same(last.picture, frame.picture)) stages.push(frame);
+  }
+  return stages;
 }
 
 /**
- * The checks every layout transition must pass on screen. While it is open the
- * scope shows the picture from before the change (the freeze). Then it shows
- * the settled picture (the swap), and nothing else ever again: no frame matches
- * neither (a crossfade, or an in-between layout such as the terminals still at
- * the old size in a grown panel), and none goes back.
+ * The checks every user layout change must pass on screen. The scope shows its
+ * picture from before the change, then the change at once with each terminal it
+ * resized keeping its last frame as drawn, then each terminal's new frame in one
+ * paint, and nothing else: no intermediate redraw, no old frame reflowed onto the
+ * new grid, no blend, and no going back. A kept frame and the new one can be the
+ * same picture (an agent whose frame did not change), so the middle stage may not
+ * show. `terminals` is how many terminals the change resizes on screen, each of
+ * which may draw its new frame in a frame of its own.
  */
-export function expectOneSwap(recording: LayoutTransitionRecording): void {
-  const { frames, openedAt, closedAt } = recording;
-  if (openedAt === null || closedAt === null) throw new Error('the layout transition never opened and closed');
-  const before = frames.filter((frame) => frame.at < openedAt).at(-1);
-  const settled = frames.at(-1);
-  if (!before || !settled) throw new Error('no frames around the layout transition');
+export function expectHoldThenDraw(recording: LayoutChangeRecording, terminals = 1): void {
+  const { heldAt, drawnAt, frames, actedAt } = recording;
+  if (heldAt === null || drawnAt === null) throw new Error('no terminal held its frame and drew the new one');
+  const stages = pictureStages(recording);
+  const summary = `stages at ${stages.map((stage) => `${Math.round((stage.at - actedAt) * 1000)}ms`).join(', ')}; `
+    + `held +${Math.round((heldAt - actedAt) * 1000)}ms, drawn +${Math.round((drawnAt - actedAt) * 1000)}ms, ${frames.length} frames`;
   // The change shows at all.
-  expect(pictureChange(before.picture, settled.picture)).toBeGreaterThan(0.001);
-  const shown = frames.map((frame) => ({
-    at: Math.round((frame.at - openedAt) * 1000),
-    shows: classifyFrame(frame.picture, before.picture, settled.picture),
-  }));
-  const summary = shown.map((frame) => `${frame.at}ms:${frame.shows}`).join(' ');
-  // Frozen while open, so the freeze has frames to be seen in.
-  const during = frames.filter((frame) => frame.at > openedAt && frame.at < closedAt - 0.02);
-  expect(during.length, summary).toBeGreaterThan(0);
-  for (const frame of during) expect(classifyFrame(frame.picture, before.picture, settled.picture), summary).toBe('before');
-  expect(shown.filter((frame) => frame.shows === 'between'), summary).toEqual([]);
-  const firstSettled = shown.findIndex((frame) => frame.shows === 'settled');
-  expect(firstSettled, summary).toBeGreaterThan(0);
-  expect(shown.slice(firstSettled).every((frame) => frame.shows === 'settled'), summary).toBe(true);
+  expect(pictureChange(stages[0].picture, stages.at(-1)?.picture ?? stages[0].picture), summary).toBeGreaterThan(0.001);
+  // The change showed before any terminal drew its new frame, so nothing held
+  // the layout back.
+  expect(stages.length, summary).toBeGreaterThanOrEqual(2);
+  expect(stages[1].at, summary).toBeLessThan(drawnAt);
+  // One more stage per terminal at most: a terminal draws its new frame in one
+  // paint, and no picture comes back once it has gone.
+  expect(stages.length, summary).toBeLessThanOrEqual(2 + terminals);
 }
 
 /**

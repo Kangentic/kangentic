@@ -214,8 +214,8 @@ export function CommandTerminalPanel({
     return () => observer.disconnect();
   }, []);
 
-  // Every terminal in the panel resizes: the panel holds still until their agents
-  // have repainted, then shows the new layout in one paint.
+  // Every terminal in the panel resizes: the new layout shows at once, and each
+  // terminal holds its frame until its agent has repainted.
   const toggleMaximized = useCallback(() => {
     runTerminalLayoutChange(areaRef.current, () => saveGeometry({ ...geometry, maximized: !geometry.maximized }));
   }, [geometry, saveGeometry]);
@@ -247,7 +247,7 @@ export function CommandTerminalPanel({
     }
     // The panel already has its final box, so the save changes nothing the
     // terminals can see: closing the gate is what sends their one refit. Both
-    // run under a frozen panel, so the terminals show their new frames at once.
+    // run as one layout change, so the terminals hold their frames until they repaint.
     const box = resizeRect(gesture.startRect, gesture.edge, deltaX, deltaY, gesture.area, gesture.floor);
     gesture.stopListening();
     runTerminalLayoutChange(areaRef.current, () => {
@@ -354,7 +354,7 @@ export function CommandTerminalPanel({
       ref={areaRef}
       className="absolute inset-0 pointer-events-none"
       data-testid="command-terminal-panel-area"
-      // The panel's layout changes freeze here, rail and header included.
+      // The panel's layout changes land here, so every terminal in it holds its frame.
       data-terminal-layout-scope=""
     >
       {areaSize.width > 0 && (

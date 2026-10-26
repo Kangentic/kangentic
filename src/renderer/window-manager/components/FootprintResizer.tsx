@@ -103,7 +103,7 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
     dragRef.current = null;
   }, []);
 
-  /** End the drag: commit the footprint it reached and close its gesture, under a frozen layer. */
+  /** End the drag: commit the footprint it reached and close its gesture, as one layout change. */
   const finishDrag = (drag: FootprintDrag): void => {
     if (dragRef.current !== drag) return;
     dragRef.current = null;

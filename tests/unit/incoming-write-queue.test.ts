@@ -290,6 +290,57 @@ describe('createIncomingWriteQueue', () => {
     expect(writes).toEqual([]);
     expect(ack).toHaveBeenCalledWith('startup noise'.length);
   });
+
+  describe('settled', () => {
+    // The end of a frame hold shows the agent's held frame only once xterm
+    // has taken all of it in, so settled must wait for every slice's callback.
+    it('resolves at once when nothing is buffered or in flight', async () => {
+      const { term } = fakeTerminal();
+      const queue = createIncomingWriteQueue({ getTerminal: () => term, shouldDrop: () => false, ack: vi.fn() });
+      await expect(queue.settled()).resolves.toBeUndefined();
+    });
+
+    it('resolves only after the last slice of a held burst has been parsed, once kicked', async () => {
+      const { term, writes } = fakeTerminal();
+      const hold = { current: true };
+      const queue = createIncomingWriteQueue({
+        getTerminal: () => term,
+        shouldDrop: () => false,
+        shouldHold: () => hold.current,
+        ack: vi.fn(),
+        chunkSize: 4,
+      });
+      queue.push('abcdefghij');
+      let settled = false;
+      void queue.settled().then(() => { settled = true; });
+      await flush();
+      // Held: nothing written, and not settled.
+      expect(writes).toEqual([]);
+      expect(settled).toBe(false);
+      hold.current = false;
+      queue.kick();
+      let settledAfterWrites = -1;
+      void queue.settled().then(() => { settledAfterWrites = writes.length; });
+      await flush();
+      expect(writes).toEqual(['abcd', 'efgh', 'ij']);
+      expect(settled).toBe(true);
+      // Not before the third slice went in.
+      expect(settledAfterWrites).toBe(3);
+    });
+
+    it('resolves when the queue is reset, whose bytes will never be written', async () => {
+      const { term } = fakeTerminal();
+      const queue = createIncomingWriteQueue({ getTerminal: () => term, shouldDrop: () => false, shouldHold: () => true, ack: vi.fn() });
+      queue.push('held');
+      let settled = false;
+      void queue.settled().then(() => { settled = true; });
+      await flush();
+      expect(settled).toBe(false);
+      queue.reset();
+      await flush();
+      expect(settled).toBe(true);
+    });
+  });
 });
 
 describe('createIncomingWriteQueue onSliceParsed', () => {
