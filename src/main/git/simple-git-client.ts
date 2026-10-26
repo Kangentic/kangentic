@@ -38,7 +38,9 @@ function withCallerAttribution(client: SimpleGit): SimpleGit {
       if (typeof value !== 'function') return value;
       return function tracedGitMethod(...args: unknown[]): unknown {
         const result: unknown = withSpawnCaller(stackCallerLabel(), () => Reflect.apply(value, target, args));
-        // A chained call (`git.cwd(x).raw(...)`) keeps going through the proxy.
+        // A method that returns the client itself (`outputHandler`) stays behind the
+        // proxy. `cwd(x)` and the command methods return a new chain object, which
+        // does not: a spawn made through one runs without a caller label.
         return result === target ? proxy : result;
       };
     },
