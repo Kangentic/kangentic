@@ -144,6 +144,60 @@ describe('readTaskChanges', () => {
     expect(result.commits.map((commit) => commit.webUrl)).toEqual([`https://github.com/example/example/commit/${LINKED}`, null]);
   });
 
+  it('with commitWebLinks false, looks up no web links, leaves the commits as the resolver gave them, and keeps the rest of the answer', async () => {
+    const commits = [commitOf(LINKED), commitOf(OTHER)];
+    const files = [{ path: 'src/example.ts', status: 'M' as const, insertions: 3, deletions: 1, binary: false }];
+    const totals = { insertions: 3, deletions: 1, filesChanged: 1 };
+    hoisted.retrievalCall.mockResolvedValue(new Map());
+    hoisted.resolveTaskChanges.mockResolvedValue(resolution({
+      emptyReason: null,
+      range: { base: OTHER, head: LINKED },
+      commits,
+      files,
+      totals,
+    }));
+    // A connector that would stamp both commits, so only the option keeps the
+    // links off. With no connector, the early return would hide a regression.
+    hoisted.commitWebLinks.mockResolvedValue(githubLinks());
+    hoisted.commitsMissingFromRemotes.mockResolvedValue(new Set());
+
+    const result = await readTaskChanges(contextWith(true), { projectId: 'project-1', taskId: TASK_ID }, { commitWebLinks: false });
+
+    expect(hoisted.commitWebLinks).not.toHaveBeenCalled();
+    expect(hoisted.commitsMissingFromRemotes).not.toHaveBeenCalled();
+    expect(result.webProviderName).toBeNull();
+    // Not even a `webUrl: undefined` key: the commits are the resolver's own.
+    expect(result.commits).toStrictEqual(commits);
+    for (const commit of result.commits) {
+      expect(commit).not.toHaveProperty('webUrl');
+    }
+    expect(result).toMatchObject({
+      range: { base: OTHER, head: LINKED },
+      files,
+      totals,
+      emptyReason: null,
+      branchName: 'feature/x',
+      baseBranch: 'develop',
+      projectPath: '/mock/project',
+    });
+  });
+
+  it('with commitWebLinks true or left out, still looks up the web links', async () => {
+    hoisted.retrievalCall.mockResolvedValue(new Map());
+    hoisted.resolveTaskChanges.mockResolvedValue(resolution({ emptyReason: null, commits: [commitOf(LINKED)] }));
+    hoisted.commitWebLinks.mockResolvedValue(githubLinks());
+    hoisted.commitsMissingFromRemotes.mockResolvedValue(new Set());
+
+    const explicitlyOn = await readTaskChanges(contextWith(true), { projectId: 'project-1', taskId: TASK_ID }, { commitWebLinks: true });
+    const optionsOmitted = await readTaskChanges(contextWith(true), { projectId: 'project-1', taskId: TASK_ID }, {});
+
+    expect(hoisted.commitWebLinks).toHaveBeenCalledTimes(2);
+    for (const result of [explicitlyOn, optionsOmitted]) {
+      expect(result.webProviderName).toBe('GitHub');
+      expect(result.commits.map((commit) => commit.webUrl)).toEqual([`https://github.com/example/example/commit/${LINKED}`]);
+    }
+  });
+
   it('refuses a task the project does not have', async () => {
     hoisted.getById.mockReturnValue(undefined);
 
@@ -314,5 +368,27 @@ describe('registerGitDiffHandlers git:commitGraph', () => {
 
     expect(hoisted.commitWebLinks).toHaveBeenCalledWith(PROJECT_PATH);
     expect(hoisted.commitsMissingFromRemotes).toHaveBeenCalledWith(PROJECT_PATH, [LINKED]);
+  });
+});
+
+describe('registerGitDiffHandlers git:taskChanges', () => {
+  it('keeps the web links on, because the view shows the commits (only get_task_report turns them off)', async () => {
+    hoisted.retrievalCall.mockResolvedValue(new Map());
+    hoisted.resolveTaskChanges.mockResolvedValue(resolution({ emptyReason: null, commits: [commitOf(LINKED)] }));
+    hoisted.commitWebLinks.mockResolvedValue(githubLinks());
+    hoisted.commitsMissingFromRemotes.mockResolvedValue(new Set());
+    registerGitDiffHandlers({
+      ...contextWith(true),
+      diffWatcher: { subscribe: vi.fn() },
+      mainWindow: null,
+    } as unknown as IpcContext);
+    const registration = hoisted.ipcHandle.mock.calls.find(([channel]) => channel === IPC.GIT_TASK_CHANGES);
+    if (!registration) throw new Error('git:taskChanges was never registered');
+    const handler = registration[1] as (event: unknown, input: { projectId: string; taskId: string }) => Promise<{ webProviderName: string | null; commits: GitCommitGraphCommit[] }>;
+
+    const result = await handler({}, { projectId: 'project-1', taskId: TASK_ID });
+
+    expect(result.webProviderName).toBe('GitHub');
+    expect(result.commits.map((commit) => commit.webUrl)).toEqual([`https://github.com/example/example/commit/${LINKED}`]);
   });
 });

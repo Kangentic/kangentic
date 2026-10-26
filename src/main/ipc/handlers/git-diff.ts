@@ -178,8 +178,16 @@ async function readLinkedCommits(context: IpcContext, projectId: string, taskId:
  * found, when the diff of a found range fails, and when the index could not be
  * read and git alone found nothing: a worker that is restarting must not read
  * as a task with no commits.
+ *
+ * `commitWebLinks: false` skips the web-link lookup (two git calls) for a
+ * caller that does not show the commits, such as `get_task_report`; each
+ * commit then has no `webUrl` and `webProviderName` is null.
  */
-export async function readTaskChanges(context: IpcContext, input: GitTaskChangesInput): Promise<GitTaskChangesResult> {
+export async function readTaskChanges(
+  context: IpcContext,
+  input: GitTaskChangesInput,
+  options: { commitWebLinks?: boolean } = {},
+): Promise<GitTaskChangesResult> {
   const { projectId, projectPath } = resolveProjectContext(context, input.projectId);
   if (!projectId || !projectPath) throw new Error('The task\'s project is not open');
   const tasks = getProjectRepos(context, projectId).tasks;
@@ -202,7 +210,9 @@ export async function readTaskChanges(context: IpcContext, input: GitTaskChanges
     throw new Error('The Knowledge Graph index is restarting, so the task\'s commits could not be read');
   }
 
-  const linkedResult = await withCommitWebLinks(projectPath, { commits: resolution.commits });
+  const linkedResult = options.commitWebLinks === false
+    ? { commits: resolution.commits, webProviderName: null }
+    : await withCommitWebLinks(projectPath, { commits: resolution.commits });
   return {
     ...resolution,
     commits: linkedResult.commits,

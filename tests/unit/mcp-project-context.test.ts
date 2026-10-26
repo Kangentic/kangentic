@@ -96,6 +96,22 @@ vi.mock('../../src/main/retrieval/retrieval-client', () => ({
   retrievalClient: { call: workerCallSpy },
 }));
 
+// The completed task view's two reads are tested where they live
+// (task-report.test.ts, git-task-changes-handler.test.ts). Here only the
+// context's wiring around them is: which project and arguments it forwards.
+// Both modules keep their other exports, since sessions.ts and the IPC
+// registration also import from them.
+const readTaskReportSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/helpers/task-report', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/task-report')>()),
+  readTaskReport: readTaskReportSpy,
+}));
+const readTaskChangesSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/handlers/git-diff', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/handlers/git-diff')>()),
+  readTaskChanges: readTaskChangesSpy,
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -118,7 +134,7 @@ import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
 import { closeTaskWindows } from '../../src/main/ipc/helpers/task-windows';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { Project, Swimlane } from '../../src/shared/types';
+import type { GitTaskChangesResult, Project, Swimlane, TaskReport } from '../../src/shared/types';
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve!: () => void;
@@ -479,6 +495,52 @@ describe('buildCommandContextForProject - readTaskKnowledge', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// get_task_report reads
+//
+// `get_task_report` shows what the completed task view shows, through two
+// callbacks on the context. Each must forward the context's own project, never
+// an ambient one, and the git read must skip the commits' web links because the
+// report carries no commits. The reads themselves are tested where they live.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - get_task_report reads', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeReportContext() {
+    const project = makeProject({ id: DEFAULT_ID });
+    const ipcContext = makeIpcContext(project);
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+    return { ipcContext, context };
+  }
+
+  it('readTaskReport forwards the IPC context, the context\'s project, the task and the options, and returns the report', async () => {
+    const report = { taskId: 'task-1' } as unknown as TaskReport;
+    readTaskReportSpy.mockResolvedValue(report);
+    const { ipcContext, context } = makeReportContext();
+
+    const result = await context.readTaskReport!('task-1', { commitLimit: 100, includeLedger: false });
+
+    expect(readTaskReportSpy).toHaveBeenCalledOnce();
+    expect(readTaskReportSpy).toHaveBeenCalledWith(ipcContext, DEFAULT_ID, 'task-1', { commitLimit: 100, includeLedger: false });
+    expect(result).toBe(report);
+  });
+
+  it('readTaskChanges reads the task in the context\'s project without commit web links, and returns the changes', async () => {
+    const changes = { branchName: 'feature/x' } as unknown as GitTaskChangesResult;
+    readTaskChangesSpy.mockResolvedValue(changes);
+    const { ipcContext, context } = makeReportContext();
+
+    const result = await context.readTaskChanges!('task-1');
+
+    expect(readTaskChangesSpy).toHaveBeenCalledOnce();
+    expect(readTaskChangesSpy).toHaveBeenCalledWith(ipcContext, { projectId: DEFAULT_ID, taskId: 'task-1' }, { commitWebLinks: false });
+    expect(result).toBe(changes);
   });
 });
 
