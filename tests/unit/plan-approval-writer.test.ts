@@ -28,7 +28,7 @@ const hoisted = vi.hoisted(() => ({
 }));
 
 vi.mock('../../src/main/plan-approval/read-decision', () => ({
-  newDecisionReadCache: () => ({ workflowValues: new Map(), globalModes: new Map() }),
+  newDecisionReadCache: () => ({ globalModes: new Map(), boards: new Map(), legacyAdoptionsTried: new Set() }),
   readPlanApprovalDecision: (_context: unknown, input: DecisionRead) => {
     hoisted.reads.push({
       projectId: input.projectId,

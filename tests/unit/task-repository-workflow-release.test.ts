@@ -144,6 +144,105 @@ describe('releasing workflow members from a board (a project delete)', () => {
     });
   });
 
+  describe('a member\'s own plan approval, the eighth workflow column', () => {
+    // `plan_approval` is written with a membership and cleared with one, but it
+    // is not one of the seven columns the tests above seed, so it is read here on
+    // its own, raw, around the repository's narrowing.
+    function storedPlanApproval(taskId: string): unknown {
+      return (database.prepare('SELECT plan_approval FROM tasks WHERE id = ?').get(taskId) as { plan_approval: unknown }).plan_approval;
+    }
+
+    it('is cleared on every member by releaseAllWorkflowMembers, whatever its home', () => {
+      const member = memberOf('home', 'Budgets API');
+      const other = memberOf('mobile', 'Budgets on the phone');
+      tasks.setPlanApproval(member, 'automatic');
+      tasks.setPlanApproval(other, 'manual');
+      // The controls: both carry one before the release.
+      expect(storedPlanApproval(member)).toBe('automatic');
+      expect(storedPlanApproval(other)).toBe('manual');
+
+      tasks.releaseAllWorkflowMembers();
+
+      expect(storedPlanApproval(member)).toBeNull();
+      expect(storedPlanApproval(other)).toBeNull();
+    });
+
+    it('is cleared by releaseMembersOfHome on the tasks homed there, and kept on a task homed elsewhere', () => {
+      const homedThere = memberOf('mobile', 'Budgets on the phone');
+      const homedElsewhere = memberOf('home', 'Budgets API');
+      tasks.setPlanApproval(homedThere, 'automatic');
+      tasks.setPlanApproval(homedElsewhere, 'automatic');
+
+      tasks.releaseMembersOfHome('mobile');
+
+      expect(storedPlanApproval(homedThere)).toBeNull();
+      expect(storedPlanApproval(homedElsewhere)).toBe('automatic');
+    });
+
+    it('is cleared by setWorkflowMembership(id, null), as every other workflow column is', () => {
+      const member = memberOf('home', 'Budgets API');
+      tasks.setPlanApproval(member, 'automatic');
+      expect(storedPlanApproval(member)).toBe('automatic');
+
+      tasks.setWorkflowMembership(member, null);
+
+      expect(storedPlanApproval(member)).toBeNull();
+    });
+
+    it('is written by setWorkflowMembership from the membership it is given', () => {
+      const task = ordinaryTask('Fix the typo');
+
+      tasks.setWorkflowMembership(task, { ...membershipFor('home'), plan_approval: 'automatic' });
+
+      expect(storedPlanApproval(task)).toBe('automatic');
+      tasks.setWorkflowMembership(task, { ...membershipFor('home'), plan_approval: null });
+      expect(storedPlanApproval(task)).toBeNull();
+    });
+  });
+
+  describe('reading a stored plan approval', () => {
+    // The column has no CHECK constraint, and a value can arrive from a hand-edited
+    // file or another build, so the row mapper narrows what it reads to a real
+    // value or null: a task never reports a value nothing could have chosen.
+    // Each bad value is planted with a raw UPDATE, since every write path is typed,
+    // and is paired with a real value that must read back as itself so a mapper that
+    // returned a constant would not pass.
+    function storeRaw(taskId: string, value: string | null): void {
+      database.prepare('UPDATE tasks SET plan_approval = ? WHERE id = ?').run(value, taskId);
+    }
+
+    it.each([
+      ['automatic', 'automatic'],
+      ['manual', 'manual'],
+    ])('reads the real value "%s" back as itself', (stored, expected) => {
+      const taskId = ordinaryTask('Budgets API');
+      storeRaw(taskId, stored);
+
+      expect(tasks.getById(taskId)!.plan_approval).toBe(expected);
+      expect(tasks.list().find((task) => task.id === taskId)!.plan_approval).toBe(expected);
+    });
+
+    it.each([
+      ['the right word in the wrong case', 'AUTOMATIC'],
+      ['an unknown word', 'bogus'],
+      ['an empty string', ''],
+      ['a word with trailing space', 'automatic '],
+    ])('reads %s as null, following the plan columns', (_label, stored) => {
+      const taskId = ordinaryTask('Budgets API');
+      storeRaw(taskId, stored);
+
+      expect(tasks.getById(taskId)!.plan_approval).toBeNull();
+      expect(tasks.list().find((task) => task.id === taskId)!.plan_approval).toBeNull();
+    });
+
+    it('reads a member\'s bad value as null through listByWorkflow too', () => {
+      const memberId = memberOf('home', 'Budgets API');
+      storeRaw(memberId, 'AUTOMATIC');
+
+      expect(tasks.listByWorkflow('workflow-in-home').find((task) => task.id === memberId)!.plan_approval).toBeNull();
+    });
+  });
+
   describe('releaseMembersOfHome', () => {
     it('sets all seven workflow columns to NULL on every task homed there, archived ones included, and returns how many', () => {
       const live = memberOf('mobile', 'Budgets on the phone');
