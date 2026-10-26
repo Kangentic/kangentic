@@ -25,12 +25,13 @@ General:
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
 - **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board)
 - **Mod+N** - New Task on the board
-- **Escape** - Close any open dialog or the search palette
+- **Escape** - Close any open dialog or the search palette. A task edit form with unsaved changes asks to save first
 
 Task detail (whichever panel is open):
 
 - **Mod+Shift+M** - Maximize the command terminal, the task detail dialog (view or edit mode), or a create dialog (New Task / New Backlog Task)
-- **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal.
+- **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal. A task edit form with unsaved changes asks to save first (see [Task detail](task-detail.md))
+- **Mod+S** - In the task edit form only, save it the same way its Save button does. A To Do task's window closes; a task with a running session goes back to its terminal
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
 - **Mod+Shift+K** - Toggle the description panel inside the task detail dialog

@@ -20,6 +20,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { Tooltip } from '../../components/Tooltip';
@@ -349,10 +350,11 @@ export function TaskDetailWindow({
     skipDeleteConfirm,
     updateConfig,
   });
-  // Pulled out by name so the compiler rules can see it is a ref (the `Ref`
-  // suffix) rather than a field of the hook's return value, which they would
-  // treat as immutable when the worktree confirm below writes to it.
-  const { pendingSaveRef } = actions;
+  // `pendingSaveRef` is pulled out by name so the compiler rules can see it is a
+  // ref (the `Ref` suffix) rather than a field of the hook's return value, which
+  // they would treat as immutable when the worktree confirm below writes to it.
+  // `handleSave` comes out beside it for the unsaved-edits prompt's memoized Save.
+  const { pendingSaveRef, handleSave } = actions;
 
   // Track the body's branch selector until a close is requested, then hold it.
   // An effect (not a render-time write) is what makes the snapshot pre-gesture:
@@ -446,6 +448,19 @@ export function TaskDetailWindow({
     setConfirmDiscard(false);
     requestCloseFrozen();
   }, [requestCloseFrozen]);
+  // The unsaved-edits prompt's Save. The user asked to close, so it closes even
+  // when a running session would keep the window open after a plain Save. A
+  // failed save leaves the form open with the edits intact. While an earlier
+  // save is in flight the prompt stays up, because executeSave would drop this
+  // one and the close with it. Once that save lands, Save works again.
+  const saveAndClose = useCallback(() => {
+    if (actions.saving) return;
+    setConfirmDiscard(false);
+    void handleSave({ closeAfterSave: true });
+  }, [actions.saving, handleSave]);
+  // The Save button is disabled on a branch-name error, so neither Ctrl+S nor
+  // the prompt may save then.
+  const canSaveEdits = !branchConfig.branchNameError;
 
   // The user's own layout changes resize this window's terminal: each lands at
   // once, and the terminal holds its last frame at the new size until the
@@ -617,12 +632,16 @@ export function TaskDetailWindow({
   const descriptionRef = useRef(description);
   const labelsRef = useRef(labels);
   const priorityRef = useRef(priority);
+  // The save Ctrl+S runs, read after its blur flush has committed (see the
+  // taskDetail.save binding below), so it sees the form the blur just wrote.
+  const latestHandleSaveRef = useRef(handleSave);
   useLayoutEffect(() => {
     editingRef.current = isEditing;
     titleRef.current = title;
     descriptionRef.current = description;
     labelsRef.current = labels;
     priorityRef.current = priority;
+    latestHandleSaveRef.current = handleSave;
   });
   useEffect(() => {
     if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
@@ -688,6 +707,30 @@ export function TaskDetailWindow({
     when: (event) =>
       !('button' in event) || (titleBarRef.current?.contains(event.target as Node) ?? false),
   });
+  // Ctrl+S is the edit form's Save button (#655), with the same outcome: a To Do
+  // task's window closes, a running task returns to its terminal. Inert outside
+  // edit mode, so view mode's terminal keeps the key, and while one of this
+  // window's own overlays is up. In-flight and branch-name-error saves are
+  // refused in the handler rather than through `enabled`, so edit mode always
+  // consumes the key. A key that fell through would open the web build's Save
+  // Page dialog.
+  const saveShortcutEnabled = windowOwnsKeys
+    && isEditing
+    && !confirmDiscard
+    && !actions.confirmDelete
+    && !actions.confirmSendToBacklog
+    && !actions.showEnableWorktreeConfirm
+    && !attachments.previewAttachment;
+  useKeybinding('taskDetail.save', (event) => {
+    if ('repeat' in event && event.repeat) return;
+    if (actions.saving || !canSaveEdits) return;
+    // A click on Save blurs the focused field before it saves; a key press does
+    // not, and LabelInput commits a typed label only on blur. Blur and flush so
+    // that commit lands before the save reads the form.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement) flushSync(() => focused.blur());
+    void latestHandleSaveRef.current();
+  }, { capture: true, enabled: saveShortcutEnabled });
   // The panel-toggle hotkeys stay inert while editing: edit mode swaps in the
   // edit form (not TaskDetailBody) and a kebab-less title bar, so firing one
   // would silently flip hidden state and, being capture-phase, swallow the
@@ -931,7 +974,9 @@ export function TaskDetailWindow({
               <div className="px-4 py-3 border-t border-edge flex-shrink-0">
                 <DialogFooterActions
                   onCancel={actions.handleCancel}
-                  onSubmit={actions.handleSave}
+                  // A wrapper rather than handleSave itself, so the click event
+                  // never arrives as its options argument.
+                  onSubmit={() => void handleSave()}
                   submitLabel="Save"
                   busy={actions.saving}
                   disabled={!!branchConfig.branchNameError}
@@ -1018,18 +1063,33 @@ export function TaskDetailWindow({
         />
       )}
 
-      {/* Discard-unsaved-changes confirm. */}
-      {confirmDiscard && (
+      {/* Unsaved-edits confirm. When the form can save it offers Save (save,
+          then close) beside Discard, the way an editor asks before closing a
+          file with unsaved changes. With a branch-name error it cannot save,
+          so it offers Discard alone. */}
+      {confirmDiscard && (canSaveEdits ? (
+        <ConfirmDialog
+          title="Save changes before closing?"
+          confirmLabel="Save"
+          cancelLabel="Keep editing"
+          message="Your edits to this task are not saved."
+          secondaryAction={{ label: 'Discard', onClick: confirmDiscardAndClose, testId: 'task-detail-unsaved-discard' }}
+          testId="task-detail-unsaved-confirm"
+          onConfirm={saveAndClose}
+          onCancel={cancelDiscard}
+        />
+      ) : (
         <ConfirmDialog
           title="Discard unsaved changes?"
           variant="warning"
           confirmLabel="Discard"
           cancelLabel="Keep editing"
           message="Closing now will discard your unsaved edits to this task."
+          testId="task-detail-unsaved-confirm"
           onConfirm={confirmDiscardAndClose}
           onCancel={cancelDiscard}
         />
-      )}
+      ))}
 
       {/* Enable worktree confirmation. */}
       {actions.showEnableWorktreeConfirm && (

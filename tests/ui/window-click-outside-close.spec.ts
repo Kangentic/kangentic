@@ -567,8 +567,8 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     // `closeWithGuard` sees the dirty form and shows ConfirmDialog instead of closing.
     await clickEmptyBoard(page);
 
-    // The "Discard unsaved changes?" confirm dialog must appear.
-    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    // The unsaved-edits confirm dialog must appear.
+    const confirmHeading = page.locator('[data-testid="task-detail-unsaved-confirm"]');
     await confirmHeading.waitFor({ state: 'visible', timeout: 5000 });
 
     // The task-detail window is still mounted behind the confirm dialog.
@@ -790,7 +790,7 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     // discard instead of silently closing - same guard as the X and Escape.
     await page.locator('[data-testid="task-detail-titlebar"]').first().click({ button: 'middle' });
 
-    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    const confirmHeading = page.locator('[data-testid="task-detail-unsaved-confirm"]');
     await confirmHeading.waitFor({ state: 'visible', timeout: 3000 });
     await pollWindowCount(page, 1);
 
