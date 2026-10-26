@@ -143,7 +143,8 @@ rings up by each process's `performance.timeOrigin`, to about a millisecond.
 A keys drive also stamps each key at its `keydown` event time (the
 renderer's `key` stage), so `keyToSend` and `keyToPainted` count a renderer
 frame the key waited behind before its handler ran, which every leg that
-starts at the handler misses.
+starts at the handler misses. `slowKeys` counts the keys whose `keyToPainted`
+reached 50 ms.
 Every leg reports p50, p95, p99 and max, and each session's stream carries
 the longest gap between its flushes and between its arrivals, which says
 whether every terminal froze or only one. `profileHost` adds a CPU profile
