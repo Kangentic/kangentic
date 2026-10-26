@@ -27,14 +27,21 @@ import { traceTerminalRenderer } from './terminal-grid-registry';
 export const LAYOUT_LANDING_CAP_MS = 700;
 /**
  * A landing stays open at least this long, however still its layout looks. A
- * change can reach its terminals through a render React runs in a task of its
- * own (the Command Terminal panel's box, then the layer's observer re-tiling
- * its windows), and nothing on screen moves until that task runs: on a loaded
- * test runner it came more than two frames after the click, so the landing had
- * closed and the panel's terminals reflowed instead of holding their frames. A refit this
- * soon after a user's change is that change's.
+ * refit this soon after a user's change is that change's.
  */
 export const LAYOUT_LANDING_MIN_MS = 150;
+/**
+ * A landing no terminal has fitted in stays open this long. A change can reach
+ * its terminals through a render React runs in a task of its own (the Command
+ * Terminal panel's box, then the layer's observer re-tiling its windows, then
+ * each terminal's own observer). On a loaded runner a terminal's fit came more
+ * than 150 ms after the click: the landing had closed, and the panel's terminals
+ * reflowed instead of holding their frames (4 of 6 runs on two cores). The
+ * scope's boxes had moved by then, so a still layout does not show that the
+ * terminals have heard of the change; their own fit does
+ * (`noteTerminalFitInLanding`). A change that fits no terminal pays only this.
+ */
+export const LAYOUT_LANDING_IDLE_MS = 500;
 /**
  * Marks an element a layout change lands in: a window layer's overlay, the
  * Command Terminal panel area (its rail changes with its terminals), the bottom
@@ -50,6 +57,8 @@ export function terminalLayoutScopeOf(element: Element | null | undefined): HTML
 interface Landing {
   scope: HTMLElement;
   startedAt: number;
+  /** How many terminal fits have landed in it (`noteTerminalFitInLanding`). */
+  fits: number;
   /** Bumped by every change that joins the landing, so the settle loop can see a quiet frame. */
   activity: number;
 }
@@ -99,7 +108,9 @@ function layoutSignature(scope: HTMLElement): string {
 /**
  * Hold the landing open for `LAYOUT_LANDING_MIN_MS`, then until `SETTLED_FRAMES`
  * frames pass with no change joining it and nothing under the scope moving, or
- * until the cap.
+ * until the cap. Until a terminal has fitted in it, the landing stays open to
+ * `LAYOUT_LANDING_IDLE_MS`, since the change's hop to that terminal may not have
+ * run yet. Each fit restarts the count of still frames.
  */
 async function settle(landing: Landing): Promise<void> {
   let seenActivity = -1;
@@ -112,7 +123,7 @@ async function settle(landing: Landing): Promise<void> {
     const layout = layoutSignature(landing.scope);
     if (landing.activity === seenActivity && layout === seenLayout) {
       stillFrames += 1;
-      if (stillFrames >= SETTLED_FRAMES && elapsed >= LAYOUT_LANDING_MIN_MS) return;
+      if (stillFrames >= SETTLED_FRAMES && elapsed >= (landing.fits > 0 ? LAYOUT_LANDING_MIN_MS : LAYOUT_LANDING_IDLE_MS)) return;
     } else {
       stillFrames = 0;
     }
@@ -144,7 +155,7 @@ export function runTerminalLayoutChange(scope: HTMLElement | null, change: () =>
     change();
     return;
   }
-  const landing: Landing = { scope, startedAt: performance.now(), activity: 1 };
+  const landing: Landing = { scope, startedAt: performance.now(), fits: 0, activity: 1 };
   landings.set(scope, landing);
   traceTerminalRenderer(null, 'layout-landing-begin', { scope: scope.dataset.testid ?? scope.tagName });
   try {
@@ -154,6 +165,20 @@ export function runTerminalLayoutChange(scope: HTMLElement | null, change: () =>
       if (landings.get(scope) === landing) landings.delete(scope);
       traceTerminalRenderer(null, 'layout-landing-end', { durationMs: Math.round(performance.now() - landing.startedAt) });
     });
+  }
+}
+
+/**
+ * A terminal fitted while a landing was open in a scope that holds `element`:
+ * the change has reached it. The landing can then end once its layout holds
+ * still, instead of waiting out `LAYOUT_LANDING_IDLE_MS`.
+ */
+export function noteTerminalFitInLanding(element: Element | null): void {
+  if (!element) return;
+  for (const landing of landings.values()) {
+    if (!landing.scope.contains(element)) continue;
+    landing.fits += 1;
+    landing.activity += 1;
   }
 }
 

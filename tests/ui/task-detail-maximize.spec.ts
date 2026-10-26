@@ -1084,27 +1084,30 @@ test.describe('Task Detail: a resize whose release went unseen', () => {
       // The pointer is not known to the page until it has moved once.
       const edgeBox = await ownPage.getByTestId('footprint-resizer-right').boundingBox();
       if (!edgeBox) throw new Error('no right footprint edge');
-      await ownPage.mouse.move(edgeBox.x + edgeBox.width / 2, edgeBox.y + edgeBox.height / 2);
+      const edgeX = edgeBox.x + edgeBox.width / 2;
+      const edgeY = edgeBox.y + edgeBox.height / 2;
+      await ownPage.mouse.move(edgeX, edgeY);
       const since = Date.now();
-      // Press the right edge and drag it 120px out, then lose the strip's capture: the release
-      // never reaches the strip.
+      // Press the right edge and drag it 120px out, with the real mouse: the browser then holds
+      // the same button state the page does. A press made of synthetic events left the browser
+      // thinking no button was down, so the mouse move it issues itself after a layout change
+      // read as a missed release and ended the drag early, on a loaded runner.
+      await ownPage.mouse.down();
+      await ownPage.mouse.move(edgeX + 120, edgeY, { steps: 4 });
+      // Lose the strip's capture: the release will not reach the strip.
       await ownPage.evaluate(() => {
         const edge = document.querySelector<HTMLElement>('[data-testid="footprint-resizer-right"]');
-        if (!edge) throw new Error('no right footprint edge');
-        const box = edge.getBoundingClientRect();
-        const x = box.left + box.width / 2;
-        const y = box.top + box.height / 2;
-        const init = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true };
-        edge.dispatchEvent(new PointerEvent('pointerdown', { ...init, button: 0, buttons: 1, clientX: x, clientY: y }));
-        edge.dispatchEvent(new PointerEvent('pointermove', { ...init, button: -1, buttons: 1, clientX: x + 120, clientY: y }));
-        if (edge.hasPointerCapture(1)) edge.releasePointerCapture(1);
+        if (edge?.hasPointerCapture(1)) edge.releasePointerCapture(1);
       });
       await expect.poll(() => isManagerResizeGateOpen(ownPage)).toBe(true);
       // Nothing is committed while the drag is live.
       expect(Math.abs((await footprint()).w - before.w)).toBeLessThan(0.001);
 
-      // The pointer moves on with no button held: the drag is over.
+      // The pointer leaves the strip with the button still down, then lets go over dead space:
+      // the strip never sees the release, and the first pointer event that shows the button up
+      // ends the drag.
       await ownPage.mouse.move(20, 20);
+      await ownPage.mouse.up();
       await expect.poll(() => isManagerResizeGateOpen(ownPage)).toBe(false);
       const abandoned = (await readTerminalTrace(ownPage, since, ['manager-resize-abandoned'])).map((entry) => entry.detail);
       expect(abandoned).toHaveLength(1);

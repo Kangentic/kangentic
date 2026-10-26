@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
-import { isTerminalLayoutLandingFor, nextFrame } from '../utils/terminal-layout-transition';
+import { isTerminalLayoutLandingFor, nextFrame, noteTerminalFitInLanding } from '../utils/terminal-layout-transition';
 import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
@@ -1319,6 +1319,8 @@ export function useTerminal(options: UseTerminalOptions) {
       // and so does any refit while it holds one. Outside a
       // landing this costs nothing.
       const element = terminal.element;
+      // The change has reached this terminal: its landing can end once it holds still.
+      if (origin === 'fit') noteTerminalFitInLanding(element ?? null);
       if (origin === 'fit' && element && (frameHoldRef.current || isTerminalLayoutLandingFor(element)) && canHoldFrame(element)) {
         const proposed = fitAddon.proposeDimensions();
         const aimed = frameHoldRef.current?.target ?? { cols: terminal.cols, rows: terminal.rows };
