@@ -95,5 +95,8 @@ A memory pause says so: a toast reads "Idle agent paused", and as more are pause
 wait first, with each project's name when they come from more than one. Each row has its own
 **Resume**, which brings that agent back without opening the task, and the row then reads Running.
 There is no Resume all, since bringing every agent back at once would fill the memory that was
-just freed. Closing the toast clears the list; the next pause starts a new one. An idle timer pause
-shows a short "Agent paused" toast for its task instead.
+just freed. The toast counts down as agents come back, from its list or from a card, window or
+move, and as their tasks move to To Do or are deleted. It closes once none on it is still paused.
+An open list stays up until you close it. Closing the toast yourself clears the list too, and the
+next pause starts a new one. An idle timer pause shows a short "Agent paused" toast for its task
+instead.
