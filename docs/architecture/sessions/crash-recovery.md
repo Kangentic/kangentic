@@ -19,6 +19,8 @@ sources:
   - resource: src/main/pty/host/pty-host-entry.ts
   - resource: src/main/pty/host/host-spawn-service.ts
   - resource: src/main/pty/host/worker-spawn-service.ts
+  - resource: src/main/pty/host/spawn-worker/spawn-worker-handler.ts
+  - resource: src/main/pty/host/spawn-worker/protocol.ts
   - resource: src/main/diagnostics/thread-cpu-profile.ts
 ---
 # Crash recovery and PTY host
