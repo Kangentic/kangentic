@@ -7,7 +7,9 @@ import type {
   Task,
   TaskCreateInput,
   TaskLink,
+  TaskPlanApproval,
   TaskRunMode,
+  TaskWorkflowMembership,
   Workflow,
   WorkflowDraft,
   WorkflowDraftLink,
@@ -43,6 +45,16 @@ import { announceBoardChange } from './workflow-board-announce';
 import { endWorkflowAgent } from './workflow-agent';
 import { linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
 import { isInWorkflow } from './workflow-home';
+import { safeLanes } from './workflow-lanes';
+import { WorkflowRequestError, requireStarted, requireWorkflow } from './workflow-requests';
+import { setTaskPlanApproval } from './workflow-task-plan-approval';
+import {
+  adoptLegacyPlanApproval,
+  readPlannedTaskPlanApproval,
+  readTaskPlanApproval,
+  type PlannedPlanSource,
+} from '../plan-approval/workflow-plan-approval';
+import { normalizeTaskPlanApproval } from '../../shared/plan-approval';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -56,15 +68,10 @@ import { isInWorkflow } from './workflow-home';
  * resolves the rest.
  */
 
-/** A refusal meant for the caller: its message says what to change. */
-export class WorkflowRequestError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'WorkflowRequestError';
-  }
-}
-
-export { MAX_WORKFLOW_TASKS };
+// Re-exported where callers and tests already import them from here: the
+// request checks and a board's columns moved to their own modules so the MCP
+// server's task-commands.ts can use them without loading the session handlers.
+export { MAX_WORKFLOW_TASKS, WorkflowRequestError, requireWorkflow, safeLanes, setTaskPlanApproval };
 
 // ---------------------------------------------------------------------------
 // Reading
@@ -94,6 +101,14 @@ export interface WorkflowTaskView {
   profileName: string | null;
   /** Why its running workflow stalled on it, while that holds; null otherwise. */
   stalled: string | null;
+  /** Its plan approval and where it comes from; null when its route has no plan column. */
+  planApproval: TaskPlanApproval | null;
+  /**
+   * What it carries (a legacy whole-workflow value until that is adopted),
+   * even on a route with no plan column, which `planApproval` cannot show. A
+   * plan read and saved back sends it, so a save does not drop it.
+   */
+  ownPlanApproval: PlanApproval | null;
 }
 
 /**
@@ -138,18 +153,10 @@ function projectRepos(projectId: string): { db: Database.Database; tasks: TaskRe
   return { db, tasks: new TaskRepository(db), lanes: new SwimlaneRepository(db).list() };
 }
 
-/** A workflow in its home. A home that is gone has none, and its database is not created again. */
-export function requireWorkflow(homeProjectId: string, workflowId: string): Workflow {
-  const homeDb = getExistingProjectDb(homeProjectId);
-  const workflow = homeDb ? new WorkflowRepository(homeDb).getById(workflowId) : undefined;
-  if (!workflow) throw new WorkflowRequestError(`${WORKFLOW_REFUSALS.notFound(workflowId)} List them with kangentic_list_workflows.`);
-  return workflow;
-}
-
 export { workflowTasks };
 
 export function readWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): WorkflowView {
-  const workflow = requireWorkflow(homeProjectId, workflowId);
+  const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
   // Asked once per task and once per link, of a few boards: each board's name
   // is read from the projects table once.
   const boardNames = new Map<string, string>();
@@ -181,6 +188,8 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         runSettings: runSettingsOf(planned),
         profileName: profileNameOn(context, projectId, planned.profile_id),
         stalled: null,
+        planApproval: readPlannedTaskPlanApproval(context, homeProjectId, planned, workflow.plan_approval, lanes),
+        ownPlanApproval: planned.plan_approval ?? workflow.plan_approval,
       };
     });
     return { workflow, homeProjectId, tasks };
@@ -222,6 +231,8 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       runSettings: runSettingsOf(task),
       profileName: profileNameOn(context, projectId, task.profile_id),
       stalled: place === 'done' ? null : stallOf(projectId, task.id),
+      planApproval: readTaskPlanApproval(context, projectId, task, workflow.plan_approval, lanes),
+      ownPlanApproval: task.plan_approval ?? workflow.plan_approval,
     };
   });
   return { workflow, homeProjectId, tasks };
@@ -254,16 +265,6 @@ function boardProfilesOf(context: IpcContext, projectId: string): BoardProfile[]
 function profileNameOn(context: IpcContext, projectId: string, profileId: string | null): string | null {
   if (!profileId) return null;
   return boardProfilesOf(context, projectId).find((profile) => profile.id === profileId)?.name ?? null;
-}
-
-/** A board's columns, or none when its database cannot be read or its project is gone. */
-export function safeLanes(projectId: string): Swimlane[] {
-  try {
-    const db = getExistingProjectDb(projectId);
-    return db ? new SwimlaneRepository(db).list() : [];
-  } catch {
-    return [];
-  }
 }
 
 function routeOfDraft(planned: WorkflowDraftTask): Pick<Task, 'route_start_swimlane_id' | 'route_last_swimlane_id' | 'skipped_swimlane_ids'> {
@@ -316,6 +317,11 @@ export interface PlannedTaskInput {
   modelOverride?: string | null;
   effortOverride?: string | null;
   permissionMode?: PermissionMode | null;
+  /**
+   * Its own plan approval; null or omitted follows its plan columns. The
+   * columns' own value is stored as nothing (`normalizeTaskPlanApproval`).
+   */
+  planApproval?: PlanApproval | null;
 }
 
 export interface PlanInput {
@@ -325,12 +331,6 @@ export interface PlanInput {
   links: Array<{ blocker: string; blocked: string }>;
   /** The revision the caller read; a save over a newer one is refused. */
   revision?: number | null;
-  /**
-   * Who approves plans for the workflow's tasks. Undefined leaves it as it is;
-   * null makes it follow the plan columns again. Changes no plan, so it moves no
-   * revision beyond the save's own.
-   */
-  planApproval?: PlanApproval | null;
 }
 
 export function resolveProjectId(context: IpcContext, homeProjectId: string, selector: string | null | undefined): string {
@@ -574,7 +574,9 @@ export function requireProfileOnBoard(context: IpcContext, projectId: string, pr
  * Every problem is found before anything is written.
  */
 export function savePlan(context: IpcContext, homeProjectId: string, workflowId: string, input: PlanInput): Workflow {
-  const workflow = requireWorkflow(homeProjectId, workflowId);
+  // A legacy whole-workflow value lands on the planned tasks first, so a save
+  // built on a read that printed it per task keeps it. It moves no revision.
+  const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
   if (workflow.state !== 'draft') {
     throw new WorkflowRequestError(
       `"${workflow.title}" has started, so its plan is its tasks now. Change it with kangentic_add_workflow_task, kangentic_link_workflow_tasks, kangentic_set_task_route or kangentic_remove_from_workflow.`,
@@ -588,14 +590,10 @@ export function savePlan(context: IpcContext, homeProjectId: string, workflowId:
   const draft = validatePlan(context, homeProjectId, workflow.draft, input);
   const db = getProjectDb(homeProjectId);
   const repository = new WorkflowRepository(db);
-  const saved = writeTransaction(db, () => {
-    // Before the draft, whose write reads the row back for the caller.
-    if (input.planApproval !== undefined) repository.setPlanApproval(workflowId, input.planApproval);
-    return repository.saveDraft(workflowId, draft, {
-      title: input.title ?? null,
-      expectedRevision: input.revision ?? null,
-    });
-  })();
+  const saved = repository.saveDraft(workflowId, draft, {
+    title: input.title ?? null,
+    expectedRevision: input.revision ?? null,
+  });
   notifyWorkflowChanged(homeProjectId, workflowId);
   return saved;
 }
@@ -617,7 +615,6 @@ export function createWorkflowWithPlan(
   const repository = new WorkflowRepository(db);
   const saved = writeTransaction(db, () => {
     const created = repository.create({ title: input.title ?? null, brief: workflowInput.brief ?? null });
-    if (input.planApproval !== undefined) repository.setPlanApproval(created.id, input.planApproval);
     return repository.saveDraft(created.id, draft, { title: input.title ?? null });
   })();
   notifyWorkflowChanged(homeProjectId, saved.id);
@@ -675,19 +672,28 @@ function validatePlan(context: IpcContext, homeProjectId: string, previous: Work
       );
     }
 
-    return {
+    const source: PlannedPlanSource = {
       key,
-      title: entry.title.trim(),
-      description: typeof entry.description === 'string' ? entry.description : '',
       project_id: projectId === homeProjectId ? null : projectId,
-      existing_task_id: existingTaskId,
       route_start_swimlane_id: routeStart,
       route_last_swimlane_id: routeLast,
       skipped_swimlane_ids: [...new Set(skipped)],
+      profile_id: runSettings.profile_id,
+      agent_override: runSettings.agent_override,
+    };
+    return {
+      ...source,
+      title: entry.title.trim(),
+      description: typeof entry.description === 'string' ? entry.description : '',
+      existing_task_id: existingTaskId,
       labels: textLabels(entry.labels),
       priority: typeof entry.priority === 'number' ? entry.priority : 0,
       canvas_x: null,
       canvas_y: null,
+      // The columns' own value is stored as nothing, so the task keeps following
+      // them. A route with no plan column keeps the value as given: it decides
+      // nothing until the route gains one.
+      plan_approval: plannedPlanApproval(context, homeProjectId, source, entry.planApproval ?? null, lanes),
       ...runSettings,
     };
   });
@@ -738,7 +744,9 @@ export interface StartResult {
  * has nothing to wait for. The task it was made from moves to Done.
  */
 export async function startWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): Promise<StartResult> {
-  const workflow = requireWorkflow(homeProjectId, workflowId);
+  // A legacy whole-workflow value lands on the planned tasks first, so the
+  // tasks Start creates carry it.
+  const workflow = adoptLegacyPlanApproval(context, homeProjectId, requireWorkflow(homeProjectId, workflowId));
   if (workflow.state !== 'draft') throw new WorkflowRequestError(`"${workflow.title}" has already started.`);
   const draft = workflow.draft ?? { tasks: [], links: [] };
   if (draft.tasks.length === 0) throw new WorkflowRequestError(`"${workflow.title}" has no tasks yet. Save a plan with kangentic_save_workflow first.`);
@@ -794,6 +802,7 @@ export async function startWorkflow(context: IpcContext, homeProjectId: string, 
             skipped_swimlane_ids: planned.skipped_swimlane_ids,
             canvas_x: planned.canvas_x,
             canvas_y: planned.canvas_y,
+            plan_approval: planned.plan_approval,
           };
           if (planned.existing_task_id) {
             tasks.setWorkflowMembership(planned.existing_task_id, membership);
@@ -1025,13 +1034,6 @@ function placeOf(resolved: ResolvedWorkflowTask): 'todo' | 'working' | 'done' {
   return lane?.role === 'todo' ? 'todo' : 'working';
 }
 
-function requireStarted(workflow: Workflow, action: string): void {
-  if (workflow.state === 'draft') {
-    throw new WorkflowRequestError(`"${workflow.title}" has not started. Change its plan with kangentic_save_workflow instead of ${action}.`);
-  }
-  if (workflow.state === 'done') throw new WorkflowRequestError(`"${workflow.title}" is complete.`);
-}
-
 /** Make `blocked` wait for `blocker`. Only a task in To Do can wait, and not on one already done. */
 export function linkTasks(
   context: IpcContext,
@@ -1186,17 +1188,27 @@ export function addWorkflowTask(
   const todo = todoColumn(lanes);
   if (!todo) throw new WorkflowRequestError('That board has no To Do column.');
   const label = `"${input.title.trim()}"`;
-  const membership = {
-    workflow_id: workflowId,
-    workflow_project_id: homeProjectId,
+  const route = {
     route_start_swimlane_id: routeColumnId(lanes, input.routeStart, 'routeStart', label),
     route_last_swimlane_id: routeColumnId(lanes, input.routeLast, 'routeLast', label),
     skipped_swimlane_ids: (input.skip ?? []).map((name) => routeColumnId(lanes, name, 'skip', label)!).filter(Boolean),
+  };
+  refuseReversedRoute(lanes, route.route_start_swimlane_id, route.route_last_swimlane_id, label);
+  const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
+  const membership: TaskWorkflowMembership = {
+    workflow_id: workflowId,
+    workflow_project_id: homeProjectId,
+    ...route,
     canvas_x: null,
     canvas_y: null,
+    plan_approval: plannedPlanApproval(context, homeProjectId, {
+      key: label,
+      project_id: projectId === homeProjectId ? null : projectId,
+      ...route,
+      profile_id: runSettings.profile_id,
+      agent_override: runSettings.agent_override,
+    }, input.planApproval ?? null, lanes),
   };
-  refuseReversedRoute(lanes, membership.route_start_swimlane_id, membership.route_last_swimlane_id, label);
-  const runSettings = input.runSettings ?? resolvePlannedRunSettings(context, projectId, input, `${label}: `);
   // Resolve the blockers before anything is written.
   const blockers = (input.waitsFor ?? []).map((selector) => resolveBlocker(context, homeProjectId, workflow, selector));
   const created = writeTransaction(db, () => tasks.create({
@@ -1291,21 +1303,20 @@ export function renameWorkflow(context: IpcContext, homeProjectId: string, workf
 }
 
 /**
- * Who approves plans for the workflow's tasks. Allowed in any state, like a
- * rename: it changes no plan, and after Start the inspector is where it is
- * changed. The board announcement is what makes every live session's approver
- * read the new value (`plan-approval-writer.ts` listens on the board bus).
+ * What to store for a planned or newly added task's own plan approval: the
+ * columns' own value is stored as nothing. A save (`validatePlan`), Add task
+ * and the Workflows view's control all store through it. `lanes` is the task's
+ * board's columns when the caller already read them.
  */
-export function setWorkflowPlanApproval(
+export function plannedPlanApproval(
   context: IpcContext,
   homeProjectId: string,
-  workflowId: string,
+  planned: PlannedPlanSource,
   planApproval: PlanApproval | null,
-): void {
-  requireWorkflow(homeProjectId, workflowId);
-  new WorkflowRepository(getProjectDb(homeProjectId)).setPlanApproval(workflowId, planApproval);
-  notifyWorkflowChanged(homeProjectId, workflowId);
-  announceWorkflowBoards(context, homeProjectId, workflowId);
+  lanes?: Swimlane[],
+): PlanApproval | null {
+  const view = planApproval === null ? null : readPlannedTaskPlanApproval(context, homeProjectId, planned, null, lanes);
+  return view ? normalizeTaskPlanApproval(planApproval, view.columnValue) : planApproval;
 }
 
 /** Find a workflow by id or (case-insensitive) title in a home project. */

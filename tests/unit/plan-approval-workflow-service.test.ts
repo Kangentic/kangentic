@@ -1,22 +1,21 @@
 /**
- * `setWorkflowPlanApproval` (src/main/workflows/workflow-service.ts) on real,
- * migrated SQLite with two projects.
+ * `setTaskPlanApproval` (src/main/workflows/workflow-service.ts) on real,
+ * migrated SQLite with two projects: a started workflow task's own plan
+ * approval, which the Workflows inspector, task detail's Workflow panel and
+ * kangentic_update_task all write through.
  *
- * Who approves plans is a setting of the workflow, not part of its plan, so
- * changing it:
- *   - stores the value (automatic, manual, or null to follow the plan columns);
- *   - leaves the workflow's revision where it was, so a save an agent built on
- *     its last read still goes through;
+ * Setting it:
+ *   - stores the value on the task, and stores the plan column's own value as
+ *     nothing, so the task keeps following its column;
  *   - tells the workflow's view (`notifyWorkflowChanged`);
- *   - announces every board holding one of the workflow's tasks, because the
- *     live sessions' approvers re-read their decision on a board event
- *     (`plan-approval-writer.ts` listens on the board bus). A change that
- *     announced nothing would leave a running session approving by the old
- *     value until some unrelated board change.
+ *   - announces the task's board, because its live session's approver re-reads
+ *     its decision on a board event (`plan-approval-writer.ts` listens on the
+ *     board bus). A change that announced nothing would leave a running session
+ *     approving by the old value until some unrelated board change;
+ *   - is refused once it can change nothing: the task is in Done, or has passed
+ *     its plan column.
  *
- * The announcement only reaches boards that hold real tasks, so these cases use
- * a STARTED workflow across both boards, like the rename case in
- * workflow-service.test.ts.
+ * The seeded board's Planning column runs in plan mode and is Manual.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -40,14 +39,14 @@ vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => (
 
 const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
-const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 
 import { openTestDatabase } from './helpers/test-database';
-import { planAcrossBoards } from './helpers/workflow-plans';
+import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-describe('setWorkflowPlanApproval', () => {
+describe('setTaskPlanApproval', () => {
   let context: IpcContext;
 
   beforeEach(() => {
@@ -68,6 +67,7 @@ describe('setWorkflowPlanApproval', () => {
         getById: (id: string) => projects.find((project) => project.id === id),
       },
       boardEvents: { emitBoardChanged: vi.fn() },
+      boardConfigManager: { getBoardProfiles: () => [] },
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
     } as unknown as IpcContext;
     vi.mocked(notifyWorkflowChanged).mockClear();
@@ -78,88 +78,118 @@ describe('setWorkflowPlanApproval', () => {
     harness.dbs.clear();
   });
 
-  const workflowsOf = (projectId: string) => new WorkflowRepository(harness.dbs.get(projectId) as Database.Database);
+  const dbOf = (projectId: string) => harness.dbs.get(projectId) as Database.Database;
   const emitBoardChanged = () => vi.mocked(context.boardEvents.emitBoardChanged);
   const boardsAnnounced = (): string[] =>
     [...new Set(emitBoardChanged().mock.calls.map(([event]) => event.projectId))].sort();
 
-  async function startedWorkflow() {
+  async function startedPhoneTask() {
     const workflow = planAcrossBoards(service, context);
     await service.startWorkflow(context, 'home', workflow.id);
-    return workflow;
+    const phone = taskTitled(service.readWorkflow(context, 'home', workflow.id), 'Budgets on the phone');
+    return { workflow, taskId: phone.taskId!, projectId: phone.projectId };
   }
 
-  it('stores each value, including null to follow the plan columns', async () => {
-    const workflow = await startedWorkflow();
-    expect(workflowsOf('home').getById(workflow.id)!.plan_approval).toBeNull();
+  const storedOn = (projectId: string, taskId: string) => new TaskRepository(dbOf(projectId)).getById(taskId)!.plan_approval;
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
-    expect(workflowsOf('home').getById(workflow.id)!.plan_approval).toBe('automatic');
+  function moveTo(projectId: string, taskId: string, columnName: string): void {
+    const db = dbOf(projectId);
+    const lane = db.prepare('SELECT id FROM swimlanes WHERE name = ?').get(columnName) as { id: string };
+    db.prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(lane.id, taskId);
+  }
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'manual');
-    expect(workflowsOf('home').getById(workflow.id)!.plan_approval).toBe('manual');
+  it('stores a value that differs from its plan column, and null to follow the column again', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    expect(storedOn(projectId, taskId)).toBeNull();
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, null);
-    expect(workflowsOf('home').getById(workflow.id)!.plan_approval).toBeNull();
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic');
+    expect(storedOn(projectId, taskId)).toBe('automatic');
+
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, null);
+    expect(storedOn(projectId, taskId)).toBeNull();
   });
 
-  it('does not move the workflow\'s revision, so an agent\'s save built on its last read still goes through', async () => {
-    const workflow = await startedWorkflow();
-    const revisionBefore = workflowsOf('home').getById(workflow.id)!.revision;
+  it('stores the plan column\'s own value as nothing, so the task keeps following its column', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic');
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, null);
+    // The seeded Planning column is Manual.
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'manual');
 
-    expect(workflowsOf('home').getById(workflow.id)!.revision).toBe(revisionBefore);
+    expect(storedOn(projectId, taskId)).toBeNull();
   });
 
-  it('keeps the revision on a draft too, where a stale-revision check would refuse the agent\'s next save', () => {
-    const workflow = planAcrossBoards(service, context);
-    const revisionBefore = workflowsOf('home').getById(workflow.id)!.revision;
-
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
-
-    expect(workflowsOf('home').getById(workflow.id)!.revision).toBe(revisionBefore);
-    expect(() => service.savePlan(context, 'home', workflow.id, {
-      revision: revisionBefore,
-      tasks: [{ key: 'api', title: 'Budgets API' }],
-      links: [],
-    })).not.toThrow();
-  });
-
-  it('tells the workflow\'s view that it changed', async () => {
-    const workflow = await startedWorkflow();
+  it('tells the workflow\'s view, and announces the task\'s own board so its live approver reads the new value', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
     vi.mocked(notifyWorkflowChanged).mockClear();
+    emitBoardChanged().mockClear();
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic');
 
-    expect(notifyWorkflowChanged).toHaveBeenCalledTimes(1);
     expect(notifyWorkflowChanged).toHaveBeenCalledWith('home', workflow.id);
+    expect(boardsAnnounced()).toEqual(['mobile']);
   });
 
-  it('announces every board holding one of its tasks, so live approvers read the new value', async () => {
-    const workflow = await startedWorkflow();
+  it('refuses a task that has passed its plan column, storing nothing and announcing nothing', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    moveTo(projectId, taskId, 'Executing');
     emitBoardChanged().mockClear();
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
+    const display = new TaskRepository(dbOf(projectId)).getById(taskId)!.display_id;
+    expect(() => service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic'))
+      .toThrow(`#${display} has passed Planning. Its plan approval can no longer change.`);
 
-    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+    expect(storedOn(projectId, taskId)).toBeNull();
+    expect(emitBoardChanged()).not.toHaveBeenCalled();
   });
 
-  it('announces a clear back to null as well, since a cleared pick changes what the approvers decide', async () => {
-    const workflow = await startedWorkflow();
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
+  it('still takes a change while the task is in its plan column: it applies to the plan it is making', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    moveTo(projectId, taskId, 'Planning');
+
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic');
+
+    expect(storedOn(projectId, taskId)).toBe('automatic');
+  });
+
+  it('refuses a task in Done', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    moveTo(projectId, taskId, 'Done');
+
+    expect(() => service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic'))
+      .toThrow(/is done\. Its plan approval can no longer change\./);
+    expect(storedOn(projectId, taskId)).toBeNull();
+  });
+
+  it('refuses an archived task that is not in Done, as done, storing nothing and announcing nothing', async () => {
+    const { workflow, taskId, projectId } = await startedPhoneTask();
+    moveTo(projectId, taskId, 'Executing');
+    new TaskRepository(dbOf(projectId)).archive(taskId);
+    const task = new TaskRepository(dbOf(projectId)).getById(taskId)!;
+    // Precondition: archived, and in a working column, not Done.
+    expect(task.archived_at).not.toBeNull();
+    expect(dbOf(projectId).prepare('SELECT role FROM swimlanes WHERE id = ?').get(task.swimlane_id)).toEqual({ role: null });
     emitBoardChanged().mockClear();
 
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, null);
+    // The "done" refusal, not "has passed Planning": an archived task is done wherever its column is.
+    expect(() => service.setTaskPlanApproval(context, 'home', workflow.id, { taskId, projectId }, 'automatic'))
+      .toThrow(`#${task.display_id} is done. Its plan approval can no longer change.`);
 
-    expect(boardsAnnounced()).toEqual(['home', 'mobile']);
+    expect(storedOn(projectId, taskId)).toBeNull();
+    expect(emitBoardChanged()).not.toHaveBeenCalled();
+  });
+
+  it('refuses a workflow that has not started, whose plan is changed with kangentic_save_workflow', () => {
+    const workflow = planAcrossBoards(service, context);
+
+    expect(() => service.setTaskPlanApproval(context, 'home', workflow.id, { taskId: 'anything', projectId: 'home' }, 'automatic'))
+      .toThrow(/has not started/);
   });
 
   it('refuses a workflow that does not exist, storing nothing and announcing nothing', () => {
     emitBoardChanged().mockClear();
 
-    expect(() => service.setWorkflowPlanApproval(context, 'home', 'no-such-workflow', 'automatic'))
+    expect(() => service.setTaskPlanApproval(context, 'home', 'no-such-workflow', { taskId: 'anything', projectId: 'home' }, 'automatic'))
       .toThrow(service.WorkflowRequestError);
 
     expect(notifyWorkflowChanged).not.toHaveBeenCalled();

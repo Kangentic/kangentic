@@ -3,19 +3,22 @@
  * src/main/agent/commands/workflow-commands.ts) and its read-back in
  * `kangentic_get_workflow`, on real, migrated SQLite.
  *
- * The parameter has three meanings, which is what makes it easy to break:
- *   - "automatic" / "manual": the agent picks who approves the plan dialogs;
- *   - null: forget the pick and follow the plan columns on the tasks' routes;
- *   - omitted: leave whatever is stored alone, so an agent that saves a plan
- *     without mentioning approval does not undo the user's pick.
- * It goes through BOTH writers, a save over an existing workflow (`savePlan`)
- * and a save that creates one (`createWorkflowWithPlan`).
+ * Plan approval is set per task. On a task entry:
+ *   - "automatic" / "manual" sets who approves that task's plan, overriding its
+ *     plan column, and the column's own value is stored as nothing so the task
+ *     keeps following its column;
+ *   - null or omitted follows the column.
+ * The workflow-level parameter is gone. A non-null value there is refused with
+ * a sentence that says what to do instead; a null is accepted and ignored,
+ * since older kangentic_get_workflow output told agents to send it back.
  *
  * A command handler can be reached with no zod schema in front of it (the
- * mobile bridge), so a value that is none of the three is refused by the
+ * mobile bridge), so a task value that is none of the three is refused by the
  * handler. `handleSaveWorkflow` answers a refusal as `{ success: false, error }`
  * rather than throwing, and a refused save writes nothing: every stored value
- * below is read from the raw column, around the repository's narrowing.
+ * below is read from the raw draft, around the repository's narrowing.
+ *
+ * The seeded board's Planning column runs in plan mode and is Manual.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type Database from 'better-sqlite3';
@@ -40,12 +43,13 @@ vi.mock('../../src/main/workflows/workflow-runtime', async (importOriginal) => (
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
-const { handleSaveWorkflow, handleGetWorkflow } = await import('../../src/main/agent/commands/workflow-commands');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
+const { handleSaveWorkflow, handleGetWorkflow, handleAddWorkflowTask } = await import('../../src/main/agent/commands/workflow-commands');
+const { startWorkflow } = await import('../../src/main/workflows/workflow-service');
 
 import { openTestDatabase } from './helpers/test-database';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { PlanApproval } from '../../src/shared/types';
 
 describe('kangentic_save_workflow planApproval', () => {
   let database: Database.Database;
@@ -64,6 +68,7 @@ describe('kangentic_save_workflow planApproval', () => {
         getById: (id: string) => projects.find((project) => project.id === id),
       },
       boardEvents: { emitBoardChanged: vi.fn() },
+      boardConfigManager: { getBoardProfiles: () => [] },
       mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
     } as unknown as IpcContext;
     commandContext = { projectId: 'home', getProjectDb: () => database } as unknown as CommandContext;
@@ -75,12 +80,11 @@ describe('kangentic_save_workflow planApproval', () => {
     harness.runtime = null;
   });
 
-  const tasks = [{ key: 'api', title: 'Budgets API' }];
-
-  /** The stored value, read around the repository's narrowing. */
-  function storedPlanApproval(workflowId: string): string | null {
-    const row = database.prepare('SELECT plan_approval FROM workflows WHERE id = ?').get(workflowId) as { plan_approval: string | null };
-    return row.plan_approval;
+  /** A planned task's stored value, read from the raw draft. */
+  function storedOnTask(workflowId: string, key: string): unknown {
+    const row = database.prepare('SELECT draft_json FROM workflows WHERE id = ?').get(workflowId) as { draft_json: string };
+    const draft = JSON.parse(row.draft_json) as { tasks: Array<{ key: string; plan_approval?: unknown }> };
+    return draft.tasks.find((task) => task.key === key)?.plan_approval;
   }
 
   function workflowCount(): number {
@@ -88,35 +92,63 @@ describe('kangentic_save_workflow planApproval', () => {
   }
 
   /** Create a workflow through the handler and return its id. */
-  async function createThroughHandler(extra: Record<string, unknown> = {}): Promise<string> {
-    const response = await handleSaveWorkflow({ tasks, ...extra }, commandContext);
+  async function createThroughHandler(params: Record<string, unknown>): Promise<string> {
+    const response = await handleSaveWorkflow(params, commandContext);
     expect(response.success, response.error).toBe(true);
     return (response.data as { id: string }).id;
   }
 
-  describe('a save that creates the workflow', () => {
-    it('stores "automatic"', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
+  describe('on a task entry', () => {
+    it('stores a value that overrides the task\'s plan column', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API', planApproval: 'automatic' }] });
 
-      expect(storedPlanApproval(workflowId)).toBe('automatic');
+      expect(storedOnTask(workflowId, 'api')).toBe('automatic');
     });
 
-    it('stores "manual"', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'manual' });
+    it('stores the plan column\'s own value as nothing, so the task keeps following its column', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API', planApproval: 'manual' }] });
 
-      expect(storedPlanApproval(workflowId)).toBe('manual');
+      expect(storedOnTask(workflowId, 'api')).toBeNull();
     });
 
-    it('stores an explicit null, which follows the plan columns', async () => {
-      const workflowId = await createThroughHandler({ planApproval: null });
+    it.each([
+      ['null', null],
+      ['omitted', undefined],
+    ])('%s follows the plan column', async (_label, planApproval) => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API', planApproval }] });
 
-      expect(storedPlanApproval(workflowId)).toBeNull();
+      expect(storedOnTask(workflowId, 'api')).toBeNull();
     });
 
-    it('leaves a new workflow following the plan columns when the call does not name it', async () => {
-      const workflowId = await createThroughHandler();
+    it('sets each task on its own: one waits for the user while another is approved', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [
+          { key: 'desktop', title: 'Desktop', planApproval: 'manual' },
+          { key: 'bridge', title: 'Bridge', planApproval: 'automatic' },
+        ],
+      });
 
-      expect(storedPlanApproval(workflowId)).toBeNull();
+      expect(storedOnTask(workflowId, 'desktop')).toBeNull();
+      expect(storedOnTask(workflowId, 'bridge')).toBe('automatic');
+    });
+
+    it('lets a task taken in with existingTask carry one: it is not a run setting the board task keeps', async () => {
+      const todo = database.prepare("SELECT id FROM swimlanes WHERE role = 'todo'").get() as { id: string };
+      const existing = new TaskRepository(database).create({ title: 'Already on the board', description: '', swimlane_id: todo.id });
+
+      const workflowId = await createThroughHandler({
+        tasks: [{ key: 'taken', title: 'Already on the board', existingTask: existing.id, planApproval: 'automatic' }],
+      });
+
+      expect(storedOnTask(workflowId, 'taken')).toBe('automatic');
+    });
+
+    it('keeps the value as given on a route with no plan column, where it decides nothing until the route gains one', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [{ key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing', planApproval: 'manual' }],
+      });
+
+      expect(storedOnTask(workflowId, 'release')).toBe('manual');
     });
 
     it.each([
@@ -124,145 +156,94 @@ describe('kangentic_save_workflow planApproval', () => {
       ['the right word in the wrong case', 'Automatic'],
       ['a number', 7],
       ['a boolean', true],
-    ])('refuses %s, and creates no workflow', async (_label, planApproval) => {
-      const response = await handleSaveWorkflow({ tasks, planApproval }, commandContext);
+    ])('refuses %s, naming the task, and creates no workflow', async (_label, planApproval) => {
+      const response = await handleSaveWorkflow({ tasks: [{ key: 'api', title: 'Budgets API', planApproval }] }, commandContext);
 
       expect(response.success).toBe(false);
-      expect(response.error).toMatch(/planApproval must be "automatic", "manual", or null/);
+      expect(response.error).toMatch(/Task 1 \("api"\): planApproval must be "automatic", "manual", or null/);
       expect(workflowCount()).toBe(0);
+    });
+
+    it('a save over an existing workflow replaces each task\'s value with what it sends', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API', planApproval: 'automatic' }] });
+
+      const response = await handleSaveWorkflow({ workflow: workflowId, tasks: [{ key: 'api', title: 'Budgets API' }] }, commandContext);
+
+      expect(response.success, response.error).toBe(true);
+      expect(storedOnTask(workflowId, 'api')).toBeNull();
     });
   });
 
-  describe('a save over an existing workflow', () => {
-    it('stores "automatic" over a workflow that followed the columns', async () => {
-      const workflowId = await createThroughHandler();
-      expect(storedPlanApproval(workflowId)).toBeNull();
-
-      const response = await handleSaveWorkflow({ workflow: workflowId, tasks, planApproval: 'automatic' }, commandContext);
-
-      expect(response.success, response.error).toBe(true);
-      expect(storedPlanApproval(workflowId)).toBe('automatic');
-    });
-
-    it('stores "manual" over an Automatic pick', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
-
-      await handleSaveWorkflow({ workflow: workflowId, tasks, planApproval: 'manual' }, commandContext);
-
-      expect(storedPlanApproval(workflowId)).toBe('manual');
-    });
-
-    it('stores an explicit null over a pick, so the workflow follows the columns again', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
-
-      const response = await handleSaveWorkflow({ workflow: workflowId, tasks, planApproval: null }, commandContext);
-
-      expect(response.success, response.error).toBe(true);
-      expect(storedPlanApproval(workflowId)).toBeNull();
-    });
-
-    it('leaves the stored pick alone when the call does not name it', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
-
-      const response = await handleSaveWorkflow({ workflow: workflowId, tasks, title: 'Renamed plan' }, commandContext);
-
-      expect(response.success, response.error).toBe(true);
-      expect(storedPlanApproval(workflowId)).toBe('automatic');
-    });
-
+  describe('the removed workflow-level parameter', () => {
     it.each([
+      ['"automatic"', 'automatic'],
+      ['"manual"', 'manual'],
       ['an unknown word', 'bogus'],
-      ['a number', 7],
-    ])('refuses %s, leaving the pick and the plan exactly as they were', async (_label, planApproval) => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
+    ])('refuses %s with what to do instead, and creates no workflow', async (_label, planApproval) => {
+      const response = await handleSaveWorkflow({ tasks: [{ key: 'api', title: 'Budgets API' }], planApproval }, commandContext);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe('planApproval is set per task now. Put planApproval on each task entry.');
+      expect(workflowCount()).toBe(0);
+    });
+
+    it('refuses it over an existing workflow too, leaving the plan exactly as it was', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API' }] });
       const before = new WorkflowRepository(database).getById(workflowId)!;
 
       const response = await handleSaveWorkflow(
-        { workflow: workflowId, title: 'Should not land', tasks: [{ key: 'ui', title: 'Budgets UI' }], planApproval },
+        { workflow: workflowId, title: 'Should not land', tasks: [{ key: 'ui', title: 'Budgets UI' }], planApproval: 'automatic' },
         commandContext,
       );
 
       expect(response.success).toBe(false);
-      expect(response.error).toMatch(/planApproval must be "automatic", "manual", or null/);
       const after = new WorkflowRepository(database).getById(workflowId)!;
-      expect(storedPlanApproval(workflowId)).toBe('automatic');
       expect(after.revision).toBe(before.revision);
       expect(after.title).toBe(before.title);
       expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
     });
 
-    // A valid pick on a save that is refused for its revision must not land.
-    // `savePlan` refuses a stale revision up front, before it writes anything, and
-    // again inside the transaction through `saveDraft`'s expectedRevision. The first
-    // test below pins the contract the agent sees (the pre-check). The second gets
-    // past the pre-check so it pins the transaction itself: the pick is written
-    // BEFORE the draft, so only the rollback keeps it from outliving the refusal.
-    it.each([
-      ['manual', 'automatic'],
-      ['automatic', 'manual'],
-    ])('a stale revision refuses a valid "%s" pick over a stored "%s" one and writes nothing', async (newPick, storedPick) => {
-      const workflowId = await createThroughHandler({ planApproval: storedPick });
-      const readRevision = new WorkflowRepository(database).getById(workflowId)!.revision;
-      // The user edits the plan after the agent read it, so what the agent holds is stale.
-      await handleSaveWorkflow({ workflow: workflowId, tasks, title: 'User edit' }, commandContext);
-      const before = new WorkflowRepository(database).getById(workflowId)!;
-      expect(before.revision).toBeGreaterThan(readRevision);
+    it('accepts a null and ignores it, since an older read told agents to send it back', async () => {
+      const response = await handleSaveWorkflow({ tasks: [{ key: 'api', title: 'Budgets API' }], planApproval: null }, commandContext);
 
-      const response = await handleSaveWorkflow(
-        { workflow: workflowId, tasks: [{ key: 'ui', title: 'Budgets UI' }], title: 'Agent edit', revision: readRevision, planApproval: newPick },
-        commandContext,
-      );
+      expect(response.success, response.error).toBe(true);
+    });
+  });
 
-      expect(response.success).toBe(false);
-      expect(response.error).toMatch(/changed since you read it/);
-      const after = new WorkflowRepository(database).getById(workflowId)!;
-      expect(storedPlanApproval(workflowId)).toBe(storedPick);
-      expect(after.revision).toBe(before.revision);
-      expect(after.title).toBe('User edit');
-      expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
+  describe('kangentic_add_workflow_task', () => {
+    /** A started workflow homed on this board, by id. */
+    async function startedWorkflow(): Promise<string> {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API' }] });
+      await startWorkflow(harness.runtime as IpcContext, 'home', workflowId);
+      return workflowId;
+    }
+
+    /** The task row the handler created, read without the repository's narrowing. */
+    function storedOnRow(taskId: string): unknown {
+      return (database.prepare('SELECT plan_approval FROM tasks WHERE id = ?').get(taskId) as { plan_approval: unknown }).plan_approval;
+    }
+
+    it('creates the task with its own value, and stores the plan column\'s own value as nothing', async () => {
+      const workflowId = await startedWorkflow();
+
+      const automatic = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets UI', planApproval: 'automatic' }, commandContext);
+      const manual = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets docs', planApproval: 'manual' }, commandContext);
+
+      expect(automatic.success, automatic.error).toBe(true);
+      expect(manual.success, manual.error).toBe(true);
+      expect(storedOnRow((automatic.data as { id: string }).id)).toBe('automatic');
+      expect(storedOnRow((manual.data as { id: string }).id)).toBeNull();
     });
 
-    it.each([
-      ['manual', 'automatic'],
-      ['automatic', 'manual'],
-    ])('rolls a "%s" pick back over a stored "%s" one when the draft write finds the revision stale', async (newPick, storedPick) => {
-      const workflowId = await createThroughHandler({ planApproval: storedPick });
-      const before = new WorkflowRepository(database).getById(workflowId)!;
-      // The pre-check reads the CURRENT revision, so it passes. A real edit can land
-      // just after that check and before the transaction opens (another process, as
-      // transaction.ts describes), so saveDraft finds the revision moved. Once the
-      // transaction is open no other writer gets in; the spy bumps the revision
-      // after the pick is stored only because that is the point the rollback has to
-      // cover, and the outcome is the same as an edit that landed just before BEGIN.
-      const originalSetPlanApproval = WorkflowRepository.prototype.setPlanApproval;
-      const setPlanApprovalSpy = vi.spyOn(WorkflowRepository.prototype, 'setPlanApproval').mockImplementation(
-        function (this: InstanceType<typeof WorkflowRepository>, id: string, planApproval: PlanApproval | null) {
-          originalSetPlanApproval.call(this, id, planApproval);
-          database.prepare('UPDATE workflows SET revision = revision + 1 WHERE id = ?').run(id);
-        },
-      );
-      let response: Awaited<ReturnType<typeof handleSaveWorkflow>>;
-      let setPlanApprovalCalls: number;
-      try {
-        response = await handleSaveWorkflow(
-          { workflow: workflowId, tasks: [{ key: 'ui', title: 'Budgets UI' }], revision: before.revision, planApproval: newPick },
-          commandContext,
-        );
-        setPlanApprovalCalls = setPlanApprovalSpy.mock.calls.length;
-      } finally {
-        // The spy sits on the shared prototype, so it never outlives this test.
-        setPlanApprovalSpy.mockRestore();
-      }
+    it('refuses a value that is none of the three, naming the task, and creates nothing', async () => {
+      const workflowId = await startedWorkflow();
+      const before = new TaskRepository(database).listByWorkflow(workflowId).length;
 
-      // The pick really was written inside the save before the draft refused it.
-      expect(setPlanApprovalCalls).toBe(1);
+      const response = await handleAddWorkflowTask({ workflow: workflowId, title: 'Budgets UI', planApproval: 'Automatic' }, commandContext);
+
       expect(response.success).toBe(false);
-      expect(response.error).toMatch(/changed since it was read/);
-      const after = new WorkflowRepository(database).getById(workflowId)!;
-      expect(storedPlanApproval(workflowId)).toBe(storedPick);
-      // The simulated edit rolled back with the rest, so nothing of the save is left.
-      expect(after.revision).toBe(before.revision);
-      expect(after.draft?.tasks.map((task) => task.key)).toEqual(['api']);
+      expect(response.error).toBe('"Budgets UI": planApproval must be "automatic", "manual", or null.');
+      expect(new TaskRepository(database).listByWorkflow(workflowId)).toHaveLength(before);
     });
   });
 
@@ -273,31 +254,111 @@ describe('kangentic_save_workflow planApproval', () => {
       return response.message ?? '';
     }
 
-    it('names the pick in the form save_workflow takes it, so a plan read and sent back keeps it', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'automatic' });
+    it('names each task\'s value and where it comes from, and a set value in save_workflow\'s own terms', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [
+          { key: 'desktop', title: 'Desktop' },
+          { key: 'bridge', title: 'Bridge', planApproval: 'automatic' },
+          { key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing' },
+        ],
+      });
 
       const text = await readText(workflowId);
 
-      expect(text).toContain('Plan approval: planApproval "automatic".');
-      expect(text).not.toContain('follows the plan columns');
+      expect(text).toContain('Plan approval: set per task. 1 task Manual, 1 Automatic; each task\'s line says why.');
+      expect(text).toMatch(/- \[desktop\] Desktop\..* Plan approval: Manual, from kangentic's Planning column\./);
+      expect(text).toMatch(/- \[bridge\] Bridge\..* Settings: planApproval "automatic"\. Plan approval: Automatic, set for this task \(its Planning column is Manual\)\./);
+      expect(text).toMatch(/- \[release\] Release\..* Plan approval: none, no plan column on its route\./);
     });
 
-    it('says the workflow follows the plan columns when nothing is picked', async () => {
-      const workflowId = await createThroughHandler();
+    it('a plan read and sent back keeps each task\'s value', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'bridge', title: 'Bridge', planApproval: 'automatic' }] });
+      const revision = new WorkflowRepository(database).getById(workflowId)!.revision;
+      const read = await handleGetWorkflow({ workflow: workflowId }, commandContext);
+      const view = read.data as { tasks: Array<{ key: string; title: string; planApproval: { set: string | null } | null }> };
+
+      // An agent resends what it read, in save_workflow's terms.
+      const response = await handleSaveWorkflow({
+        workflow: workflowId,
+        revision,
+        tasks: view.tasks.map((task) => ({ key: task.key, title: task.title, planApproval: task.planApproval?.set ?? null })),
+      }, commandContext);
+
+      expect(response.success, response.error).toBe(true);
+      expect(storedOnTask(workflowId, 'bridge')).toBe('automatic');
+    });
+
+    it('a plan read and sent back keeps a value on a task whose route has no plan column', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [{ key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing', planApproval: 'automatic' }],
+      });
+      // The control: the value was stored as given, though nothing on the route reads it yet.
+      expect(storedOnTask(workflowId, 'release')).toBe('automatic');
+      const revision = new WorkflowRepository(database).getById(workflowId)!.revision;
+
+      const read = await handleGetWorkflow({ workflow: workflowId }, commandContext);
+      expect(read.success, read.error).toBe(true);
+      const text = read.message ?? '';
+
+      // The Settings carry it in save_workflow's own terms, while the sentence says nothing resolves it.
+      expect(text).toMatch(/- \[release\] Release\..* Settings: planApproval "automatic"\. Plan approval: none, no plan column on its route\./);
+      // The view has no resolved value for this task, so its own value is the only place an agent can read it from.
+      const readTask = (read.data as { tasks: Array<{ planApproval: unknown; ownPlanApproval: unknown }> }).tasks[0];
+      expect(readTask.planApproval).toBeNull();
+      expect(readTask.ownPlanApproval).toBe('automatic');
+
+      // An agent sends back what it read: the value from the Settings text, and the route it already had.
+      const sentBack = /planApproval "(\w+)"/.exec(text)?.[1];
+      expect(sentBack).toBe('automatic');
+      const response = await handleSaveWorkflow({
+        workflow: workflowId,
+        revision,
+        tasks: [{ key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing', planApproval: sentBack }],
+      }, commandContext);
+
+      expect(response.success, response.error).toBe(true);
+      expect(storedOnTask(workflowId, 'release')).toBe('automatic');
+    });
+
+    it('prints no planApproval setting for a task that carries none, so a read does not invent one', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [{ key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing' }],
+      });
 
       const text = await readText(workflowId);
 
-      expect(text).toContain('Plan approval: follows the plan columns on the tasks\' routes (planApproval null).');
+      expect(text).toMatch(/- \[release\] Release\..* Plan approval: none, no plan column on its route\./);
       expect(text).not.toContain('planApproval "');
     });
 
-    it('moves from one form to the other as the pick is set and cleared', async () => {
-      const workflowId = await createThroughHandler({ planApproval: 'manual' });
-      expect(await readText(workflowId)).toContain('Plan approval: planApproval "manual".');
+    it('says plan approval is set per task and that no task has a plan column, when no route has one', async () => {
+      const workflowId = await createThroughHandler({
+        tasks: [
+          { key: 'release', title: 'Release', routeStart: 'Executing', routeLast: 'Executing' },
+          { key: 'docs', title: 'Docs', routeStart: 'Executing', routeLast: 'Executing', planApproval: 'automatic' },
+        ],
+      });
 
-      await handleSaveWorkflow({ workflow: workflowId, tasks, planApproval: null }, commandContext);
+      const text = await readText(workflowId);
 
-      expect(await readText(workflowId)).toContain('planApproval null');
+      expect(text).toContain('Plan approval: set per task (planApproval on each task). No task\'s route has a plan column.');
+      // Not the counted line a workflow with a plan column prints.
+      expect(text).not.toMatch(/tasks? Manual, \d+ Automatic/);
+    });
+
+    it('moves a legacy whole-workflow value onto each planned task, then forgets it', async () => {
+      const workflowId = await createThroughHandler({ tasks: [{ key: 'api', title: 'Budgets API' }] });
+      database.prepare("UPDATE workflows SET plan_approval = 'automatic' WHERE id = ?").run(workflowId);
+      const revisionBefore = new WorkflowRepository(database).getById(workflowId)!.revision;
+
+      const text = await readText(workflowId);
+
+      expect(text).toContain('Settings: planApproval "automatic". Plan approval: Automatic, set for this task (its Planning column is Manual).');
+      expect(storedOnTask(workflowId, 'api')).toBe('automatic');
+      const after = new WorkflowRepository(database).getById(workflowId)!;
+      expect(after.plan_approval).toBeNull();
+      // What each task gets did not change, so neither does the plan's revision.
+      expect(after.revision).toBe(revisionBefore);
     });
   });
 });

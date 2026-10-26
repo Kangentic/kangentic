@@ -1,12 +1,13 @@
 /**
- * The plan approval a RUNNING workflow gets (`readWorkflowPlanApproval`) and
+ * The plan approval a STARTED workflow task gets (`readTaskPlanApproval`) and
  * the push that tells open Workflows views to re-read it
  * (`notifyWorkflowsReadingBoard`), over real, migrated SQLite.
  *
  * workflow-view-service.test.ts pins the value as the inspector draws it for a
- * planned workflow. This pins what changes once the workflow has started: only
- * the tasks still ahead count, the agent that runs each one is the task's own
- * answer, and the returned shape says whether Automatic is on offer.
+ * planned workflow. This pins what holds once the workflow has started: each
+ * task reads the plan columns on its OWN route, the agent that runs it is the
+ * task's own answer, and the shape says whether Automatic is on offer and
+ * whether the task has passed its plan column.
  *
  * The seeded boards plan in Planning, Manual by default; Planning runs in plan
  * mode, so it is the one plan column on a route that visits it.
@@ -48,7 +49,8 @@ const { TaskRepository } = await import('../../src/main/db/repositories/task-rep
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const service = await import('../../src/main/workflows/workflow-service');
-const { readWorkflowPlanApproval, notifyWorkflowsReadingBoard } = await import('../../src/main/plan-approval/workflow-plan-approval');
+const { readTaskPlanApproval, notifyWorkflowsReadingBoard } = await import('../../src/main/plan-approval/workflow-plan-approval');
+const { agentRegistry } = await import('../../src/main/agent/agent-registry');
 
 import { openTestDatabase } from './helpers/test-database';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -108,9 +110,9 @@ describe('a running workflow\'s plan approval', () => {
     dbOf(projectId).prepare('UPDATE tasks SET agent_override = ? WHERE id = ?').run(agent, taskId);
   }
 
-  function moveToDone(projectId: string, taskId: string): void {
+  function moveTo(projectId: string, taskId: string, columnName: string): void {
     new TaskRepository(dbOf(projectId)).move(
-      { taskId, targetSwimlaneId: laneId(projectId, 'Done'), targetPosition: 0 },
+      { taskId, targetSwimlaneId: laneId(projectId, columnName), targetPosition: 0 },
       { origin: 'workflow' },
     );
   }
@@ -126,120 +128,138 @@ describe('a running workflow\'s plan approval', () => {
     return {
       workflowId: workflow.id,
       taskOn,
-      approval: () => readWorkflowPlanApproval(context, 'home', workflowOf(workflow.id)),
-      pick: (planApproval: PlanApproval | null) => new WorkflowRepository(dbOf('home')).setPlanApproval(workflow.id, planApproval),
+      /** The task's plan approval, read as the decision and the views read it. */
+      approvalOf: (projectId: string, title: string) =>
+        readTaskPlanApproval(context, projectId, taskOn(projectId, title), workflowOf(workflow.id).plan_approval),
+      setOwn: (projectId: string, title: string, planApproval: PlanApproval | null) =>
+        new TaskRepository(dbOf(projectId)).setPlanApproval(taskOn(projectId, title).id, planApproval),
     };
   }
 
-  describe('which tasks count', () => {
-    it('stops counting a task that is already in Done', async () => {
-      // Home plans Automatic, mobile Manual: the value is Manual only while the
-      // mobile task still has its Planning column ahead of it.
+  const codexName = () => agentRegistry.get('codex')?.displayName ?? 'codex';
+
+  describe('its own route', () => {
+    it('a Manual plan column on another board holds only the task whose route passes through it', async () => {
       setPlanColumn('home', 'automatic');
-      const { approval, taskOn } = await start([
+      const { approvalOf } = await start([
         { key: 'api', title: 'Budgets API' },
         { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
       ]);
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: true });
 
-      moveToDone('mobile', taskOn('mobile', 'Budgets on the phone').id);
-
-      expect(approval()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', set: null, column: { name: 'Planning', boardName: 'kangentic' } });
+      expect(approvalOf('mobile', 'Budgets on the phone')).toMatchObject({ value: 'manual', set: null, column: { name: 'Planning', boardName: 'kangentic-mobile' } });
     });
 
-    it('is Manual again, with Automatic on offer, once every task is in Done', async () => {
+    it('says when the task has passed its plan column, and that Done has passed it too', async () => {
+      const { approvalOf, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      expect(approvalOf('home', 'Budgets API')?.passed).toBe(false);
+
+      moveTo('home', taskOn('home', 'Budgets API').id, 'Planning');
+      expect(approvalOf('home', 'Budgets API')?.passed).toBe(false);
+
+      moveTo('home', taskOn('home', 'Budgets API').id, 'Executing');
+      expect(approvalOf('home', 'Budgets API')?.passed).toBe(true);
+
+      moveTo('home', taskOn('home', 'Budgets API').id, 'Done');
+      expect(approvalOf('home', 'Budgets API')?.passed).toBe(true);
+    });
+
+    it('with two plan columns on one route, a task between them has not passed its plan column, and one after the second has', async () => {
+      // Code Review runs in plan mode too, so the route has two plan columns,
+      // Planning and Code Review, with Executing between them.
+      new SwimlaneRepository(dbOf('home')).update({ id: laneId('home', 'Code Review'), permission_mode: 'plan' });
       setPlanColumn('home', 'automatic');
-      const { approval, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
-      expect(approval().value).toBe('automatic');
+      const { approvalOf, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      // Precondition: both are plan columns on this route (Code Review is Manual, so it decides).
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ columnValue: 'manual', column: { name: 'Code Review' } });
 
-      moveToDone('home', taskOn('home', 'Budgets API').id);
+      const passedIn = (columnName: string): boolean | undefined => {
+        moveTo('home', taskOn('home', 'Budgets API').id, columnName);
+        return approvalOf('home', 'Budgets API')?.passed;
+      };
 
-      // No plan column is ahead of anything, which derives Manual and offers Automatic.
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: true });
+      expect(passedIn('Planning')).toBe(false);
+      expect(passedIn('Executing')).toBe(false);
+      expect(passedIn('Code Review')).toBe(false);
+      expect(passedIn('Testing')).toBe(true);
+      expect(passedIn('Merge')).toBe(true);
+      expect(passedIn('Done')).toBe(true);
+    });
+
+    it('is null for a route that visits no plan column', async () => {
+      // A route that starts after Planning visits no plan column.
+      const { approvalOf } = await start([{ key: 'api', title: 'Budgets API', routeStart: 'Executing' }]);
+
+      expect(approvalOf('home', 'Budgets API')).toBeNull();
     });
   });
 
   describe('which agent would run each task', () => {
     it('reads a task\'s own agent override, an agent that cannot approve plans, as Manual and not on offer', async () => {
       setPlanColumn('home', 'automatic');
-      const { approval, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
-      expect(approval()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+      const { approvalOf, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', canApprove: true, agentName: null });
 
       setAgentOverride('home', taskOn('home', 'Budgets API').id, 'codex');
 
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: false });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', canApprove: false, agentName: codexName() });
     });
 
     it('does not read the agent that last ran on a task as the agent that would run it next', async () => {
       // `task.agent` records what ran, for resume and handoff. The override,
       // the column and the project name what runs next (`resolveTargetAgent`).
       setPlanColumn('home', 'automatic');
-      const { approval, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      const { approvalOf, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
       dbOf('home').prepare('UPDATE tasks SET agent = ? WHERE id = ?').run('codex', taskOn('home', 'Budgets API').id);
 
-      expect(approval()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', canApprove: true });
     });
 
     it('reads the board\'s default agent when nothing closer names one, and lets a task override win over it', async () => {
       setPlanColumn('home', 'automatic');
       projects[0].default_agent = 'codex';
-      const { approval, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: false });
+      const { approvalOf, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', canApprove: false });
 
       setAgentOverride('home', taskOn('home', 'Budgets API').id, 'claude');
 
-      expect(approval()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', canApprove: true });
     });
   });
 
-  describe('the shape it returns', () => {
-    it('says a pick was made, and the pick holds over the plan columns either way', async () => {
-      const { approval, pick } = await start([{ key: 'api', title: 'Budgets API' }]);
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: true });
+  describe('its own value', () => {
+    it('holds over its plan column either way, and null follows the column again', async () => {
+      const { approvalOf, setOwn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', set: null, columnValue: 'manual' });
 
-      pick('automatic');
-      expect(approval()).toEqual({ value: 'automatic', picked: true, canApprove: true });
+      setOwn('home', 'Budgets API', 'automatic');
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', set: 'automatic', columnValue: 'manual' });
 
       setPlanColumn('home', 'automatic');
-      pick('manual');
-      expect(approval()).toEqual({ value: 'manual', picked: true, canApprove: true });
+      setOwn('home', 'Budgets API', 'manual');
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', set: 'manual', columnValue: 'automatic' });
 
-      pick(null);
-      expect(approval()).toEqual({ value: 'automatic', picked: false, canApprove: true });
+      setOwn('home', 'Budgets API', null);
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', set: null });
     });
 
-    it('reads Manual and takes Automatic off offer when no plan column\'s agent can approve, even for a picked Automatic', async () => {
-      const { approval, pick, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
+    it('reads Manual and takes Automatic off offer when no plan column\'s agent can approve, even with its own Automatic', async () => {
+      const { approvalOf, setOwn, taskOn } = await start([{ key: 'api', title: 'Budgets API' }]);
       setAgentOverride('home', taskOn('home', 'Budgets API').id, 'codex');
-      pick('automatic');
+      setOwn('home', 'Budgets API', 'automatic');
 
-      expect(approval()).toEqual({ value: 'manual', picked: true, canApprove: false });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', set: 'automatic', canApprove: false });
     });
 
-    it('keeps Automatic on offer while any plan column\'s agent can approve', async () => {
+    it('a legacy whole-workflow value sits between the task\'s own value and its column', async () => {
       setPlanColumn('home', 'automatic');
-      setPlanColumn('mobile', 'automatic');
-      const { approval, pick, taskOn } = await start([
-        { key: 'api', title: 'Budgets API' },
-        { key: 'phone', title: 'Budgets on the phone', project: 'kangentic-mobile' },
-      ]);
-      setAgentOverride('mobile', taskOn('mobile', 'Budgets on the phone').id, 'codex');
+      const { workflowId, approvalOf, setOwn } = await start([{ key: 'api', title: 'Budgets API' }]);
+      dbOf('home').prepare("UPDATE workflows SET plan_approval = 'manual' WHERE id = ?").run(workflowId);
 
-      // Unpicked, one column that cannot approve is enough to wait.
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: true });
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'manual', set: 'manual' });
 
-      pick('automatic');
-      expect(approval()).toEqual({ value: 'automatic', picked: true, canApprove: true });
-    });
-
-    it('offers Automatic when no plan column is ahead of any task at all', async () => {
-      // A route that starts after Planning visits no plan column.
-      const { approval, pick } = await start([{ key: 'api', title: 'Budgets API', routeStart: 'Executing' }]);
-      expect(approval()).toEqual({ value: 'manual', picked: false, canApprove: true });
-
-      pick('automatic');
-
-      expect(approval()).toEqual({ value: 'automatic', picked: true, canApprove: true });
+      setOwn('home', 'Budgets API', 'automatic');
+      expect(approvalOf('home', 'Budgets API')).toMatchObject({ value: 'automatic', set: 'automatic' });
     });
   });
 
@@ -318,6 +338,7 @@ describe('a running workflow\'s plan approval', () => {
           skipped_swimlane_ids: [],
           canvas_x: null,
           canvas_y: null,
+          plan_approval: null,
         },
       });
       expect(new TaskRepository(dbOf('home')).listWorkflowMemberships()).toHaveLength(1);

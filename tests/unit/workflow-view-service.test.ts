@@ -114,34 +114,57 @@ describe('the Workflows view operations', () => {
     expect(detail.tasks[1].planned?.labels).toEqual(['ui']);
   });
 
-  it('derives plan approval from the plan columns on its routes until picked, across boards', () => {
+  it('reads each planned task\'s plan approval from the plan columns on its own route, across boards', () => {
     // The seeded boards plan in Planning, Manual by default.
     const workflow = service.createWorkflow('home', {});
-    view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
-    view.addViewTask(context, 'home', workflow.id, { title: 'Budgets on the phone', projectId: 'mobile' });
-    const approvalOf = () => view.readWorkflowDetail(context, 'home', workflow.id).planApproval;
-    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+    const apiKey = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    const phoneKey = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets on the phone', projectId: 'mobile' });
+    const approvalOf = (key: string) => view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((task) => task.key === key)!.planApproval;
+    expect(approvalOf(apiKey)).toMatchObject({ value: 'manual', set: null, canApprove: true, passed: false });
 
-    // One board's Planning on Automatic: the other still waits, so the workflow is Manual.
+    // One board's Planning on Automatic moves only the task on that board.
     new SwimlaneRepository(homeDb()).update({ id: laneId('home', 'Planning'), plan_approval: 'automatic' });
-    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+    expect(approvalOf(apiKey)).toMatchObject({ value: 'automatic', column: { name: 'Planning', boardName: 'kangentic' } });
+    expect(approvalOf(phoneKey)).toMatchObject({ value: 'manual', column: { name: 'Planning', boardName: 'kangentic-mobile' } });
 
-    // Both: Automatic.
-    new SwimlaneRepository(harness.dbs.get('mobile') as Database.Database).update({ id: laneId('mobile', 'Planning'), plan_approval: 'automatic' });
-    expect(approvalOf()).toEqual({ value: 'automatic', picked: false, canApprove: true });
-
-    // A plan column on an agent that cannot approve plans makes it Manual again.
+    // A plan column on an agent that cannot approve plans makes it Manual, with Automatic off.
     new SwimlaneRepository(homeDb()).update({ id: laneId('home', 'Planning'), agent_override: 'codex' });
-    expect(approvalOf()).toEqual({ value: 'manual', picked: false, canApprove: true });
+    expect(approvalOf(apiKey)).toMatchObject({ value: 'manual', canApprove: false });
+  });
 
-    // A pick holds.
-    service.setWorkflowPlanApproval(context, 'home', workflow.id, 'automatic');
-    expect(approvalOf()).toEqual({ value: 'automatic', picked: true, canApprove: true });
+  it('sets a planned task\'s own plan approval, storing its column\'s own value as nothing', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    const plannedValue = () => view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((task) => task.key === key)!.planned!.plan_approval;
 
-    // With no plan column whose agent can approve, a picked Automatic approves
-    // nothing, so it reads Manual and is not offered.
-    new SwimlaneRepository(harness.dbs.get('mobile') as Database.Database).update({ id: laneId('mobile', 'Planning'), agent_override: 'codex' });
-    expect(approvalOf()).toEqual({ value: 'manual', picked: true, canApprove: false });
+    view.setViewPlanApproval(context, 'home', workflow.id, key, 'automatic');
+    expect(plannedValue()).toBe('automatic');
+
+    // The seeded Planning column is Manual: picking it goes back to following the column.
+    view.setViewPlanApproval(context, 'home', workflow.id, key, 'manual');
+    expect(plannedValue()).toBeNull();
+  });
+
+  it('refuses a plan approval for a key that is no longer in the plan, writing nothing', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    const before = new WorkflowRepository(homeDb()).getById(workflow.id)!;
+
+    expect(() => view.setViewPlanApproval(context, 'home', workflow.id, 'task-9', 'automatic')).toThrow(/no longer in the plan/);
+
+    const after = new WorkflowRepository(homeDb()).getById(workflow.id)!;
+    expect(after.revision).toBe(before.revision);
+    expect(after.draft?.tasks.find((task) => task.key === key)?.plan_approval).toBeNull();
+  });
+
+  it('a planned task moved to another board drops its own plan approval and follows the new board\'s columns', () => {
+    const workflow = service.createWorkflow('home', {});
+    const key = view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+    view.setViewPlanApproval(context, 'home', workflow.id, key, 'automatic');
+
+    view.updatePlannedTask(context, 'home', workflow.id, key, { projectId: 'mobile' });
+
+    expect(view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((task) => task.key === key)!.planned!.plan_approval).toBeNull();
   });
 
   it('sets a route from the switched-on columns, open at the ends, and refuses an empty one', () => {
@@ -539,6 +562,65 @@ describe('the Workflows view operations', () => {
       const after = new TaskRepository(homeDb()).getById(ui.id)!;
       expect(after.workflow_id).toBeNull();
       expect(view.readWorkflowDetail(context, 'home', workflow.id).links).toEqual([]);
+    });
+
+    describe('setting a started task\'s plan approval from the view', () => {
+      /** The task row's own value, read raw around the repository's narrowing. */
+      const storedApproval = (taskId: string): unknown =>
+        (homeDb().prepare('SELECT plan_approval FROM tasks WHERE id = ?').get(taskId) as { plan_approval: unknown }).plan_approval;
+
+      it('writes the task row by its id, storing the plan column\'s own value as nothing', async () => {
+        const { workflow, api, ui } = await started();
+        expect(storedApproval(api.id)).toBeNull();
+
+        // The seeded Planning column is Manual, so Automatic is an override worth storing.
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, 'automatic');
+        expect(storedApproval(api.id)).toBe('automatic');
+        // Only the task it names.
+        expect(storedApproval(ui.id)).toBeNull();
+
+        // Picking the column's own value goes back to following the column.
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, 'manual');
+        expect(storedApproval(api.id)).toBeNull();
+
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, 'automatic');
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, null);
+        expect(storedApproval(api.id)).toBeNull();
+      });
+
+      it('shows the stored value in the read model it draws from', async () => {
+        const { workflow, api } = await started();
+
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, 'automatic');
+
+        const task = view.readWorkflowDetail(context, 'home', workflow.id).tasks.find((candidate) => candidate.key === api.id)!;
+        expect(task.planApproval).toMatchObject({ set: 'automatic', value: 'automatic' });
+      });
+
+      it('refuses a key that is no task of the workflow, writing nothing', async () => {
+        const { workflow, api, ui } = await started();
+
+        // The view's key for a started task is its id: the number an agent reads is not one.
+        expect(() => view.setViewPlanApproval(context, 'home', workflow.id, `#${api.display_id}`, 'automatic'))
+          .toThrow(/That task is no longer in this workflow\./);
+        expect(() => view.setViewPlanApproval(context, 'home', workflow.id, 'no-such-task', 'automatic'))
+          .toThrow(/That task is no longer in this workflow\./);
+
+        expect(storedApproval(api.id)).toBeNull();
+        expect(storedApproval(ui.id)).toBeNull();
+      });
+
+      it('refuses a finished workflow, leaving the row as it was', async () => {
+        const { workflow, api } = await started();
+        view.setViewPlanApproval(context, 'home', workflow.id, api.id, 'automatic');
+        new WorkflowRepository(homeDb()).setState(workflow.id, 'done');
+
+        // The only hold `requireViewMayChange` has today. Its docblock says the hold on an
+        // edit while the workflow agent works is still to come, so none is pinned here.
+        expect(() => view.setViewPlanApproval(context, 'home', workflow.id, api.id, null)).toThrow(/complete/);
+
+        expect(storedApproval(api.id)).toBe('automatic');
+      });
     });
 
     it('adds a task to a running workflow in To Do', async () => {

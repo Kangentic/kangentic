@@ -8,22 +8,26 @@ import { loadTaskProfile } from '../ipc/helpers/task-profile';
 import { planExitTargetFor } from '../ipc/helpers/plan-exit-target';
 import type { IpcContext } from '../ipc/ipc-context';
 import { workflowOfTask } from '../workflows/workflow-home';
-import { readWorkflowPlanApproval } from './workflow-plan-approval';
+import { adoptLegacyPlanApproval, readTaskPlanApproval } from './workflow-plan-approval';
 import { resolvePlanApprovalDecision } from './resolve-decision';
 
 /**
- * What one refresh pass reads once and every session in it shares. A running
- * workflow's derived value walks every project's database, the effective
- * config is a synchronous read, and a board's columns are the same for every
- * session on it, so none of them is repeated per session.
+ * What one refresh pass reads once and every session in it shares. The
+ * effective config is a synchronous read, and a board's columns are the same
+ * for every session on it, so neither is repeated per session. A workflow
+ * task's plan approval is its own, read from its own route each time.
  */
 export interface DecisionReadCache {
-  /** By workflow id. */
-  workflowValues: Map<string, PlanApproval>;
   /** By project path ('' for none). */
   globalModes: Map<string, PermissionMode>;
   /** By project id. */
   boards: Map<string, BoardColumns>;
+  /**
+   * Workflow ids whose legacy plan approval this pass already tried to adopt.
+   * Once adopted it is one null check, but a board that will not read keeps it
+   * in place, and every session of that workflow would walk every board again.
+   */
+  legacyAdoptionsTried: Set<string>;
 }
 
 /**
@@ -37,7 +41,7 @@ interface BoardColumns {
 }
 
 export function newDecisionReadCache(): DecisionReadCache {
-  return { workflowValues: new Map(), globalModes: new Map(), boards: new Map() };
+  return { globalModes: new Map(), boards: new Map(), legacyAdoptionsTried: new Set() };
 }
 
 function boardColumnsOf(
@@ -93,12 +97,18 @@ export function readPlanApprovalDecision(
   const column = applyProfileToLane(board.getById(task.swimlane_id), profile, lanes);
   if (!column) return null;
 
-  let runningWorkflowValue: PlanApproval | null = null;
+  // A workflow task keeps or overrides its plan columns, whatever state its
+  // workflow is in, so a paused workflow's task moved by hand still honours it.
+  let workflowTaskValue: PlanApproval | null = null;
   const workflow = workflowOfTask(task, input.projectId);
-  if (workflow?.state === 'running') {
-    runningWorkflowValue = cache.workflowValues.get(workflow.id)
-      ?? readWorkflowPlanApproval(context, task.workflow_project_id ?? input.projectId, workflow).value;
-    cache.workflowValues.set(workflow.id, runningWorkflowValue);
+  if (workflow) {
+    // Read before the adoption: this task row was read before any copy landed.
+    const legacy = workflow.plan_approval;
+    if (!cache.legacyAdoptionsTried.has(workflow.id)) {
+      cache.legacyAdoptionsTried.add(workflow.id);
+      adoptLegacyPlanApproval(context, task.workflow_project_id ?? input.projectId, workflow);
+    }
+    workflowTaskValue = readTaskPlanApproval(context, input.projectId, task, legacy, lanes)?.value ?? null;
   }
 
   const rawTarget = planExitTargetFor(context, task, task.swimlane_id, board, projectPath);
@@ -116,7 +126,7 @@ export function readPlanApprovalDecision(
     automationsDisabled,
     bypassAvailable: input.bypassAvailable,
     column,
-    runningWorkflowValue,
+    workflowTaskValue,
     target,
     taskPermissionMode: task.permission_mode,
     globalPermissionMode,

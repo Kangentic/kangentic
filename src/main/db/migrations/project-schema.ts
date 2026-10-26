@@ -2092,6 +2092,8 @@ function migrateWorkflows(db: Database.Database): void {
     ['skipped_swimlane_ids', 'TEXT'],
     ['canvas_x', 'REAL'],
     ['canvas_y', 'REAL'],
+    // A workflow task's own plan approval; NULL follows its plan columns.
+    ['plan_approval', 'TEXT'],
   ];
   for (const [columnName, columnType] of workflowTaskColumns) {
     if (!taskColumnNames.has(columnName)) {
@@ -2123,9 +2125,9 @@ function migrateWorkflows(db: Database.Database): void {
     db.exec('ALTER TABLE workflows ADD COLUMN paused_at TEXT DEFAULT NULL');
   }
 
-  // Who approves plans for the workflow's tasks: 'manual' or 'automatic' once
-  // picked. NULL follows the plan columns on its tasks' routes, so every
-  // existing workflow keeps doing what its columns already do.
+  // Legacy: the whole-workflow plan approval older versions picked. Nothing
+  // writes it now; `adoptLegacyPlanApproval` copies a value left here onto the
+  // workflow's tasks (`tasks.plan_approval`) and clears it.
   if (!workflowColumnNames.has('plan_approval')) {
     db.exec('ALTER TABLE workflows ADD COLUMN plan_approval TEXT DEFAULT NULL');
   }

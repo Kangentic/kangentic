@@ -32,10 +32,11 @@ const TRIGGER_PHRASES: Record<AutomationTrigger, string> = {
 
 function describeRun(lane: Swimlane): string {
   if (!lane.auto_spawn) return 'No agent starts here.';
-  // Who approves the plan is what decides whether a workflow waits here, so
-  // the agent planning one is told; `planApproval` on save_workflow changes it.
+  // Who approves the plan is what decides whether a workflow task waits here,
+  // so the agent planning one is told; `planApproval` on a save_workflow task
+  // overrides it for that task.
   const agent = lane.permission_mode === 'plan'
-    ? `An agent in plan mode, whose plan ${lane.plan_approval === 'automatic' ? 'Kangentic approves' : 'the user approves'}`
+    ? `An agent in plan mode, whose plan ${lane.plan_approval === 'automatic' ? 'Kangentic approves' : 'the user approves'} unless a task sets its own planApproval`
     : 'An agent';
   const session = lane.session_target === 'isolated' ? ' in a session of its own' : '';
   const command = lane.auto_command?.trim() ? `, which runs ${escapeXml(lane.auto_command.trim())}` : '';

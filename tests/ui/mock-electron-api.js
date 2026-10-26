@@ -28,6 +28,9 @@
   // it on each entry, and the workflow detail derives a workflow's value from it.
   // tests/unit/mock-agent-list-parity.test.ts pins it against the adapters.
   const PLAN_APPROVING_AGENTS = ['claude'];
+  // The adapters' display names, as main's sentence names an agent that cannot
+  // approve plans; matches the mock's agents.list() entries.
+  const AGENT_DISPLAY_NAMES = { claude: 'Claude Code', codex: 'Codex CLI', gemini: 'Gemini CLI' };
   // KEEP IN SYNC with AUTOMATION_TRIGGERS in src/shared/automation-manifest.ts:
   // the three groups, in the order a task meets them.
   const AUTOMATION_TRIGGER_ORDER = ['enter', 'turn_end', 'exit'];
@@ -575,6 +578,7 @@
       skipped_swimlane_ids: [],
       canvas_x: null,
       canvas_y: null,
+      plan_approval: null,
       created_at: now(),
       updated_at: now(),
     };
@@ -5596,31 +5600,53 @@
         return { todo: endOf(todoLane(projectId)), done: endOf(doneLane(projectId)) };
       }
 
-      // KEEP IN SYNC with readWorkflowPlanApproval
-      // (src/main/plan-approval/workflow-plan-approval.ts): a pick holds;
-      // unpicked, the workflow is Automatic only when every plan column its tasks
-      // visit is Automatic on an agent that can approve plans; and where no plan
-      // column's agent can approve, it is Manual and Automatic is not offered.
-      // The mock folds no Board Profile, since no UI spec seeds one on a workflow task.
-      // Each column's agent resolves as resolveTargetAgent does: the task's
-      // override, then the column's, then the project's default.
-      function planApprovalOf(entry, routedTasks) {
-        var workflow = entry.workflow;
+      // KEEP IN SYNC with taskPlanApproval (src/shared/plan-approval.ts) and its
+      // main reader (src/main/plan-approval/workflow-plan-approval.ts): a task's
+      // own value wins; left alone, it is Automatic only when every plan column
+      // on its OWN route is Automatic on an agent that can approve plans; where no
+      // plan column's agent can approve, it is Manual. Null when its route has no
+      // plan column. A legacy whole-workflow value sits between the two. The mock
+      // folds no Board Profile, since no UI spec seeds one on a workflow task.
+      // Each column's agent resolves as
+      // resolveTargetAgent does: the task's override, then the column's, then the
+      // project's default.
+      function taskPlanApprovalOf(entry, task, projectId, place) {
+        var project = projects.find(function (candidate) { return candidate.id === projectId; });
+        var planLanes = [];
         var planColumns = [];
-        routedTasks.forEach(function (routed) {
-          var project = projects.find(function (candidate) { return candidate.id === routed.projectId; });
-          routeColumns(routed.task, routed.projectId).forEach(function (lane) {
-            if (lane.permission_mode !== 'plan') return;
-            var agentName = routed.task.agent_override || lane.agent_override || (project && project.default_agent) || 'claude';
-            planColumns.push({ planApproval: lane.plan_approval || 'manual', agentCanApprove: PLAN_APPROVING_AGENTS.indexOf(agentName) !== -1 });
+        routeColumns(task, projectId).forEach(function (lane) {
+          if (lane.permission_mode !== 'plan') return;
+          var agentName = task.agent_override || lane.agent_override || (project && project.default_agent) || 'claude';
+          planLanes.push(lane);
+          planColumns.push({
+            name: lane.name,
+            planApproval: lane.plan_approval || 'manual',
+            agentCanApprove: PLAN_APPROVING_AGENTS.indexOf(agentName) !== -1,
+            agentName: AGENT_DISPLAY_NAMES[agentName] || agentName,
           });
         });
-        var canApprove = planColumns.length === 0 || planColumns.some(function (column) { return column.agentCanApprove; });
-        var value = workflow.plan_approval
-          || (planColumns.length > 0 && planColumns.every(function (column) {
-            return column.planApproval === 'automatic' && column.agentCanApprove;
-          }) ? 'automatic' : 'manual');
-        return { value: canApprove ? value : 'manual', picked: Boolean(workflow.plan_approval), canApprove: canApprove };
+        if (planColumns.length === 0) return null;
+        function approves(column) { return column.planApproval === 'automatic' && column.agentCanApprove; }
+        var columnValue = planColumns.every(approves) ? 'automatic' : 'manual';
+        var canApprove = planColumns.some(function (column) { return column.agentCanApprove; });
+        var deciding = planColumns.find(function (column) { return !approves(column); }) || planColumns[0];
+        var set = task.plan_approval || entry.workflow.plan_approval || null;
+        var passed = place === 'done';
+        if (place === 'working') {
+          var current = laneOf(task.swimlane_id);
+          passed = Boolean(current && current.position > planLanes[planLanes.length - 1].position);
+        }
+        var unable = planColumns.find(function (column) { return !column.agentCanApprove; });
+        return {
+          set: set,
+          value: canApprove ? (set || columnValue) : 'manual',
+          columnValue: columnValue,
+          canApprove: canApprove,
+          column: { name: deciding.name, boardName: project ? project.name : 'its board' },
+          agentName: canApprove ? null : (unable || deciding).agentName,
+          waitingAgentName: canApprove && unable ? unable.agentName : null,
+          passed: passed,
+        };
       }
 
       function detail(entry) {
@@ -5654,12 +5680,10 @@
                 steps: stepsOf(planned, 'planned', taskProjectId), canvasX: planned.canvas_x, canvasY: planned.canvas_y,
                 unnamedBlockerCount: 0,
                 stallReason: null,
+                planApproval: taskPlanApprovalOf(entry, planned, taskProjectId, 'planned'),
               };
             }),
             links: draft.links.map(function (link) { return { blockerKey: link.blocker, blockedKey: link.blocked }; }),
-            planApproval: planApprovalOf(entry, draft.tasks.map(function (planned) {
-              return { task: planned, projectId: boardOf(entry, planned) };
-            })),
           };
         }
         var created = createdTasks(workflow.id);
@@ -5681,15 +5705,12 @@
                 return link.workflow_id === workflow.id && link.blocked_task_id === task.id && keys.indexOf(link.blocker_task_id) === -1 && blockerHeld(link);
               }).length,
               stallReason: place === 'done' ? null : stallOf(workflow, task.id),
+              planApproval: taskPlanApprovalOf(entry, task, taskProjectId, place),
             };
           }),
           links: links.filter(function (link) {
             return link.workflow_id === workflow.id && keys.indexOf(link.blocker_task_id) !== -1 && keys.indexOf(link.blocked_task_id) !== -1;
           }).map(function (link) { return { blockerKey: link.blocker_task_id, blockedKey: link.blocked_task_id }; }),
-          // A task already done visits nothing more, so its route no longer counts.
-          planApproval: planApprovalOf(entry, created.filter(function (task) { return placeOf(task) !== 'done'; }).map(function (task) {
-            return { task: task, projectId: boardOf(entry, task) };
-          })),
         };
       }
 
@@ -5804,6 +5825,8 @@
         task.route_start_swimlane_id = route.route_start_swimlane_id;
         task.route_last_swimlane_id = route.route_last_swimlane_id;
         task.skipped_swimlane_ids = route.skipped_swimlane_ids;
+        // A workflow column like the route: Start copies the planned task's.
+        task.plan_approval = route.plan_approval || null;
       }
       function release(task) {
         task.workflow_id = null;
@@ -5811,6 +5834,7 @@
         task.route_start_swimlane_id = null;
         task.route_last_swimlane_id = null;
         task.skipped_swimlane_ids = [];
+        task.plan_approval = null;
       }
 
       // A planned task's run settings (WorkflowTaskRunSettings), in the task
@@ -5916,13 +5940,39 @@
           emit(homeOf(entry), workflowId, false);
           return JSON.parse(JSON.stringify(entry.workflow));
         },
-        // As main's setWorkflowPlanApproval: any state, and the revision stays.
-        setPlanApproval: async function (projectId, workflowId, planApproval) {
+        // As main's setViewPlanApproval: a planned task's draft entry, or a
+        // started task's row, refused once the task has passed its plan column.
+        // The columns' own value is stored as nothing (normalizeTaskPlanApproval).
+        setTaskPlanApproval: async function (projectId, workflowId, key, planApproval) {
           var entry = requireEntry(projectId, workflowId);
           if (planApproval !== 'automatic' && planApproval !== 'manual' && planApproval !== null) {
-            throw new Error('Plan approval must be "automatic", "manual", or null to follow the columns.');
+            throw new Error('planApproval must be "automatic", "manual", or null.');
           }
-          entry.workflow.plan_approval = planApproval;
+          if (entry.workflow.state === 'done') throw new Error('"' + entry.workflow.title + '" is complete.');
+          // As main's storedPlanApproval. The mock never adopts a legacy value, so
+          // while one is on the workflow the pick is stored as given.
+          function normalized(task, place) {
+            var view = taskPlanApprovalOf(entry, Object.assign({}, task, { plan_approval: null }), boardOf(entry, task), place);
+            if (!view) return planApproval;
+            if (entry.workflow.plan_approval) return planApproval || view.columnValue;
+            return planApproval === view.columnValue ? null : planApproval;
+          }
+          if (entry.workflow.state === 'draft') {
+            editDraft(entry, function (draft) {
+              var planned = draft.tasks.find(function (task) { return task.key === key; });
+              if (!planned) throw new Error('That task is no longer in the plan.');
+              planned.plan_approval = normalized(planned, 'planned');
+            });
+            return;
+          }
+          var task = requireTask(entry, key);
+          var place = placeOf(task);
+          var label = '#' + task.display_id;
+          if (place === 'done') throw new Error(label + ' is done. Its plan approval can no longer change.');
+          var view = taskPlanApprovalOf(entry, task, boardOf(entry, task), place);
+          if (view && view.passed) throw new Error(label + ' has passed ' + view.column.name + '. Its plan approval can no longer change.');
+          task.plan_approval = normalized(task, place);
+          entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, true);
         },
         delete: async function (projectId, workflowId) {
@@ -6025,6 +6075,7 @@
                 existing_task_id: null,
                 route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
                 labels: input.labels || [], priority: input.priority || 0, canvas_x: null, canvas_y: null,
+                plan_approval: null,
               }, runSettingsOver(null, input)));
             });
             return key;

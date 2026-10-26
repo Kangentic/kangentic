@@ -18,9 +18,9 @@ stops waiting for it.
 (Mod+Shift+L). Its header picks the workflow and holds Rename, the lifecycle button (Start,
 Running, which pauses it, or Resume), Delete, the progress, and New workflow. The canvas in the
 middle draws each task as its card with the links between them, and the inspector on the right
-shows the workflow's Plan approval above the run order, or the selected task's route, what it waits
-for, and what waits for it, with Open task (Open on its board, for a task on another project's
-board) at the bottom. The board's
+shows the run order, or the selected task's Plan approval (while a plan column is ahead of it), its
+route, what it waits for, and what waits for it, with Open task (Open on its board, for a task on
+another project's board) at the bottom. The board's
 search and filter apply to the canvas too. The Workflows segment shows how many unfinished
 workflows the project has, the same list the picker holds. While one of them runs, the working
 mark takes the count's place; with none at all, the segment shows nothing. In the
@@ -105,17 +105,24 @@ blocker; a step it has reached cannot change). Remove takes a task out of the wo
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task
 to the next column on its route, and the last one to Done; not done leaves it where it is. A task
-that finishes a plan moves on when its plan is approved. Who approves is the workflow's **Plan
-approval**, in the inspector with no task selected: **Automatic** has Kangentic approve every plan
-in the workflow, and **Manual** leaves each one to you. While a plan is approved automatically, an
-MCP tool your Claude allow rules name, in the project's settings or your own, runs without a prompt during planning, even one Claude's
-plan mode would ask about. A question the agent asks, and any tool you have not allowed, still wait.
-Until you pick, it shows what the plan columns on its tasks' routes give together: Automatic only
-when every one is set to Automatic and runs an agent Kangentic can approve plans for, Manual
-otherwise. A pick holds from then on. When no plan column on the routes runs an agent Kangentic can
-approve plans for, it shows Manual and Automatic is disabled. Before Start, an agent can set it too, with `kangentic_save_workflow`'s
-`planApproval`. Without an Automation agent, or in a column with no agent, you drag the card on
-yourself.
+that finishes a plan moves on when its plan is approved. Who approves is the task's own **Plan
+approval**, at the top of its panel in the inspector and in task detail's Workflow panel:
+**Automatic** has Kangentic approve the task's plan, and **Manual** leaves it to you. Left alone,
+a task follows the plan columns on its own route: Automatic only when every one is set to
+Automatic and runs an agent Kangentic can approve plans for, Manual otherwise. Picking the other
+option overrides it for that task only, and picking the columns' value again goes back to
+following them. The lit option's tooltip says which ("Manual, set for this task (kangentic's
+Planning column is Automatic)."). On a route where only some plan columns run an agent Kangentic
+can approve plans for, Automatic approves only in those, and the tooltip names the agent whose plans
+still wait. While a plan is approved automatically, an MCP tool your Claude
+allow rules name, in the project's settings or your own, runs without a prompt during planning,
+even one Claude's plan mode would ask about. A question the agent asks, and any tool you have not
+allowed, still wait. When no plan column on the route runs an agent Kangentic can approve plans
+for, the task shows Manual and Automatic is disabled. The control is there only while a plan column
+is still ahead of the task; once the task has passed it, or is in Done, it is gone. An agent can
+set it too: `planApproval` on a task in `kangentic_save_workflow` or `kangentic_add_workflow_task`,
+and `kangentic_update_task` for a task already on the board. Without an Automation agent, or in a
+column with no agent, you drag the card on yourself.
 
 **When a step does not finish.** A running workflow stops a task only for a decision that only you
 can make. When a turn ends with the step not done, the Automation agent also judges why it stopped:

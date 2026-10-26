@@ -67,6 +67,7 @@ export function plannedAsTask(viewTask: WorkflowViewTask): Task {
     skipped_swimlane_ids: planned?.skipped_swimlane_ids ?? [],
     canvas_x: viewTask.canvasX,
     canvas_y: viewTask.canvasY,
+    plan_approval: planned?.plan_approval ?? null,
     attachment_count: 0,
     auto_command_state: null,
     auto_command_text: null,

@@ -128,13 +128,20 @@ describe('workflow operations', () => {
     expect(service.readWorkflow(context, 'home', workflow.id).tasks).toEqual([]);
   });
 
-  it('saves plan approval with the plan, and leaves it alone when the save does not name it', () => {
-    const created = service.createWorkflowWithPlan(context, 'home', {}, plan({ planApproval: 'automatic' }));
-    expect(created.plan_approval).toBe('automatic');
-    const resaved = service.savePlan(context, 'home', created.id, plan({ revision: created.revision }));
-    expect(resaved.plan_approval).toBe('automatic');
-    const cleared = service.savePlan(context, 'home', created.id, plan({ revision: resaved.revision, planApproval: null }));
-    expect(cleared.plan_approval).toBeNull();
+  it('saves a planned task\'s own plan approval with the plan, and Start carries it onto the task it creates', async () => {
+    // The seeded Planning column is Manual, so Automatic is an override worth storing.
+    const created = service.createWorkflowWithPlan(context, 'home', {}, {
+      tasks: [{ key: 'api', title: 'Budgets API', planApproval: 'automatic' }, { key: 'ui', title: 'Budgets UI' }],
+      links: [],
+    });
+    expect(created.draft?.tasks.map((task) => task.plan_approval)).toEqual(['automatic', null]);
+
+    await service.startWorkflow(context, 'home', created.id);
+
+    const started = service.readWorkflow(context, 'home', created.id);
+    const byTitle = new Map(started.tasks.map((task) => [task.title, task]));
+    expect(byTitle.get('Budgets API')?.planApproval).toMatchObject({ set: 'automatic', value: 'automatic' });
+    expect(byTitle.get('Budgets UI')?.planApproval).toMatchObject({ set: null, value: 'manual' });
   });
 
   it('refuses a save over a newer revision', () => {
@@ -350,6 +357,41 @@ describe('workflow operations', () => {
     expect(tasksOf('home').getById(existing.id)!.workflow_id).toBe(workflow.id);
   });
 
+  it('a board task taken in with its own plan approval keeps it on the task row, as a created task does', async () => {
+    // The seeded Planning column is Manual, so Automatic is an override that is stored.
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const existing = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
+    const workflow = service.createWorkflow('home', {});
+    const saved = service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'old', title: 'Already here', existingTask: String(existing.display_id), planApproval: 'automatic' }],
+      links: [],
+    });
+    // The controls: the plan holds it, and the board task carries nothing until Start joins it.
+    expect(saved.draft?.tasks[0].plan_approval).toBe('automatic');
+    expect(tasksOf('home').getById(existing.id)!.plan_approval).toBeNull();
+
+    await service.startWorkflow(context, 'home', workflow.id);
+
+    expect(tasksOf('home').getById(existing.id)!.plan_approval).toBe('automatic');
+  });
+
+  it('a board task taken in with no plan approval of its own joins following its plan columns', async () => {
+    // The pair of the test above: only a planned value reaches the row, so a
+    // Start that wrote one onto every taken-in task would fail here.
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const existing = tasksOf('home').create({ title: 'Already here', description: '', swimlane_id: todo.id });
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      tasks: [{ key: 'old', title: 'Already here', existingTask: String(existing.display_id) }],
+      links: [],
+    });
+
+    await service.startWorkflow(context, 'home', workflow.id);
+
+    expect(tasksOf('home').getById(existing.id)!.workflow_id).toBe(workflow.id);
+    expect(tasksOf('home').getById(existing.id)!.plan_approval).toBeNull();
+  });
+
   it('a board task taken in with its automations switch on joins with it cleared, and the board hears it only after the write', async () => {
     // Joining clears the switch (setWorkflowMembership) without bumping
     // updated_at. A paired phone re-reads its board on the board event, so the
@@ -514,6 +556,35 @@ describe('workflow operations', () => {
     const removed = service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) });
     expect(removed.workflow_id).toBeNull();
     expect(new TaskLinkRepository(harness.dbs.get('home') as Database.Database).listBlockersOf(ui.id)).toEqual([]);
+  });
+
+  it('releasing a started task clears its own plan approval with the rest of its membership', async () => {
+    // An ordinary task follows no workflow's plan columns, so a value left on
+    // the row would be read again the day the task joins another workflow.
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, plan());
+    await service.startWorkflow(context, 'home', workflow.id);
+    const ui = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets UI')!;
+    const api = tasksOf('home').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets API')!;
+    // Read raw, around the repository's narrowing.
+    const storedApproval = (taskId: string): unknown => {
+      const row = (harness.dbs.get('home') as Database.Database)
+        .prepare('SELECT plan_approval FROM tasks WHERE id = ?')
+        .get(taskId) as { plan_approval: unknown } | undefined;
+      return row === undefined ? 'no such row' : row.plan_approval;
+    };
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId: ui.id, projectId: 'home' }, 'automatic');
+    service.setTaskPlanApproval(context, 'home', workflow.id, { taskId: api.id, projectId: 'home' }, 'automatic');
+    // The control: both carry it before the release.
+    expect(storedApproval(ui.id)).toBe('automatic');
+    expect(storedApproval(api.id)).toBe('automatic');
+
+    service.removeFromWorkflow(context, 'home', workflow.id, { task: String(ui.display_id) });
+
+    expect(storedApproval(ui.id)).toBeNull();
+    expect(tasksOf('home').getById(ui.id)!.workflow_id).toBeNull();
+    // Only the released task: the one still in the workflow keeps its own value.
+    expect(storedApproval(api.id)).toBe('automatic');
   });
 
   it('removes a task\'s links before it clears the task\'s membership, so a failure between the two writes leaves a member with no links', async () => {

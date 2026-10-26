@@ -1,11 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskMoveProvenance, TaskWorkflowMembership, ArchivedTasksPreview, AutoCommandState, WorktreeSkipReason, PlanApproval } from '../../../shared/types';
 import { worktreeFolderUnderRoot } from '../../../shared/worktree-folder';
 import { devPortRepository } from './dev-port-repository';
 import { writeTransaction } from '../transaction';
 import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
+import { isPlanApproval } from '../../../shared/plan-approval';
 
 /**
  * Raw row from SQLite - labels and skipped columns stored as JSON strings, the
@@ -44,6 +45,7 @@ function rowToTask(row: TaskRow): Task {
     skipped_swimlane_ids: parseStringList(row.skipped_swimlane_ids),
     canvas_x: row.canvas_x ?? null,
     canvas_y: row.canvas_y ?? null,
+    plan_approval: isPlanApproval(row.plan_approval) ? row.plan_approval : null,
     automations_disabled: Boolean(row.automations_disabled),
   };
 }
@@ -123,7 +125,7 @@ export function applyProfileExclusivity(next: ExclusiveFields, requested: Partia
  */
 const WORKFLOW_COLUMNS = [
   'workflow_id', 'workflow_project_id', 'route_start_swimlane_id',
-  'route_last_swimlane_id', 'skipped_swimlane_ids', 'canvas_x', 'canvas_y',
+  'route_last_swimlane_id', 'skipped_swimlane_ids', 'canvas_x', 'canvas_y', 'plan_approval',
 ] as const;
 
 /** What a release writes: every workflow column, cleared. No `updated_at`, as for membership. */
@@ -443,6 +445,7 @@ export class TaskRepository {
       skipped_swimlane_ids: input.workflow?.skipped_swimlane_ids ?? [],
       canvas_x: input.workflow?.canvas_x ?? null,
       canvas_y: input.workflow?.canvas_y ?? null,
+      plan_approval: input.workflow?.plan_approval ?? null,
       attachment_count: 0,
       // A brand-new task has never run an auto_command. These four columns are
       // written only by `recordAutoCommandOutcome`, never by create/update.
@@ -513,6 +516,14 @@ export class TaskRepository {
   }
 
   /**
+   * A workflow task's own plan approval, or null to follow its plan columns.
+   * Same no-`updated_at` reasoning as the route: it is workflow state, not an edit.
+   */
+  setPlanApproval(taskId: string, planApproval: PlanApproval | null): void {
+    this.db.prepare('UPDATE tasks SET plan_approval = ? WHERE id = ?').run(planApproval, taskId);
+  }
+
+  /**
    * Every workflow a task on this board belongs to, archived tasks included,
    * as one covering read of `idx_tasks_workflow`. The engine asks it before
    * `listByWorkflow`, whose attachment count groups the whole attachments
@@ -569,6 +580,7 @@ export class TaskRepository {
       membership && membership.skipped_swimlane_ids.length > 0 ? JSON.stringify(membership.skipped_swimlane_ids) : null,
       membership?.canvas_x ?? null,
       membership?.canvas_y ?? null,
+      membership?.plan_approval ?? null,
       taskId,
     );
   }

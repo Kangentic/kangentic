@@ -2,13 +2,13 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import type { WorkflowCanvasPosition, WorkflowTaskInput } from '../../../shared/types';
 import { isPlanApproval } from '../../../shared/plan-approval';
+import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import type { IpcContext } from '../ipc-context';
 import {
   deleteWorkflow,
   pauseWorkflow,
   renameWorkflow,
   resumeWorkflow,
-  setWorkflowPlanApproval,
   startWorkflow,
   WorkflowRequestError,
 } from '../../workflows/workflow-service';
@@ -20,6 +20,7 @@ import {
   readWorkflowDetail,
   removeViewTask,
   setViewLink,
+  setViewPlanApproval,
   setViewPositions,
   setViewRoute,
   updatePlannedTask,
@@ -52,11 +53,11 @@ export function registerWorkflowHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.WORKFLOW_RENAME, (_, projectId: string, workflowId: string, title: string) =>
     renameWorkflow(context, projectId, workflowId, title));
 
-  ipcMain.handle(IPC.WORKFLOW_SET_PLAN_APPROVAL, (_, projectId: string, workflowId: string, planApproval: unknown) => {
+  ipcMain.handle(IPC.WORKFLOW_SET_TASK_PLAN_APPROVAL, (_, projectId: string, workflowId: string, key: string, planApproval: unknown) => {
     if (planApproval !== null && !isPlanApproval(planApproval)) {
-      throw new WorkflowRequestError('Plan approval must be "automatic", "manual", or null to follow the columns.');
+      throw new WorkflowRequestError(WORKFLOW_REFUSALS.planApprovalValue);
     }
-    setWorkflowPlanApproval(context, projectId, workflowId, planApproval);
+    setViewPlanApproval(context, projectId, workflowId, key, planApproval);
   });
 
   ipcMain.handle(IPC.WORKFLOW_DELETE, (_, projectId: string, workflowId: string) => {
