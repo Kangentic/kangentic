@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type { HostMemoryAgentPausedEvent, HostMemoryPressureEvent } from '../../shared/types';
+import { countStillPaused, notePausedOutcomes, type PausedAgentOutcome } from '../lib/paused-for-memory';
 import { useConfigStore } from './config-store';
+import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
 
 /**
@@ -13,10 +15,17 @@ import { useToastStore } from './toast-store';
  * - The PAUSED list: each agent low memory paused, one push per agent. The
  *   first raises a persistent toast ("Idle agent paused"); each later one
  *   updates that toast in place ("3 idle agents paused") rather than stacking
- *   another. Its Review button opens the list. Dismissing the toast clears the
- *   list, so the next pause after that starts again at 1. A resumed row stays
- *   in the list and reads Running. Recovery leaves the toast alone: the agents
- *   stay paused until the user resumes them, so what it says stays true.
+ *   another. Its Review button opens the list. The toast counts only the
+ *   agents still paused (`countStillPaused`), so it counts down in place as
+ *   agents come back by any route, or leave (moved to To Do, deleted), and
+ *   closes once none is still paused. What became of each agent is noted from
+ *   the session store as it happens (`pausedOutcomes`), so one that came back
+ *   and later stopped is not counted again. A resumed row stays in the list
+ *   and reads Running. The list clears once neither the toast nor Review shows
+ *   it (`keepListWhileShown`), so a dialog the user is looking at never
+ *   unmounts under them, and the next pause after that starts again at 1.
+ *   Recovery leaves the toast alone: the agents stay paused until the user
+ *   resumes them, so what it says stays true.
  *
  * There is no `load*`/`sync*` here (the truth is a push, not something to
  * re-fetch on HMR), so it needs no `vite:afterUpdate` registration.
@@ -47,6 +56,8 @@ const initialPausedAgents: HostMemoryAgentPausedEvent[] = import.meta.hot?.data?
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const initialPausedToastId: string | null = import.meta.hot?.data?.hostMemoryPausedToastId ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const initialPausedOutcomes: Record<string, PausedAgentOutcome> = import.meta.hot?.data?.hostMemoryPausedOutcomes ?? {};
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
 const initialReviewOpen: boolean = import.meta.hot?.data?.hostMemoryReviewOpen ?? false;
 
 interface HostMemoryState {
@@ -59,8 +70,12 @@ interface HostMemoryState {
    *  it can already be gone (dismissed by hand, evicted by `maxCount`, or the
    *  renderer reloaded). */
   pressureToastId: string | null;
-  /** Every agent low memory paused since the paused toast was raised. */
+  /** Every agent low memory paused since the paused toast was raised,
+   *  including those that came back (their rows read Running) or left. */
   pausedAgents: HostMemoryAgentPausedEvent[];
+  /** What became of each listed agent since its pause, by task id
+   *  (`notePausedOutcomes`). Cleared with the list. */
+  pausedOutcomes: Readonly<Record<string, PausedAgentOutcome>>;
   /** The paused toast, updated in place as more agents are paused. */
   pausedToastId: string | null;
   /** Whether the Review list is open. */
@@ -89,10 +104,21 @@ function openBehaviorSettings(): void {
   configStore.setSettingsOpen(true);
 }
 
+/**
+ * The list stands while its toast or the Review list shows it, and clears
+ * once neither does. The toast leaving and Review closing both end here, so
+ * neither has to know the other's half of the rule.
+ */
+function keepListWhileShown(next: { pausedToastId: string | null; reviewOpen: boolean }): Partial<HostMemoryState> {
+  if (next.pausedToastId !== null || next.reviewOpen) return next;
+  return { ...next, pausedAgents: [], pausedOutcomes: {} };
+}
+
 const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
   lastEvent: initialLastEvent,
   pressureToastId: initialPressureToastId,
   pausedAgents: initialPausedAgents,
+  pausedOutcomes: initialPausedOutcomes,
   pausedToastId: initialPausedToastId,
   reviewOpen: initialReviewOpen,
 
@@ -148,12 +174,17 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
     // One row per task: a task paused again (resumed, then paused once more)
     // moves its row rather than adding a second.
     const pausedAgents = [...get().pausedAgents.filter((entry) => entry.taskId !== event.taskId), event];
-    const copy = pausedToastCopy(pausedAgents.length);
+    // A task paused again is paused, whatever became of its last pause.
+    const { [event.taskId]: _previousOutcome, ...pausedOutcomes } = get().pausedOutcomes;
+    // The list can hold agents already back, so count what is still paused.
+    // That includes this one: no resume of its task can start before main
+    // sends its push.
+    const copy = pausedToastCopy(countStillPaused(pausedAgents, useSessionStore.getState().sessions, pausedOutcomes));
     const toastStore = useToastStore.getState();
     const existingToastId = get().pausedToastId;
     if (existingToastId !== null && toastStore.toasts.some((toast) => toast.id === existingToastId)) {
       toastStore.updateToast(existingToastId, { ...copy, since: event.pausedAt });
-      set({ pausedAgents });
+      set({ pausedAgents, pausedOutcomes });
       return;
     }
     const toastId = toastStore.addToast({
@@ -163,11 +194,11 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
       since: event.pausedAt,
       action: { label: 'Review', icon: 'review', onClick: () => useHostMemoryStore.getState().openReview() },
     });
-    set({ pausedAgents, pausedToastId: toastId });
+    set({ pausedAgents, pausedOutcomes, pausedToastId: toastId });
   },
 
   openReview: () => set({ reviewOpen: true }),
-  closeReview: () => set({ reviewOpen: false }),
+  closeReview: () => set(keepListWhileShown({ pausedToastId: get().pausedToastId, reviewOpen: false })),
 }));
 
 /** @see the Pattern E note above. */
@@ -177,14 +208,43 @@ const preservedHostMemoryStore: ReturnType<typeof createHostMemoryStore> | undef
 export const useHostMemoryStore = preservedHostMemoryStore ?? createHostMemoryStore();
 
 /**
- * Dismissing the paused toast clears the list it stands for. The toast store
- * has no dismiss callback, so this watches for the toast leaving the stack.
+ * The paused toast leaving, whether the user closed it or the session watch
+ * below took it down, clears the list it stands for unless Review still shows
+ * it (`keepListWhileShown`). The toast store has no dismiss callback, so this
+ * watches for the toast leaving the stack.
  */
 const unsubscribeToastWatch = useToastStore.subscribe((state) => {
-  const { pausedToastId } = useHostMemoryStore.getState();
+  const { pausedToastId, reviewOpen } = useHostMemoryStore.getState();
   if (pausedToastId === null) return;
   if (state.toasts.some((toast) => toast.id === pausedToastId)) return;
-  useHostMemoryStore.setState({ pausedAgents: [], pausedToastId: null, reviewOpen: false });
+  useHostMemoryStore.setState(keepListWhileShown({ pausedToastId: null, reviewOpen }));
+});
+
+/**
+ * Agents come back by many routes (the Review row, a card, a task window, a
+ * move), in any project, and every one lands in the session store, which is
+ * unscoped. So the outcomes are noted there, and the toast recounts: in place
+ * while some are still paused, and gone once none are.
+ */
+const unsubscribeSessionWatch = useSessionStore.subscribe((state, previousState) => {
+  // Usage and activity ticks change the store without touching `sessions`.
+  if (state.sessions === previousState.sessions) return;
+  const { pausedAgents, pausedOutcomes, pausedToastId } = useHostMemoryStore.getState();
+  if (pausedAgents.length === 0) return;
+  // Noted with the toast gone too: an open Review list still reads them.
+  const outcomes = notePausedOutcomes(pausedAgents, pausedOutcomes, state.sessions, previousState.sessions);
+  if (outcomes !== pausedOutcomes) useHostMemoryStore.setState({ pausedOutcomes: outcomes });
+  if (pausedToastId === null) return;
+  const toastStore = useToastStore.getState();
+  const toast = toastStore.toasts.find((candidate) => candidate.id === pausedToastId);
+  if (!toast) return;
+  const remaining = countStillPaused(pausedAgents, state.sessions, outcomes);
+  if (remaining === 0) {
+    toastStore.dismissToast(pausedToastId);
+    return;
+  }
+  const copy = pausedToastCopy(remaining);
+  if (toast.title !== copy.title) toastStore.updateToast(pausedToastId, copy);
 });
 
 // @ts-expect-error -- Vite handles import.meta.hot
@@ -192,10 +252,12 @@ if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
   import.meta.hot.dispose((data: Record<string, unknown>) => {
     unsubscribeToastWatch();
-    const { lastEvent, pressureToastId, pausedAgents, pausedToastId, reviewOpen } = useHostMemoryStore.getState();
+    unsubscribeSessionWatch();
+    const { lastEvent, pressureToastId, pausedAgents, pausedOutcomes, pausedToastId, reviewOpen } = useHostMemoryStore.getState();
     data.hostMemoryLastEvent = lastEvent;
     data.hostMemoryPressureToastId = pressureToastId;
     data.hostMemoryPausedAgents = pausedAgents;
+    data.hostMemoryPausedOutcomes = pausedOutcomes;
     data.hostMemoryPausedToastId = pausedToastId;
     data.hostMemoryReviewOpen = reviewOpen;
   });

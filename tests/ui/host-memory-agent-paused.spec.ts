@@ -9,8 +9,13 @@
  *   agents span projects, a Resume button per row.
  * - Resume brings the task back through the task's own Resume path and the
  *   row reads Running. A task that comes back by any other route reads Running
- *   too (the row watches the session store). A refused Resume toasts the card
- *   menu's own copy.
+ *   too (the row watches the session store), and keeps reading Running if the
+ *   agent stops later. A paused session the replica still lists as running does
+ *   not read Running, and a task paused again gets a fresh row. A refused
+ *   Resume toasts the card menu's own copy.
+ * - The toast counts only the agents still paused and closes once every one
+ *   is running again, by any route. With Review open the list stays, its rows
+ *   reading Running, until the user closes it.
  * - Memory recovering leaves the paused toast up: the agents stay paused.
  *
  * Each case owns its page.
@@ -24,7 +29,9 @@ test.describe.configure({ mode: 'parallel' });
 
 function pausedEvent(taskId: string, overrides: Partial<HostMemoryAgentPausedEvent> = {}): HostMemoryAgentPausedEvent {
   return {
-    pausedAt: new Date().toISOString(),
+    // A minute back, so a session a case starts now always starts after the
+    // pause, which is what counts its agent as running again.
+    pausedAt: new Date(Date.now() - 60_000).toISOString(),
     taskId,
     projectId: 'proj-1',
     taskTitle: `Task ${taskId}`,
@@ -43,6 +50,46 @@ async function firePaused(page: Page, event: HostMemoryAgentPausedEvent): Promis
     if (!window.__mockFireHostMemoryAgentPaused) throw new Error('window.__mockFireHostMemoryAgentPaused is not installed');
     window.__mockFireHostMemoryAgentPaused(payload);
   }, event);
+}
+
+/**
+ * A session for the task lands in the session store, as main's push puts it
+ * there when the task comes back by a route other than the Review list (its
+ * card, its window, a move). It starts now unless the case says otherwise.
+ */
+async function upsertSession(
+  page: Page,
+  session: { id: string; taskId: string; status: 'running' | 'suspended'; startedAt?: string },
+): Promise<void> {
+  await page.evaluate(({ id, taskId, status, startedAt }) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session: { getState: () => { upsertSession: (session: Record<string, unknown>) => void } } };
+    }).__zustandStores;
+    if (!stores) throw new Error('__zustandStores is not exposed');
+    stores.session.getState().upsertSession({
+      id,
+      taskId,
+      projectId: 'proj-9',
+      pid: 4242,
+      status,
+      shell: 'bash',
+      cwd: '/mock/paused-for-memory',
+      startedAt: startedAt ?? new Date().toISOString(),
+      exitCode: null,
+    });
+  }, session);
+}
+
+/**
+ * Waits until the page has painted what the store holds: two animation frames
+ * are enough for React to flush the updates the last call made. A case asserts
+ * that a row or a toast did NOT change, which `toHaveAttribute` and
+ * `toHaveText` would pass at once if they ran before the render.
+ */
+async function settleRender(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
 }
 
 test.describe('Agents paused for low memory', () => {
@@ -146,28 +193,11 @@ test.describe('Agents paused for low memory', () => {
 
       // Back through some other route (its card, its window, a move): the store
       // gains a session for the task. A PAUSED session is not Running...
-      const upsertSession = (status: 'suspended' | 'running') => page.evaluate((nextStatus) => {
-        const stores = (window as unknown as {
-          __zustandStores?: { session: { getState: () => { upsertSession: (session: Record<string, unknown>) => void } } };
-        }).__zustandStores;
-        if (!stores) throw new Error('__zustandStores is not exposed');
-        stores.session.getState().upsertSession({
-          id: 'sess-elsewhere',
-          taskId: 'task-1',
-          projectId: 'proj-9',
-          pid: 4242,
-          status: nextStatus,
-          shell: 'bash',
-          cwd: '/mock/paused-for-memory',
-          startedAt: new Date().toISOString(),
-          exitCode: null,
-        });
-      }, status);
-      await upsertSession('suspended');
+      await upsertSession(page, { id: 'sess-elsewhere', taskId: 'task-1', status: 'suspended' });
       await expect(row).toHaveAttribute('data-state', 'paused');
 
       // ...and the same session going live is.
-      await upsertSession('running');
+      await upsertSession(page, { id: 'sess-elsewhere', taskId: 'task-1', status: 'running' });
       await expect(row).toHaveAttribute('data-state', 'running');
       await expect(row.getByTestId('paused-for-memory-running')).toHaveText('Running');
       // The row of a task that did not come back is untouched.
@@ -175,6 +205,177 @@ test.describe('Agents paused for low memory', () => {
 
       const calls = await page.evaluate(() => (window as unknown as { __resumeCalls: unknown[][] }).__resumeCalls);
       expect(calls).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a task paused again gets a fresh row, so the earlier Resume click does not keep it Running', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Resume resolves with a session but pushes nothing into the session
+      // store, so the only thing that can read Running is this row's own click.
+      await page.evaluate(() => {
+        const sessions = window.electronAPI.sessions as unknown as {
+          resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<unknown>;
+        };
+        sessions.resume = async (taskId, _resumePrompt, projectId) => ({ id: 'sess-resumed', taskId, projectId, status: 'running' });
+      });
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9' }));
+      await page.getByTestId('toast-action').click();
+
+      const row = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-1"]');
+      await row.getByTestId('paused-for-memory-resume').click();
+      await expect(row).toHaveAttribute('data-state', 'running');
+
+      // The same task is paused again, later than the first pause. The Review
+      // list is still open, and rows are keyed by task and pause time.
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9', pausedAt: new Date().toISOString() }));
+
+      await expect(row).toHaveAttribute('data-state', 'paused');
+      await expect(row.getByTestId('paused-for-memory-resume')).toBeVisible();
+      await expect(row.getByTestId('paused-for-memory-running')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a paused session still listed as running does not read Running', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // The replica lists the paused session as running when the pause lands:
+      // it started two minutes back, before the pause the event stamps a
+      // minute back.
+      await upsertSession(page, {
+        id: 'sess-paused',
+        taskId: 'task-1',
+        status: 'running',
+        startedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      });
+      await firePaused(page, pausedEvent('task-1'));
+
+      const toast = page.getByTestId('toast');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Idle agent paused');
+      await toast.getByTestId('toast-action').click();
+
+      const row = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-1"]');
+      await expect(row).toHaveAttribute('data-state', 'paused');
+      await expect(row.getByTestId('paused-for-memory-resume')).toBeVisible();
+      await expect(row.getByTestId('paused-for-memory-running')).toHaveCount(0);
+      // Opening the list took nothing down.
+      await expect(toast.getByTestId('toast-title')).toHaveText('Idle agent paused');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a row keeps reading Running after its agent comes back and then stops', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9' }));
+      await firePaused(page, pausedEvent('task-2', { projectId: 'proj-9', waitedMs: 5 * 60_000 }));
+      const toast = page.getByTestId('toast');
+      await expect(toast.getByTestId('toast-title')).toHaveText('2 idle agents paused');
+      await toast.getByTestId('toast-action').click();
+
+      const row = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-1"]');
+      const otherRow = page.locator('[data-testid="paused-for-memory-row"][data-task-id="task-2"]');
+      await expect(row).toHaveAttribute('data-state', 'paused');
+
+      // Back through some route other than the Review list.
+      await upsertSession(page, { id: 'sess-elsewhere', taskId: 'task-1', status: 'running' });
+      await expect(row).toHaveAttribute('data-state', 'running');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Idle agent paused');
+
+      // The same session stops. Wait for the store to hold it and the page to
+      // paint, so the assertions below read the state after the stop.
+      await upsertSession(page, { id: 'sess-elsewhere', taskId: 'task-1', status: 'suspended' });
+      await expect.poll(() => page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session: { getState: () => { sessions: Array<{ id: string; status: string }> } } };
+        }).__zustandStores;
+        return stores?.session.getState().sessions.find((session) => session.id === 'sess-elsewhere')?.status;
+      })).toBe('suspended');
+      await settleRender(page);
+
+      // It came back once, so it is neither paused again nor counted again.
+      await expect(row).toHaveAttribute('data-state', 'running');
+      await expect(row.getByTestId('paused-for-memory-running')).toHaveText('Running');
+      await expect(toast.getByTestId('toast-title')).toHaveText('Idle agent paused');
+      // The other task is still paused.
+      await expect(otherRow).toHaveAttribute('data-state', 'paused');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the toast counts down as agents come back by any route, and closes once none is paused', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9' }));
+      await firePaused(page, pausedEvent('task-2', { projectId: 'proj-9' }));
+      const toast = page.getByTestId('toast');
+      await expect(toast.getByTestId('toast-title')).toHaveText('2 idle agents paused');
+
+      // Back through some route other than the Review list (its card, its
+      // window, a move): the store gains a running session for the task.
+      const upsertRunning = (taskId: string) => upsertSession(page, { id: `sess-${taskId}`, taskId, status: 'running' });
+
+      await upsertRunning('task-1');
+      await expect(toast).toHaveCount(1);
+      await expect(toast.getByTestId('toast-title')).toHaveText('Idle agent paused');
+      await expect(toast.getByTestId('toast-body')).toHaveText('Kangentic paused it to free memory.');
+
+      await upsertRunning('task-2');
+      await expect(toast).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with Review open, Resume on the last row takes the toast down and the list stays, reading Running', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      // Resume answers as main does: its session-changed push for the new
+      // session reaches the store, then the call resolves with that session.
+      await page.evaluate(() => {
+        const sessions = window.electronAPI.sessions as unknown as {
+          resume: (taskId: string, resumePrompt?: string, projectId?: string | null) => Promise<unknown>;
+        };
+        sessions.resume = async (taskId, _resumePrompt, projectId) => {
+          const session = {
+            id: 'sess-resumed',
+            taskId,
+            projectId,
+            pid: 4242,
+            status: 'running',
+            shell: 'bash',
+            cwd: '/mock/paused-for-memory',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: true,
+            agentSessionId: null,
+          };
+          const fireStatus = (window as unknown as { __mockFireStatus?: (sessionId: string, payload: unknown) => void }).__mockFireStatus;
+          if (!fireStatus) throw new Error('__mockFireStatus not installed (no onStatus subscriber?)');
+          fireStatus(session.id, session);
+          return session;
+        };
+      });
+      await firePaused(page, pausedEvent('task-1', { projectId: 'proj-9' }));
+      await page.getByTestId('toast-action').click();
+
+      const dialog = page.getByTestId('paused-for-memory-dialog');
+      const row = dialog.getByTestId('paused-for-memory-row');
+      await row.getByTestId('paused-for-memory-resume').click();
+
+      await expect(page.getByTestId('toast')).toHaveCount(0);
+      await expect(dialog).toBeVisible();
+      await expect(row).toHaveAttribute('data-state', 'running');
+      await expect(row.getByTestId('paused-for-memory-running')).toHaveText('Running');
+
+      await dialog.getByTestId('paused-for-memory-close').click();
+      await expect(dialog).toHaveCount(0);
     } finally {
       await browser.close();
     }

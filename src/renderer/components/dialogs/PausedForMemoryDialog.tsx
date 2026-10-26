@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { LoaderCircle, MemoryStick, Play } from 'lucide-react';
 import type { HostMemoryAgentPausedEvent } from '../../../shared/types';
-import { isLiveSessionStatus } from '../../../shared/session-liveness';
 import { BaseDialog } from './BaseDialog';
 import { ActivityMark } from '../ActivityMark';
 import { Tooltip } from '../Tooltip';
@@ -11,7 +10,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { useNow } from '../../hooks/useNow';
 import { formatDateTime, formatTimeAgo } from '../../lib/datetime';
 import { sessionToggleFailureToast } from '../../utils/session-toggle';
-import { orderPausedAgents, pausedRowDetail } from '../../lib/paused-for-memory';
+import { isPausedAgentRunning, orderPausedAgents, pausedRowDetail } from '../../lib/paused-for-memory';
 
 /** How often the header's age re-reads the clock; it shows whole minutes. */
 const AGE_TICK_MS = 30_000;
@@ -22,8 +21,12 @@ const AGE_TICK_MS = 30_000;
  * button. Resume is the task's own Resume path, in place, from any project,
  * without opening the task. Once the agent is back the row reads Running,
  * and so does a row whose task was resumed some other way (its card, its
- * window, a move). There is no Resume all: bringing every agent back at once
- * would refill the memory that was just freed.
+ * window, a move), and it keeps reading Running if the agent stops later. The
+ * row reads the outcome the store noted and `isPausedAgentRunning`, as the
+ * paused toast counts, so the toast is gone once every row reads Running
+ * while this list stays open until the user closes it. There is no Resume
+ * all: bringing every agent back at once would refill the memory that was
+ * just freed.
  */
 export function PausedForMemoryDialog() {
   const open = useHostMemoryStore((state) => state.reviewOpen);
@@ -70,8 +73,10 @@ function PausedForMemoryDialogBody({ entries, onClose }: { entries: HostMemoryAg
         <p className="mb-2 text-sm text-fg-muted">
           {single ? 'It stays paused until you resume it.' : 'They stay paused until you resume them.'}
         </p>
+        {/* Keyed by the pause too: a task paused again gets a fresh row, without
+            the earlier one's own-click Running. */}
         {ordered.map((entry) => (
-          <PausedAgentRow key={entry.taskId} entry={entry} showProject={spansProjects} />
+          <PausedAgentRow key={`${entry.taskId}:${entry.pausedAt}`} entry={entry} showProject={spansProjects} />
         ))}
       </div>
     </BaseDialog>
@@ -84,10 +89,10 @@ function PausedAgentRow({ entry, showProject }: { entry: HostMemoryAgentPausedEv
   const [resuming, setResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
   // Running however it came back: this Resume, its card, its window, a move.
-  const liveElsewhere = useSessionStore((state) => state.sessions.some(
-    (session) => session.taskId === entry.taskId && isLiveSessionStatus(session.status),
-  ));
-  const state: RowState = resumed || liveElsewhere ? 'running' : resuming ? 'resuming' : 'paused';
+  // `resumed` answers this row's own click before main's session push lands.
+  const cameBack = useHostMemoryStore((state) => state.pausedOutcomes[entry.taskId] === 'came-back');
+  const runningAgain = useSessionStore((state) => isPausedAgentRunning(entry, state.sessions));
+  const state: RowState = resumed || cameBack || runningAgain ? 'running' : resuming ? 'resuming' : 'paused';
 
   const resume = async (): Promise<void> => {
     setResuming(true);
