@@ -356,6 +356,11 @@ export type PtyHostEvent =
    *  because every write reaches the PTY here, in the order the PTY gets it).
    *  Null once the prompt looks empty. Main mirrors it for `getPendingDraft`. */
   | { type: 'promptDraft'; sessionId: string; draft: string | null }
+  /** The first write that carried a key or text from a human (`origin` 'user',
+   *  `writeCarriesUserContent`), once per session. A renderer's keystrokes reach
+   *  the host on its own port and never cross main, so main learns that the
+   *  session was used here. Main marks `Session.hasUserInput` from it. */
+  | { type: 'userInput'; sessionId: string }
   /** Output for a tapped session: every flushed slice, and the bytes a replay
    *  sample drained before they could flush. `endOffset` is the cumulative
    *  parser offset just past `data` (compare getSeedFrame's barrierOffset). */

@@ -370,10 +370,11 @@ describe('PtyHostCore', () => {
       fake.feed('echo of x');
       await vi.advanceTimersByTimeAsync(1);
       // The echo came back on the port on the next loop turn. Main heard only
-      // what carries no bytes: the draft changed and output happened.
+      // what carries no bytes: the draft changed, a human used the session
+      // (once) and output happened.
       expect(port.received).toEqual([{ type: 'data', sessionId: 'session-1', data: 'echo of x' }]);
       expect(events.filter((event) => !port.received.includes(event as FromPtyHostPortMessage)).map((event) => event.type))
-        .toEqual(['promptDraft', 'outputSeen']);
+        .toEqual(['promptDraft', 'userInput', 'outputSeen']);
     });
 
     it('sends each session\'s output only to the renderers that show it', async () => {
@@ -605,6 +606,42 @@ describe('PtyHostCore', () => {
       core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: '\r', origin: 'system' });
 
       expect(drafts()).toEqual(['instead', 'instead can', null]);
+    });
+
+    describe('tells main once that a human used the session', () => {
+      const userInputs = (events: HostOutput[]) => events.filter((event) => event.type === 'userInput');
+
+      it("never for xterm's own replies or injected keystrokes", () => {
+        const { core, events, port } = makeCore();
+        core.spawn(spawnParams());
+
+        port.send({ type: 'write', sessionId: 'session-1', data: '\x1b[?1;2c' }); // device attributes reply
+        port.send({ type: 'write', sessionId: 'session-1', data: '\x1b[24;80R' }); // cursor position report
+        port.send({ type: 'write', sessionId: 'session-1', data: '\x1b[I' }); // focus report
+        port.send({ type: 'write', sessionId: 'session-1', data: '\x1b[<0;10;5M' }); // a click into the pane
+        core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: '/model sonnet\r', origin: 'system' }); // a pill's command
+
+        expect(userInputs(events)).toEqual([]);
+      });
+
+      it('on the first typed key from a renderer port, and only that once', () => {
+        const { core, events, port } = makeCore();
+        core.spawn(spawnParams());
+
+        port.send({ type: 'write', sessionId: 'session-1', data: 'h' });
+        port.send({ type: 'write', sessionId: 'session-1', data: 'i' });
+
+        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1' }]);
+      });
+
+      it('on a user write main enqueues (dictation, the phone)', () => {
+        const { core, events } = makeCore();
+        core.spawn(spawnParams());
+
+        core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: 'dictated words', origin: 'user' });
+
+        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1' }]);
+      });
     });
 
     it('forgets a renderer\'s port when its end disconnects, but not a newer port for the same renderer', async () => {
