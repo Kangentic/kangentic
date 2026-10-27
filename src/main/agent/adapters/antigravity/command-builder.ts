@@ -7,9 +7,13 @@ import {
   buildHooks,
   deployWorkspaceBridgeCopy,
   spaceFreeAgentsToken,
+  wslAgentsHookCommand,
   type AntigravityHooksFile,
 } from './hook-manager';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import type { CliPlace, CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { prepareWslHookTransport } from '../../shared/wsl-hook-transport';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -46,12 +50,21 @@ export interface AntigravityCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * An agy installed in a WSL distro (`CommandOptions.cliTarget`): named by the
+   * path the distro sees, its hooks run the WSL hook transport's script, and
+   * on NAT networking its MCP plugin names the transport's stdio bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 export class AntigravityCommandBuilder {
   buildAntigravityCommand(options: AntigravityCommandOptions): string {
     const { shell } = options;
-    const parts = [quoteArg(options.agyPath, shell)];
+    // An agy in a WSL distro is started by the path the distro sees; the PTY's
+    // cwd reaches it as its `/mnt` path.
+    const place = options.cliTarget ?? null;
+    const parts = [quoteArg(place ? place.linuxCliPath : options.agyPath, shell)];
 
     // Side effects first: hooks.json (event bridge) and the MCP plugin dir.
     // Seed .git/info/exclude BEFORE the writes so the hooks.json
@@ -61,10 +74,11 @@ export class AntigravityCommandBuilder {
     // runs - which for the MCP plugin would commit the per-launch token.
     this.seedGitExcludes(options);
     if (options.eventsOutputPath) {
-      this.writeMergedHooks(options.cwd, options.eventsOutputPath);
+      this.writeMergedHooks(options.cwd, options.eventsOutputPath, place);
     }
     if (antigravityMcpWiringEnabled(options)) {
-      this.writeMcpPlugin(options.cwd, options.mcpServerUrl, options.mcpServerToken);
+      const server = this.kangenticServer(options, place);
+      if (server) this.writeMcpPlugin(options.cwd, server);
     }
 
     // Permission mode mapping onto agy's native autonomy flags
@@ -134,9 +148,22 @@ export class AntigravityCommandBuilder {
    * PTY silence timer (`hooks_and_pty`), and session-id capture falls back
    * to the shutdown-summary PTY scrape.
    */
-  private writeMergedHooks(cwd: string, eventsOutputPath: string): void {
-    const bridgeToken = deployWorkspaceBridgeCopy(cwd);
-    const eventsToken = spaceFreeAgentsToken(cwd, eventsOutputPath);
+  private writeMergedHooks(cwd: string, eventsOutputPath: string, place: CliPlace | null): void {
+    let bridgeToken: string | null;
+    let eventsToken: string | null;
+    let eventCommand: ((eventType: string, ...directives: string[]) => string) | undefined;
+    if (place) {
+      // An agy in a WSL distro may have no node: its hooks publish through the
+      // WSL hook transport, the session's script named by a space-free token.
+      // A failed write throws to the spawn's caller, as the other files do.
+      const scriptToken = spaceFreeAgentsToken(cwd, prepareWslHookTransport(path.dirname(eventsOutputPath)).script);
+      bridgeToken = scriptToken;
+      eventsToken = scriptToken;
+      if (scriptToken) eventCommand = (eventType, ...directives) => wslAgentsHookCommand(scriptToken, eventType, ...directives);
+    } else {
+      bridgeToken = deployWorkspaceBridgeCopy(cwd);
+      eventsToken = spaceFreeAgentsToken(cwd, eventsOutputPath);
+    }
     if (!bridgeToken || !eventsToken) {
       console.warn(
         '[antigravity] Skipping hook wiring (no space-free relative path available); '
@@ -156,7 +183,7 @@ export class AntigravityCommandBuilder {
       // No existing hooks file - start fresh.
     }
 
-    const merged = buildHooks(bridgeToken, eventsToken, existingRoot);
+    const merged = buildHooks(bridgeToken, eventsToken, existingRoot, eventCommand);
     try {
       fs.mkdirSync(path.dirname(hooksPath), { recursive: true });
       fs.writeFileSync(hooksPath, JSON.stringify(merged, null, 2));
@@ -212,8 +239,12 @@ export class AntigravityCommandBuilder {
    * plaintext on disk during the active session. Mitigations: tokens rotate
    * per app launch, and `removeHooks()` deletes the plugin dir on session
    * exit / suspend.
+   *
+   * For an agy in a WSL distro on NAT networking the entry is the WSL hook
+   * transport's stdio bridge (`command`, `args`, `env`), the token in the
+   * bridge's `env`, as plaintext as the header form above.
    */
-  private writeMcpPlugin(cwd: string, serverUrl: string, serverToken: string): void {
+  private writeMcpPlugin(cwd: string, server: KangenticMcpServer): void {
     const pluginDir = path.join(cwd, '.agents', 'plugins', 'kangentic');
     try {
       fs.mkdirSync(pluginDir, { recursive: true });
@@ -225,16 +256,41 @@ export class AntigravityCommandBuilder {
         path.join(pluginDir, 'mcp_config.json'),
         JSON.stringify({
           mcpServers: {
-            kangentic: {
-              serverUrl,
-              headers: { 'X-Kangentic-Token': serverToken },
-            },
+            kangentic: server.kind === 'stdio'
+              ? { command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } }
+              : { serverUrl: server.url, headers: { 'X-Kangentic-Token': server.token } },
           },
         }, null, 2),
       );
       console.log(`[antigravity] Wrote MCP plugin to ${pluginDir}`);
     } catch (error) {
       console.error(`[antigravity] Failed to write MCP plugin: ${pluginDir}`, error);
+    }
+  }
+
+  /**
+   * Kangentic's server for this session (`kangenticMcpServer`): the URL, or
+   * for an agy in a WSL distro on NAT networking the transport's bridge,
+   * prepared in the session's directory, whose relay the spawn attaches. Null
+   * for a distro build with no session directory, or a bridge that cannot be
+   * written: the session then runs without Kangentic's tools.
+   */
+  private kangenticServer(
+    options: AntigravityCommandOptions & { mcpServerUrl: string; mcpServerToken: string },
+    place: CliPlace | null,
+  ): KangenticMcpServer | null {
+    if (!place) return { kind: 'http', url: options.mcpServerUrl, token: options.mcpServerToken };
+    if (!options.eventsOutputPath) return null;
+    try {
+      return kangenticMcpServer({
+        url: options.mcpServerUrl,
+        token: options.mcpServerToken,
+        place,
+        directory: path.dirname(options.eventsOutputPath),
+      });
+    } catch (error) {
+      console.error('[antigravity] Could not prepare the WSL MCP bridge; the session runs without Kangentic tools', error);
+      return null;
     }
   }
 }

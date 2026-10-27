@@ -77,6 +77,19 @@ export function spaceFreeAgentsToken(cwd: string, absoluteTarget: string): strin
 }
 
 /**
+ * The event hook command for an agy installed in a WSL distro, which may have
+ * no node: `sh <script> event <type> <directives>`, naming the session's copy
+ * of the WSL hook transport's script by the same `.agents`-relative,
+ * space-free token the bridge gets, since agy splits a command on whitespace
+ * and keeps quotes literal. The script finds its folder from its own path.
+ * agy passes the payload on stdin, which the script's `event` mode reads.
+ * Directives are single tokens already (`directive-builders.ts`).
+ */
+export function wslAgentsHookCommand(scriptToken: string, eventType: string, ...directives: string[]): string {
+  return ['sh', scriptToken, 'event', eventType, ...directives].join(' ');
+}
+
+/**
  * Copy the deployed event-bridge script into `<cwd>/.kangentic/` so the hook
  * command can reference it space-free relative to `.agents/`. Checked on every
  * spawn and re-copied when it differs, so an app upgrade can never leave a
@@ -180,14 +193,20 @@ export function filterOurHooks(root: AntigravityHooksFile): AntigravityHooksFile
  *   tool-denied retry loop), and answering `allow` would bypass the CLI's
  *   own permission system. PostInvocation is skipped as pure noise (fires
  *   with PreInvocation's cadence, carries nothing Stop/Prompt do not).
+ *
+ * `eventCommand`, for an agy installed in a WSL distro, builds each command in
+ * place of `node <bridge> <events>` with the same event types and directives
+ * (`wslAgentsHookCommand`).
  */
 export function buildHooks(
   bridgeToken: string,
   eventsToken: string,
   existingRoot: AntigravityHooksFile,
+  eventCommand?: (eventType: string, ...directives: string[]) => string,
 ): AntigravityHooksFile {
-  const bridge = (eventType: string, ...directives: string[]): string =>
-    ['node', bridgeToken, eventsToken, eventType, ...directives].join(' ');
+  const bridge = (eventType: string, ...directives: string[]): string => (eventCommand
+    ? eventCommand(eventType, ...directives)
+    : ['node', bridgeToken, eventsToken, eventType, ...directives].join(' '));
 
   return {
     ...filterOurHooks(existingRoot),

@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { AgentCallUsage } from '../../../../shared/types';
 import type { AnswerStreamEvent } from '../../shared/cli-answer';
 import { antigravityDataRoot } from './data-paths';
+import type { CliPlace } from '../../shared/cli-target';
 
 interface AntigravityRecord {
   event?: unknown;
@@ -109,12 +110,12 @@ export function antigravityStreamUsage(stdout: string): AgentCallUsage | null {
  * transcript and any plan artifacts), its conversation database, its presence
  * lock, and the title agy writes for it under `annotations` (new in the CLI
  * measured 2026-10-13: `title:"..."`). An answer is not a conversation to
- * resume. Best-effort.
+ * resume. Best-effort. `place`: an agy in a WSL distro keeps it in the distro.
  */
-export async function removeAntigravityConversation(conversationId: string): Promise<void> {
+export async function removeAntigravityConversation(conversationId: string, place: CliPlace | null = null): Promise<void> {
   // A conversation id is a UUID; anything else is not a path to act on.
   if (!/^[0-9a-f-]{36}$/i.test(conversationId)) return;
-  const root = antigravityDataRoot();
+  const root = antigravityDataRoot(place);
   await Promise.all([
     path.join(root, 'brain', conversationId),
     path.join(root, 'conversations', `${conversationId}.db`),

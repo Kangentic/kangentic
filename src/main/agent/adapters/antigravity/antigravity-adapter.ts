@@ -18,6 +18,7 @@ import { runAntigravityPrint } from './print-runner';
 import { buildSummarizePrompt, cleanSummarizeOutput } from '../../shared/auto-name';
 import { forwardStreamLines, runCliPrintAnswer, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { antigravityAnswerEvents, antigravityConversationId, antigravityStreamUsage, removeAntigravityConversation } from './answer-stream';
 import type {
   AgentAdapter,
@@ -76,6 +77,8 @@ export class AntigravityAdapter implements AgentAdapter {
   // The literal URL and token go into the folder's
   // `.agents/plugins/kangentic/mcp_config.json`.
   readonly kangenticMcp = 'shared-folder' as const;
+  /** An agy installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   // Mapped onto agy's native autonomy flags in the command builder
   // (--mode plan / --mode accept-edits / --dangerously-skip-permissions;
   // no flag = agy's own "request-review" default).
@@ -107,15 +110,16 @@ export class AntigravityAdapter implements AgentAdapter {
     return discoverAntigravityCapabilities(cliPath, forceRefresh);
   }
 
-  async ensureTrust(workingDirectory: string): Promise<void> {
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // Pre-seeding `trustedWorkspaces` skips the TUI's first-run workspace
-    // trust confirmation, which would otherwise block an automated spawn.
-    await ensureWorkspaceTrust(workingDirectory);
+    // trust confirmation, which would otherwise block an automated spawn. An
+    // agy in a WSL distro is trusted in the distro's settings.
+    await ensureWorkspaceTrust(workingDirectory, place ?? null);
   }
 
   /** Symmetric cleanup so trustedWorkspaces does not grow a dead entry per task. */
-  async onWorktreeRemoved(worktreePath: string): Promise<void> {
-    await removeWorkspaceTrust(worktreePath);
+  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
+    await removeWorkspaceTrust(worktreePath, place ?? null);
   }
 
   /** Trust + `-c` continuity follow a moved project/worktree path. */
@@ -186,24 +190,29 @@ export class AntigravityAdapter implements AgentAdapter {
     return data.length > 0;
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, _cwd: string): Promise<string | null> {
+  async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
     // The brain-dir transcript appears when the first turn starts; poll
     // briefly since callers locate right after id capture.
     for (let attempt = 0; attempt < 10; attempt++) {
-      const located = locateAntigravityTranscriptFile(agentSessionId);
+      const located = locateAntigravityTranscriptFile(agentSessionId, place ?? null);
       if (located) return located;
       await sleep(500);
     }
     return null;
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    return parseAntigravityTranscript(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    return parseAntigravityTranscript(agentSessionId, cwd, place ?? null);
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(agentSessionId: string, _cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    return readAntigravityTranscriptPage(agentSessionId, antigravityTranscriptPath(agentSessionId), request);
+  readTranscriptPage(
+    agentSessionId: string,
+    _cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    return readAntigravityTranscriptPage(agentSessionId, antigravityTranscriptPath(agentSessionId, place ?? null), request);
   }
 
   /**
@@ -216,9 +225,10 @@ export class AntigravityAdapter implements AgentAdapter {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
     const transcriptPath = input.transcriptPath
-      ?? (input.agentSessionId ? antigravityTranscriptPath(input.agentSessionId) : null);
+      ?? (input.agentSessionId ? antigravityTranscriptPath(input.agentSessionId, input.place ?? null) : null);
     if (!transcriptPath || !fs.existsSync(transcriptPath)) return null;
 
     const parsed = await parseAntigravityTranscriptFile(transcriptPath);
@@ -256,7 +266,7 @@ export class AntigravityAdapter implements AgentAdapter {
     return async (context) => {
       if (context.type !== 'command-injection' || !context.agentSessionId) return false;
       const verifier = createAntigravityInjectionVerifier(
-        antigravityTranscriptPath(context.agentSessionId),
+        antigravityTranscriptPath(context.agentSessionId, placeFromStored(context.cliTarget)),
       );
       if (!verifier) return false;
       return verifier(context.text, context.sentAt ?? Date.now());
@@ -358,9 +368,12 @@ export class AntigravityAdapter implements AgentAdapter {
   ): Promise<string> {
     const onEvent = options?.onEvent;
     let conversationId: string | null = null;
+    // An agy installed in a WSL distro runs there, and its conversation is removed there.
+    const cliTarget = await resolveCliTarget(cliPath, true);
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model and effort flags are OMITTED when none is chosen: passing an
         // empty value is an error.
         args: [
@@ -389,7 +402,7 @@ export class AntigravityAdapter implements AgentAdapter {
         }),
       });
     } finally {
-      if (conversationId) await removeAntigravityConversation(conversationId);
+      if (conversationId) await removeAntigravityConversation(conversationId, cliTarget);
     }
   }
 

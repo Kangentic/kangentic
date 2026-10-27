@@ -9,6 +9,7 @@ import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { antigravityTranscriptPath } from './data-paths';
+import type { CliPlace } from '../../shared/cli-target';
 
 /** Antigravity uuids come from each step's own `step_index`, so nothing counts lines. */
 const UUIDS_NUMBER_LINES = false;
@@ -52,8 +53,8 @@ interface AntigravityStep {
  * exist (yet). Non-polling: callers that need to wait (the adapter's
  * locateSessionHistoryFile) poll around this.
  */
-export function locateAntigravityTranscriptFile(conversationId: string): string | null {
-  const transcriptPath = antigravityTranscriptPath(conversationId);
+export function locateAntigravityTranscriptFile(conversationId: string, place: CliPlace | null = null): string | null {
+  const transcriptPath = antigravityTranscriptPath(conversationId, place);
   return fs.existsSync(transcriptPath) ? transcriptPath : null;
 }
 
@@ -120,8 +121,9 @@ function decodeToolArgs(args: Record<string, unknown> | undefined): Record<strin
 export async function parseAntigravityTranscript(
   agentSessionId: string,
   _cwd: string,
+  place: CliPlace | null = null,
 ): Promise<ParsedTranscript> {
-  const sourcePath = locateAntigravityTranscriptFile(agentSessionId);
+  const sourcePath = locateAntigravityTranscriptFile(agentSessionId, place);
   if (!sourcePath) return { entries: [], sourcePath: null };
   return parseAntigravityTranscriptFile(sourcePath, agentSessionId);
 }

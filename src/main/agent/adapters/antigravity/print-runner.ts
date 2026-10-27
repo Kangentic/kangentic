@@ -32,6 +32,7 @@ import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
 import type { AgentCallUsage } from '../../../../shared/types';
 import { antigravityUsage, removeAntigravityConversation } from './answer-stream';
 import { ensureWorkspaceTrust } from './trust-manager';
+import { cliInvocationForTarget, resolveCliTarget } from '../../shared/cli-target';
 
 const PRINT_TIMEOUT_MS = 25_000;
 const OUTPUT_CAP_BYTES = 64 * 1024;
@@ -93,12 +94,16 @@ export async function runAntigravityPrint(
   flags: readonly string[] = [],
   onUsage?: (usage: AgentCallUsage) => void,
 ): Promise<string> {
+  // An agy installed in a WSL distro runs there: its hidden PTY starts
+  // `wsl.exe`, the scratch folder is trusted in the distro's store, and the
+  // conversation it leaves is removed from the distro.
+  const target = await resolveCliTarget(cliPath, true);
   const scratch = scratchDirectory();
   // sync-write-ok: this must throw, not degrade - the function docblock above
   // already documents that contract, and the summarize caller treats any
   // throw from this whole function as "auto-name unavailable".
   fs.mkdirSync(scratch, { recursive: true });
-  await ensureWorkspaceTrust(scratch);
+  await ensureWorkspaceTrust(scratch, target);
 
   // Newlines collapse to spaces: the prompt travels as one argv entry
   // through ConPTY's command-line reconstruction, where embedded CR/LF is
@@ -115,9 +120,15 @@ export async function runAntigravityPrint(
     env: childProcessEnv(),
   };
   const args = ['-p', flatPrompt, '--output-format', 'json', ...flags];
-  const printProcess = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)
-    ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, ...args], spawnOptions)
-    : await spawnOffMainPty(cliPath, args, spawnOptions);
+  let printProcess: Awaited<ReturnType<typeof spawnOffMainPty>>;
+  if (target) {
+    const invocation = cliInvocationForTarget(target, args);
+    printProcess = await spawnOffMainPty(invocation.file, invocation.args, { ...spawnOptions, env: childProcessEnv(invocation.env) });
+  } else {
+    printProcess = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cliPath)
+      ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, ...args], spawnOptions)
+      : await spawnOffMainPty(cliPath, args, spawnOptions);
+  }
 
   return new Promise<string>((resolve, reject) => {
     let output = '';
@@ -132,7 +143,7 @@ export async function runAntigravityPrint(
       // reported, and its conversation is still not one to resume.
       const result = extractPrintResult(output);
       if (result?.usage) onUsage?.(result.usage);
-      if (result?.conversationId) void removeAntigravityConversation(result.conversationId);
+      if (result?.conversationId) void removeAntigravityConversation(result.conversationId, target);
       if (error) {
         reject(error);
         return;

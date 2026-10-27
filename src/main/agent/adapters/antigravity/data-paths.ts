@@ -1,5 +1,5 @@
-import os from 'node:os';
 import path from 'node:path';
+import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
 
 /**
  * On-disk layout of the Antigravity CLI's data root, verified against agy
@@ -15,19 +15,22 @@ import path from 'node:path';
  *
  * `last_conversations.json` is written only at CLI exit; the transcript is
  * appended while the conversation runs.
+ *
+ * An agy installed in a WSL distro (`place`) keeps the same tree in the
+ * distro's home, reached through the distro's share.
  */
-export function antigravityDataRoot(): string {
-  return path.join(os.homedir(), '.gemini', 'antigravity-cli');
+export function antigravityDataRoot(place: CliPlace | null = null): string {
+  return path.join(cliHomeDir(place), '.gemini', 'antigravity-cli');
 }
 
 /** The CLI's own settings file, which carries the `trustedWorkspaces` trust store. */
-export function antigravitySettingsPath(): string {
-  return path.join(antigravityDataRoot(), 'settings.json');
+export function antigravitySettingsPath(place: CliPlace | null = null): string {
+  return path.join(antigravityDataRoot(place), 'settings.json');
 }
 
 /** Workspace-path -> most-recent-conversation-id map (what `agy -c` resumes). */
-export function antigravityLastConversationsPath(): string {
-  return path.join(antigravityDataRoot(), 'cache', 'last_conversations.json');
+export function antigravityLastConversationsPath(place: CliPlace | null = null): string {
+  return path.join(antigravityDataRoot(place), 'cache', 'last_conversations.json');
 }
 
 /**
@@ -35,9 +38,9 @@ export function antigravityLastConversationsPath(): string {
  * the CLI reports as `transcriptPath` in every hook payload (with the
  * `antigravity-cli` app-data segment; the IDE variants differ).
  */
-export function antigravityTranscriptPath(conversationId: string): string {
+export function antigravityTranscriptPath(conversationId: string, place: CliPlace | null = null): string {
   return path.join(
-    antigravityDataRoot(),
+    antigravityDataRoot(place),
     'brain',
     conversationId,
     '.system_generated',

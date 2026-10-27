@@ -166,7 +166,7 @@ describe('runAntigravityPrint conversation removal', () => {
     await expect(resultPromise).resolves.toBe('Fix the login timeout bug');
 
     expect(removeConversationMock).toHaveBeenCalledTimes(1);
-    expect(removeConversationMock).toHaveBeenCalledWith('a1b2c3');
+    expect(removeConversationMock).toHaveBeenCalledWith('a1b2c3', null);
   });
 
   it('removes it when the run printed no title', async () => {
@@ -179,7 +179,7 @@ describe('runAntigravityPrint conversation removal', () => {
     await expect(resultPromise).rejects.toThrow('no parseable response');
 
     expect(removeConversationMock).toHaveBeenCalledTimes(1);
-    expect(removeConversationMock).toHaveBeenCalledWith('d4e5f6');
+    expect(removeConversationMock).toHaveBeenCalledWith('d4e5f6', null);
   });
 
   it('removes it when the run times out after naming its conversation', async () => {
@@ -200,7 +200,7 @@ describe('runAntigravityPrint conversation removal', () => {
 
       await rejection;
       expect(removeConversationMock).toHaveBeenCalledTimes(1);
-      expect(removeConversationMock).toHaveBeenCalledWith('0a1b2c');
+      expect(removeConversationMock).toHaveBeenCalledWith('0a1b2c', null);
     } finally {
       vi.useRealTimers();
     }

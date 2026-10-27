@@ -36,6 +36,7 @@ export class AntigravityDetector extends AgentDetector {
         const trimmed = raw.trim();
         return /^\d/.test(trimmed) ? trimmed : null;
       },
+      supportsWslCli: true,
     });
   }
 }

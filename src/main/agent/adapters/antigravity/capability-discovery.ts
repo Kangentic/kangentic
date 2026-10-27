@@ -15,6 +15,7 @@
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -28,7 +29,9 @@ export function resetAntigravityCapabilityCacheForTests(): void {
   cache = null;
 }
 
-async function runCli(cliPath: string, args: string[], timeoutMs: number): Promise<string> {
+/** Run agy and return stdout. An agy installed in a WSL distro (`target`) runs there, through `wsl.exe`. */
+async function runCli(cliPath: string, args: string[], timeoutMs: number, target: CliTarget | null): Promise<string> {
+  if (target) return (await execCliForTarget(target, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 })).stdout;
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} ${args.join(' ')}`, {
       timeout: timeoutMs,
@@ -80,10 +83,14 @@ export async function discoverAntigravityCapabilities(
 ): Promise<AgentCapabilities> {
   if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
 
+  // A distro whose facts cannot be read cannot be asked either.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  if (target === undefined) return { supportsModelOverride: false, effortLevels: [] };
+
   let supportsModelOverride = false;
   let effortLevels: string[] = [];
   try {
-    const helpText = await runCli(cliPath, ['--help'], HELP_TIMEOUT_MS);
+    const helpText = await runCli(cliPath, ['--help'], HELP_TIMEOUT_MS, target);
     supportsModelOverride = /--model\s/.test(helpText);
     if (/--effort\s/.test(helpText)) effortLevels = ['low', 'medium', 'high'];
   } catch {
@@ -94,7 +101,7 @@ export async function discoverAntigravityCapabilities(
   let displayNames: Record<string, string> = {};
   if (supportsModelOverride) {
     try {
-      const parsed = parseModelsOutput(await runCli(cliPath, ['models'], MODELS_TIMEOUT_MS));
+      const parsed = parseModelsOutput(await runCli(cliPath, ['models'], MODELS_TIMEOUT_MS, target));
       models = parsed.models;
       displayNames = parsed.displayNames;
     } catch {
