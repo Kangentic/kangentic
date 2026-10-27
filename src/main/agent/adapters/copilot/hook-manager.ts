@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
 import { AgentTool, EventType } from '../../../../shared/types';
@@ -9,6 +8,7 @@ import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-
 import { backgroundLaunchDirective, backgroundStopDirectives, backgroundToolMatcher } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
+import { copilotHomeDir } from './copilot-home';
 
 /**
  * A single hook entry under one event in a Copilot hook config.
@@ -205,7 +205,7 @@ export interface CopilotSessionHookOptions {
  * Resolve the user's Copilot config directory (default: `~/.copilot`).
  */
 function userCopilotConfigDir(): string {
-  return path.join(os.homedir(), '.copilot');
+  return copilotHomeDir();
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

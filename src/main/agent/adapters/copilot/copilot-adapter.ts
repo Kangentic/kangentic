@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { CopilotDetector } from './detector';
@@ -17,6 +16,7 @@ import { sharedFolderKey } from '../../shared/shared-folder-holds';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import { copilotHomeDir } from './copilot-home';
 
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
@@ -352,7 +352,7 @@ export class CopilotAdapter implements AgentAdapter {
           : {}),
       });
     } finally {
-      await fs.promises.rm(path.join(os.homedir(), '.copilot', 'session-state', sessionId), { recursive: true, force: true })
+      await fs.promises.rm(path.join(copilotHomeDir(), 'session-state', sessionId), { recursive: true, force: true })
         .catch(() => undefined);
       if (strayConfigPath) await fs.promises.rm(strayConfigPath, { force: true }).catch(() => undefined);
     }

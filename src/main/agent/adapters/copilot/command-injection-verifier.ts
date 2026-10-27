@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import type { SubmissionContext, SubmissionVerifier } from '../../../../shared/types';
+import { copilotHomeDir } from './copilot-home';
 
 /**
  * Copilot's `command-injection` verifier. CONFIRM-ONLY.
@@ -65,7 +65,7 @@ export const COPILOT_HISTORY_FILE_NAME = 'command-history-state.json';
  * instead: 1.0.97 lists the file among the state that lives in the config home.
  */
 export function resolveCopilotHistoryPath(): string {
-  return path.join(os.homedir(), '.copilot', COPILOT_HISTORY_FILE_NAME);
+  return path.join(copilotHomeDir(), COPILOT_HISTORY_FILE_NAME);
 }
 
 /**
