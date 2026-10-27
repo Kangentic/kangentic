@@ -88,12 +88,16 @@ describe('worktreeViteConfig', () => {
     expect(ignored.every((pattern) => pattern.startsWith(PROJECT_DIR_FORWARD))).toBe(true);
   });
 
-  it('carries the Tailwind and React plugins', async () => {
+  it('carries the Tailwind, React and Lingui plugins', async () => {
     const config = await worktreeViteConfig(PROJECT_DIR, 5199);
     const flattened = config.plugins.flat(Infinity) as Array<{ name?: string }>;
     const names = flattened.map((plugin) => plugin.name ?? '');
     expect(names.some((name) => name.includes('tailwindcss'))).toBe(true);
     expect(names.some((name) => name.includes('react'))).toBe(true);
+    // The macro transform and the PO loader, then the dev-only catalog hot update.
+    expect(names).toContain('vite-plugin-lingui-macro-transform');
+    expect(names).toContain('vite-plugin-lingui-load-catalog');
+    expect(names).toContain('kangentic:lingui-catalog-hot-update');
   });
 
   it('builds the same cache-relevant config whatever port it is asked for', async () => {

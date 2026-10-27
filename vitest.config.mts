@@ -1,12 +1,17 @@
 // The extension is .mts, not .ts, because package.json sets no "type". Vite's config loader reads a
 // .ts config as CommonJS and warns on every run that its ESM syntax would not load natively.
 import { defineConfig } from 'vitest/config';
+import { lingui } from '@lingui/vite-plugin';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  // Lingui, as every renderer Vite config registers it: compiles the macros in the
+  // source under test and lets a test import a PO catalog. Pinned by
+  // tests/unit/vite-refresh-hook-signatures.test.ts.
+  plugins: [lingui({ macroTransform: true, configPath: path.join(configDir, 'lingui.config.ts') })],
   resolve: {
     // No existing alias precedent for @shared in this config (unit tests import
     // it via relative paths instead); this one is added specifically so
@@ -49,7 +54,10 @@ export default defineConfig({
     // node-api-floor.ts goes first: below Node-API 10 better-sqlite3 13
     // segfaults instead of failing, so the run stops there with a reason.
     globalSetup: ['tests/unit/helpers/node-api-floor.ts', 'tests/unit/helpers/unit-data-root.ts'],
-    setupFiles: ['tests/unit/helpers/isolate-data-dir.ts'],
+    // english-catalogs.ts loads the real English catalogs and activates English, the
+    // way the renderer does before its first render: tests pin the language through
+    // that, never through the machine's.
+    setupFiles: ['tests/unit/helpers/isolate-data-dir.ts', 'tests/unit/helpers/english-catalogs.ts'],
     // `tests/unit/**` runs by default via `npm run test:unit`.
     // `tests/integration/**` is opt-in - tests there hit real CLIs / file
     // system / network and only make sense to run on demand. They are

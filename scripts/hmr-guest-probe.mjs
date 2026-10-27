@@ -54,8 +54,10 @@
 import { createServer, createLogger } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { lingui } from '@lingui/vite-plugin';
 import { chromium } from '@playwright/test';
 import { refreshHookSignatures } from './vite-refresh-hook-signatures.mjs';
+import { linguiCatalogHotUpdate } from './vite-lingui-catalog-hmr.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -224,7 +226,13 @@ async function main() {
     root: projectRoot,
     cacheDir: path.join(projectRoot, '.kangentic', 'vite-cache-probe'),
     customLogger: capturingLogger,
-    plugins: [tailwindcss(), react(), ...(hookSignatures ? refreshHookSignatures() : [])],
+    plugins: [
+      tailwindcss(),
+      react(),
+      ...lingui({ macroTransform: true, configPath: path.join(projectRoot, 'lingui.config.ts') }),
+      ...(hookSignatures ? refreshHookSignatures() : []),
+      ...linguiCatalogHotUpdate(),
+    ],
     resolve: {
       alias: { '@shared': '/src/shared', '@kangentic/protocol': '/packages/protocol/src' },
       preserveSymlinks: true,
@@ -364,9 +372,12 @@ async function main() {
     console.log(`[probe] edit written  : ${editFromRef} -> working tree`);
   } else {
     // The trigger: a comment-only edit. Nothing about the module's behavior changes.
+    // A PO catalog takes a `#` comment, at the top so it cannot attach to an entry.
     fs.writeFileSync(
       targetPath,
-      `${originalSource}\n// hmr-guest-probe touch ${Date.now()}\n`,
+      targetPath.endsWith('.po')
+        ? `# hmr-guest-probe touch ${Date.now()}\n${originalSource}`
+        : `${originalSource}\n// hmr-guest-probe touch ${Date.now()}\n`,
       'utf-8',
     );
     console.log('[probe] edit written  : comment-only append');

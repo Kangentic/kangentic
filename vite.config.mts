@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { lingui } from '@lingui/vite-plugin';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json' with { type: 'json' };
 import { refreshHookSignatures } from './scripts/vite-refresh-hook-signatures.mjs';
+import { linguiCatalogHotUpdate } from './scripts/vite-lingui-catalog-hmr.mjs';
 
 // fileURLToPath(import.meta.url) rather than a __dirname shim: this config is
 // bundled/evaluated as ESM.
@@ -142,9 +144,15 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     tailwindcss(),
     react(),
+    // Lingui: compiles the macros (<Trans>, msg) natively and each PO catalog to a
+    // module. Every renderer config registers it (vite-refresh-hook-signatures.test.ts).
+    ...lingui({ macroTransform: true, configPath: path.join(configDir, 'lingui.config.ts') }),
     // Dev-only: gives the renderer's custom hooks Fast Refresh signatures, so
     // a hook-list change remounts its caller instead of crashing it (#912).
     ...refreshHookSignatures(),
+    // Dev-only: an edited PO catalog updates the text in place instead of
+    // reloading the page and its Browser pane guests.
+    ...linguiCatalogHotUpdate(),
     ...(uploadSourcemaps && mode === 'production' ? resolveSentryVitePlugins() : []),
   ],
   resolve: {

@@ -8,6 +8,7 @@ import type {
   AnnouncementArchiveEntry,
   AnnouncementsChangedPayload,
 } from './announcements';
+import type { AppLocale } from './i18n/locales';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
 
 // === Database Models ===
@@ -4071,6 +4072,15 @@ export interface AppConfig {
    * lives in the Sentry escalation record, which is where it gets read.
    */
   graphicsAccelerationOffBy: 'app' | 'user' | null;
+  /**
+   * The display language (Settings > Language), unset until the user picks one.
+   * Unset runs in English. Main reads it once at startup
+   * (`resolveActiveLocale`): a change saves through
+   * `language.setLanguageAndRestart` and applies on the restart that follows,
+   * and a language this build does not ship starts in English.
+   * See docs/architecture/i18n.md.
+   */
+  displayLanguage?: AppLocale;
   diffViewMode: 'split' | 'inline'; // split = side-by-side, inline = unified
   diffDefaultScope: GitDiffScope; // default scope a freshly opened Changes panel uses
   diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
@@ -4640,6 +4650,13 @@ export interface AppConfig {
    *  Retirable (with its migration block) once no supported install can still predate the
    *  release that introduced it, like `hasMigratedWindowLightDismissDefault` above. */
   hasPurgedSeededDiscoveredModels: boolean;
+  /** One-shot marker for the first-launch language suggestion: true once the user
+   *  closed the toast that offers the OS language, answered its restart prompt, or
+   *  changed the display language in Settings. `computeLanguageSuggestion`
+   *  (`src/shared/i18n/locales.ts`) offers nothing after that. A separate marker
+   *  because `save()` writes the whole merged config, so whether
+   *  `displayLanguage` is present cannot say whether the user ever chose. */
+  hasAnsweredLanguageSuggestion: boolean;
   /** One-shot marker for the move to each platform's native terminal font, size and
    *  cursor (`terminal-native-defaults.ts`). `save()` writes the whole config and a
    *  persisted value beats the default, so an install that ran under the old shared
@@ -4786,6 +4803,18 @@ export type SerializedTileNode =
  */
 export interface ConfigSetResult {
   persisted: boolean;
+}
+
+/** What `language.getInfo` reports: the facts main decided at startup and from config. */
+export interface LanguageInfo {
+  /** The language this session runs in. */
+  locale: AppLocale;
+  /** The languages the picker offers (`SHIPPED_LOCALES`). */
+  shippedLocales: AppLocale[];
+  /** The OS language to offer once in the first-launch toast, or null for none
+   *  (`computeLanguageSuggestion`). Read from config on every call, so a toast the
+   *  user already answered does not come back on a renderer reload. */
+  suggestion: AppLocale | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -4939,6 +4968,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   hasMigratedWindowLightDismissDefault: false,
   hasMigratedNativeTerminalDefaults: false,
   hasPurgedSeededDiscoveredModels: false,
+  hasAnsweredLanguageSuggestion: false,
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,
@@ -8135,6 +8165,20 @@ export interface ElectronAPI {
   gpuHealth: {
     readStatus: () => Promise<GpuGraphicsStatus>;
     setAccelerationAndRestart: (enabled: boolean) => Promise<void>;
+  };
+
+  // Display language (Settings > Language). The language is chosen at startup
+  // and changes only through a restart, so the renderer never switches live.
+  language: {
+    /** The language this window runs in. Synchronous: main passes it on the
+     *  window's command line (`--kangentic-locale=`), so the renderer can load the
+     *  catalog before its first render, which config (loaded after it) cannot do. */
+    getBootLocale: () => AppLocale;
+    getInfo: () => Promise<LanguageInfo>;
+    /** Saves `displayLanguage`, marks the first-launch suggestion answered, and
+     *  restarts Kangentic through the normal quit. The promise may never settle:
+     *  the app quits. Rejects when the language does not ship or the save fails. */
+    setLanguageAndRestart: (locale: AppLocale) => Promise<void>;
   };
 
   // Announcements (remote feed; active = filtered for this client in main.

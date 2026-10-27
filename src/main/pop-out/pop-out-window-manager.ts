@@ -6,6 +6,7 @@ import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParam
 import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
 import { isErrorReportingActive } from '../analytics/error-reporting';
+import { localeArgument } from '../i18n/main-i18n';
 
 const BOUNDS_SAVE_DEBOUNCE_MS = 500;
 
@@ -154,6 +155,9 @@ export class PopOutWindowManager {
           // window factory that omits it silently disables renderer Sentry
           // for every window it creates.
           ...(isErrorReportingActive() ? ['--kangentic-error-reporting'] : []),
+          // Mirrors createWindow() too: the pop-out renders in the session's
+          // language from its first frame.
+          localeArgument(),
         ],
       },
     });

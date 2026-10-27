@@ -14,6 +14,7 @@
  */
 
 import { useState } from 'react';
+import { Plural } from '@lingui/react/macro';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
 
@@ -44,6 +45,8 @@ export function KnowledgeGraphSourceRows({
   };
 
   if (collapsed && !expanded) {
+    // Named, so the translator reads `{taskCount, plural, ...}` rather than `{0, ...}`.
+    const taskCount = rows.length;
     return (
       <button
         type="button"
@@ -51,7 +54,7 @@ export function KnowledgeGraphSourceRows({
         className="self-start py-0.5 text-[11.5px] text-fg-muted hover:text-fg cursor-pointer"
         data-testid="knowledge-graph-chat-rows-collapsed"
       >
-        Show {rows.length} {rows.length === 1 ? 'task' : 'tasks'}
+        <Plural value={taskCount} one="Show # task" other="Show # tasks" />
       </button>
     );
   }

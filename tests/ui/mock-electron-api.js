@@ -442,6 +442,12 @@
     // true for the same reason: an established install has already run the one-shot
     // purge of seeded entries out of discoveredModelsByAgent (ConfigManager.load).
     hasPurgedSeededDiscoveredModels: true,
+    // Tests pin English through config, never through the machine's language: the
+    // display language is set, and the first-launch suggestion already answered, so
+    // no spec sees the language toast whatever OS runs it. A spec that wants the
+    // toast seeds window.__mockLanguageSuggestion and overrides these two.
+    displayLanguage: 'en',
+    hasAnsweredLanguageSuggestion: true,
     discoveredModelsByAgent: {},
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
@@ -5229,6 +5235,67 @@
         if (window.__mockGraphicsRestartHold === true) {
           return new Promise(function (resolve) {
             window.__mockGraphicsRestartHoldRelease = resolve;
+          });
+        }
+        return Promise.resolve();
+      },
+    },
+
+    // Display language. The real bridge reads the boot locale off the window's
+    // command line; the mock reads the config's displayLanguage, which is what
+    // main would have started in. getInfo mirrors readLanguageInfo: the shipped
+    // list is SHIPPED_LOCALES (['en']) unless a spec seeds
+    // window.__mockShippedLocales, and the suggestion is
+    // window.__mockLanguageSuggestion while the config has not answered it, and
+    // counts each call in window.__mockLanguageGetInfoCalls so a spec can tell a
+    // component that asked main from one that never did.
+    language: {
+      getBootLocale: function () {
+        return typeof config.displayLanguage === 'string' ? config.displayLanguage : 'en';
+      },
+      getInfo: async function () {
+        window.__mockLanguageGetInfoCalls = (window.__mockLanguageGetInfoCalls || 0) + 1;
+        var shippedLocales = Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales.slice() : ['en'];
+        var suggestion = config.hasAnsweredLanguageSuggestion === true
+          ? null
+          : (window.__mockLanguageSuggestion || null);
+        return {
+          locale: typeof config.displayLanguage === 'string' ? config.displayLanguage : 'en',
+          shippedLocales: shippedLocales,
+          suggestion: suggestion,
+        };
+      },
+      // The real handler saves and restarts. The mock records the request in
+      // window.__mockLanguageRestartRequests and applies the same config write.
+      // Like saveLanguageForRestart, it rejects a language that does not ship.
+      // Set window.__mockLanguageRestartRejects = true to simulate a failed save.
+      // Test hook: set window.__mockLanguageRestartHold = true to hold each call
+      // pending after it is recorded, so a spec can drive a second confirm (a
+      // second Enter, a second click) while the first is still in flight, the way
+      // useLanguageRestart's restartInFlightRef guard is meant to be exercised,
+      // as __mockGraphicsRestartHold does for the Graphics restart. Calling
+      // window.__mockLanguageRestartHoldRelease() resolves every held call. With
+      // the hold unset the call resolves immediately.
+      setLanguageAndRestart: function (locale) {
+        var shipped = Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales : ['en'];
+        if (shipped.indexOf(locale) === -1) {
+          return Promise.reject(new Error('mock language.setLanguageAndRestart: ' + locale + ' does not ship'));
+        }
+        if (window.__mockLanguageRestartRejects === true) {
+          return Promise.reject(new Error('mock language.setLanguageAndRestart rejection'));
+        }
+        if (!Array.isArray(window.__mockLanguageRestartRequests)) window.__mockLanguageRestartRequests = [];
+        window.__mockLanguageRestartRequests.push(locale);
+        config = deepMerge(config, { displayLanguage: locale, hasAnsweredLanguageSuggestion: true });
+        if (window.__mockLanguageRestartHold === true) {
+          return new Promise(function (resolve) {
+            if (!Array.isArray(window.__mockLanguageRestartHeld)) window.__mockLanguageRestartHeld = [];
+            window.__mockLanguageRestartHeld.push(resolve);
+            window.__mockLanguageRestartHoldRelease = function () {
+              var held = window.__mockLanguageRestartHeld;
+              window.__mockLanguageRestartHeld = [];
+              held.forEach(function (release) { release(); });
+            };
           });
         }
         return Promise.resolve();

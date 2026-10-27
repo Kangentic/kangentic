@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ChevronDown, X } from 'lucide-react';
+import { Check, ChevronDown, X } from 'lucide-react';
 import { newerModelFor, planModelPickerRows, type ModelDisplayGroup } from '../../../shared/model-id';
 import type { ModelAliasOption } from '../../../shared/types';
 import {
@@ -402,11 +402,16 @@ export function ModelCombobox({
       </span>
     ) : null;
 
+  // The current row's mark, at the row's end after its 1M chip and hints, as
+  // Combobox, ColumnPicker and AutomationTypePicker draw it.
+  const currentRowCheck = <Check size={14} className="mr-3 shrink-0 text-accent" />;
+
   // One floating alias: its bare family name in a fixed-width column so the
   // resolved versions line up, then the version it runs today, muted. No 1M
   // chip and no context badge: an alias names a family, not a window.
   const renderAliasRow = (alias: ModelAliasOption) => {
     const row = aliasRowView(alias, modelAliases, modelDisplayNames);
+    const isSelected = alias.id === value;
     return (
       <div key={alias.id} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
         {/* No `data-model-id` here: an alias row is selected by `data-model-alias`, so a spec
@@ -414,6 +419,8 @@ export function ModelCombobox({
         <Tooltip label={row.title}>
           <button
             type="button"
+            role="option"
+            aria-selected={isSelected}
             data-model-option
             data-model-alias={alias.id}
             onClick={() => handleSelectModel(alias.id)}
@@ -428,6 +435,7 @@ export function ModelCombobox({
             )}
           </button>
         </Tooltip>
+        {isSelected && currentRowCheck}
       </div>
     );
   };
@@ -443,11 +451,15 @@ export function ModelCombobox({
     // `[1m]` chip is suppressed, and everything else uses the
     // telemetry-learned window (absent -> none).
     const contextLabel = modelContextBadgeLabel(group, contextWindows);
+    const isPrimarySelected = group.primaryId === value;
+    const isOneMillionSelected = oneMillionId !== null && oneMillionId === value;
     return (
       <div key={group.primaryId} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
         <Tooltip label={group.primaryId}>
           <button
             type="button"
+            role="option"
+            aria-selected={isPrimarySelected}
             data-model-option
             data-model-id={group.primaryId}
             onClick={() => handleSelectModel(group.primaryId)}
@@ -474,6 +486,8 @@ export function ModelCombobox({
           <Tooltip label={oneMillionId}>
             <button
               type="button"
+              role="option"
+              aria-selected={isOneMillionSelected}
               data-model-1m
               data-model-id={oneMillionId}
               onClick={() => handleSelectModel(oneMillionId)}
@@ -484,6 +498,7 @@ export function ModelCombobox({
             </button>
           </Tooltip>
         )}
+        {(isPrimarySelected || isOneMillionSelected) && currentRowCheck}
       </div>
     );
   };
@@ -551,6 +566,7 @@ export function ModelCombobox({
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-[min(16rem,var(--popover-available-height,16rem))] overflow-y-auto"
+        role="listbox"
         data-testid={`${testId}-menu`}
       >
         {hasAnyRow ? (
@@ -594,6 +610,8 @@ export function ModelCombobox({
                       <Tooltip key={row.id} label={row.id}>
                         <button
                           type="button"
+                          role="option"
+                          aria-selected={row.id === value}
                           data-model-option
                           data-model-pinned-option
                           data-model-id={row.id}
@@ -601,8 +619,9 @@ export function ModelCombobox({
                           onKeyDown={handleOptionKeyDown}
                           className="w-full flex items-center text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors"
                         >
-                          <span className="truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
+                          <span className="min-w-0 flex-1 truncate">{modelRowLabel(row.id, modelDisplayNames)}</span>
                           {renderNewerHint([row.id])}
+                          {row.id === value && <Check size={14} className="ml-2 shrink-0 text-accent" />}
                         </button>
                       </Tooltip>
                     ),

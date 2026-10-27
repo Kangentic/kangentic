@@ -10,7 +10,14 @@
  * This is a distinct system from src/shared/template-vars.ts, which resolves
  * Shortcut command variables ({{cwd}}, {{branchName}}, {{taskTitle}},
  * {{projectPath}}) and is unrelated to task template interpolation.
+ *
+ * A `description` is user-facing copy, translated through Lingui's runtime macro
+ * (main bundles this module with plain esbuild). Literal `{{keyword}}` text in one
+ * is ICU syntax, so it is quoted: `'{{task_xml}}'` renders `{{task_xml}}`.
+ * Keyword names and chips stay English: they are template syntax.
  */
+import { msg } from '@lingui/core/runtime-macro';
+import type { LocalizedText } from './i18n/text';
 
 /**
  * The prompt template a fresh spawn uses when no `spawn_agent` action supplies
@@ -102,7 +109,8 @@ const WORKFLOW_AGENT_ONLY: readonly TaskTemplateContextName[] = ['workflow'];
 export interface TaskTemplateVarInfo {
   name: TaskTemplateVarName;
   chip: string;
-  description: string;
+  /** Resolve it where it renders (`translateText`). */
+  description: LocalizedText;
   contexts: readonly TaskTemplateContextName[];
   /**
    * Shown by the picker under a value that is USUALLY empty, so nobody reaches
@@ -116,7 +124,7 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'task_xml',
     chip: '{{task_xml}}',
-    description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{workflow_xml}}{{attachments}}.',
+    description: msg`Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is '{{task_xml}}{{workflow_xml}}{{attachments}}'.`,
     contexts: EVERYWHERE,
   },
   {

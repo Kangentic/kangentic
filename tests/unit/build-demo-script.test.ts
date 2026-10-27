@@ -149,7 +149,13 @@ describe('scripts/build-demo.js', { timeout: 30_000 }, () => {
     return run.capture;
   }
 
-  /** The real script with one piece cut out, written where its own `..` resolves to the sandbox. */
+  /**
+   * The real script with one piece cut out, written where its own `..` resolves to the sandbox.
+   * Beside it, a no-op stand-in for the i18n catalog gate it requires: the sandbox has no
+   * node_modules for the real one to find the Lingui CLI in, and these cases are about the
+   * Vite spawn. The real-script cases above run the real gate (its spawns are recorded too,
+   * and the Vite spawn, the last one, is the capture they read).
+   */
   function writeMutatedScript(caseName: string, needle: string, replacement: string): string {
     const original = fs.readFileSync(BUILD_DEMO_SOURCE_PATH, 'utf8');
     if (!original.includes(needle)) {
@@ -159,6 +165,10 @@ describe('scripts/build-demo.js', { timeout: 30_000 }, () => {
     fs.mkdirSync(scriptsDirectory, { recursive: true });
     const scriptPath = path.join(scriptsDirectory, 'build-demo.js');
     fs.writeFileSync(scriptPath, original.split(needle).join(replacement));
+    fs.writeFileSync(
+      path.join(scriptsDirectory, 'i18n-catalogs.js'),
+      'module.exports = { assertNodeSupportsLingui() {}, checkCatalogs() {} };\n',
+    );
     return scriptPath;
   }
 

@@ -52,6 +52,7 @@ src/
     hooks/        # useTerminal
     stores/       # Zustand stores (board, config, project, session)
   shared/         # Types and IPC channel constants
+  locales/        # Lingui PO catalogs, one per area per locale (lingui.config.ts)
 tests/
   e2e/            # Playwright E2E tests
 scripts/          # Build and dev scripts
@@ -63,6 +64,8 @@ scripts/          # Build and dev scripts
 - `npm run build` - Production build to `.vite/build/`
 - `npm test` - Run all Playwright E2E tests
 
+- `npm run i18n:extract` - Update the PO catalogs after adding, changing or removing UI text;
+  `npm run i18n:check` is the gate CI and the release build run (`.claude/rules/i18n.md`)
 - `npm run package` - Package for distribution (unpacked directory)
 - `npm run make` - Build installer (NSIS on Windows, DMG on macOS, deb/rpm on Linux)
 - `npm run build:demo` - Build the renderer for a plain browser into `dist/demo/` (the web demo
@@ -272,6 +275,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `task-process-tag.md` - task PTYs carry `KANGENTIC_TASK_ID`; a terminal transition kills only tagged processes in the task's directories, never shared, visible or tmux ones; env text never leaves a reader.
 - `web-demo-parity.md` - the web build is the real renderer over the mock bridge; every `ElectronAPI` method has a mock.
 - `session-replica-contract.md` - the renderer session store is a replica of main's registry, and a removal is its own push.
+- `i18n.md` - UI text goes through Lingui: `.tsx` macros, `msg` plus `i18n._` in `.ts`, translated where it renders, agent text English, one PO file per area.
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.

@@ -36,8 +36,11 @@ function worktreeViteCacheDir(projectDir) {
 async function worktreeViteConfig(projectDir, port) {
   const tailwindcss = (await import('@tailwindcss/vite')).default;
   const react = (await import('@vitejs/plugin-react')).default;
+  const { lingui } = await import('@lingui/vite-plugin');
   // Kept in step with vite.config.mts; scripts/vite-refresh-hook-signatures.mjs says why.
   const { refreshHookSignatures } = await import('./vite-refresh-hook-signatures.mjs');
+  // Kept in step with vite.config.mts; scripts/vite-lingui-catalog-hmr.mjs says why.
+  const { linguiCatalogHotUpdate } = await import('./vite-lingui-catalog-hmr.mjs');
   // Ignore runtime dirs that Electron/Claude write into during the session.
   // vite.config.mts cannot be reused because its **/.kangentic/** pattern
   // matches every file in the worktree. Use absolute paths instead.
@@ -55,7 +58,13 @@ async function worktreeViteConfig(projectDir, port) {
     // Isolated dep cache; see worktreeViteCacheDir above. Never let a worktree
     // server share node_modules/.vite with the main checkout.
     cacheDir: viteCacheDir,
-    plugins: [tailwindcss(), react(), ...refreshHookSignatures()],
+    plugins: [
+      tailwindcss(),
+      react(),
+      ...lingui({ macroTransform: true, configPath: path.join(projectDir, 'lingui.config.ts') }),
+      ...refreshHookSignatures(),
+      ...linguiCatalogHotUpdate(),
+    ],
     resolve: {
       alias: { '@shared': '/src/shared', '@kangentic/protocol': '/packages/protocol/src' },
       preserveSymlinks: true,

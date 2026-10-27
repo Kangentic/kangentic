@@ -1,16 +1,19 @@
 /**
  * Shared formatting utilities for session metrics (cost, duration).
  */
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 
+/** "1h 30m", "4m 12s", "9s", with the unit letters from the active catalog. */
 export function formatDuration(milliseconds: number): string {
   const totalSeconds = Math.round(milliseconds / 1000);
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
 
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  if (hours > 0) return i18n._(msg`${{ hours }}h ${{ minutes }}m`);
+  if (minutes > 0) return i18n._(msg`${{ minutes }}m ${{ seconds }}s`);
+  return i18n._(msg`${{ seconds }}s`);
 }
 
 const SECOND_MS = 1000;

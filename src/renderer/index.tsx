@@ -1,6 +1,10 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import { App } from './App';
+import { activateLocale } from './i18n';
+import { SOURCE_LOCALE } from '../shared/i18n/locales';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
@@ -37,20 +41,39 @@ if (!document.querySelector('link[rel="icon"]')) {
 // the full app. See src/renderer/pop-out/ and src/shared/pop-out.ts.
 const popOutDescriptor = readPopOutDescriptor();
 
-const root = createRoot(document.getElementById('root')!);
-root.render(
-  <React.StrictMode>
-    {popOutDescriptor ? (
-      // Wrapped like the <App/> branch: PopOutSurfaceRoot resolves its surface and runs
-      // its bootstrap at the top of render (outside its own inner ErrorBoundary), so an
-      // unexpected descriptor would otherwise blank the window with no recovery UI.
-      <ErrorBoundary>
-        <PopOutSurfaceRoot descriptor={popOutDescriptor} />
-      </ErrorBoundary>
-    ) : (
-      <ErrorBoundary>
-        <App />
-      </ErrorBoundary>
-    )}
-  </React.StrictMode>
-);
+function render(): void {
+  const root = createRoot(document.getElementById('root')!);
+  root.render(
+    <React.StrictMode>
+      <I18nProvider i18n={i18n}>
+        {popOutDescriptor ? (
+          // Wrapped like the <App/> branch: PopOutSurfaceRoot resolves its surface and runs
+          // its bootstrap at the top of render (outside its own inner ErrorBoundary), so an
+          // unexpected descriptor would otherwise blank the window with no recovery UI.
+          <ErrorBoundary>
+            <PopOutSurfaceRoot descriptor={popOutDescriptor} />
+          </ErrorBoundary>
+        ) : (
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
+        )}
+      </I18nProvider>
+    </React.StrictMode>
+  );
+}
+
+// The session's language, which main passes on this window's command line (the
+// main window and every pop-out alike), loads before the first render. English is
+// already active, so English renders without waiting, and a language whose
+// catalog fails to load renders in English rather than not at all. `lang` lets the
+// browser pick the right glyphs for CJK text, where the same code point differs.
+const bootLocale = window.electronAPI?.language?.getBootLocale?.() ?? SOURCE_LOCALE;
+activateLocale(bootLocale)
+  .catch((error: unknown) => {
+    console.error(`[i18n] Could not load the ${bootLocale} catalog; rendering in English:`, error);
+  })
+  .finally(() => {
+    document.documentElement.lang = i18n.locale;
+    render();
+  });

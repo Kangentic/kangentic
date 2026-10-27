@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Settings
-description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer)."
+description: "Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer)."
 tags: [settings, tabs, git, notifications, dictation]
 sources:
   - resource: src/renderer/components/settings/settings-tabs.ts
@@ -14,7 +14,7 @@ Settings are accessed from two entry points, both opening the same unified panel
 - **App Settings** - click the gear icon in the title bar. Scoped to the currently active project (or, if none is open, only the shared System tabs appear).
 - **Project Settings** - click the gear icon on a project row in the sidebar. Opens the same panel scoped to that project, with a project switcher dropdown in the header to jump between projects.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Board through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. Tabs above the divider (General, Theme, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below it (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) are shared across all projects. The shared tabs are further grouped into Core (Language through Notifications, unlabeled), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). The Performance tab holds Graphics acceleration (see [Graphics failures](troubleshooting.md#graphics-failures)) and Animations, which moved there from Board because it applies to the whole app rather than the board. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)); the Theme tab holds the interface color-scheme picker. The Task tab (Card Density, Ticket Numbers, Context Bar) holds settings for how an individual task presents itself, split out from Board and Terminal. Terminal (shell, font, cursor style, colors) is a shared tab, not per-project: nobody wants a different font per project, and the shell setting in particular was never reliably project-scoped under the hood. When no project is open, only the shared tabs appear.
 
 ## Moving a project
 
@@ -25,6 +25,21 @@ Before the move, a confirmation dialog lists the project's active agent sessions
 A same-drive move is instant. Moving to a different drive copies the folder (a progress indicator shows the copy), then removes the original once the relocation has succeeded; if the original cannot be fully removed, the move still completes and a warning notes that the old copy remains.
 
 If a project's folder was moved or renamed outside Kangentic while the app was closed, you are instead prompted with **Project Folder Not Found** the next time you open it; click **Locate Folder...** to point Kangentic at the new location.
+
+## Language
+
+The Language tab (a shared setting, first in the list) holds one card, Display language, with a picker
+of the languages Kangentic ships. Each row shows the language's own name and its code, such as
+"English (en)", and the current one is checked. Only English ships today, so the picker has one row.
+
+Picking another language asks to restart: "Switch to {language}?" with Cancel and Restart now. Only
+Restart now saves the choice (`displayLanguage` in the global config), and Kangentic restarts with it.
+The language never switches without a restart. It covers menus, settings and dialogs. Agent output and
+terminal text keep their own language.
+
+Kangentic always starts in English. The first time you open it, if your operating system's language is
+one Kangentic ships and is not English, a toast offers to switch, with its title and button in that
+language. Closing the toast or answering the prompt ends the offer for good.
 
 ## Search
 

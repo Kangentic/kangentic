@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
 import { SETTINGS_REGISTRY } from '../../src/renderer/components/settings/settings-registry';
+import { englishText } from '../../src/shared/i18n/english';
 import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
 
 // Guards the settings card design (`.claude/rules/settings-card-design.md`).
@@ -47,7 +48,7 @@ const BASE_TILES = ['CardRow', 'CardToggleRow', 'CardChoiceRow', 'CardGroupTile'
 /** Components that render their children in place, so the scan looks through them. */
 const TRANSPARENT_WRAPPERS = new Set(['Fragment', 'React.Fragment', 'DndContext', 'SortableContext']);
 /** What a tab may render at its top level besides cards. */
-const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog']);
+const TAB_ROOT_EXTRAS = new Set(['ConfirmDialog', 'DevToolsSections', 'WorkflowAgentPromptDialog', 'LanguageRestartDialog']);
 
 /**
  * `CardTile`'s className is for layout inside the tile. A fill or padding there
@@ -79,7 +80,9 @@ interface Violation {
   found: string;
 }
 
-const registryDescriptions = new Map(SETTINGS_REGISTRY.map((entry) => [entry.id, entry.description]));
+// A registry description is a `msg` descriptor once its area is translated, so it
+// is resolved to the English the budgets measure before anything reads its length.
+const registryDescriptions = new Map(SETTINGS_REGISTRY.map((entry) => [entry.id, englishText(entry.description)]));
 
 function parse(fileLabel: string, source: string): ts.SourceFile {
   return ts.createSourceFile(fileLabel, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -404,6 +407,8 @@ describe('settings card design', () => {
 
   it('every description a card shows fits on one line', () => {
     const { descriptions } = scanRealSettings();
+    // A length read off anything but text is undefined, and `undefined > budget` passes.
+    expect(descriptions.filter((entry) => typeof entry.text !== 'string').map((entry) => entry.owner)).toEqual([]);
     const over = descriptions
       .filter((entry) => entry.text.length > DESCRIPTION_BUDGET[entry.context])
       .map((entry) => `${entry.file}:${entry.line} ${entry.owner}: ${entry.text.length} > ${DESCRIPTION_BUDGET[entry.context]} (${entry.context}) "${entry.text}"`);
@@ -432,6 +437,9 @@ describe('settings card design', () => {
     expect(owners).toContain('knowledgeGraph.enabled');
     expect(owners).toContain('"Project defaults"');
     expect(descriptions.some((entry) => entry.text === registryDescriptions.get('mobileBridge.relayMode'))).toBe(true);
+    // A descriptor-backed entry reaches the budgets as its English sentence, never a
+    // message ID or the descriptor itself.
+    expect(registryDescriptions.get('displayLanguage')).toMatch(/^Applies after a restart/);
     expect(owners).toContain('browserAutomation.allowInteraction');
     expect(descriptions.find((entry) => entry.owner === 'browserAutomation.restrictNavigationToLocalhost')?.context).toBe('nested_row');
     expect(owners.some((owner) => owner.endsWith('(unavailable)'))).toBe(true);

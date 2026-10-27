@@ -1,0 +1,46 @@
+msgid ""
+msgstr ""
+"POT-Creation-Date: 2026-10-27 12:10-0400\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: @lingui/cli\n"
+"Language: en\n"
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Change and restart"
+msgstr "Change and restart"
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Change the display language to {language}?"
+msgstr "Change the display language to {language}?"
+
+#: src/renderer/components/language/useLanguageRestart.ts
+msgid "Couldn't restart"
+msgstr "Couldn't restart"
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Kangentic restarts to change the language."
+msgstr "Kangentic restarts to change the language."
+
+#: src/renderer/components/language/useLanguageRestart.ts
+msgid "Restart Kangentic to apply the change."
+msgstr "Restart Kangentic to apply the change."
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Restart now"
+msgstr "Restart now"
+
+#: src/renderer/components/language/language-messages.ts
+msgctxt "Display language prompt"
+msgid "Switch to {language}?"
+msgstr "Switch to {language}?"

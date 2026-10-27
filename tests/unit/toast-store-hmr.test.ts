@@ -207,6 +207,21 @@ describe('toast-store HMR preservation', () => {
     expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 
+  // onDismiss records a user's answer (the first-launch language suggestion reads a
+  // closed card as "do not ask again"), so only the card's X may run it: ToastItem
+  // calls it there. A dismissal from code, such as the suggestion's own button
+  // closing the card before it opens its prompt, must not.
+  it('keeps a persistent toast\'s onDismiss and never runs it from dismissToast', () => {
+    const onDismiss = vi.fn();
+    const id = useToastStore.getState().addToast({ title: 'Toast', message: 'Persistent', persistent: true, onDismiss });
+    const stored = useToastStore.getState().toasts.find((toast: Toast) => toast.id === id);
+    expect(stored?.onDismiss).toBe(onDismiss);
+
+    useToastStore.getState().dismissToast(id);
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it('addToast enforces maxCount from config (capped at 5)', () => {
     for (let index = 0; index < 7; index++) {
       useToastStore.getState().addToast({ title: 'Toast', message: `Toast ${index}` });

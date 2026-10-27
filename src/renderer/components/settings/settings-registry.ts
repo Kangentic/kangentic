@@ -1,5 +1,8 @@
+import { msg } from '@lingui/core/runtime-macro';
 import { NAMED_THEMES } from '../../../shared/types';
 import { AUTO_FETCH_INTERVAL_MS, PR_REFRESH_INTERVAL_MS } from '../../../shared/refresh-intervals';
+import type { LocalizedText } from '../../../shared/i18n/text';
+import { translateText } from '../../i18n/translate';
 import type { SettingScope } from './setting-scope';
 
 /** A cadence in whole minutes, as the copy below names it. */
@@ -16,15 +19,19 @@ export interface SettingDefinition {
   id: string;
   /** Tab this setting belongs to */
   tabId: string;
-  /** Display label */
-  label: string;
+  /**
+   * Display label. A `msg` descriptor (runtime macro) once its area is
+   * translated; read through `settingProps`, which resolves it.
+   */
+  label: LocalizedText;
   /** Short description */
-  description: string;
+  description: LocalizedText;
   /** Setting scope for panel filtering */
   scope: SettingScope;
   /** Section within the tab (e.g. 'Context Bar') */
-  section?: string;
-  /** Extra search keywords not in label/description */
+  section?: LocalizedText;
+  /** Extra search keywords not in label/description. English, never translated:
+   *  settings search matches them beside the translated text. */
   keywords?: string[];
 }
 
@@ -38,6 +45,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // Every theme's name is a keyword, so searching "peach" lands on the picker.
   // `dark` and `light` stay as words because no label carries them any more (Graphite, Paper).
   { id: 'theme', tabId: 'theme', label: 'Theme', description: 'Hover a tile to try it on the whole app, click to keep it.', scope: 'project', keywords: ['color', 'scheme', 'appearance', 'swatch', 'dark', 'light', 'kangentic', ...NAMED_THEMES.map((theme) => theme.label.toLowerCase())] },
+
+  // ── Language ──
+  // Saved and applied through a restart (language.setLanguageAndRestart), never a
+  // live switch. Keywords stay clear of Dictation's spoken "Language" row.
+  { id: 'displayLanguage', tabId: 'language', label: msg`Language`, description: msg`Applies after a restart, and does not change agent output or terminal text.`, scope: 'global', section: msg`Display language`, keywords: ['display language', 'interface', 'translation', 'translate', 'ui language', 'menus', 'restart'] },
 
   // ── Board ──
   { id: 'columnWidth', tabId: 'board', label: 'Column width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
@@ -283,7 +295,8 @@ export const PROJECT_TAB_GLOBALS: Record<string, string> = {
 
 /** Tab label lookup for search matching against tab names. Kept in sync with
  *  SETTINGS_TABS by tests/unit/settings-tab-scope-parity.test.ts. */
-export const TAB_LABELS: Record<string, string> = {
+export const TAB_LABELS: Record<string, LocalizedText> = {
+  language: msg`Language`,
   general: 'General',
   theme: 'Theme',
   agent: 'Agent',
@@ -308,9 +321,13 @@ export const TAB_LABELS: Record<string, string> = {
   developer: 'Developer',
 };
 
-/** A registry entry as props for a `SettingsCard` or a card row (`CardRow`, `CardToggleRow`, `CardChoiceRow`). */
+/**
+ * A registry entry as props for a `SettingsCard` or a card row (`CardRow`,
+ * `CardToggleRow`, `CardChoiceRow`), with its text in the session's language.
+ * Call it while rendering, never at module load, so it reads the active catalog.
+ */
 export function settingProps(id: string): { searchId: string; label: string; description: string } {
   const entry = SETTINGS_BY_ID[id];
   if (!entry) throw new Error(`Unknown setting ID: ${id}`);
-  return { searchId: entry.id, label: entry.label, description: entry.description };
+  return { searchId: entry.id, label: translateText(entry.label), description: translateText(entry.description) };
 }

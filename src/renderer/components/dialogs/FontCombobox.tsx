@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -229,27 +229,34 @@ export function FontCombobox({
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-[min(12rem,var(--popover-available-height,12rem))] overflow-y-auto py-1"
+        role="listbox"
         data-testid={`${testId}-menu`}
       >
         {filteredFonts.length > 0 ? (
-          filteredFonts.map((font) => (
-            // The full name of a font the menu's width may cut short.
-            <Tooltip key={font} label={font}>
-              <button
-                type="button"
-                data-font-option
-                data-testid={`${testId}-option-${font}`}
-                onClick={() => handleSelectFont(font)}
-                onKeyDown={handleOptionKeyDown}
-                style={{ fontFamily: font }}
-                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
-                  font === value ? 'text-fg font-medium' : 'text-fg-muted'
-                }`}
-              >
-                {font}
-              </button>
-            </Tooltip>
-          ))
+          filteredFonts.map((font) => {
+            const isSelected = font === value;
+            return (
+              // The full name of a font the menu's width may cut short.
+              <Tooltip key={font} label={font}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  data-font-option
+                  data-testid={`${testId}-option-${font}`}
+                  onClick={() => handleSelectFont(font)}
+                  onKeyDown={handleOptionKeyDown}
+                  className={`flex w-full items-center gap-2 text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors ${
+                    isSelected ? 'text-fg font-medium' : 'text-fg-muted'
+                  }`}
+                >
+                  {/* The row previews its own font; the check stays in the UI font. */}
+                  <span className="min-w-0 flex-1 truncate" style={{ fontFamily: font }}>{font}</span>
+                  {isSelected && <Check size={14} className="shrink-0 text-accent" />}
+                </button>
+              </Tooltip>
+            );
+          })
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>
         )}
