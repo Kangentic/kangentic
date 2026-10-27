@@ -11,6 +11,7 @@ sources:
   - resource: src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs
   - resource: src/main/agent/adapters/opencode/session-history-parser.ts
   - resource: src/main/agent/adapters/opencode/remote-client.ts
+  - resource: src/main/agent/adapters/opencode/distro-sessions.ts
 ---
 # OpenCode
 
@@ -52,6 +53,19 @@ Not caller-owned (`supportsCallerSessionId = false`). Two capture pathways run c
 
 - **`sessionId.fromOutput`:** `SessionIdScanner` strips ANSI escapes from each PTY chunk and matches against `(?:session(?:[ _-]?id)?|sid)` and `--session` flag forms. Accepts both OpenCode's native `ses_<16-64 alphanumeric>` shape (verified empirically on v1.14.25, e.g. `ses_2349b5c91ffeKd6qajuUTR4clq`) and canonical UUID format.
 - **`sessionId.fromFilesystem`:** Polls the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` (read-only, WAL-friendly handle) for a `session` row whose `directory` equals the spawn cwd and whose `time_created` falls within `[spawnedAt - 5s, spawnedAt + 30s]`. Polls every 500 ms for up to ~10 s. Direct DB read avoids ~200-500 ms `opencode` CLI spin-up per poll, and avoids the Windows `child_process.execFile` rejection of `.cmd` shims.
+
+## WSL
+
+An OpenCode installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`, for the curl installer `~/.opencode/bin/opencode`). Name that binary itself: a distro whose PATH also reaches a Windows `npm` install resolves a bare `opencode` to the Windows shim through interop. The session starts the binary's Linux path in a `wsl -d <distro>` shell.
+
+- **Activity plugin:** unchanged. It is a file in the project, which the distro reads at its `/mnt` path, and the spawn lists `KANGENTIC_EVENTS_PATH` in `WSLENV` with `/up`, so the plugin appends to `events.jsonl` at the path the distro sees. One OpenCode process is that file's only writer, as on Windows.
+- **MCP:** `OPENCODE_CONFIG_CONTENT` crosses into the distro through `WSLENV`. On mirrored networking it holds the `remote` entry. On NAT networking it holds the WSL hook transport's bridge as a `local` entry, `{"type": "local", "command": ["sh", <script>, "mcp", <url>], "environment": {"KANGENTIC_MCP_TOKEN": <token>}, "enabled": true}`, the shape OpenCode's MCP docs give a local server (`command` is the program and its arguments in one array).
+- **Sessions:** the distro's sessions are in the distro's `opencode.db`. Its WAL needs shared memory the share does not give a Windows reader, so Kangentic never opens it. It asks the distro's own CLI through `wsl.exe`, with `--pure` and the session's cwd (`distro-sessions.ts`). The session id comes from the plugin's hook first, else `opencode session list --format json` polled once a second for up to ten tries, matched on the distro's path of the cwd. The transcript is `opencode export <id>`, whose messages are the `{info, parts}` entries the remote mapper reads. The auto_command check exports the session too, one run per Enter where the local query takes under 100 ms. The Conversation viewer gets no pages and handoff no history file, as for a remote session. Running the CLI after the session needs its path, so a session row's `cli_target` keeps `linuxCliPath`. A row from before that reads as no transcript.
+- **Sign-in:** `probeAuth` reads `auth.json` under the distro's own `XDG_DATA_HOME`, else its `~/.local/share/opencode/`.
+- **Other runs:** `--help` and a Knowledge Graph answer run through `wsl.exe`, and the answer's session is deleted there. An answer whose search bridges gets a run directory of its own for the relay.
+- **Not covered:** `onProjectRelocated` rewrites this machine's database only, so a distro's sessions keep their old directory after a project moves.
+
+The shapes were checked against this machine's OpenCode 1.18.31 and the distro's 1.14.25 `--help`. The distro's OpenCode was not signed in and had no sessions, so no session has been run end to end in a distro.
 
 ## Remote Execution
 

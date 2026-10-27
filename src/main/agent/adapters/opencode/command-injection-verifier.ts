@@ -2,6 +2,9 @@ import fs from 'node:fs';
 import type DatabaseType from 'better-sqlite3';
 import type { SubmissionContext, SubmissionVerifier } from '../../../../shared/types';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
+import { exportDistroOpenCodeSession } from './distro-sessions';
+import { placeFromStored, targetOfPlace } from '../../shared/cli-target';
+import type { OpenCodeRemoteMessageEntry } from './remote-client';
 
 /**
  * OpenCode's `command-injection` verifier. CONFIRM-ONLY.
@@ -181,10 +184,48 @@ function queryForSubmittedText(
   }
 }
 
-export function createOpenCodeCommandInjectionVerifier(): SubmissionVerifier {
+/**
+ * The same match over a session's exported messages (`{ info, parts }`), for an
+ * OpenCode in a WSL distro, whose database is the distro's.
+ */
+export function findOpenCodeSubmittedTextInMessages(
+  messages: OpenCodeRemoteMessageEntry[],
+  text: string,
+  sentAt: number,
+): boolean {
+  const expected = text.trim();
+  if (!expected) return false;
+  return messages.slice(-RECENT_MESSAGE_LIMIT).some(({ info, parts }) => {
+    if (info.role !== 'user') return false;
+    const created = typeof info.time?.created === 'number' ? info.time.created : 0;
+    if (created < sentAt - SENT_AT_TOLERANCE_MS) return false;
+    const combined = parts
+      .filter((part) => part.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text as string)
+      .join('');
+    return combined.trim() === expected;
+  });
+}
+
+/**
+ * For a session in a WSL distro (`context.cliTarget`), each check is one
+ * `opencode export` in the distro (`distro-sessions.ts`): seconds, not the 64 to
+ * 95 ms of the local query, so a burst gets about one check per Enter. The user
+ * turn is written on submit, before that run reads it.
+ */
+export function createOpenCodeCommandInjectionVerifier(
+  exportSession: typeof exportDistroOpenCodeSession = exportDistroOpenCodeSession,
+): SubmissionVerifier {
   return async (context: SubmissionContext): Promise<boolean> => {
     if (context.type !== 'command-injection') return false;
     if (!context.agentSessionId) return false;
+
+    if (context.cliTarget) {
+      const target = targetOfPlace(placeFromStored(context.cliTarget));
+      if (!target || !context.cwd) return false;
+      const messages = await exportSession(target, context.agentSessionId, context.cwd).catch(() => []);
+      return findOpenCodeSubmittedTextInMessages(messages, context.text, context.sentAt ?? Date.now());
+    }
 
     const dbPath = openCodeDbPath();
     if (!fs.existsSync(dbPath)) return false;

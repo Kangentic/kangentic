@@ -1,5 +1,8 @@
+import path from 'node:path';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
+import type { CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks } from './hook-manager';
 import type { PermissionMode, ResolvedExecutionTarget } from '../../../../shared/types';
 
@@ -23,6 +26,26 @@ export interface OpenCodeCommandOptions {
   effort?: string;
   /** Present only when this project's OpenCode execution mode is 'remote'. */
   executionTarget?: ResolvedExecutionTarget;
+  /**
+   * An OpenCode installed in a WSL distro (`CommandOptions.cliTarget`): started
+   * by the path the distro sees, and on NAT networking given Kangentic's server
+   * as the WSL hook transport's bridge. The activity plugin needs nothing more:
+   * it is a file in the project, which the distro reads at its `/mnt` path, and
+   * the spawn hands it `KANGENTIC_EVENTS_PATH` in the distro's form.
+   */
+  cliTarget?: CliTarget | null;
+}
+
+/**
+ * Kangentic's server as OpenCode's `mcp` config names it: `remote` with the
+ * token header for the loopback URL, or `local` for the WSL hook transport's
+ * bridge, whose `command` is the program and its arguments in one array and
+ * whose `environment` carries the token (OpenCode's MCP docs).
+ */
+export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<string, unknown> {
+  return server.kind === 'stdio'
+    ? { type: 'local', command: [server.command, ...server.args], environment: { [server.tokenEnv]: server.token }, enabled: true }
+    : { type: 'remote', url: server.url, enabled: true, headers: { 'X-Kangentic-Token': server.token } };
 }
 
 /**
@@ -85,7 +108,7 @@ export class OpenCodeCommandBuilder {
       buildHooks(projectRoot);
     }
 
-    const parts: string[] = [quoteArg(options.opencodePath, shell)];
+    const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];
 
     if (options.resume && options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
@@ -161,18 +184,14 @@ export class OpenCodeCommandBuilder {
     if (!options.mcpServerEnabled) return null;
     if (!options.mcpServerUrl || !options.mcpServerToken) return null;
 
-    const inlineConfig = {
-      mcp: {
-        kangentic: {
-          type: 'remote',
-          url: options.mcpServerUrl,
-          enabled: true,
-          headers: {
-            'X-Kangentic-Token': options.mcpServerToken,
-          },
-        },
-      },
-    };
+    // A distro OpenCode on NAT networking cannot reach this machine's loopback:
+    // its server is the bridge, prepared in the session's directory, whose
+    // relay the spawn attaches with the session.
+    const place = options.cliTarget ?? null;
+    const server: KangenticMcpServer = place && options.eventsOutputPath
+      ? kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) })
+      : { kind: 'http', url: options.mcpServerUrl, token: options.mcpServerToken };
+    const inlineConfig = { mcp: { kangentic: openCodeKangenticMcpEntry(server) } };
 
     return { OPENCODE_CONFIG_CONTENT: JSON.stringify(inlineConfig) };
   }
@@ -205,7 +224,7 @@ function buildOpenCodeAttachCommand(
   target: ResolvedExecutionTarget,
   shell?: string,
 ): string {
-  const parts: string[] = [quoteArg(options.opencodePath, shell), 'attach', quoteArg(target.url, shell)];
+  const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell), 'attach', quoteArg(target.url, shell)];
 
   if (target.workingDirectory) {
     parts.push('--dir', quoteArg(target.workingDirectory, shell));
