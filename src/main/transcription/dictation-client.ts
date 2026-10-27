@@ -123,15 +123,6 @@ export class DictationClient extends EventEmitter {
   private readonly activeSessions = new Set<string>();
   /** Commit reader behind the ceiling check; injectable so tests drive it. */
   private readonly readCommitBytes: (pid: number) => number | null;
-  /** The child an intentional teardown (idle recycle or dispose) is killing,
-   *  so the resulting 'exit' is not miscounted as a crash. Held per child
-   *  rather than as a bare boolean: a killed worker's 'exit' arrives
-   *  asynchronously, so a replacement can be spawned and can itself crash
-   *  while the predecessor's kill is still outstanding. One shared flag gets
-   *  read by whichever exit lands first, which both swallows the
-   *  replacement's genuine crash and then records the predecessor's
-   *  deliberate kill as one. */
-  private intentionalKill: UtilityProcess | null = null;
 
   constructor(
     restartPolicy?: UtilityRestartPolicy,
@@ -342,14 +333,15 @@ export class DictationClient extends EventEmitter {
   }
 
   private onWorkerExit(child: UtilityProcess, exitCode?: number, stderrTail?: StderrTail): void {
-    // Asked of THIS child, so an exit can never consume another child's
-    // classification.
-    const intentional = child === this.intentionalKill;
-    if (intentional) this.intentionalKill = null;
-    // A killed worker's 'exit' arrives asynchronously, after a replacement may
-    // already have been spawned and tracked. Ignore the stale exit so it never
-    // nulls the live child or rejects the replacement's in-flight requests.
-    if (this.child !== null && child !== this.child) return;
+    // Only the current child's exit is a crash. killChild() nulls this.child
+    // before it kills, so every intentional exit (a release, an idle recycle,
+    // dispose) arrives from a child that is no longer current, and so does a
+    // killed predecessor's exit landing after its replacement spawned. Both are
+    // dropped here, in any order, so neither nulls the live child nor rejects
+    // its requests. Do not add a kill mark beside this guard. A release with no
+    // worker left (a renderer reload sends two) overwrites it, and the
+    // released worker's exit(0) then reads as a crash.
+    if (child !== this.child) return;
     this.child = null;
     // A crash must not leave the idle timer running against a child that is
     // already gone: it would fire on the replacement (which, freshly
@@ -364,8 +356,7 @@ export class DictationClient extends EventEmitter {
       entry.reject(lostSessionError);
     }
     this.pending.clear();
-    // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
+    if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
   /** Kill the worker now, on purpose (dictation was turned off). Unlike the
@@ -468,7 +459,6 @@ export class DictationClient extends EventEmitter {
     this.servedSession = false;
     this.warmedEngineKeys.clear();
     this.activeSessions.clear();
-    this.intentionalKill = child;
     if (child) {
       try {
         const message: ShutdownMessage = { type: 'shutdown' };

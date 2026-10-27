@@ -408,8 +408,8 @@ describe('DictationClient', () => {
 
       const firstChild = await serveAndFinish(client);
 
-      // Idle recycle: killChild() nulls this.child synchronously. C1's real
-      // 'exit' has not fired yet.
+      // Idle recycle: killChild() nulls this.child synchronously, so C1 is
+      // no longer the current child. Its real 'exit' has not fired yet.
       await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
 
       const secondPromise = client.ensureWarm(fakeEnsureEngineRequest());
@@ -431,7 +431,7 @@ describe('DictationClient', () => {
     }
   });
 
-  it('classifies an exit by the specific child instance being killed, so a crashing replacement is recorded and the predecessor\'s stale exit is not double-recorded as a second crash', async () => {
+  it('records a crashing replacement once, and never counts the killed predecessor\'s later exit as a second crash', async () => {
     vi.useFakeTimers();
     try {
       const policy = new UtilityRestartPolicy({ service: 'kangentic-dictation', maxCrashes: 3 });
@@ -440,17 +440,16 @@ describe('DictationClient', () => {
 
       const firstChild = await serveAndFinish(client);
 
-      // Idle recycle: killChild() records C1 as the intentional kill and
-      // nulls this.child synchronously. C1's own 'exit' has not landed yet.
+      // Idle recycle: killChild() nulls this.child synchronously, so C1 is
+      // no longer the current child. Its own 'exit' has not landed yet.
       await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
 
       const secondPromise = client.ensureWarm(fakeEnsureEngineRequest());
       const secondChild = lastChild();
       expect(secondChild).not.toBe(firstChild);
 
-      // C2 crashes for real before C1's stale exit arrives - the exact
-      // ordering a single shared boolean misclassifies (it would still read
-      // "intentional" from C1's kill and skip this genuine crash).
+      // C2 crashes for real before C1's stale exit arrives. C2 is the
+      // current child, so its exit is the crash.
       const secondAssertion = expect(secondPromise).rejects.toThrow(/exited unexpectedly/);
       secondChild.emit('exit', 1);
       await secondAssertion;
@@ -458,8 +457,8 @@ describe('DictationClient', () => {
       expect(recordCrashSpy).toHaveBeenCalledTimes(1);
       expect(recordCrashSpy.mock.calls[0][0]).toBe(1);
 
-      // C1's stale exit finally lands - it must not be recorded a second
-      // time as a crash; it was a deliberate kill.
+      // C1's stale exit finally lands. It was never the current child after
+      // its kill, so it is not a crash.
       firstChild.emit('exit', 0);
       expect(recordCrashSpy).toHaveBeenCalledTimes(1);
 
@@ -468,6 +467,57 @@ describe('DictationClient', () => {
       vi.useRealTimers();
     }
   });
+
+  it('a second release with no worker left does not turn the released worker\'s exit into a crash, so the next warm spawns', async () => {
+    // A renderer reload sent prewarm(null) twice (StrictMode runs the effect
+    // twice), so main released twice. The killed worker's exit(0) then landed
+    // as a crash and put the real warm that followed inside the backoff:
+    // "Dictation is unavailable (exited with code 0)".
+    const policy = new UtilityRestartPolicy({ service: 'kangentic-dictation', maxCrashes: 3 });
+    const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+    const client = new DictationClient(policy);
+
+    const firstChild = await warm(client);
+    client.release();
+    client.release();
+    firstChild.emit('exit', 0);
+
+    expect(recordCrashSpy).not.toHaveBeenCalled();
+    const secondChild = await warm(client);
+    expect(secondChild).not.toBe(firstChild);
+    expect(mockFork).toHaveBeenCalledTimes(2);
+
+    client.dispose();
+  });
+
+  it.each(['the first worker exits first', 'the second worker exits first'])(
+    'two workers released in turn are neither counted as a crash when %s',
+    async (order) => {
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-dictation', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new DictationClient(policy);
+
+      const firstChild = await warm(client);
+      client.release();
+      const secondChild = await warm(client);
+      client.release();
+      expect(secondChild).not.toBe(firstChild);
+
+      if (order === 'the first worker exits first') {
+        firstChild.emit('exit', 0);
+        secondChild.emit('exit', 0);
+      } else {
+        secondChild.emit('exit', 0);
+        firstChild.emit('exit', 0);
+      }
+
+      expect(recordCrashSpy).not.toHaveBeenCalled();
+      await warm(client);
+      expect(mockFork).toHaveBeenCalledTimes(3);
+
+      client.dispose();
+    },
+  );
 
   it('never idle-recycles a prewarm-only worker: it holds only the live model and is the always-on baseline', async () => {
     vi.useFakeTimers();

@@ -43,9 +43,6 @@ export class LineCountClient {
   private readonly restartPolicy: UtilityRestartPolicy;
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
-  /** True while an intentional teardown (idle recycle or dispose) is in
-   *  flight, so the resulting 'exit' is not miscounted as a crash. */
-  private intentionalShutdown = false;
 
   constructor(restartPolicy?: UtilityRestartPolicy) {
     this.restartPolicy = restartPolicy
@@ -131,11 +128,14 @@ export class LineCountClient {
   }
 
   private onWorkerExit(child: UtilityProcess, exitCode?: number, stderrTail?: StderrTail): void {
-    const intentional = this.intentionalShutdown;
-    this.intentionalShutdown = false;
-    // A killed worker's 'exit' arrives asynchronously, after a replacement may
-    // already have been spawned and tracked. Ignore the stale exit so it never
-    // nulls the live child or resolves the replacement's in-flight requests.
+    // Only the current child's exit is a crash. killChild() nulls this.child
+    // before it kills, so an intentional exit (idle recycle, dispose) arrives
+    // from a child that is no longer current, as does a killed predecessor's
+    // exit landing after its replacement spawned. Dropping both here keeps
+    // them from nulling the live child or resolving its requests. Do not add
+    // an "intentional" flag beside this guard. Whichever exit lands next reads
+    // it, so it hides the crash of a replacement that died before its
+    // predecessor's exit landed.
     if (child !== this.child) return;
     this.child = null;
     for (const entry of this.pending.values()) {
@@ -143,8 +143,7 @@ export class LineCountClient {
       entry.resolve(null);
     }
     this.pending.clear();
-    // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
+    if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
   private armIdleShutdown(): void {
@@ -164,7 +163,6 @@ export class LineCountClient {
   }
 
   private killChild(): void {
-    this.intentionalShutdown = true;
     const child = this.child;
     this.child = null;
     if (child) {

@@ -297,6 +297,71 @@ describe('LineCountClient', () => {
     }
   });
 
+  it('counts a replacement\'s genuine crash that lands before its killed predecessor\'s exit, and never the predecessor\'s exit', async () => {
+    vi.useFakeTimers();
+    try {
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new LineCountClient(policy);
+
+      const firstPromise = client.countFiles(['/mock/a.txt']);
+      const firstChild = lastChild();
+      firstChild.emit('message', { type: 'result', id: 1, entries: [] });
+      await firstPromise;
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(firstChild.kill).toHaveBeenCalledTimes(1);
+
+      // C2 crashes for real while C1's kill is still outstanding. A shared
+      // "intentional" flag set by C1's kill read this crash as intentional.
+      const secondPromise = client.countFiles(['/mock/b.txt']);
+      const secondChild = lastChild();
+      expect(secondChild).not.toBe(firstChild);
+      secondChild.emit('exit', 1);
+      await expect(secondPromise).resolves.toBeNull();
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+      expect(recordCrashSpy.mock.calls[0][0]).toBe(1);
+
+      firstChild.emit('exit', 0);
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('counts the next worker\'s crash after the idle timer of a crashed worker fires with nothing to kill', async () => {
+    // A crash leaves the idle timer armed. When it fires there is no child,
+    // and a kill with no child must mark nothing that the next worker's
+    // genuine crash could be read through.
+    vi.useFakeTimers();
+    try {
+      const policy = new UtilityRestartPolicy({ service: 'kangentic-line-count', maxCrashes: 3 });
+      const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+      const client = new LineCountClient(policy);
+
+      const firstPromise = client.countFiles(['/mock/a.txt']);
+      const firstChild = lastChild();
+      firstChild.emit('message', { type: 'result', id: 1, entries: [] });
+      await firstPromise;
+      firstChild.emit('exit', 1);
+      expect(recordCrashSpy).toHaveBeenCalledTimes(1);
+
+      // Past the idle window, which is also past the post-crash backoff.
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+
+      const secondPromise = client.countFiles(['/mock/b.txt']);
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      lastChild().emit('exit', 1);
+      await expect(secondPromise).resolves.toBeNull();
+      expect(recordCrashSpy).toHaveBeenCalledTimes(2);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('forks the worker with stderr piped and stdin/stdout ignored, the same shape as the embed worker', async () => {
     const client = new LineCountClient();
     const promise = client.countFiles(['/mock/a.txt']);

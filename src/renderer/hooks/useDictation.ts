@@ -98,6 +98,7 @@ export const dictationPopupActions: { commit: () => void; clear: () => void; can
  * never branches on it, so the lifecycle here is the same either way.
  */
 export function useDictation(): void {
+  const configLoaded = useConfigStore((state) => state.configLoaded);
   const enabled = useConfigStore((state) => state.globalConfig.dictation?.enabled ?? false);
   const engineMode = useConfigStore((state) => state.globalConfig.dictation?.engineMode ?? 'auto');
   const modelId = useConfigStore((state) => state.globalConfig.dictation?.modelId ?? null);
@@ -540,7 +541,15 @@ export function useDictation(): void {
   // dictation is turned off. Debounced so rapid setting changes do not thrash the
   // loader; the main-process warm cache keeps the previous model too, so an A/B
   // switch back to it stays instant.
+  //
+  // Nothing is sent until the first config fetch lands. A fresh renderer (a
+  // reload, in dev or production) mounts on DEFAULT_CONFIG, where dictation is
+  // off, and this effect runs before App's loadConfig() resolves. Sending that
+  // `prewarm(null)` killed the warm worker on every reload, so the real config
+  // a moment later paid a full model load. Gated on `configLoaded`, never on
+  // `loading`, which the HMR re-sync flips and would re-run the warm.
   useEffect(() => {
+    if (!configLoaded) return;
     if (!enabled) {
       window.electronAPI.dictation.prewarm(null);
       return;
@@ -549,7 +558,7 @@ export function useDictation(): void {
       window.electronAPI.dictation.prewarm({ engineMode, modelId, liveModelId, mode, language });
     }, 300);
     return () => clearTimeout(timer);
-  }, [enabled, engineMode, modelId, liveModelId, mode, language]);
+  }, [configLoaded, enabled, engineMode, modelId, liveModelId, mode, language]);
 
   /**
    * Start, and never fail SILENTLY.

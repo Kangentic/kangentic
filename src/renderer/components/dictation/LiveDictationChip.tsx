@@ -12,13 +12,18 @@ import { Tooltip } from '../Tooltip';
  * is only a small status chip (mic state +
  * a Clear control), not a transcript surface. While the model is downloading on
  * first use it shows progress, since no live typing can happen until it is
- * ready. Renders nothing while idle.
+ * ready. At idle it renders nothing unless a model is downloading.
+ *
+ * A failed download at idle (`modelProgress` with status `error`) raises no
+ * chip. Nothing is being dictated, so a chip would sit in a corner until Clear
+ * with nothing to clear. The Dictation tab names the model on its line, and the
+ * next press reports its own failure.
  */
 export function LiveDictationChip() {
   const status = useDictationStore((state) => state.status);
-  const modelProgress = useDictationStore((state) => state.modelProgress);
+  const downloading = useDictationStore((state) => state.modelProgress?.status === 'downloading');
   // activity-state-ok: the dictation store's own status enum (idle/recording/finalizing/error), not ActivityState
-  if (status === 'idle' && !modelProgress) return null;
+  if (status === 'idle' && !downloading) return null;
   return <LiveDictationChipContent />;
 }
 
@@ -84,9 +89,9 @@ function LiveDictationChipContent() {
           : 'No terminal or input focused')
         : recording
           ? 'Listening'
-          : status === 'finalizing'
-            ? (willSubmit ? 'Sending...' : 'Inserting...')
-            : 'Dictation';
+          // Finalizing is the one state left. An idle chip is always
+          // downloading, and error and busy have their own labels above.
+          : (willSubmit ? 'Sending...' : 'Inserting...');
 
   // Trailing hint, separated by spacing and a muted tone rather than a glyph.
   const hint = recording && !noTarget
