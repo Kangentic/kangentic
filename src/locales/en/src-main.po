@@ -6,3 +6,133 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{place}. Stalled: {reason}"
+msgstr "{place}. Stalled: {reason}"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{place}. Waiting on you: {reason}"
+msgstr "{place}. Waiting on you: {reason}"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{projectName}: {workflowName}"
+msgstr "{projectName}: {workflowName}"
+
+#: src/main/index.ts
+msgid "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
+msgstr "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
+
+#: src/main/index.ts
+msgid "{provider} returned a sign-in error"
+msgstr "{provider} returned a sign-in error"
+
+#: src/main/index.ts
+msgid "{provider} would not complete this sign-in."
+msgstr "{provider} would not complete this sign-in."
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{workflowTitle} workflow"
+msgstr "{workflowTitle} workflow"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "A project"
+msgstr "A project"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "A task"
+msgstr "A task"
+
+#: src/main/diagnostics/renderer-recovery.ts
+msgid "Available system memory at the time: {availableMb} MB."
+msgstr "Available system memory at the time: {availableMb} MB."
+
+#: src/main/index.ts
+msgid "Close"
+msgstr "Close"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Command Terminal"
+msgstr "Command Terminal"
+
+#: src/main/index.ts
+msgctxt "Action"
+msgid "Copy"
+msgstr "Copy"
+
+#: src/main/index.ts
+msgid "Copy Image"
+msgstr "Copy Image"
+
+#: src/main/diagnostics/renderer-recovery.ts
+msgid "Free system memory (commit) at the time: {remainingMb} MB."
+msgstr "Free system memory (commit) at the time: {remainingMb} MB."
+
+#: src/main/db/global-db-dialog.ts
+msgid "Kangentic can't read its database"
+msgstr "Kangentic can't read its database"
+
+#: src/main/index.ts
+msgid "Kangentic's window stopped responding"
+msgstr "Kangentic's window stopped responding"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Needs permission: {place}"
+msgstr "Needs permission: {place}"
+
+#: src/main/window-open-policy.ts
+msgid "Not secure - {host}"
+msgstr "Not secure - {host}"
+
+#: src/main/index.ts
+msgid "OK"
+msgstr "OK"
+
+#: src/main/index.ts
+msgid "Open in my browser"
+msgstr "Open in my browser"
+
+#: src/main/index.ts
+msgid "Paste"
+msgstr "Paste"
+
+#: src/main/db/global-db-dialog.ts
+msgid "Quit"
+msgstr "Quit"
+
+#: src/main/db/global-db-dialog.ts
+msgctxt "Action"
+msgid "Retry"
+msgstr "Retry"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Running agents are resuming."
+msgstr "Running agents are resuming."
+
+#: src/main/index.ts
+msgid "Select All"
+msgstr "Select All"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Session crashed: {label}"
+msgstr "Session crashed: {label}"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Terminals restarted"
+msgstr "Terminals restarted"
+
+#: src/main/index.ts
+msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
+msgstr "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
+
+#: src/main/db/global-db-dialog.ts
+msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
+msgstr "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
+
+#: src/main/window-open-policy.ts
+msgid "Unknown site"
+msgstr "Unknown site"
+
+#: src/main/index.ts
+msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."
+msgstr "Your agents are still running in the background. Restart Kangentic to reconnect to them."

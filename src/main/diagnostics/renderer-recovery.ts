@@ -1,3 +1,5 @@
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../i18n/main-i18n';
 import type { HostMemorySample } from '../../shared/types';
 
 /**
@@ -61,13 +63,14 @@ const BYTES_PER_MB = 1024 * 1024;
  *  caller omits the line entirely rather than printing a confusing "unknown". */
 export function formatHostMemoryDetailLine(sample: HostMemorySample | null): string | null {
   if (!sample) return null;
+  // The figure stays a raw number, as it always printed (no digit grouping).
   if (sample.commitRemainingBytes !== null) {
-    const remainingMb = Math.round(sample.commitRemainingBytes / BYTES_PER_MB);
-    return `Free system memory (commit) at the time: ${remainingMb} MB.`;
+    const remainingMb = String(Math.round(sample.commitRemainingBytes / BYTES_PER_MB));
+    return translateText(msg`Free system memory (commit) at the time: ${{ remainingMb }} MB.`);
   }
   if (sample.physicalAvailableBytes !== null) {
-    const availableMb = Math.round(sample.physicalAvailableBytes / BYTES_PER_MB);
-    return `Available system memory at the time: ${availableMb} MB.`;
+    const availableMb = String(Math.round(sample.physicalAvailableBytes / BYTES_PER_MB));
+    return translateText(msg`Available system memory at the time: ${{ availableMb }} MB.`);
   }
   return null;
 }

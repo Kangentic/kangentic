@@ -6,3 +6,133 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: pt-BR\n"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{place}. Stalled: {reason}"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{place}. Waiting on you: {reason}"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{projectName}: {workflowName}"
+msgstr ""
+
+#: src/main/index.ts
+msgid "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
+msgstr ""
+
+#: src/main/index.ts
+msgid "{provider} returned a sign-in error"
+msgstr ""
+
+#: src/main/index.ts
+msgid "{provider} would not complete this sign-in."
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "{workflowTitle} workflow"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "A project"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "A task"
+msgstr ""
+
+#: src/main/diagnostics/renderer-recovery.ts
+msgid "Available system memory at the time: {availableMb} MB."
+msgstr ""
+
+#: src/main/index.ts
+msgid "Close"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Command Terminal"
+msgstr ""
+
+#: src/main/index.ts
+msgctxt "Action"
+msgid "Copy"
+msgstr ""
+
+#: src/main/index.ts
+msgid "Copy Image"
+msgstr ""
+
+#: src/main/diagnostics/renderer-recovery.ts
+msgid "Free system memory (commit) at the time: {remainingMb} MB."
+msgstr ""
+
+#: src/main/db/global-db-dialog.ts
+msgid "Kangentic can't read its database"
+msgstr ""
+
+#: src/main/index.ts
+msgid "Kangentic's window stopped responding"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Needs permission: {place}"
+msgstr ""
+
+#: src/main/window-open-policy.ts
+msgid "Not secure - {host}"
+msgstr ""
+
+#: src/main/index.ts
+msgid "OK"
+msgstr ""
+
+#: src/main/index.ts
+msgid "Open in my browser"
+msgstr ""
+
+#: src/main/index.ts
+msgid "Paste"
+msgstr ""
+
+#: src/main/db/global-db-dialog.ts
+msgid "Quit"
+msgstr ""
+
+#: src/main/db/global-db-dialog.ts
+msgctxt "Action"
+msgid "Retry"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Running agents are resuming."
+msgstr ""
+
+#: src/main/index.ts
+msgid "Select All"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Session crashed: {label}"
+msgstr ""
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Terminals restarted"
+msgstr ""
+
+#: src/main/index.ts
+msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
+msgstr ""
+
+#: src/main/db/global-db-dialog.ts
+msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
+msgstr ""
+
+#: src/main/window-open-policy.ts
+msgid "Unknown site"
+msgstr ""
+
+#: src/main/index.ts
+msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."
+msgstr ""

@@ -3,7 +3,8 @@ const PROCESS_START = performance.now();
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import type { Event as ElectronEvent } from 'electron';
 import type { GpuGraphicsStatus, LanguageInfo } from '../shared/types';
-import { getActiveLocale, initMainI18n, localeArgument } from './i18n/main-i18n';
+import { msg, plural } from '@lingui/core/runtime-macro';
+import { getActiveLocale, initMainI18n, localeArgument, translateText } from './i18n/main-i18n';
 import { readLanguageInfo, saveLanguageForRestart } from './i18n/language-handlers';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -688,16 +689,13 @@ app.on('web-contents-created', (_event, contents) => {
       });
     },
     showSignInRefusalPrompt: (popupWindow, refusal) => {
+      const provider = refusal.provider;
       void dialog.showMessageBox(popupWindow, {
         type: 'warning',
-        title: `${refusal.provider} returned a sign-in error`,
-        message: `${refusal.provider} would not complete this sign-in.`,
-        detail:
-          `${refusal.provider} blocks sign-in from apps that embed a browser, which is the usual `
-          + 'cause here. You can open the sign-in page in your default browser, but signing in there '
-          + 'does not sign you in inside this pane. To use the pane itself, sign in with a different '
-          + 'method on that site.',
-        buttons: ['Open in my browser', 'Close'],
+        title: translateText(msg`${{ provider }} returned a sign-in error`),
+        message: translateText(msg`${{ provider }} would not complete this sign-in.`),
+        detail: translateText(msg`${{ provider }} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site.`),
+        buttons: [translateText(msg`Open in my browser`), translateText(msg`Close`)],
         defaultId: 0,
         cancelId: 1,
       }).then(({ response }) => {
@@ -1032,7 +1030,7 @@ function showTerminalAwareContextMenu(
 
   template.push(
     {
-      label: 'Copy',
+      label: translateText(msg({ message: 'Copy', context: 'Action' })),
       accelerator: 'CmdOrCtrl+C',
       enabled: params.editFlags.canCopy || true,
       click: () => {
@@ -1051,7 +1049,7 @@ function showTerminalAwareContextMenu(
       },
     },
     {
-      label: 'Paste',
+      label: translateText(msg`Paste`),
       accelerator: 'CmdOrCtrl+V',
       enabled: params.editFlags.canPaste,
       click: () => {
@@ -1068,7 +1066,7 @@ function showTerminalAwareContextMenu(
     },
     { type: 'separator' },
     {
-      label: 'Select All',
+      label: translateText(msg`Select All`),
       accelerator: 'CmdOrCtrl+A',
       click: () => {
         wc.executeJavaScript(`
@@ -1387,7 +1385,7 @@ const createWindow = () => {
     if (params.mediaType === 'image' && params.hasImageContents) {
       const imageMenu = Menu.buildFromTemplate([
         {
-          label: 'Copy Image',
+          label: translateText(msg`Copy Image`),
           click: () => {
             try {
               const image = nativeImage.createFromDataURL(params.srcURL);
@@ -1398,14 +1396,14 @@ const createWindow = () => {
           },
         },
         {
-          label: 'Copy',
+          label: translateText(msg({ message: 'Copy', context: 'Action' })),
           accelerator: 'CmdOrCtrl+C',
           enabled: params.editFlags.canCopy || true,
           click: () => { wc.executeJavaScript(`document.execCommand('copy')`); },
         },
         { type: 'separator' },
         {
-          label: 'Select All',
+          label: translateText(msg`Select All`),
           accelerator: 'CmdOrCtrl+A',
           click: () => { wc.executeJavaScript(`document.execCommand('selectAll')`); },
         },
@@ -1449,19 +1447,22 @@ const createWindow = () => {
     // modal has nobody to click it.
     if (isE2ETest) return;
     const sample = getLastHostMemorySample();
+    // Electron's reason code stays as written; the sentence around it translates.
+    const crashReason = details.reason;
+    const attempts = RENDERER_RELOAD_MAX;
+    const minutes = RENDERER_RELOAD_WINDOW_MS / 60_000;
     const detail = [
-      `The window crashed (${details.reason}) and could not recover after `
-        + `${RENDERER_RELOAD_MAX} attempts in ${RENDERER_RELOAD_WINDOW_MS / 60_000} minutes.`,
+      translateText(msg`The window crashed (${{ crashReason }}) and could not recover after ${plural({ attempts }, { one: '# attempt', other: '# attempts' })} in ${plural({ minutes }, { one: '# minute', other: '# minutes' })}.`),
       formatHostMemoryDetailLine(sample),
-      'Your agents are still running in the background. Restart Kangentic to reconnect to them.',
+      translateText(msg`Your agents are still running in the background. Restart Kangentic to reconnect to them.`),
     ].filter((line): line is string => line !== null).join('\n\n');
     const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
     const options: Electron.MessageBoxOptions = {
       type: 'error',
       title: 'Kangentic',
-      message: "Kangentic's window stopped responding",
+      message: translateText(msg`Kangentic's window stopped responding`),
       detail,
-      buttons: ['OK'],
+      buttons: [translateText(msg`OK`)],
     };
     void (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)).catch(
       (dialogError) => {

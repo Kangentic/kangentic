@@ -1,8 +1,10 @@
+import { msg } from '@lingui/core/runtime-macro';
 import {
   EMBEDDED_BROWSER_SCHEMES,
   EXTERNAL_OPEN_SCHEMES,
   isAllowedExternalUrl,
 } from '../shared/external-url';
+import { translateText } from './i18n/main-i18n';
 import { detectEmbeddedSignInRefusal, type EmbeddedSignInRefusal } from './browser/embedded-signin-refusal';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
 
@@ -134,11 +136,12 @@ export function popupWindowTitleForUrl(rawUrl: string): string {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    return 'Unknown site';
+    return translateText(msg`Unknown site`);
   }
-  if (parsed.protocol === 'https:') return parsed.host;
-  if (parsed.protocol === 'http:') return `Not secure - ${parsed.host}`;
-  return 'Unknown site';
+  const host = parsed.host;
+  if (parsed.protocol === 'https:') return host;
+  if (parsed.protocol === 'http:') return translateText(msg`Not secure - ${{ host }}`);
+  return translateText(msg`Unknown site`);
 }
 
 /**
