@@ -5,7 +5,10 @@
  * the two are separate features that happen to share vocabulary.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import { compileMessage } from '@lingui/message-utils/compileMessage';
 
 // `useAnySettingVisible` is a hook (it calls `useContext` internally), so
 // calling it directly outside a React render trips React's "invalid hook
@@ -31,6 +34,8 @@ vi.mock('react', async (importOriginal) => {
 
 import { computeSearchResults, useAnySettingVisible } from '../../src/renderer/components/settings/settings-search';
 import { SETTINGS_REGISTRY, type SettingDefinition } from '../../src/renderer/components/settings/settings-registry';
+import { translateText } from '../../src/renderer/i18n/translate';
+import type { LocalizedText } from '../../src/shared/i18n/text';
 
 describe('settings search: hotkeys/shortcuts disentanglement', () => {
   it('matches the Shortcuts tab but not the Hotkeys tab on "shortcut"', () => {
@@ -109,6 +114,131 @@ describe('settings search: sentence punctuation around a word', () => {
 
   it('matches nothing for a query that is only punctuation', () => {
     expect(computeSearchResults(' . ? ', SETTINGS_REGISTRY).matchingIds.size).toBe(0);
+  });
+});
+
+describe('settings search: matches the text as translated', () => {
+  // A row's label, description, section and tab name are matched as the user reads them, in the
+  // session's language, while the keywords stay English. Every other case in this file runs in
+  // English, where a search that matched the English source text would pass just the same.
+  // These load a German catalog into the global i18n the way the renderer does for a session
+  // language, and search for words that exist only in the translation.
+  function messageIdOf(text: LocalizedText | undefined, field: string): string {
+    if (text === undefined || typeof text === 'string' || !text.id) {
+      throw new Error(`the ${field} is no longer a message descriptor, so this test has nothing to translate`);
+    }
+    return text.id;
+  }
+
+  function activateGerman(translations: Record<string, string>): void {
+    const messages: Record<string, ReturnType<typeof compileMessage>> = {};
+    for (const [messageId, translation] of Object.entries(translations)) messages[messageId] = compileMessage(translation);
+    i18n.loadAndActivate({ locale: 'de', messages });
+  }
+
+  function matchingEntryIds(query: string, registry: SettingDefinition[]): string[] {
+    return [...computeSearchResults(query, registry).matchingIds].sort();
+  }
+
+  afterEach(() => {
+    // The vitest setup file activates English for every test; put it back for the ones after.
+    i18n.activate('en');
+  });
+
+  describe("the Language row (registry entry 'displayLanguage')", () => {
+    function languageRow(): SettingDefinition {
+      const row = SETTINGS_REGISTRY.find((candidate) => candidate.id === 'displayLanguage');
+      if (!row) throw new Error("the settings registry has no 'displayLanguage' entry");
+      return row;
+    }
+
+    function activateGermanLanguageRow(): void {
+      const row = languageRow();
+      activateGerman({
+        [messageIdOf(row.label, "displayLanguage's label")]: 'Sprache',
+        [messageIdOf(row.description, "displayLanguage's description")]: 'Gilt nach einem Neustart und aendert keine Agentenausgabe.',
+        [messageIdOf(row.section, "displayLanguage's section")]: 'Anzeigesprache',
+      });
+    }
+
+    it('finds the row by its translated label, description and section, and still by an English keyword', () => {
+      activateGermanLanguageRow();
+      // The fixture took effect: these are the strings the search reads.
+      expect(translateText(languageRow().label)).toBe('Sprache');
+      expect(translateText(languageRow().section ?? '')).toBe('Anzeigesprache');
+
+      expect(matchingEntryIds('sprache', SETTINGS_REGISTRY)).toContain('displayLanguage');
+      expect(matchingEntryIds('neustart', SETTINGS_REGISTRY)).toContain('displayLanguage');
+      expect(matchingEntryIds('anzeigesprache', SETTINGS_REGISTRY)).toContain('displayLanguage');
+      // Keywords stay English, so a user who types the English word still finds the row ...
+      expect(matchingEntryIds('translation', SETTINGS_REGISTRY)).toContain('displayLanguage');
+      // ... including in one query beside a translated word, since every token must match somewhere.
+      expect(matchingEntryIds('sprache translation', SETTINGS_REGISTRY)).toContain('displayLanguage');
+    });
+
+    it('does not find the row by a translated word while the session is English', () => {
+      activateGermanLanguageRow();
+      i18n.activate('en');
+      expect(translateText(languageRow().label)).toBe('Language');
+
+      expect(matchingEntryIds('neustart', SETTINGS_REGISTRY)).not.toContain('displayLanguage');
+      expect(matchingEntryIds('anzeigesprache', SETTINGS_REGISTRY)).not.toContain('displayLanguage');
+      // The English words still do.
+      expect(matchingEntryIds('language', SETTINGS_REGISTRY)).toContain('displayLanguage');
+      expect(matchingEntryIds('translation', SETTINGS_REGISTRY)).toContain('displayLanguage');
+    });
+  });
+
+  describe('each field on its own', () => {
+    // The Language row cannot isolate the label: its tab is the Language tab, whose name is the
+    // same message (the same ID) as the row's label, so a translated label word would still match
+    // through the tab name if the label alone stopped being translated. These entries carry one
+    // translated field each, with every other field a plain string, so a word from the translation
+    // can be matched only by the field that holds it.
+    const labelEntry: SettingDefinition = {
+      id: 'translated.label', tabId: 'general', label: msg`Zebra setting`, description: 'Plain.', scope: 'global',
+    };
+    const descriptionEntry: SettingDefinition = {
+      id: 'translated.description', tabId: 'general', label: 'Plain', description: msg`Zebra details`, scope: 'global',
+    };
+    const sectionEntry: SettingDefinition = {
+      id: 'translated.section', tabId: 'general', label: 'Plain', description: 'Plain.', section: msg`Zebra group`, scope: 'global',
+    };
+    // Its tab, 'language', is the one tab whose name is a message. Nothing else on the entry is.
+    const tabEntry: SettingDefinition = {
+      id: 'translated.tab', tabId: 'language', label: 'Plain', description: 'Plain.', scope: 'global',
+    };
+    const registry = [labelEntry, descriptionEntry, sectionEntry, tabEntry];
+
+    function activateGermanFixtures(): void {
+      activateGerman({
+        [messageIdOf(labelEntry.label, 'label fixture')]: 'Zebraeinstellung',
+        [messageIdOf(descriptionEntry.description, 'description fixture')]: 'Zebradetails',
+        [messageIdOf(sectionEntry.section, 'section fixture')]: 'Zebragruppe',
+        [messageIdOf(msg`Language`, 'tab name')]: 'Sprache',
+      });
+    }
+
+    it.each([
+      ['label', 'zebraeinstellung', 'translated.label'],
+      ['description', 'zebradetails', 'translated.description'],
+      ['section', 'zebragruppe', 'translated.section'],
+      ['tab name', 'sprache', 'translated.tab'],
+    ])('matches a word from the translated %s, on the entry that holds it and no other', (_field, query, expectedEntryId) => {
+      activateGermanFixtures();
+      expect(matchingEntryIds(query, registry)).toEqual([expectedEntryId]);
+    });
+
+    it.each([
+      ['label', 'zebraeinstellung'],
+      ['description', 'zebradetails'],
+      ['section', 'zebragruppe'],
+      ['tab name', 'sprache'],
+    ])('does not match the translated %s while the session is English', (_field, query) => {
+      activateGermanFixtures();
+      i18n.activate('en');
+      expect(matchingEntryIds(query, registry)).toEqual([]);
+    });
   });
 });
 
