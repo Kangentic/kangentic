@@ -1,5 +1,5 @@
 import {
-  chromium, errors, expect, type Browser, type CDPSession, type ConsoleMessage, type Locator, type Page, type Request, type Response,
+  chromium, errors, expect, test, type Browser, type CDPSession, type ConsoleMessage, type Locator, type Page, type Request, type Response,
 } from '@playwright/test';
 import path from 'node:path';
 
@@ -683,8 +683,12 @@ export async function settleFrames(page: Page, frames = 2): Promise<void> {
 
 /** What the screen showed of a layout change's scope, frame by frame. */
 export interface LayoutChangeRecording {
-  /** Every frame the compositor produced: when, and the scope's pixels as a small grayscale image. */
-  frames: Array<{ at: number; picture: Uint8Array }>;
+  /**
+   * Every frame the compositor produced: when, the scope's pixels as a small grayscale image, and
+   * whether a terminal in the scope held its frame when the frame was painted (`holding`, read from
+   * the hold marker painted into the frame itself, so it needs no clock to compare with).
+   */
+  frames: Array<{ at: number; picture: Uint8Array; holding: boolean }>;
   /** Wall-clock seconds the action started. */
   actedAt: number;
   /** Wall-clock seconds the first terminal in the scope held its frame and the last one's new frame was on screen (null if none held one). */
@@ -838,10 +842,22 @@ export async function recordLayoutChange(
       requestAnimationFrame(pumpFrame);
     };
     requestAnimationFrame(pumpFrame);
+    // The hold marker: white while a terminal in the scope holds its frame, black otherwise. It
+    // changes in the same observer callback that sees the hold attribute change, which runs before
+    // the next paint, so every frame shows the marker and the terminals in the same state. That
+    // puts "was the hold on when this frame was painted" in the frames themselves: a frame's stamp
+    // and the page's clock cannot be compared (the stamp trails the paint by however long the
+    // compositor was starved, over 400 ms on a loaded runner). Big enough to survive the
+    // screencast's downscale and JPEG, next to the pump, outside every scope.
+    const marker = document.createElement('div');
+    marker.dataset.testid = 'layout-change-hold-marker';
+    marker.style.cssText = 'position:fixed;left:12px;top:0;width:40px;height:12px;z-index:2147483647;pointer-events:none;background:#000';
+    document.body.appendChild(marker);
     const times: { held: number | null; drawn: number | null } = { held: null, drawn: null };
     (window as unknown as { __layoutChangeTimes: typeof times }).__layoutChangeTimes = times;
     new MutationObserver(() => {
       const heldNow = scope.querySelectorAll(holdSelector).length;
+      marker.style.background = heldNow > 0 ? '#fff' : '#000';
       if (heldNow > 0 && times.held === null) times.held = Date.now() / 1000;
       if (heldNow === 0 && times.held !== null) times.drawn = Date.now() / 1000;
       else if (heldNow > 0) times.drawn = null;
@@ -872,18 +888,38 @@ export async function recordLayoutChange(
   // Every consumer reads the frames as a timeline, so an old picture arriving late read as one that
   // came back after the change. Array.prototype.sort is stable, so equal stamps keep arrival order.
   captured.sort((first, second) => first.at - second.at);
+  const markerBox = await page.evaluate(() => {
+    const marker = document.querySelector('[data-testid="layout-change-hold-marker"]');
+    const rect = marker?.getBoundingClientRect();
+    return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
+  });
   await page.evaluate(() => document.querySelector('[data-testid="layout-change-frame-pump"]')?.remove());
+  await page.evaluate(() => document.querySelector('[data-testid="layout-change-hold-marker"]')?.remove());
 
   const area = { x: box.x, y: box.y, width: box.width, height: box.height };
-  const pictures = await page.evaluate(async ({ images, region, pictureWidth }) => {
+  const decoded = await page.evaluate(async ({ images, region, pictureWidth, marker }) => {
     const width = pictureWidth;
     const height = Math.max(1, Math.round(region.height * (pictureWidth / region.width)));
     const results: string[] = [];
+    const holding: boolean[] = [];
     for (const image of images) {
       const blob = await (await fetch(`data:image/jpeg;base64,${image}`)).blob();
       const bitmap = await createImageBitmap(blob);
       // The screencast scaled the page down to fit its frame size.
       const scale = bitmap.width / window.innerWidth;
+      // The hold marker's mean brightness: white while a terminal held its frame, black after.
+      if (marker) {
+        const markerCanvas = new OffscreenCanvas(4, 2);
+        const markerContext = markerCanvas.getContext('2d');
+        if (!markerContext) throw new Error('no 2d context');
+        markerContext.drawImage(bitmap, marker.x * scale, marker.y * scale, marker.width * scale, marker.height * scale, 0, 0, 4, 2);
+        const markerPixels = markerContext.getImageData(0, 0, 4, 2).data;
+        let brightness = 0;
+        for (let index = 0; index < markerPixels.length; index += 4) brightness += markerPixels[index];
+        holding.push(brightness / (markerPixels.length / 4) > 128);
+      } else {
+        holding.push(false);
+      }
       const canvas = new OffscreenCanvas(width, height);
       const context = canvas.getContext('2d');
       if (!context) throw new Error('no 2d context');
@@ -898,11 +934,15 @@ export async function recordLayoutChange(
       }
       results.push(btoa(binary));
     }
-    return results;
-  }, { images: captured.map((frame) => frame.data), region: area, pictureWidth: PICTURE_WIDTH });
+    return { pictures: results, holding };
+  }, { images: captured.map((frame) => frame.data), region: area, pictureWidth: PICTURE_WIDTH, marker: markerBox });
   const times = await readTimes();
   return {
-    frames: captured.map((frame, index) => ({ at: frame.at, picture: new Uint8Array(Buffer.from(pictures[index], 'base64')) })),
+    frames: captured.map((frame, index) => ({
+      at: frame.at,
+      picture: new Uint8Array(Buffer.from(decoded.pictures[index], 'base64')),
+      holding: decoded.holding[index],
+    })),
     actedAt,
     heldAt: times.held,
     drawnAt: times.drawn,
@@ -942,7 +982,7 @@ const PICTURE_NOISE_MEAN = 0.5;
  * small change in high contrast; the mean sees a blend, which moves most pixels
  * by less than the count's threshold.
  */
-export function pictureStages(recording: LayoutChangeRecording): Array<{ at: number; picture: Uint8Array }> {
+export function pictureStages(recording: LayoutChangeRecording): LayoutChangeRecording['frames'] {
   const { frames, actedAt } = recording;
   const before = frames.filter((frame) => frame.at < actedAt).at(-1);
   const final = frames.at(-1);
@@ -951,7 +991,7 @@ export function pictureStages(recording: LayoutChangeRecording): Array<{ at: num
   const changeMean = pictureDistance(before.picture, final.picture);
   const same = (first: Uint8Array, second: Uint8Array) => pictureChange(first, second) < changeCount / 8
     && pictureDistance(first, second) < Math.max(PICTURE_NOISE_MEAN, changeMean / 8);
-  const stages: Array<{ at: number; picture: Uint8Array }> = [];
+  const stages: LayoutChangeRecording['frames'] = [];
   for (const frame of frames.filter((candidate) => candidate.at >= before.at)) {
     const last = stages.at(-1);
     if (!last || !same(last.picture, frame.picture)) stages.push(frame);
@@ -968,19 +1008,44 @@ export function pictureStages(recording: LayoutChangeRecording): Array<{ at: num
  * same picture (an agent whose frame did not change), so the middle stage may not
  * show. `terminals` is how many terminals the change resizes on screen, each of
  * which may draw its new frame in a frame of its own.
+ *
+ * "The change shows before the terminals draw" is read from the frames, not from
+ * a clock. A frame's stamp trails its paint by however long the compositor was
+ * starved (a loaded CI runner went 440 ms between two frames, and a stamp 80 ms
+ * past the page's own held time still showed no hold), so comparing a stamp with
+ * the page's held and drawn times reads a starved compositor as a held-back
+ * layout: one frame that landed 3 ms after the draw failed that comparison.
+ * Each frame instead carries the hold marker (`LayoutChangeRecording.frames`),
+ * painted in the same frame as the terminals' hold state, so the frames order
+ * themselves. Two cases:
+ *   - Some frame was painted during the hold: the change must already show by
+ *     the first of them (the first frame that differs from before comes no later
+ *     in the sequence). A layout held back until the draw shows the hold frames
+ *     with the old picture, so the change comes after them and this fails.
+ *   - No frame was painted during the hold: the compositor made none in a hold
+ *     of 200 ms or more, so the screen never sampled it and what it looked like
+ *     cannot be known on this run. The structural checks still run, and the run
+ *     is annotated `hold-unsampled` so a CI log shows how often it happens.
  */
 export function expectHoldThenDraw(recording: LayoutChangeRecording, terminals = 1): void {
   const { heldAt, drawnAt, frames, actedAt } = recording;
   if (heldAt === null || drawnAt === null) throw new Error('no terminal held its frame and drew the new one');
   const stages = pictureStages(recording);
-  const summary = `stages at ${stages.map((stage) => `${Math.round((stage.at - actedAt) * 1000)}ms`).join(', ')}; `
-    + `held +${Math.round((heldAt - actedAt) * 1000)}ms, drawn +${Math.round((drawnAt - actedAt) * 1000)}ms, ${frames.length} frames`;
+  const holdFrames = frames.filter((frame) => frame.at >= actedAt && frame.holding);
+  const summary = `stages at ${stages.map((stage) => `${Math.round((stage.at - actedAt) * 1000)}ms${stage.holding ? ' (holding)' : ''}`).join(', ')}; `
+    + `held +${Math.round((heldAt - actedAt) * 1000)}ms, drawn +${Math.round((drawnAt - actedAt) * 1000)}ms, `
+    + `${frames.length} frames, ${holdFrames.length} painted during the hold`;
   // The change shows at all.
   expect(pictureChange(stages[0].picture, stages.at(-1)?.picture ?? stages[0].picture), summary).toBeGreaterThan(0.001);
-  // The change showed before any terminal drew its new frame, so nothing held
-  // the layout back.
   expect(stages.length, summary).toBeGreaterThanOrEqual(2);
-  expect(stages[1].at, summary).toBeLessThan(drawnAt);
+  if (holdFrames.length > 0) {
+    // The change showed no later than the first frame painted during the hold, so
+    // nothing held the layout back. (Panel chrome can move a frame ahead of the
+    // terminals' hold, which is why the change may come before it, never after.)
+    expect(frames.indexOf(stages[1]), summary).toBeLessThanOrEqual(frames.indexOf(holdFrames[0]));
+  } else {
+    test.info().annotations.push({ type: 'hold-unsampled', description: summary });
+  }
   // One more stage per terminal at most: a terminal draws its new frame in one
   // paint, and no picture comes back once it has gone.
   expect(stages.length, summary).toBeLessThanOrEqual(2 + terminals);
