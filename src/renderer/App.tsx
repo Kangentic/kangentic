@@ -271,12 +271,13 @@ export function App() {
     // connection row shows, and Open settings lands on that row.
     const cleanupMcpConnectionFailed = window.electronAPI.mcpServer?.onConnectionFailed(({ error }) => {
       useToastStore.getState().addToast({
-        title: "Couldn't reach the MCP server",
+        title: i18n._(msg`Couldn't reach the MCP server`),
+        // The error the check hit, as main wrote it.
         message: error,
         variant: 'warning',
         persistent: true,
         action: {
-          label: 'Open settings',
+          label: i18n._(msg`Open settings`),
           icon: 'settings',
           onClick: () => {
             useConfigStore.getState().setLastSettingsTab('mcpServer');

@@ -546,6 +546,10 @@ msgstr "Couldn't pause the workflow agent"
 msgid "Couldn't promote tasks"
 msgstr "Couldn't promote tasks"
 
+#: src/renderer/App.tsx
+msgid "Couldn't reach the MCP server"
+msgstr "Couldn't reach the MCP server"
+
 #: src/renderer/hooks/useAddProject.ts
 msgid "Couldn't read that folder"
 msgstr "Couldn't read that folder"
@@ -1005,6 +1009,10 @@ msgstr "Open PR #{prNumber} in browser"
 #: src/renderer/components/PrLink.tsx
 msgid "Open PR in browser"
 msgstr "Open PR in browser"
+
+#: src/renderer/App.tsx
+msgid "Open settings"
+msgstr "Open settings"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 msgid "Open task"
