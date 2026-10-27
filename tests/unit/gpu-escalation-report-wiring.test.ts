@@ -132,6 +132,16 @@ function escalationReportTryBlock(): string {
   return sliceBalancedBlock(INDEX_SOURCE, tryIndex);
 }
 
+/** How a save-and-restart handler restarts: the helper Graphics acceleration and the display language share. */
+const RELAUNCH_CALL = 'relaunchForSavedSetting()';
+
+/** The body of `relaunchForSavedSetting`, which holds the one relaunchApp call both handlers reach. */
+function relaunchHelperBody(): string {
+  const declaration = INDEX_CODE.indexOf('function relaunchForSavedSetting(');
+  if (declaration === -1) throw new Error('src/main/index.ts no longer declares relaunchForSavedSetting');
+  return sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', declaration));
+}
+
 describe('the GPU-health escalation report is wired into src/main/index.ts', () => {
   it('reads GPU_HEALTH_FILE_PATH from a single shared constant, not two independent literals', () => {
     // Both crash-capture.ts's write path and this read/clear path take the
@@ -370,14 +380,29 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     // The restart is what keeps the saved value matching the running mode.
     // A save alone is the silent toggle this replaced.
     const saveIndex = handlerBody.indexOf('configManager.save(');
-    const relaunchIndex = handlerBody.indexOf('relaunchApp(');
+    const relaunchIndex = handlerBody.indexOf(RELAUNCH_CALL);
     expect(saveIndex, 'the handler must save the setting').toBeGreaterThan(-1);
     expect(relaunchIndex, 'the handler must restart after saving').toBeGreaterThan(saveIndex);
-    expect(handlerBody, 'the dev restart file is read only in dev builds').toContain('__KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null');
+    // The restart itself lives in relaunchForSavedSetting, shared with the
+    // display language's save-and-restart, so its options are pinned there.
+    const relaunchBody = relaunchHelperBody();
+    expect(relaunchBody).toContain('relaunchApp(');
+    expect(relaunchBody, 'the dev restart file is read only in dev builds').toContain('__KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null');
     // A plain relaunch with a downloaded update pending runs the installer on
     // quit without relaunching, and the installer closes the relaunched app.
-    expect(handlerBody).toContain('installPendingUpdateAndRelaunch: quitAndInstallIfUpdatePending');
-    expect(handlerBody, 'app.exit() would skip before-quit, so the run would read as abrupt').not.toContain('app.exit(');
+    expect(relaunchBody).toContain('installPendingUpdateAndRelaunch: quitAndInstallIfUpdatePending');
+    expect(relaunchBody, 'app.exit() would skip before-quit, so the run would read as abrupt').not.toContain('app.exit(');
+  });
+
+  it('saves the display language before restarting, through the same restart', () => {
+    const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.LANGUAGE_SET_AND_RESTART');
+    expect(handlerStart, 'src/main/index.ts must register the LANGUAGE_SET_AND_RESTART handler').toBeGreaterThan(-1);
+    const handlerBody = sliceBalancedBlock(INDEX_CODE, INDEX_CODE.indexOf('{', handlerStart));
+    // saveLanguageForRestart throws on a language that does not ship or a failed
+    // write (pinned in i18n-locales.test.ts), so the restart after it never runs then.
+    const saveIndex = handlerBody.indexOf('saveLanguageForRestart(getOptionalIpcContext()?.configManager');
+    expect(saveIndex, 'the save resolves the IPC context config manager first').toBeGreaterThan(-1);
+    expect(handlerBody.indexOf(RELAUNCH_CALL)).toBeGreaterThan(saveIndex);
   });
 
   it('rejects a non-boolean enabled argument by throwing, not by coercing or silently no-opping', () => {
@@ -430,10 +455,10 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       "a failed save must throw new Error('Graphics acceleration could not be saved'), so the invoke call rejects and the settings tab can surface the failure",
     ).toBeGreaterThan(saveGuardIndex);
 
-    const relaunchIndex = handlerBody.indexOf('relaunchApp(');
+    const relaunchIndex = handlerBody.indexOf(RELAUNCH_CALL);
     expect(
       relaunchIndex,
-      'relaunchApp( must run only AFTER the save-failure throw. A restart on a failed save would suspend every agent and come back in the old mode, and the write-failure toast would be lost in the quit',
+      'the restart must run only AFTER the save-failure throw. A restart on a failed save would suspend every agent and come back in the old mode, and the write-failure toast would be lost in the quit',
     ).toBeGreaterThan(saveFailureThrowIndex);
   });
 
@@ -546,6 +571,55 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       tryBlock,
       "previousRunExit must read previousRunProps.lastRunExit ?? 'unknown' - this is what lets a report distinguish the DESKTOP-W shape (the escalating run ended in an abrupt process kill) from the DESKTOP-15 shape (Chromium recovered on its own); a wrong field name or a different sentinel silently breaks that distinction without any type error, since previousRunProps is a loosely-typed Record",
     ).toContain("previousRunExit: previousRunProps.lastRunExit ?? 'unknown'");
+  });
+});
+
+/**
+ * The display language reaches a window two ways, both owned by `src/main/index.ts`:
+ * the main window's command line carries the session's locale
+ * (`localeArgument()`), which preload reads back before the first render, and
+ * the `language:getInfo` handler tells the renderer which language runs and
+ * whether to offer another. Neither can be imported into vitest (this file's
+ * header explains why), and the UI tier reaches both only through the mock, so a
+ * deleted argument shows up as an English window in a translated session with no
+ * test red. The pop-out factory has the same argument, pinned at runtime in
+ * `pop-out-window-manager.test.ts`, which can construct its windows.
+ */
+describe('the display language is wired into src/main/index.ts', () => {
+  it("passes the session's locale on createWindow's own webPreferences.additionalArguments", () => {
+    // Anchored on the assignment, not on a bare `new BrowserWindow(`, and narrowed to
+    // webPreferences, so a localeArgument() call that moves to some other options
+    // object or statement in the file cannot satisfy it.
+    const constructionIndex = INDEX_CODE.indexOf('mainWindow = new BrowserWindow(');
+    expect(constructionIndex, 'createWindow() must still assign mainWindow = new BrowserWindow(...)').toBeGreaterThan(-1);
+    const windowOptions = sliceBalancedBlock(INDEX_CODE, constructionIndex);
+
+    const webPreferencesIndex = windowOptions.indexOf('webPreferences:');
+    expect(webPreferencesIndex, 'the main window must still set webPreferences').toBeGreaterThan(-1);
+    const webPreferences = sliceBalancedBlock(windowOptions, webPreferencesIndex);
+
+    const additionalArgumentsIndex = webPreferences.indexOf('additionalArguments: [');
+    expect(additionalArgumentsIndex, 'webPreferences must still pass additionalArguments').toBeGreaterThan(-1);
+    expect(
+      webPreferences.slice(additionalArgumentsIndex),
+      "the main window's additionalArguments must include localeArgument(). Without it preload reads no --kangentic-locale, so every window of a translated session boots in English and flips to the session language only after the first render",
+    ).toContain('localeArgument()');
+  });
+
+  it("registers the language:getInfo handler on the session's language and the saved config", () => {
+    // A bare registration pin would stay green for a stub that returns a constant. The
+    // body is sliced up to the call's own closing brace and must feed readLanguageInfo
+    // the live session language (not a config read, which is the NEXT session's language
+    // after a pending restart), the IPC context's config manager (the same stale-cache
+    // rule as the other handlers), and the OS languages the suggestion is computed from.
+    const handlerStart = INDEX_CODE.indexOf('ipcMain.handle(IPC.LANGUAGE_GET_INFO');
+    expect(handlerStart, 'src/main/index.ts must register the LANGUAGE_GET_INFO handler').toBeGreaterThan(-1);
+    const handlerBody = sliceBalancedBlock(INDEX_CODE, handlerStart);
+
+    expect(handlerBody, 'the handler must answer through readLanguageInfo').toContain('readLanguageInfo(');
+    expect(handlerBody, 'the reported language is the one this session runs in').toContain('activeLocale: getActiveLocale()');
+    expect(handlerBody, 'the config read must resolve the IPC context config manager first').toContain('getOptionalIpcContext()?.configManager');
+    expect(handlerBody, 'the suggestion is computed from the OS preferred languages').toContain('app.getPreferredSystemLanguages()');
   });
 });
 

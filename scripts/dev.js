@@ -5,6 +5,7 @@ const http = require('http');
 const esbuild = require('esbuild');
 const { worktreeViteCacheDir, worktreeViteConfig } = require('./worktree-vite-config');
 const { copyExternalScripts } = require('./copy-external-scripts');
+const { compileCatalogsForMainInBackground } = require('./i18n-catalogs');
 const { writeExitRecord } = require('./preview-exit-record');
 const {
   previewGitCeilingDirectories,
@@ -393,6 +394,9 @@ async function start() {
   // reaches start()'s catch through the await below, not the
   // unhandledRejection handler.
   mainBundlesBuilt.catch(() => {});
+  // Main's catalogs (.vite/build/locales), beside the esbuild builds. A PO edit
+  // reaches main on the next `npm start`; the renderer hot-applies its own.
+  const mainCatalogsCompiled = compileCatalogsForMainInBackground(projectDir);
 
   // 1. Start Vite dev server using JS API
   console.time('[dev] vite createServer');
@@ -438,6 +442,9 @@ async function start() {
   await mainBundlesBuilt;
   console.timeEnd('[dev] esbuild');
   console.log('[dev] Main + preload + embed, line-count, dictation and retrieval workers and the pty host built');
+  // Before Electron starts, so main reads this session's catalogs. Never fails
+  // the boot: a failed compile has warned, and main then runs in English.
+  await mainCatalogsCompiled;
 
   // Copy external scripts (bridges + adapter plugins) next to the bundle, the
   // same step scripts/build.js runs. Without this, dev runs whatever stale copy

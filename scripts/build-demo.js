@@ -12,6 +12,7 @@
  */
 const { spawnSync } = require('node:child_process');
 const path = require('node:path');
+const { assertNodeSupportsLingui, checkCatalogs } = require('./i18n-catalogs');
 
 const previous = process.env.NODE_ENV;
 process.env.NODE_ENV = 'production';
@@ -30,6 +31,17 @@ for (const argument of forwarded) {
     console.error(`[build:demo] --base must start with a slash, got ${JSON.stringify(match[1])}. On Windows a Git Bash shell rewrites the value; run from PowerShell or set MSYS_NO_PATHCONV=1.`);
     process.exit(1);
   }
+}
+
+// The i18n catalog gate, as scripts/build.js runs it: the demo is a production
+// renderer, which keeps only message IDs, so a stale catalog would show them raw.
+// deploy-demo.yml builds through here. After the argument check, which needs nothing.
+try {
+  assertNodeSupportsLingui();
+  checkCatalogs(projectDir);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
 }
 
 // The config imports extensionless .ts files from src/ and tests/captures/, which Vite's native

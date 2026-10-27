@@ -8,6 +8,8 @@ import { Pill } from '../Pill';
 import { CountBadge } from '../CountBadge';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
+import { translateText } from '../../i18n/translate';
+import type { LocalizedText } from '../../../shared/i18n/text';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
 export { SettingsPanelProvider, useScopedUpdate } from './setting-scope';
@@ -17,14 +19,15 @@ export type { SettingScope } from './setting-scope';
 
 export interface SettingsTabDefinition {
   id: string;
-  label: string;
+  /** Resolved where it renders (`translateText`). */
+  label: LocalizedText;
   icon: React.ElementType;
   /** 'project' tabs save to the project's override file; 'system' tabs are
    *  shared across all projects and must render with no project open. See
    *  settings-tabs.ts and .claude/rules/settings-tab-scope.md. */
   category: 'project' | 'system';
   /** Tooltip shown on hover (e.g. "Applies to all projects"). */
-  tooltip?: string;
+  tooltip?: LocalizedText;
   /** Sidebar sub-grouping within the System group. See SettingsTabTier. */
   tier?: SettingsTabTier;
 }
@@ -192,7 +195,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                     {isNewTier && (
                       <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
                     )}
-                    <Tooltip label={tab.tooltip ?? ''}>
+                    <Tooltip label={translateText(tab.tooltip ?? '')}>
                       <button
                         data-testid={`settings-tab-${tab.id}`}
                         onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
@@ -209,7 +212,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                             from the tab's own tone so it follows hover and the
                             selection. The pair takes the free width. */}
                         <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
-                          <span>{tab.label}</span>
+                          <span>{translateText(tab.label)}</span>
                           {isSearching && matchCount !== undefined && matchCount > 0 && (
                             <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
                           )}
@@ -247,7 +250,7 @@ export function SearchTabGroupHeader({ tab, first, onNavigate }: { tab: Settings
     <div className={first ? 'pb-3' : 'pt-4 pb-3 mt-4 -mx-6 px-6 border-t border-edge'}>
       <Pill size="lg" onClick={() => onNavigate?.(tab.id)} className="bg-accent/10 hover:bg-accent/20 transition-colors">
         <Icon size={16} className="text-accent" />
-        <span className="text-sm font-semibold text-accent">{tab.label}</span>
+        <span className="text-sm font-semibold text-accent">{translateText(tab.label)}</span>
       </Pill>
     </div>
   );

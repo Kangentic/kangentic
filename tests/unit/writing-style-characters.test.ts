@@ -19,17 +19,31 @@ import path from 'node:path';
 // quotes are checked in markdown only, because sanitizer code under src/ lists those characters
 // in regex classes as data (auto-name.ts, qwen-code/transcript-cleanup.ts). Both trees stay with
 // the review half of the rule.
+//
+// The i18n catalogs (src/locales/<locale>/*.po) split the same way. The English catalog is
+// authored English, so it is scanned. Every other locale's is a translation, where the rule's
+// characters are correct punctuation (Chinese and Japanese use long dashes and curly quotes), so
+// those folders are skipped.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['src', 'scripts', 'docs', 'demo', '.claude/rules', '.claude/skills', '.claude/agents'];
 const SCAN_ROOT_FILES = ['README.md', 'CLAUDE.md'];
 // .mts and .cts are here because demo/vite.config.mts is the largest config file in a scanned
-// tree and is comment-dense; without them the extension list would silently skip it.
+// tree and is comment-dense; without them the extension list would silently skip it. .po is the
+// English i18n catalog.
 const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.json', '.html',
+  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.json', '.html', '.po',
 ]);
 // Mirrors the .gitignore entries that drop agent scratch prose inside a scanned tree.
 const SKIP_DIRECTORY_NAMES = new Set(['superpowers']);
+const CATALOGS_DIRECTORY = 'src/locales';
+const SOURCE_CATALOG_LOCALE = 'en';
+
+/** A translated catalog's folder: `src/locales/<locale>` for any locale but English. */
+function isTranslatedCatalogDirectory(relativeDirectory: string): boolean {
+  const parent = path.posix.dirname(relativeDirectory);
+  return parent === CATALOGS_DIRECTORY && path.posix.basename(relativeDirectory) !== SOURCE_CATALOG_LOCALE;
+}
 const SKIP_FILE_SUFFIX = '-probe-report.md';
 // Built from code points so this file stays free of the characters it bans.
 const EM_DASH = String.fromCharCode(0x2014);
@@ -45,6 +59,7 @@ function collectTextFiles(directory: string): string[] {
     const fullPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRECTORY_NAMES.has(entry.name)) continue;
+      if (isTranslatedCatalogDirectory(relativePosixPath(fullPath))) continue;
       files.push(...collectTextFiles(fullPath));
     } else if (
       TEXT_EXTENSIONS.has(path.extname(entry.name)) && !entry.name.endsWith(SKIP_FILE_SUFFIX)
@@ -196,6 +211,17 @@ describe('writing-style character detectors (fixtures, not the live corpus)', ()
     expect(EMOJI_IN_HEADING.test(bodyLineWithEmoji)).toBe(false);
     expect(EMOJI_IN_HEADING.test(headingWithAsciiDash)).toBe(false);
     expect(EMOJI_IN_HEADING.test(headingWithoutVariationSelector)).toBe(false);
+  });
+
+  it('scans the English catalog and skips only the translated ones', () => {
+    expect(isTranslatedCatalogDirectory('src/locales/zh-CN')).toBe(true);
+    expect(isTranslatedCatalogDirectory('src/locales/pt-BR')).toBe(true);
+    expect(isTranslatedCatalogDirectory('src/locales/en')).toBe(false);
+    expect(isTranslatedCatalogDirectory('src/renderer/components/language')).toBe(false);
+
+    const scanned = collectScannedFiles().map(relativePosixPath);
+    expect(scanned.some((file) => file.startsWith('src/locales/en/') && file.endsWith('.po'))).toBe(true);
+    expect(scanned.some((file) => file.startsWith('src/locales/') && !file.startsWith('src/locales/en/'))).toBe(false);
   });
 
   it('scopes isMarkdown to .md paths, so the src/ curly-quote exemption is intentional rather than borrowed from one file', () => {

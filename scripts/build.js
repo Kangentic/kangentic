@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
 const { copyExternalScripts } = require('./copy-external-scripts');
+const { assertNodeSupportsLingui, checkCatalogs, compileCatalogsForMain } = require('./i18n-catalogs');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -519,6 +520,14 @@ async function runEsbuildBundles(bundleOptions, buildBundle, { sequential }) {
 
 async function build() {
   announceSentryUploadMode();
+  // The i18n catalogs first, since the check costs seconds and a stale catalog
+  // ships raw message IDs: a production renderer keeps only each message's ID.
+  // This is the release gate too, since release.yml builds through here. The
+  // compile writes main's catalogs (.vite/build/locales), which esbuild cannot
+  // import from the PO files.
+  assertNodeSupportsLingui();
+  checkCatalogs(projectDir);
+  compileCatalogsForMain(projectDir, { strict: true });
   console.log('[build] Running tsc --noEmit type check...');
   execSync('npx tsc --noEmit', { cwd: projectDir, stdio: 'inherit' });
   console.log('[build] Type check passed');

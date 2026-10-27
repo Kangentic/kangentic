@@ -40,6 +40,8 @@ export interface Toast {
   onOpen?: () => void;
   /** When what the toast reports happened (UTC ISO 8601), shown as its age. */
   since?: string;
+  /** A persistent toast's: runs when the user closes the card with its X. */
+  onDismiss?: () => void;
 }
 
 interface ToastFields {
@@ -64,6 +66,12 @@ export interface TimedToastInput extends ToastFields {
 export interface PersistentToastInput extends ToastFields {
   persistent: true;
   action?: ToastAction;
+  /**
+   * Runs when the user closes the card with its X, and never when code dismisses
+   * it (`dismissToast`), so it can record a user's answer: the first-launch
+   * language suggestion reads closing it as "do not ask again".
+   */
+  onDismiss?: () => void;
 }
 
 export type ToastInput = TimedToastInput | PersistentToastInput;
@@ -105,6 +113,7 @@ export function resolveToast(input: ToastInput, id: string, defaultDurationMs: n
     action: input.action,
     onOpen: input.onOpen,
     since: input.since,
+    onDismiss: input.persistent === true ? input.onDismiss : undefined,
   };
 }
 

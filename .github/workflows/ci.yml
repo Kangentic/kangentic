@@ -164,6 +164,13 @@ jobs:
         id: typecheck_demo
         if: ${{ !cancelled() }}
         run: npm run typecheck:demo
+      # The catalogs match the source and English is complete. `npm run build`
+      # runs the same gate first; its own step names the failure in the summary
+      # instead of leaving it inside a failed build.
+      - name: i18n catalogs (lingui check)
+        id: i18n
+        if: ${{ !cancelled() }}
+        run: npm run i18n:check
       - name: Build (production bundle)
         id: build
         if: ${{ !cancelled() }}
@@ -187,6 +194,7 @@ jobs:
           check "Lint (ESLint)" "${{ steps.lint.outcome }}"
           check "Type check (tsc)" "${{ steps.typecheck.outcome }}"
           check "Type check demo tier (tsc)" "${{ steps.typecheck_demo.outcome }}"
+          check "i18n catalogs (lingui check)" "${{ steps.i18n.outcome }}"
           check "Build (production bundle)" "${{ steps.build.outcome }}"
           check "Build @kangentic/protocol" "${{ steps.build_protocol.outcome }}"
           exit $status

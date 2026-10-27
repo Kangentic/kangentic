@@ -157,9 +157,14 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
     return () => clearTimeout(timer);
   }, [exiting, onDismiss, toast.id]);
 
+  // The X is the user's own close, the one place a toast's `onDismiss` runs. An
+  // exiting card's X still takes clicks until it unmounts, so a second click
+  // during the exit is ignored rather than running `onDismiss` again.
   const handleDismissClick = useCallback(() => {
+    if (exiting) return;
+    toast.onDismiss?.();
     setExiting(true);
-  }, []);
+  }, [toast, exiting]);
 
   // A click anywhere on a card that opens something opens it, then closes the
   // toast. The card's own buttons keep their clicks.

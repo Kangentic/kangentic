@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
-import { ChevronDown, X } from 'lucide-react';
+import { Check, ChevronDown, X } from 'lucide-react';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -7,6 +7,12 @@ import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 export interface ComboboxOption {
   value: string;
   label: string;
+  /**
+   * A muted second part drawn right after the label in the menu row, such as a
+   * language's code ("(zh-cn)"). The filter matches it too; the field shows the
+   * label alone.
+   */
+  detail?: string;
 }
 
 interface ComboboxProps {
@@ -92,7 +98,9 @@ export function Combobox({
   const searchQuery = filterText.toLowerCase();
   const filteredOptions = useMemo(
     () => options.filter((option) =>
-      option.label.toLowerCase().includes(searchQuery) || option.value.toLowerCase().includes(searchQuery)),
+      option.label.toLowerCase().includes(searchQuery)
+      || option.value.toLowerCase().includes(searchQuery)
+      || (option.detail ?? '').toLowerCase().includes(searchQuery)),
     [options, searchQuery],
   );
 
@@ -316,26 +324,37 @@ export function Combobox({
         portal
         transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
         className="fixed z-[2147483646] bg-surface-raised border border-edge rounded shadow-lg max-h-[min(12rem,var(--popover-available-height,12rem))] overflow-y-auto py-1"
+        role="listbox"
         data-testid={`${testId}-menu`}
       >
         {filteredOptions.length > 0 ? (
-          filteredOptions.map((option) => (
-            // The full label of a row the menu's width may cut short.
-            <Tooltip key={option.value} label={option.label}>
-              <button
-                type="button"
-                data-combobox-option
-                data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-                onClick={() => handleSelectOption(option.value)}
-                onKeyDown={handleOptionKeyDown}
-                className={`w-full text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
-                  option.value === value ? 'text-fg font-medium' : 'text-fg-muted'
-                }`}
-              >
-                {option.label}
-              </button>
-            </Tooltip>
-          ))
+          filteredOptions.map((option) => {
+            const isSelected = option.value === value;
+            return (
+              // The full label of a row the menu's width may cut short.
+              <Tooltip key={option.value} label={option.detail ? `${option.label} ${option.detail}` : option.label}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  data-combobox-option
+                  data-testid={testId ? `${testId}-option-${option.value}` : undefined}
+                  onClick={() => handleSelectOption(option.value)}
+                  onKeyDown={handleOptionKeyDown}
+                  className={`flex w-full items-center gap-2 text-left px-3 py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors ${
+                    isSelected ? 'text-fg font-medium' : 'text-fg-muted'
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {option.label}
+                    {option.detail && <span className="font-normal text-fg-faint"> {option.detail}</span>}
+                  </span>
+                  {/* The current row's mark, the one ColumnPicker and AutomationTypePicker draw. */}
+                  {isSelected && <Check size={14} className="shrink-0 text-accent" />}
+                </button>
+              </Tooltip>
+            );
+          })
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">No matches</div>
         )}

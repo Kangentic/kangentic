@@ -1,3 +1,4 @@
+import { Trans } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -20,6 +21,9 @@ export function ProjectPathMissingDialog() {
 
   if (!missingPathProject) return null;
   const project = missingPathProject;
+  // A named placeholder: `{project.name}` inside <Trans> would reach the
+  // translator as `{0}`.
+  const projectName = project.name;
 
   const handleLocate = async () => {
     const selectedPath = await window.electronAPI.dialog.selectFolder();
@@ -60,7 +64,7 @@ export function ProjectPathMissingDialog() {
       message={
         <div className="space-y-2" data-testid="project-path-missing-dialog">
           <p>
-            The folder for <strong>&quot;{project.name}&quot;</strong> no longer exists:
+            <Trans>The folder for <strong>&quot;{projectName}&quot;</strong> no longer exists:</Trans>
           </p>
           <p className="text-xs break-all">{project.path}</p>
           <p>

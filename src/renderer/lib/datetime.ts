@@ -1,11 +1,18 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { formatDuration } from '../utils/format-session';
 
 type DateLike = Date | string | number | null | undefined;
 
 let testLocaleOverride: string | undefined;
 
+/**
+ * The display language, so dates and relative times read in the same language
+ * as the rest of the UI. A packaged build ships only Chromium's en-US locale, so
+ * English already formatted as en-US there before the app had a language.
+ */
 function getLocale(): string | undefined {
-  return testLocaleOverride;
+  return testLocaleOverride ?? (i18n.locale || undefined);
 }
 
 /** Test-only seam: force a locale for deterministic assertions. Pass undefined to restore. */
@@ -148,7 +155,7 @@ export function formatTimeAgo(value: DateLike, now: number = Date.now()): string
   const date = toDate(value);
   if (!date) return '';
   const elapsedMs = now - date.getTime();
-  if (elapsedMs < MINUTE_MS) return 'just now';
+  if (elapsedMs < MINUTE_MS) return i18n._(msg`just now`);
   const formatter = getRelativeFormatter();
   for (const { unit, unitMs } of RELATIVE_UNITS) {
     if (elapsedMs >= unitMs) return formatter.format(-Math.floor(elapsedMs / unitMs), unit);
@@ -156,7 +163,7 @@ export function formatTimeAgo(value: DateLike, now: number = Date.now()): string
   return '';
 }
 
-/** Elapsed duration between two instants, reusing the locale-neutral "1h 30m" format. */
+/** Elapsed duration between two instants, in `formatDuration`'s "1h 30m" format. */
 export function formatDurationBetween(start: DateLike, end: DateLike): string {
   const startDate = toDate(start);
   const endDate = toDate(end);

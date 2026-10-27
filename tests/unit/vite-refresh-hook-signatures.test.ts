@@ -215,16 +215,63 @@ describe('through a real dev server (the plugins beside react(), as the renderer
   });
 });
 
-describe('every renderer dev server registers them', () => {
-  const configs = ['vite.config.mts', 'scripts/worktree-vite-config.js', 'scripts/hmr-guest-probe.mjs'];
+/** A config's source without its comment lines, so a mention in prose cannot satisfy a check. */
+function configSourceWithoutComments(relativePath: string): string {
+  return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n');
+}
 
-  it.each(configs)('%s', (relativePath) => {
-    const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8')
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
-      .join('\n');
+const RENDERER_DEV_CONFIGS = ['vite.config.mts', 'scripts/worktree-vite-config.js', 'scripts/hmr-guest-probe.mjs'];
+
+describe('every renderer dev server registers them', () => {
+  it.each(RENDERER_DEV_CONFIGS)('%s', (relativePath) => {
+    const source = configSourceWithoutComments(relativePath);
     expect(source).toMatch(/vite-refresh-hook-signatures\.mjs/);
     // Spread into a plugins array, the two plugins it returns.
     expect(source).toMatch(/\.\.\.[^\n]*refreshHookSignatures\(\)/);
+  });
+});
+
+/**
+ * The i18n plugins ride the same configs. @lingui/vite-plugin compiles the macros
+ * and the PO catalogs, so a renderer server without it fails on the first <Trans>,
+ * and vitest needs it for the source under test. The catalog hot update
+ * (scripts/vite-lingui-catalog-hmr.mjs) keeps a PO edit from reloading the page
+ * and its Browser pane guests, so every dev server registers that too.
+ */
+describe('every renderer Vite config registers Lingui', () => {
+  it.each(RENDERER_DEV_CONFIGS)('%s registers lingui() with its macro transform and the catalog hot update', (relativePath) => {
+    const source = configSourceWithoutComments(relativePath);
+    expect(source).toMatch(/\.\.\.[^\n]*lingui\(\{\s*macroTransform:\s*true/);
+    expect(source).toMatch(/vite-lingui-catalog-hmr\.mjs/);
+    expect(source).toMatch(/\.\.\.[^\n]*linguiCatalogHotUpdate\(\)/);
+  });
+
+  it('vitest.config.mts registers lingui() with its macro transform', () => {
+    expect(configSourceWithoutComments('vitest.config.mts')).toMatch(/lingui\(\{\s*macroTransform:\s*true/);
+  });
+
+  it('the web demo inherits it from vite.config.mts, keeping every plugin but Sentry', () => {
+    const source = configSourceWithoutComments('demo/vite.config.mts');
+    expect(source).toMatch(/baseConfigFactory\(/);
+    expect(source).toMatch(/!plugin\.name\.startsWith\('sentry-'\)/);
+  });
+
+  it('the hot-update event name is the one the renderer listens for', async () => {
+    const { CATALOG_UPDATE_EVENT } = await import('../../scripts/vite-lingui-catalog-hmr.mjs');
+    const rendererSource = fs.readFileSync(path.join(RENDERER_ROOT, 'i18n', 'catalogs.ts'), 'utf-8');
+    expect(rendererSource).toContain(`CATALOG_UPDATE_EVENT = '${CATALOG_UPDATE_EVENT}'`);
+  });
+
+  it('accepts a PO module and nothing else', async () => {
+    const { acceptCatalogUpdate } = await import('../../scripts/vite-lingui-catalog-hmr.mjs');
+    const catalogId = path.join(REPO_ROOT, 'src', 'locales', 'zh-CN', 'settings.po').replace(/\\/g, '/');
+    const accepted = acceptCatalogUpdate('export const messages = {};', catalogId);
+    expect(accepted).toContain('import.meta.hot.accept(');
+    // The catalog's path from src/, which the renderer reads the locale from.
+    expect(accepted).toContain('catalogPath: "src/locales/zh-CN/settings.po"');
+    expect(acceptCatalogUpdate('export const value = 1;', rendererId('lib/datetime.ts'))).toBeNull();
   });
 });

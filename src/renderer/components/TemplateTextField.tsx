@@ -38,6 +38,7 @@ import {
   splitTemplateSegments,
 } from './dialogs/board-manager/automation-drafts';
 import { Tooltip } from './Tooltip';
+import { translateText } from '../i18n/translate';
 
 /**
  * Every property that decides where a character lands, set once for both
@@ -418,9 +419,9 @@ export function TemplateTextField({
                 }`}
               >
                 <span className="font-mono text-xs text-fg">{info.chip}</span>
-                <Tooltip label={info.description}>
+                <Tooltip label={translateText(info.description)}>
                   <span className="line-clamp-1 text-[11px] text-fg-faint">
-                    {info.description}
+                    {translateText(info.description)}
                   </span>
                 </Tooltip>
               </button>

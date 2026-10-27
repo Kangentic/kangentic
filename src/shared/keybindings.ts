@@ -21,7 +21,12 @@
  *   - Main key: a single uppercase letter (`P`), digit (`0`), symbol (`=`, `-`),
  *     or a named key verbatim (`Enter`, `Escape`, `F5`).
  *   Examples: `Mod+Shift+P`, `Mod+I`, `Mod+0`, `Ctrl+C`, `F5`.
+ *
+ * Main bundles this module with plain esbuild, so a label is a descriptor from
+ * `@lingui/core/runtime-macro`, never the build-time macro (.claude/rules/i18n.md).
  */
+import { msg } from '@lingui/core/runtime-macro';
+import type { LocalizedText } from './i18n/text';
 
 /** Mutually-exclusive activation contexts, used by conflict detection. Two
  *  actions sharing a combo only conflict if their scopes can be simultaneously
@@ -63,8 +68,9 @@ export const KEY_GROUP_ORDER: readonly KeyGroup[] = [
 export interface KeybindingDefinition {
   /** Stable, dot-namespaced action id. NEVER renamed: user overrides key on it. */
   id: string;
-  /** Human-readable action name shown in the settings panel. */
-  label: string;
+  /** Human-readable action name shown in the settings panel. Resolve it where it
+   *  renders (`translateText`); a string until its entry is converted. */
+  label: LocalizedText;
   /** Short description shown under the label. */
   description?: string;
   /** Panel section. */
@@ -93,7 +99,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   // ── General ──
   {
     id: 'settings.toggle',
-    label: 'Toggle settings',
+    label: msg`Toggle settings`,
     description: 'Open or close the settings panel.',
     group: 'General',
     scope: 'global',

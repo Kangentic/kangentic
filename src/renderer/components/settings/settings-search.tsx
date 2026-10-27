@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import type { SettingDefinition } from './settings-registry';
 import { TAB_LABELS } from './settings-registry';
+import { translateText } from '../../i18n/translate';
 
 /* ── Search Result Types ── */
 
@@ -18,7 +19,12 @@ export interface SearchResults {
  */
 const WORD_EDGE_MARKS = /^["'.,!?;:]+|["'.,!?;:]+$/g;
 
-/** Compute which setting IDs match a search query. All tokens must appear in at least one searchable field. */
+/**
+ * Compute which setting IDs match a search query. All tokens must appear in at
+ * least one searchable field. The label, description, section and tab name are
+ * matched as displayed, in the session's language; the keywords stay English, so
+ * an English search term still finds a row in any language.
+ */
 export function computeSearchResults(query: string, registry: SettingDefinition[]): SearchResults {
   const matchingIds = new Set<string>();
   const tabMatchCounts = new Map<string, number>();
@@ -35,11 +41,12 @@ export function computeSearchResults(query: string, registry: SettingDefinition[
   }
 
   for (const entry of registry) {
+    const tabLabel = TAB_LABELS[entry.tabId];
     const searchableFields = [
-      entry.label.toLowerCase(),
-      entry.description.toLowerCase(),
-      (entry.section || '').toLowerCase(),
-      (TAB_LABELS[entry.tabId] || '').toLowerCase(),
+      translateText(entry.label).toLowerCase(),
+      translateText(entry.description).toLowerCase(),
+      (entry.section ? translateText(entry.section) : '').toLowerCase(),
+      (tabLabel ? translateText(tabLabel) : '').toLowerCase(),
       ...(entry.keywords || []).map((keyword) => keyword.toLowerCase()),
     ].join(' ');
 

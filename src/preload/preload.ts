@@ -3,6 +3,7 @@ import { IPC } from '../shared/ipc-channels';
 import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
+import { readLocaleArgument, type AppLocale } from '../shared/i18n/locales';
 import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
 import { PtyPortClient } from './pty-port-client';
@@ -35,6 +36,12 @@ function readPopOutDescriptor(): PopOutDescriptor | null {
   }
 }
 const popOutDescriptor = readPopOutDescriptor();
+
+// The session's display language: `--kangentic-locale=<code>` is appended by both
+// window factories (createWindow in index.ts, pop-out-window-manager.ts) from the
+// language main loaded at startup. Read once, synchronously, so the renderer can
+// load its catalog before the first render. Anything missing or unknown is English.
+const bootLocale = readLocaleArgument(process.argv);
 
 // This renderer's direct port to the pty host: a terminal's keystrokes and
 // output travel on it and never wait on main's event loop. Asked for once per
@@ -652,6 +659,12 @@ const api: ElectronAPI = {
   gpuHealth: {
     readStatus: () => ipcRenderer.invoke(IPC.GPU_HEALTH_STATUS),
     setAccelerationAndRestart: (enabled: boolean) => ipcRenderer.invoke(IPC.GPU_HEALTH_SET_ACCELERATION, enabled),
+  },
+
+  language: {
+    getBootLocale: () => bootLocale,
+    getInfo: () => ipcRenderer.invoke(IPC.LANGUAGE_GET_INFO),
+    setLanguageAndRestart: (locale: AppLocale) => ipcRenderer.invoke(IPC.LANGUAGE_SET_AND_RESTART, locale),
   },
 
   announcements: {

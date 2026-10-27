@@ -216,6 +216,9 @@ export async function launchApp(options?: {
   // `fixed inset-0` backdrop over the spec and swallows every click. A test
   // fixture is an ESTABLISHED install, not a user who just upgraded. Read from
   // package.json so it tracks the version the launched app actually reports.
+  // The display language is pinned to English through config, and the
+  // first-launch language suggestion marked answered, so the text assertions never
+  // depend on the machine's OS language. A test that pre-writes either keeps it.
   const configPath = path.join(dataDir, 'config.json');
   const appVersion = JSON.parse(
     fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf-8'),
@@ -240,12 +243,22 @@ export async function launchApp(options?: {
       existing.lastWhatsNewShownVersion = appVersion;
       changed = true;
     }
+    if (existing.displayLanguage === undefined) {
+      existing.displayLanguage = 'en';
+      changed = true;
+    }
+    if (existing.hasAnsweredLanguageSuggestion === undefined) {
+      existing.hasAnsweredLanguageSuggestion = true;
+      changed = true;
+    }
     if (changed) fs.writeFileSync(configPath, JSON.stringify(existing));
   } catch {
     fs.writeFileSync(configPath, JSON.stringify({
       hasCompletedFirstRun: true,
       notifications: notificationDefaults,
       lastWhatsNewShownVersion: appVersion,
+      displayLanguage: 'en',
+      hasAnsweredLanguageSuggestion: true,
     }));
   }
 

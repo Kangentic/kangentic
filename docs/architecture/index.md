@@ -17,6 +17,7 @@
 * [IPC channels](ipc/index.md) - Every renderer-to-main IPC channel, grouped into board, session and app channels, with its direction and payload.
 * [Renderer](renderer/index.md) - Renderer-side structure: the Zustand stores, the Command Terminal's window layer, and the activity marks.
 * [Embedded browser](embedded-browser/index.md) - The task Browser pane: webview hardening and cookie jars, Draw and Inspect capture, agent driving, and the numbered decision log behind it.
+* [Display language and i18n](i18n.md) - How Kangentic's UI is translated with Lingui 6, one PO catalog per area per locale and who owns each, how main, the renderer and every pop-out load the session's language, the Language setting and first-launch suggestion, the catalog gate, what stays English, and why Lingui over i18next.
 
 ## Local features
 

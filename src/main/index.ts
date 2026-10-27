@@ -2,7 +2,9 @@ const PROCESS_START = performance.now();
 
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, powerMonitor, session, shell } from 'electron';
 import type { Event as ElectronEvent } from 'electron';
-import type { GpuGraphicsStatus } from '../shared/types';
+import type { GpuGraphicsStatus, LanguageInfo } from '../shared/types';
+import { getActiveLocale, initMainI18n, localeArgument } from './i18n/main-i18n';
+import { readLanguageInfo, saveLanguageForRestart } from './i18n/language-handlers';
 import path from 'node:path';
 import fs from 'node:fs';
 import { relaunchApp, devRestartFileFrom, isRestartRequested } from './app-relaunch';
@@ -439,6 +441,26 @@ ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION, (_event, enabled: unknown): void
   if (!configManager.save({ graphicsAccelerationEnabled: enabled, graphicsAccelerationOffBy: enabled ? null : 'user' })) {
     throw new Error('Graphics acceleration could not be saved');
   }
+  relaunchForSavedSetting();
+});
+
+// The display language's two calls. Registered here beside Graphics acceleration
+// for the same reason: the language is loaded once at startup (initMainI18n in
+// whenReady), so a change is a save plus a restart, and the restart path is this
+// file's. The logic lives in i18n/language-handlers.ts.
+ipcMain.handle(IPC.LANGUAGE_GET_INFO, (): LanguageInfo => readLanguageInfo({
+  activeLocale: getActiveLocale(),
+  config: (getOptionalIpcContext()?.configManager ?? windowConfigManager).load(),
+  systemLanguages: app.getPreferredSystemLanguages(),
+}));
+
+ipcMain.handle(IPC.LANGUAGE_SET_AND_RESTART, (_event, locale: unknown): void => {
+  saveLanguageForRestart(getOptionalIpcContext()?.configManager ?? windowConfigManager, locale);
+  relaunchForSavedSetting();
+});
+
+/** Restart after a setting that only applies at startup was saved. */
+function relaunchForSavedSetting(): void {
   relaunchApp({
     isTest: process.env.NODE_ENV === 'test',
     devRestartFile: __KANGENTIC_DEV__ ? devRestartFileFrom(process.argv) : null,
@@ -450,7 +472,7 @@ ipcMain.handle(IPC.GPU_HEALTH_SET_ACCELERATION, (_event, enabled: unknown): void
     // settings tab tells the user the restart did not happen.
     writeFile: (filePath, contents) => fs.writeFileSync(filePath, contents),
   });
-});
+}
 
 // Set Windows AppUserModelID so the taskbar resolves the correct icon.
 // In packaged builds, this must match the appId in electron-builder.yml so
@@ -1121,7 +1143,9 @@ const createWindow = () => {
       // dev-preview mode (`--ephemeral`), so the dev TestHarness and the preview title
       // stay out of the regular `npm start` dogfood. The title is base64-encoded so a
       // value with spaces / `:` / `/` survives command-line round-tripping intact.
+      // The locale lets the renderer load its catalog before the first render.
       additionalArguments: [
+        localeArgument(),
         ...(isErrorReportingActive() ? ['--kangentic-error-reporting'] : []),
         ...(__KANGENTIC_DEV__ && isEphemeral
           ? [
@@ -1691,6 +1715,15 @@ Menu.setApplicationMenu(
 
 app.whenReady().then(async () => {
   mark('app_ready');
+
+  // The session's language, before anything shows text or opens a window: every
+  // window is told it on its command line (localeArgument), and the global
+  // database dialog below may already speak it. A failure leaves English active.
+  try {
+    initMainI18n({ displayLanguage: windowConfigManager.load().displayLanguage });
+  } catch (error) {
+    console.error('[I18N] Failed to load the display language; staying in English:', error);
+  }
 
   // sqlite-vec is loaded by the retrieval worker alone, the only process that
   // reads or writes the index. While the worker is up it also checkpoints the

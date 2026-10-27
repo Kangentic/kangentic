@@ -10,6 +10,9 @@
  * projects and MUST remain fully functional with no project open (see
  * .claude/rules/settings-tab-scope.md).
  */
+import { msg } from '@lingui/core/runtime-macro';
+import type { LocalizedText } from '../../../shared/i18n/text';
+
 /**
  * `tier` further groups `category: 'system'` tabs in the sidebar (Project
  * tabs and any tab without a tier render with no extra grouping). Tiers must
@@ -32,10 +35,11 @@ export const TIER_LABELS: Record<Exclude<SettingsTabTier, 'core'>, string> = {
 
 export interface SettingsTabMeta {
   id: string;
-  label: string;
+  /** Resolved where it renders (`translateText`); a descriptor once translated. */
+  label: LocalizedText;
   category: 'project' | 'system';
   /** Tooltip shown on hover (e.g. "Applies to all projects"). */
-  tooltip?: string;
+  tooltip?: LocalizedText;
   /** Sidebar sub-grouping within the System group. See SettingsTabTier. */
   tier?: SettingsTabTier;
 }
@@ -59,6 +63,8 @@ export const SETTINGS_TABS: SettingsTabMeta[] = [
   { id: 'browser', label: 'Browser', category: 'project' },
   { id: 'shortcuts', label: 'Shortcuts', category: 'project' },
   // -- Shared settings: Core tier --
+  // First under System: the one tab a user who cannot read the rest must find.
+  { id: 'language', label: msg`Language`, category: 'system', tier: 'core', tooltip: msg`Applies to all projects` },
   { id: 'board', label: 'Board', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'task', label: 'Task', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },
   { id: 'changes', label: 'Changes', category: 'system', tier: 'core', tooltip: 'Applies to all projects' },

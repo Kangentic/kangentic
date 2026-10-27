@@ -27,6 +27,7 @@ import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
 import { PausedForMemoryDialog } from '../dialogs/PausedForMemoryDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
 import { WhatsNewDialog } from '../dialogs/WhatsNewDialog';
+import { LanguageSuggestion } from '../language/LanguageSuggestion';
 import { AnnouncementBanner } from '../announcements/AnnouncementBanner';
 import { AnnouncementDialog } from '../announcements/AnnouncementDialog';
 import { AnnouncementHistoryDialog } from '../announcements/AnnouncementHistoryDialog';
@@ -649,6 +650,8 @@ export function AppLayout() {
       <AnnouncementDialog />
       {onboardingChecklistOpen && <WelcomeChecklistDialog />}
       <WalkthroughLayer />
+      {/* The first-launch language toast and its restart prompt (main window only). */}
+      <LanguageSuggestion />
       <ToastContainer />
       <DictationSurface />
       <WindowLayer />

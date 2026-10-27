@@ -627,6 +627,15 @@ export const IPC = {
   // value disagreeing with how the app is actually rendering.
   GPU_HEALTH_SET_ACCELERATION: 'gpuHealth:setAccelerationAndRestart',
 
+  // Display language (Settings > Language and the first-launch suggestion).
+  // The session's language and the languages that ship, plus the OS language to
+  // offer, read fresh from config on each call.
+  LANGUAGE_GET_INFO: 'language:getInfo',
+  // Save the display language and restart, one main-side call for the same reason
+  // as Graphics acceleration: the language is loaded once at startup, so a save
+  // without the restart would leave the setting disagreeing with the UI.
+  LANGUAGE_SET_AND_RESTART: 'language:setAndRestart',
+
   // Announcements (remote feed poll; see src/main/announcements.ts)
   ANNOUNCEMENTS_GET: 'announcements:get',
   ANNOUNCEMENTS_GET_HISTORY: 'announcements:getHistory',

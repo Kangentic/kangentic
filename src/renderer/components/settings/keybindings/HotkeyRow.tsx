@@ -7,6 +7,7 @@ import { CardTile, InfoTip } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { KeyCombo } from './KeyCombo';
 import { KeyCaptureInput } from './KeyCaptureInput';
+import { translateText } from '../../../i18n/translate';
 
 interface HotkeyRowProps {
   definition: KeybindingDefinition;
@@ -42,6 +43,7 @@ export function HotkeyRow({
   onReset,
 }: HotkeyRowProps) {
   const readOnly = !definition.rebindable;
+  const label = translateText(definition.label);
 
   return (
     <CardTile className="flex items-center gap-3" testId={`hotkey-row-${definition.id}`}>
@@ -50,8 +52,8 @@ export function HotkeyRow({
           {/* The label and its info icon never split across lines: the label
               truncates instead. Only the state pills after them wrap. */}
           <span className="flex min-w-0 max-w-full items-center gap-1.5">
-            <span className={`${SETTING_LABEL_CLASS} truncate`}>{definition.label}</span>
-            {definition.description ? <InfoTip label={definition.label} text={definition.description} /> : null}
+            <span className={`${SETTING_LABEL_CLASS} truncate`}>{label}</span>
+            {definition.description ? <InfoTip label={label} text={definition.description} /> : null}
           </span>
           {conflict && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-conflict-${definition.id}`}>
