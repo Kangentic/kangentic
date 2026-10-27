@@ -354,13 +354,16 @@ describe('OpenCode Adapter', () => {
       ) as typeof fs.readFileSync);
     }
 
+    // The CLI the project detected, which probeAuth is handed; a path on this machine.
+    const LOCAL_CLI_PATH = '/usr/local/bin/opencode';
+
     it('targets ~/.local/share/opencode/auth.json under the home directory', async () => {
       let probedPath: string | null = null;
       mockReadFileSync((filePath) => {
         probedPath = filePath;
         return JSON.stringify({ anthropic: { type: 'oauth' } });
       });
-      await adapter.probeAuth();
+      await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(probedPath).not.toBeNull();
       expect(probedPath!).toBe(path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'));
     });
@@ -371,19 +374,19 @@ describe('OpenCode Adapter', () => {
       // entries. Pins probeAuth against the real on-disk format so a
       // future schema change (e.g. envelope wrapper) trips this test.
       mockReadFileSync(() => opencodeAuthFixture);
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(true);
     });
 
     it('returns true when auth.json contains at least one provider', async () => {
       mockReadFileSync(() => JSON.stringify({ anthropic: { type: 'oauth', access: 'tok' } }));
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(true);
     });
 
     it('returns false when auth.json is the empty object', async () => {
       mockReadFileSync(() => '{}');
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
 
@@ -393,13 +396,13 @@ describe('OpenCode Adapter', () => {
         error.code = 'ENOENT';
         throw error;
       });
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
 
     it('returns null when auth.json contains malformed JSON', async () => {
       mockReadFileSync(() => 'not-json{{{');
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBeNull();
     });
 
@@ -409,19 +412,19 @@ describe('OpenCode Adapter', () => {
         error.code = 'EACCES';
         throw error;
       });
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBeNull();
     });
 
     it('returns false when auth.json is a JSON array (defensive: not the documented shape)', async () => {
       mockReadFileSync(() => '[]');
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
 
     it('returns false when auth.json contains a JSON null', async () => {
       mockReadFileSync(() => 'null');
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
   });

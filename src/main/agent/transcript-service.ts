@@ -224,9 +224,16 @@ export async function readSavedConversation(
 export function findTranscriptRecord(db: Database.Database, anyId: string): { record: SessionRecord; title: string | null } | null {
   const record = new SessionRepository(db).findByAnyId(anyId);
   if (record) return { record, title: null };
-  let row: { title: string; agent_name: string | null; agent_session_id: string; agent_cwd: string | null; created_at: string } | undefined;
+  let row: {
+    title: string;
+    agent_name: string | null;
+    agent_session_id: string;
+    agent_cwd: string | null;
+    agent_cli_target: string | null;
+    created_at: string;
+  } | undefined;
   try {
-    row = db.prepare('SELECT title, agent_name, agent_session_id, agent_cwd, created_at FROM workflows WHERE agent_session_id = ?')
+    row = db.prepare('SELECT title, agent_name, agent_session_id, agent_cwd, agent_cli_target, created_at FROM workflows WHERE agent_session_id = ?')
       .get(anyId) as typeof row;
   } catch {
     return null;
@@ -240,6 +247,7 @@ export function findTranscriptRecord(db: Database.Database, anyId: string): { re
       sessionType: adapter.sessionType,
       cwd: row.agent_cwd,
       startedAt: row.created_at,
+      cliTarget: row.agent_cli_target,
     }),
   };
 }

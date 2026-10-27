@@ -31,7 +31,8 @@ function checkConnection(explicit: boolean): Promise<McpConnectionCheck> {
 
 /**
  * Whether agents can reach the server: Connected, or Failed with the error the
- * check hit, as selectable text and nothing more. Checked on every visit; Test
+ * check hit, as selectable text and nothing more. Checked each time the row
+ * shows (a visit, or a settings search that brings it back); Test
  * connection checks again, starting a stopped WSL distro a CLI path points
  * into, which the check on arrival skips. While a check runs only the button
  * changes. Replaces the Documentation tile: every tool cell already opens its
@@ -41,9 +42,18 @@ function McpConnectionRow() {
   const { searchId, label } = settingProps('mcpServer.connection');
   const visible = useSettingVisible(searchId);
   const [result, setResult] = useState<McpConnectionCheck | null>(null);
-  // The check on arrival starts as the row mounts.
-  const [checking, setChecking] = useState(true);
+  // The check on arrival starts once the row shows: not while settings search
+  // hides it, since a check can start a `wsl.exe` and a bridge round trip.
+  const [checking, setChecking] = useState(visible);
+  // The row showing again starts a check (the effect below), so the button
+  // reads as checking from that render on.
+  const [shownLastRender, setShownLastRender] = useState(visible);
+  if (visible !== shownLastRender) {
+    setShownLastRender(visible);
+    setChecking(visible);
+  }
   useEffect(() => {
+    if (!visible) return undefined;
     let mounted = true;
     void checkConnection(false).then((answer) => {
       if (!mounted) return;
@@ -53,7 +63,7 @@ function McpConnectionRow() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [visible]);
   const testConnection = useCallback(async () => {
     setChecking(true);
     setResult(await checkConnection(true));

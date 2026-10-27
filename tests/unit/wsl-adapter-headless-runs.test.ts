@@ -97,6 +97,15 @@ const WSL_AGENTS = agentRegistry.list()
   .map((name) => agentRegistry.get(name))
   .filter((adapter): adapter is NonNullable<typeof adapter> => adapter?.supportsWslCli === true);
 
+/**
+ * Adapters whose capability discovery asks the CLI nothing, by design. Droid is
+ * TUI-first: `discoverDroidCapabilities` returns a fixed
+ * `supportsModelOverride: false` (model and effort stay in the TUI, see
+ * `.claude/rules/cli-features-over-custom-layers.md`), so there is no CLI run
+ * to put in a distro. Any other adapter must run at least one probe.
+ */
+const DISCOVERY_RUNS_NOTHING = new Set<string>(['droid']);
+
 function expectStartedInDistro(linuxCliPath: string): void {
   expect(started.length).toBeGreaterThan(0);
   const run = started[0];
@@ -107,6 +116,14 @@ function expectStartedInDistro(linuxCliPath: string): void {
 }
 
 describe('headless runs of agents that run from a WSL distro', () => {
+  it('lists only adapters that still run from a distro and still discover capabilities as allowlisted', () => {
+    for (const name of DISCOVERY_RUNS_NOTHING) {
+      const adapter = WSL_AGENTS.find((candidate) => candidate.name === name);
+      expect(adapter, `${name} is allowlisted but is not a WSL adapter`).toBeDefined();
+      expect(adapter?.discoverCapabilities, `${name} is allowlisted but discovers nothing`).toBeDefined();
+    }
+  });
+
   for (const adapter of WSL_AGENTS) {
     const uncCliPath = `\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\${adapter.name}`;
     const linuxCliPath = `/home/dev/.local/bin/${adapter.name}`;
@@ -128,9 +145,24 @@ describe('headless runs of agents that run from a WSL distro', () => {
     if (adapter.discoverCapabilities) {
       it(`${adapter.name}: capability discovery runs nothing but wsl.exe, and never the share path`, async () => {
         await adapter.discoverCapabilities!(uncCliPath).catch(() => undefined);
+        // A loop over nothing passes, so a discovery that stopped asking the
+        // CLI in its distro would pass too. Count both ways a probe starts
+        // (the exec drop-in and a spawned CLI or PTY) before checking any.
+        const runCount = executed.length + started.length;
+        if (DISCOVERY_RUNS_NOTHING.has(adapter.name)) {
+          // Exactly zero, so an allowlisted adapter that begins to probe the CLI
+          // fails here and leaves the list, where it is checked like the rest.
+          expect(runCount, `${adapter.name} is allowlisted as running nothing`).toBe(0);
+        } else {
+          expect(runCount, `${adapter.name} ran no probe for a CLI in a distro`).toBeGreaterThan(0);
+        }
         for (const command of executed) {
           expect(command, command).not.toContain('wsl.localhost');
           expect(command.split(' ')[0].endsWith('wsl.exe'), command).toBe(true);
+        }
+        for (const run of started) {
+          expect(run.command.endsWith('wsl.exe'), run.command).toBe(true);
+          expect([run.command, ...run.args].join(' ')).not.toContain('wsl.localhost');
         }
       });
     }

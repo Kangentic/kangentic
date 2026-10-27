@@ -3,8 +3,9 @@
  * the WSL hook transport, `wsl-hook-transport.ts`): one JSON-RPC message,
  * posted to Kangentic's loopback MCP server exactly as an HTTP client sends it,
  * with the token the request carried. The server's own token and host checks
- * decide, as they do for every client; the relay adds no access of its own and
- * reaches nothing but that server's `/mcp/` paths on `127.0.0.1`.
+ * decide, as they do for every client. The relay posts only the caller's own
+ * JSON-RPC body, and only to a `/mcp/` path on `127.0.0.1`; it does not pin the
+ * port, so the URL in the request names which loopback server that is.
  *
  * Returns the text the bridge prints: the server's answer on one line, nothing
  * for a notification (which gets no answer), or a JSON-RPC error carrying the

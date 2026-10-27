@@ -886,17 +886,24 @@ export class ClaudeAdapter implements AgentAdapter {
     // The bridge's relay, on a distro on NAT networking, lives as long as the
     // session's process.
     const stopRelay = startRunMcpRelay(input.runDirectory, mcpServer);
-    const session = openStdinJsonSession({
-      cliPath: input.cliPath,
-      cliTarget,
-      args: [...args, '--input-format', 'stream-json'],
-      cwd: input.cwd,
-      ...answerEnv(effort),
-      formatTurn: (prompt) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } }),
-      createReducer: createAnswerStreamReducer,
-      isTurnEnd: isResultLine,
-      extractAnswer: extractStreamedAnswer,
-    });
+    let session: AnswerSession;
+    try {
+      session = openStdinJsonSession({
+        cliPath: input.cliPath,
+        cliTarget,
+        args: [...args, '--input-format', 'stream-json'],
+        cwd: input.cwd,
+        ...answerEnv(effort),
+        formatTurn: (prompt) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } }),
+        createReducer: createAnswerStreamReducer,
+        isTurnEnd: isResultLine,
+        extractAnswer: extractStreamedAnswer,
+      });
+    } catch (error) {
+      // A spawn that throws leaves no process whose exit would stop the relay.
+      stopRelay();
+      throw error;
+    }
     void session.exited.then(stopRelay, stopRelay);
     return session;
   }

@@ -6,9 +6,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   describeWslFailure,
+  invalidateWslDistroFacts,
   isWslDistroRunning,
   parseInteractiveEnvironment,
   parsePathsAndMode,
+  peekWslDistroFacts,
   resetWslDistroCacheForTests,
   resolveWslDistroFacts,
   type WslExec,
@@ -123,6 +125,107 @@ describe('resolveWslDistroFacts', () => {
   it('rejects when the shell gives no HOME or PATH', async () => {
     const empty: WslExec = vi.fn(async () => ({ stdout: '__KANGENTIC_ENV_BEGIN__\n__KANGENTIC_ENV_END__\n', stderr: '' }));
     await expect(resolveWslDistroFacts('Ubuntu', empty)).rejects.toThrow('Could not read HOME and PATH');
+  });
+});
+
+describe('invalidateWslDistroFacts and peekWslDistroFacts', () => {
+  // Re-detect drops every distro's facts so an install or a .bashrc edit is
+  // picked up. `peek` is the synchronous read for a caller that cannot wait: it
+  // answers only from a read that finished.
+
+  /** A wsl.exe answering the facts read (two runs), held until `release()` when `held`. */
+  function fakeWsl(options: { held?: boolean } = {}): { run: WslExec; release: () => void } {
+    let release: () => void = () => undefined;
+    const gate = options.held
+      ? new Promise<void>((resolve) => { release = resolve; })
+      : Promise.resolve();
+    const run = vi.fn<WslExec>(async (args) => {
+      await gate;
+      return String(args[args.indexOf('-c') + 1]).includes('wslpath')
+        ? { stdout: PATHS_OUTPUT, stderr: '' }
+        : { stdout: ENVIRONMENT_OUTPUT, stderr: '' };
+    });
+    return { run, release };
+  }
+
+  /** One turn of the event loop: every promise callback queued so far has run. */
+  const settle = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+
+  // Red-green: an invalidate that leaves the cached read in place keeps the
+  // run count at 2.
+  it('reads the distro again after an invalidation', async () => {
+    const { run } = fakeWsl();
+    await resolveWslDistroFacts('Ubuntu', run);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    invalidateWslDistroFacts();
+    const facts = await resolveWslDistroFacts('Ubuntu', run);
+
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(facts.homeLinux).toBe('/home/dev');
+  });
+
+  it('forgets every distro, not only one', async () => {
+    const { run } = fakeWsl();
+    await resolveWslDistroFacts('Ubuntu', run);
+    await resolveWslDistroFacts('Debian', run);
+    expect(run).toHaveBeenCalledTimes(4);
+
+    invalidateWslDistroFacts();
+    await resolveWslDistroFacts('Ubuntu', run);
+    await resolveWslDistroFacts('Debian', run);
+
+    expect(run).toHaveBeenCalledTimes(8);
+  });
+
+  // Red-green: a peek backed by the in-flight read (or a cache filled when the
+  // read starts rather than when it finishes) is not null while the exec is held.
+  it('peeks nothing before the read, nothing while it runs, and the facts once it has settled', async () => {
+    const { run, release } = fakeWsl({ held: true });
+    expect(peekWslDistroFacts('Ubuntu')).toBeNull();
+
+    const reading = resolveWslDistroFacts('Ubuntu', run);
+    await settle();
+    expect(run).toHaveBeenCalled();
+    expect(peekWslDistroFacts('Ubuntu')).toBeNull();
+
+    release();
+    const facts = await reading;
+    await settle();
+
+    expect(peekWslDistroFacts('Ubuntu')).toEqual(facts);
+    expect(peekWslDistroFacts('Ubuntu')).toMatchObject({ distro: 'Ubuntu', homeLinux: '/home/dev' });
+    // Another distro was never read.
+    expect(peekWslDistroFacts('Debian')).toBeNull();
+  });
+
+  // Red-green: an invalidate that clears only the in-flight map leaves the
+  // settled facts behind, and the peek keeps returning them.
+  it('peeks nothing after an invalidation', async () => {
+    const { run } = fakeWsl();
+    await resolveWslDistroFacts('Ubuntu', run);
+    await settle();
+    expect(peekWslDistroFacts('Ubuntu')).not.toBeNull();
+
+    invalidateWslDistroFacts();
+
+    expect(peekWslDistroFacts('Ubuntu')).toBeNull();
+  });
+
+  // Red-green: without the "is this still the current read" check, the read that
+  // was in flight at the invalidation settles into the peek cache and serves
+  // facts the invalidation was meant to drop.
+  it('does not let a read that was in flight at the invalidation settle into the peek', async () => {
+    const { run, release } = fakeWsl({ held: true });
+    const reading = resolveWslDistroFacts('Ubuntu', run);
+    await settle();
+
+    invalidateWslDistroFacts();
+    release();
+    await reading;
+    await settle();
+
+    expect(peekWslDistroFacts('Ubuntu')).toBeNull();
   });
 });
 

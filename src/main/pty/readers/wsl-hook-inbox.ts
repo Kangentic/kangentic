@@ -71,6 +71,8 @@ export class WslHookInbox {
   private readonly relaysInFlight = new Set<string>();
   /** Ends the relays still running when the session ends. */
   private readonly relayAbort = new AbortController();
+  /** The last events append failure logged, so one that repeats every poll is logged once. */
+  private lastIngestFailure: string | null = null;
 
   constructor(private readonly options: WslHookInboxOptions) {
     this.paths = wslHookPaths(options.sessionDirectory);
@@ -191,8 +193,13 @@ export class WslHookInbox {
         // against the synchronous exit drain; an events file that cannot be
         // written keeps the files, which the next drain tries again.
         fs.appendFileSync(this.options.eventsOutputPath, lines.join('\n') + '\n');
+        this.lastIngestFailure = null;
       } catch (error) {
-        this.logError('ingest', error instanceof Error ? error.message : String(error));
+        // The files stay pending, so the next poll tries again: log a failure
+        // once, not once per poll.
+        const message = error instanceof Error ? error.message : String(error);
+        if (message !== this.lastIngestFailure) this.logError('ingest', message);
+        this.lastIngestFailure = message;
         return;
       }
     }
@@ -289,6 +296,9 @@ export class WslHookInbox {
       const decision: unknown = await fsPromises.readFile(decisionPath, 'utf-8')
         .then((raw) => JSON.parse(raw) as unknown)
         .catch(() => null);
+      // The session ended during the read: its events file is gone or going,
+      // and a marker there would outlive it.
+      if (this.closed) return '';
       try {
         const approval = planApprovalAnswer({
           encodedSpec: record.argument,

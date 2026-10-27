@@ -14,7 +14,7 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: { ...actual, existsSync: vi.fn().mockReturnValue(false) } };
 });
 
-import { AgentDetector, type AgentDetectorDependencies } from '../../src/main/agent/shared/agent-detector';
+import { AgentDetector, type AgentDetectorConfig, type AgentDetectorDependencies } from '../../src/main/agent/shared/agent-detector';
 import { execVersion } from '../../src/main/agent/shared/exec-version';
 import type { WslDistroFacts } from '../../src/main/agent/shared/wsl-distro';
 
@@ -75,6 +75,105 @@ describe('AgentDetector - a CLI inside a WSL distro', () => {
 
     expect(result).toMatchObject({ found: false, detectionError: 'There is no distribution with the supplied name.' });
     expect(runWsl).not.toHaveBeenCalled();
+  });
+
+  // Awaited one after another on purpose: concurrent calls share one in-flight
+  // detection, which would run wsl.exe once with or without a cache.
+  it('does not cache a failed facts read, so the next detection reads the distro again', async () => {
+    const runWsl = vi.fn(async () => ({ stdout: '2.1.311 (Claude Code)\n', stderr: '' }));
+    const resolveFacts = vi.fn<(distro: string) => Promise<WslDistroFacts>>()
+      .mockRejectedValueOnce(new Error('There is no distribution with the supplied name.'))
+      .mockResolvedValue(FACTS);
+    const detector = makeDetector(true, { runWsl, resolveFacts });
+
+    const failed = await detector.detect(CLI_PATH);
+    expect(failed).toMatchObject({ found: false, path: CLI_PATH, detectionError: 'There is no distribution with the supplied name.' });
+    expect(resolveFacts).toHaveBeenCalledTimes(1);
+    expect(runWsl).not.toHaveBeenCalled();
+    expect(detector.getCachedVersion(CLI_PATH)).toBeNull();
+
+    const recovered = await detector.detect(CLI_PATH);
+    expect(resolveFacts).toHaveBeenCalledTimes(2);
+    expect(recovered).toEqual({ found: true, path: CLI_PATH, version: '2.1.311', cliTarget: { kind: 'wsl', distro: 'Ubuntu' } });
+    expect(runWsl).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries a facts read that rejected with something other than an Error as its text', async () => {
+    const result = await makeDetector(true, {
+      runWsl: vi.fn(),
+      resolveFacts: async () => { throw 'the distro is still booting'; },
+    }).detect(CLI_PATH);
+
+    expect(result).toMatchObject({ found: false, detectionError: 'the distro is still booting' });
+  });
+
+  it('caches a successful detection, so a repeat does not run wsl.exe again', async () => {
+    const runWsl = vi.fn(async () => ({ stdout: '2.1.311 (Claude Code)\n', stderr: '' }));
+    const resolveFacts = vi.fn(async () => FACTS);
+    const detector = makeDetector(true, { runWsl, resolveFacts });
+
+    const first = await detector.detect(CLI_PATH);
+    const second = await detector.detect(CLI_PATH);
+
+    expect(first.found).toBe(true);
+    expect(second).toBe(first);
+    expect(runWsl).toHaveBeenCalledTimes(1);
+    expect(resolveFacts).toHaveBeenCalledTimes(1);
+    expect(detector.getCachedVersion(CLI_PATH)).toBe('2.1.311');
+  });
+
+  describe('a CLI that prints its version some other way, and output that is not a version', () => {
+    const OZ_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\oz';
+    // Rejects anything that does not open with a dotted version, unlike the
+    // permissive parser makeDetector gives.
+    const semverOnly: AgentDetectorConfig['parseVersion'] = (raw) => /^\d+\.\d+\.\d+/.exec(raw)?.[0] ?? null;
+
+    function makeStrictDetector(runWsl: AgentDetectorDependencies['runWsl'], versionArgs?: readonly string[]): AgentDetector {
+      return new AgentDetector(
+        { binaryName: 'oz', supportsWslCli: true, parseVersion: semverOnly, ...(versionArgs ? { versionArgs } : {}) },
+        { platform: 'win32', resolveFacts: async () => FACTS, runWsl },
+      );
+    }
+
+    it('runs the config\'s versionArgs in the distro in place of --version', async () => {
+      const runWsl = vi.fn(async () => ({ stdout: '0.4.2\n', stderr: '' }));
+      const result = await makeStrictDetector(runWsl, ['dump-debug-info']).detect(OZ_PATH);
+
+      expect(result).toMatchObject({ found: true, version: '0.4.2' });
+      const [, args] = runWsl.mock.calls[0] as unknown as [string, string[]];
+      expect(args).toEqual(['-d', 'Ubuntu', '-e', 'env', `PATH=${FACTS.interactivePath}`, '/home/dev/.local/bin/oz', 'dump-debug-info']);
+      expect(args).not.toContain('--version');
+    });
+
+    it('asks for --version when the config names no versionArgs', async () => {
+      const runWsl = vi.fn(async () => ({ stdout: '0.4.2\n', stderr: '' }));
+      await makeStrictDetector(runWsl).detect(OZ_PATH);
+
+      const [, args] = runWsl.mock.calls[0] as unknown as [string, string[]];
+      expect(args.slice(-2)).toEqual(['/home/dev/.local/bin/oz', '--version']);
+    });
+
+    it('reports empty output when the CLI prints nothing on either stream', async () => {
+      const runWsl = vi.fn(async () => ({ stdout: '  \n', stderr: '' }));
+      const result = await makeStrictDetector(runWsl).detect(OZ_PATH);
+
+      expect(result).toEqual({ found: false, path: OZ_PATH, version: null, cliTarget: { kind: 'wsl', distro: 'Ubuntu' }, detectionError: 'empty output' });
+    });
+
+    it('reports the first line of output the parser rejects, not all of it', async () => {
+      const runWsl = vi.fn(async () => ({ stdout: 'Usage: oz [options]\r\nRun oz --help for the full list\r\n', stderr: '' }));
+      const result = await makeStrictDetector(runWsl).detect(OZ_PATH);
+
+      expect(result).toEqual({ found: false, path: OZ_PATH, version: null, cliTarget: { kind: 'wsl', distro: 'Ubuntu' }, detectionError: 'Usage: oz [options]' });
+    });
+
+    it('reads stderr when stdout is empty, and reports its first line when that is rejected too', async () => {
+      const accepted = await makeStrictDetector(vi.fn(async () => ({ stdout: '', stderr: '0.4.2\n' }))).detect(OZ_PATH);
+      expect(accepted).toMatchObject({ found: true, version: '0.4.2' });
+
+      const rejected = await makeStrictDetector(vi.fn(async () => ({ stdout: '', stderr: 'error: unknown option\nsecond line\n' }))).detect(OZ_PATH);
+      expect(rejected).toMatchObject({ found: false, version: null, detectionError: 'error: unknown option' });
+    });
   });
 
   it('reports the path unsupported for an adapter that does not run from WSL, probing nothing', async () => {

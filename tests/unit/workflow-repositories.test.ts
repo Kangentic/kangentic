@@ -20,6 +20,7 @@ const {
 } = await import('../../src/main/db/repositories/workflow-repository');
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { TaskMoveRepository } = await import('../../src/main/db/repositories/task-move-repository');
+const { parseStoredCliTarget, serializeCliTarget } = await import('../../src/main/agent/shared/cli-target');
 
 import { openTestDatabase } from './helpers/test-database';
 
@@ -259,6 +260,68 @@ describe('workflow tables', () => {
     expect(recorded.revision).toBe(workflow.revision);
     workflows.setAgentConversation(workflow.id, null);
     expect(workflows.getById(workflow.id)!.agent_session_id).toBeNull();
+  });
+
+  describe('where the workflow agent\'s CLI ran (`agent_cli_target`)', () => {
+    // As a session row's `cli_target` holds it: the real serializer's output, with the homes a reader needs.
+    const wslTarget = serializeCliTarget({
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      facts: {
+        distro: 'Ubuntu',
+        homeLinux: '/home/dev',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+        interactivePath: '',
+        env: {},
+        networkingMode: 'nat',
+      },
+    });
+    const conversation = { agentName: 'claude', agentSessionId: 'conv-1', cwd: '/home/dev/project' };
+
+    it('is NULL on a new workflow, and keeps the target the conversation was recorded with', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({ title: 'Usage budgets' });
+      expect(workflow.agent_cli_target).toBeNull();
+
+      workflows.setAgentConversation(workflow.id, { ...conversation, cliTarget: wslTarget });
+
+      const recorded = workflows.getById(workflow.id)!;
+      expect(recorded.agent_cli_target).toBe(wslTarget);
+      // What a reader after the agent gets from it: the distro and its homes.
+      expect(parseStoredCliTarget(recorded.agent_cli_target)).toMatchObject({
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      });
+      // The target is part of the conversation, not of the plan.
+      expect(recorded.revision).toBe(workflow.revision);
+    });
+
+    it('is NULL when the conversation is recorded without a target', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({ title: 'Usage budgets' });
+
+      workflows.setAgentConversation(workflow.id, conversation);
+
+      const recorded = workflows.getById(workflow.id)!;
+      expect(recorded.agent_cwd).toBe('/home/dev/project');
+      expect(recorded.agent_cli_target).toBeNull();
+    });
+
+    it('is forgotten with the conversation, and when the conversation is recorded again as this machine', () => {
+      const { workflows } = freshDatabase();
+      const workflow = workflows.create({ title: 'Usage budgets' });
+
+      workflows.setAgentConversation(workflow.id, { ...conversation, cliTarget: wslTarget });
+      workflows.setAgentConversation(workflow.id, null);
+      expect(workflows.getById(workflow.id)!.agent_cli_target).toBeNull();
+
+      workflows.setAgentConversation(workflow.id, { ...conversation, cliTarget: wslTarget });
+      workflows.setAgentConversation(workflow.id, { ...conversation, cliTarget: null });
+      expect(workflows.getById(workflow.id)!.agent_cli_target).toBeNull();
+    });
   });
 
   it('clears a legacy whole-workflow plan approval, and stores a draft\'s adopted copies, without changing the plan\'s revision', () => {

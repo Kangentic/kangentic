@@ -70,6 +70,41 @@ describe('a background shell hint command is recognized by its spec, not by wher
   });
 });
 
+// Pins the `wsl-hook.sh` clause of `isKangenticHookCommand`. The WSL hook
+// transport's commands run `sh <script> <verb> ...` instead of a node bridge, so
+// no `*-bridge` name is in them, and without that clause a stale entry in a
+// distro CLI's settings would never be swept. Like the node bridges, the script
+// name alone is not enough: a user's own `wsl-hook.sh` must survive, so the
+// command also has to point into `.kangentic`. The negatives name an install the
+// mocked shipped paths do not match, so branch (c) cannot rescue them.
+describe('a WSL hook transport command is recognized by its script and a .kangentic path', () => {
+  const NODE_BRIDGE_NAMES = ['activity-bridge', 'event-bridge', 'plan-approval-bridge', 'background-shell-hint-bridge'];
+
+  it.each([
+    ['a session\'s own script', 'sh "/mnt/c/p/.kangentic/sessions/s/wsl-hooks/wsl-hook.sh" event tool_start'],
+    ['a workspace copy', 'sh .kangentic/gemini-wsl-hook.sh event x'],
+  ])('takes %s for Kangentic\'s', (_label, command) => {
+    // Only the wsl-hook.sh clause can name the bridge here, and only `.kangentic` can vouch for it.
+    for (const bridgeName of NODE_BRIDGE_NAMES) expect(command).not.toContain(bridgeName);
+    expect(command).not.toContain('KANGENTIC_EVENTS_PATH');
+    expect(command).not.toContain('/kangentic/');
+
+    expect(isKangenticHookCommand(command)).toBe(true);
+  });
+
+  it('does not take a wsl-hook.sh outside .kangentic, which is the user\'s own script', () => {
+    const command = 'sh /home/dev/scripts/wsl-hook.sh event x';
+    expect(command).not.toContain('.kangentic');
+    expect(command).not.toContain('/kangentic/');
+
+    expect(isKangenticHookCommand(command)).toBe(false);
+  });
+
+  it('does not take a .kangentic path that runs no bridge script at all', () => {
+    expect(isKangenticHookCommand('sh "/mnt/c/p/.kangentic/sessions/s/wsl-hooks/other.sh" event x')).toBe(false);
+  });
+});
+
 // Pins `ownBridgePaths` in src/main/agent/shared/hook-utils.ts, which maps every
 // `resolveBridgeScript` answer through `toForwardSlash`. A hook command names
 // the bridge forward-slashed, so without the mapping the memoized backslash

@@ -151,7 +151,7 @@ Operates on the workflow's home project DB.
 | `markStarted(id)` | Running, the plan spent (its tasks now exist), `started_at` stamped |
 | `setState(id, state)` | Running, paused or done; done stamps `finished_at`, paused stamps `paused_at`, and any other state clears it |
 | `bumpRevision(id)` | Any change to a started workflow's tasks, links or routes |
-| `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`), or null to forget it so the next open starts a new one. A null `agentSessionId` records an agent whose id is not known yet. The revision stays |
+| `setAgentConversation(id, conversation)` | The workflow agent's conversation (`agent_name`, `agent_session_id`, `agent_cwd`, and `agent_cli_target` when its CLI ran in a WSL distro), or null to forget it so the next open starts a new one. A null `agentSessionId` records an agent whose id is not known yet. The revision stays |
 | `forgetAgentSessionId(id)` | Clear `agent_session_id` only, after a resume finds no conversation: the agent stays recorded, so the next start continues from the saved plan. The revision stays |
 | `addAgentReadProject(id, projectId)` | Let the workflow agent read another registered project from now on; false when it already could. The revision stays |
 | `setAgentGrid(id, grid)` / `getAgentGrid(id)` | The workflow agent's last PTY grid (`agent_pty_cols/rows`), or null before it has one. The revision stays |

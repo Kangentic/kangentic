@@ -257,6 +257,7 @@ export async function prepareAgentSpawn(input: {
       records: lineage,
       cwd,
       projectPath,
+      place: cliTarget,
     });
     if (verdict === 'never-started') {
       console.log(

@@ -3,6 +3,7 @@ import { handleGetTranscript, handleQueryDb } from '../../src/main/agent/command
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { TranscriptEntry } from '../../src/shared/types';
 import type { AgentAdapter, ParsedTranscript } from '../../src/main/agent/agent-adapter';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 
 // Vitest hoists vi.mock() calls automatically, so these factories run before
 // the inspect-commands module is evaluated. We mock the agent registry (the
@@ -58,7 +59,42 @@ interface MockSessionRow {
   agent_session_id?: string | null;
   cwd?: string;
   started_at?: string;
+  /** A session row's stored target: JSON, set only for a CLI that ran in a WSL distro. */
+  cli_target?: string | null;
 }
+
+/**
+ * A `cli_target` column value as a session that ran in a WSL distro leaves it:
+ * the real serializer's output, with the homes a reader after the session needs.
+ */
+const STORED_WSL_TARGET = serializeCliTarget({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: {
+    distro: 'Ubuntu',
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    interactivePath: '',
+    env: {},
+    networkingMode: 'nat',
+  },
+});
+
+/**
+ * The place a reader gets back for `STORED_WSL_TARGET`. Matched by its distro and
+ * homes only: the facts a reader rebuilds from a row carry no live distro state
+ * (`networkingMode`, `interactivePath`), so the full input does not round-trip.
+ */
+const EXPECTED_WSL_PLACE = expect.objectContaining({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: expect.objectContaining({
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  }),
+});
 
 function createMockDb(options: {
   tasks?: Array<{ id: string; display_id: number; session_id: string | null }>;
@@ -232,6 +268,8 @@ describe('handleGetTranscript', () => {
     const baseWorkflow = {
       id: 'wf-1', title: 'Usage budgets', created_at: '2026-06-01T09:00:00Z',
       agent_name: 'claude', agent_session_id: 'conv-wf', agent_cwd: '/work/project',
+      // Where its CLI ran (`StoredCliTarget` JSON): null is this machine.
+      agent_cli_target: null,
     };
 
     it('says so when the agent has no conversation yet', async () => {
@@ -258,8 +296,29 @@ describe('handleGetTranscript', () => {
       vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
       const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
       expect(result.success).toBe(true);
+      // A workflow with no recorded target reads this machine.
       expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null);
       expect(result.message).toContain('plan the budgets');
+    });
+
+    it('reads its conversation in the distro the workflow recorded its CLI in', async () => {
+      vi.mocked(resolveWorkflow).mockReturnValue(
+        { ...baseWorkflow, agent_cwd: '/home/dev/project', agent_cli_target: STORED_WSL_TARGET } as unknown as ReturnType<typeof resolveWorkflow>,
+      );
+      vi.mocked(agentRegistry.get).mockReturnValue({ sessionType: 'claude_agent' } as unknown as AgentAdapter);
+      const parseTranscript = vi.fn(async (): Promise<ParsedTranscript> => ({
+        entries: [{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }],
+        sourcePath: '/history/conv-wf.jsonl',
+      }));
+      vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
+
+      const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('plan the budgets');
+      // A workflow agent has no sessions row, so its target comes from the workflow.
+      // A null here reads this machine's home, which holds none of a distro agent's files.
+      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/home/dev/project', EXPECTED_WSL_PLACE);
     });
   });
 
@@ -783,6 +842,55 @@ describe('handleGetTranscript', () => {
     expect(result.success).toBe(true);
     expect(parseTranscript).toHaveBeenCalledWith('agent-new', 'C:/Users/dev/project', null);
     expect(result.message).toContain('from newest');
+  });
+
+  describe('a session whose CLI ran in a WSL distro', () => {
+    const wslEntries = [{ kind: 'assistant' as const, uuid: 'a1', ts: 0, blocks: [{ type: 'text' as const, text: 'read from the distro' }] }];
+
+    it('reads the history in the distro the session row names, not on this machine', async () => {
+      const parseTranscript = vi.fn().mockResolvedValue({ entries: wslEntries, sourcePath: '/fake/wsl-history.jsonl' });
+      vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
+      const db = createMockDb({
+        sessions: [{
+          id: 'session-wsl',
+          task_id: 'task-1',
+          session_type: 'claude_agent',
+          agent_session_id: 'agent-wsl',
+          cwd: '/home/dev/project',
+          cli_target: STORED_WSL_TARGET,
+        }],
+      });
+
+      const result = await handleGetTranscript({ sessionId: 'session-wsl' }, createMockContext(db));
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('read from the distro');
+      // The third argument is where the parser looks for the history: the row's
+      // distro and its homes. A null here reads this machine's home, which holds
+      // none of a distro session's files.
+      expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+    });
+
+    it('uses the target of the session sessionIndex selects, not the newest session\'s', async () => {
+      const parseTranscript = vi.fn().mockResolvedValue({ entries: wslEntries, sourcePath: '/fake/history.jsonl' });
+      vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
+      const db = createMockDb({
+        tasks: [{ id: 'task-1', display_id: 1, session_id: 'session-host' }],
+        sessions: [
+          // The newest ran on this machine (no stored target); the one before it ran in the distro.
+          { id: 'session-host', task_id: 'task-1', session_type: 'claude_agent', agent_session_id: 'agent-host', cwd: 'C:/Users/dev/project', started_at: '2026-02-02T00:00:00Z', cli_target: null },
+          { id: 'session-wsl', task_id: 'task-1', session_type: 'claude_agent', agent_session_id: 'agent-wsl', cwd: '/home/dev/project', started_at: '2026-02-01T00:00:00Z', cli_target: STORED_WSL_TARGET },
+        ],
+      });
+      const context = createMockContext(db);
+
+      await handleGetTranscript({ taskId: '1', sessionIndex: 0 }, context);
+      await handleGetTranscript({ taskId: '1', sessionIndex: 1 }, context);
+
+      expect(parseTranscript).toHaveBeenCalledTimes(2);
+      expect(parseTranscript).toHaveBeenNthCalledWith(1, 'agent-host', 'C:/Users/dev/project', null);
+      expect(parseTranscript).toHaveBeenNthCalledWith(2, 'agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+    });
   });
 
   // --- medium-value handler tests ---

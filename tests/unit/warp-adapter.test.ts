@@ -349,8 +349,8 @@ describe('WarpAdapter', () => {
 // ── parseWarpVersion (real output format) ────────────────────────────────────
 
 describe('parseWarpVersion', async () => {
-  // The vi.mock above only replaces execWarpVersion; parseWarpVersion
-  // is the real implementation (passed through in the mock).
+  // The vi.mock above replaces only the shared execVersion probe;
+  // parseWarpVersion is the real implementation.
   const { parseWarpVersion } = await import('../../src/main/agent/adapters/warp/version-detector');
 
   it('extracts version from real dump-debug-info output', () => {

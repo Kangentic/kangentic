@@ -143,6 +143,8 @@ export class AgentDetector {
   private latest: AgentInfo | null = null;
   /** Bumped by `invalidateCache`, so a detection that was running then caches nothing. */
   private generation = 0;
+  /** Results `detect()` answers with but never caches (a WSL distro whose facts could not be read). */
+  private readonly uncacheable = new WeakSet<AgentInfo>();
   private readonly platform: NodeJS.Platform;
   private readonly resolveFacts: (distro: string) => Promise<WslDistroFacts>;
   private readonly runWsl: (file: string, args: readonly string[], options: OffMainExecOptions) => Promise<ExecOutput>;
@@ -177,7 +179,7 @@ export class AgentDetector {
     this.inflight.set(key, detection);
     try {
       const result = await detection;
-      if (generation === this.generation) {
+      if (generation === this.generation && !this.uncacheable.has(result)) {
         this.cached.set(key, result);
         this.latest = result;
       }
@@ -375,7 +377,11 @@ export class AgentDetector {
     } catch (error) {
       const detectionError = error instanceof Error ? error.message : String(error);
       console.warn(`[agent-detect] ${name}: could not read WSL distro ${wslCli.distro} for ${overridePath} (${detectionError})`);
-      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+      // Not cached: the facts read keeps no failure either (`resolveWslDistroFacts`),
+      // so a distro that was stopped or still booting is found by the next detection.
+      const result: AgentInfo = { found: false, path: overridePath, version: null, cliTarget, detectionError };
+      this.uncacheable.add(result);
+      return result;
     }
 
     const invocation = cliInvocationForTarget(target, this.config.versionArgs ?? ['--version']);

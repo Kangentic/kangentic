@@ -29,7 +29,7 @@ import type { SessionRecord, TranscriptEntry } from '../../src/shared/types';
  */
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
-  agentRegistry: { getBySessionType: vi.fn() },
+  agentRegistry: { getBySessionType: vi.fn(), get: vi.fn() },
 }));
 
 import {
@@ -42,7 +42,11 @@ import {
   stitchMemoSizeForTests,
 } from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
+import { openTestDatabase } from './helpers/test-database';
 
 // The index fallback reads through the retrieval worker in the app; here the
 // worker's own read runs in process over the fake database.
@@ -138,6 +142,39 @@ function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
 
 const getBySessionType = vi.mocked(agentRegistry.getBySessionType);
 
+/**
+ * A `cli_target` column value as a session that ran in a WSL distro leaves it:
+ * the real serializer's output, with the homes a reader after the session needs.
+ */
+const STORED_WSL_TARGET = serializeCliTarget({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: {
+    distro: 'Ubuntu',
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    interactivePath: '',
+    env: {},
+    networkingMode: 'nat',
+  },
+});
+
+/**
+ * The place a reader gets back for `STORED_WSL_TARGET`. Matched by its distro and
+ * homes only: the facts a reader rebuilds from a row carry no live distro state
+ * (`networkingMode`, `interactivePath`), so the full input does not round-trip.
+ */
+const EXPECTED_WSL_PLACE = expect.objectContaining({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: expect.objectContaining({
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  }),
+});
+
 describe('resolveSessionTranscript', () => {
   it('returns null when no session record matches the id', async () => {
     const db = makeFakeDb({ sessionRecord: undefined });
@@ -179,6 +216,30 @@ describe('resolveSessionTranscript', () => {
       // appended marker pushes the total string past that.
       expect(entry.text.split('\n[truncated')[0].length).toBe(20_000);
     }
+  });
+
+  it("source 'live': parses the history in the WSL distro the session row names, not on this machine", async () => {
+    // The cache is keyed by session type and agent session id, and a hit skips the parse.
+    resetForTests();
+    const db = makeFakeDb({
+      sessionRecord: makeRecord({ agent_session_id: 'agent-wsl', cwd: '/home/dev/project', cli_target: STORED_WSL_TARGET }),
+      taskRow: { title: 'Wire the auth flow' },
+    });
+    const entries: TranscriptEntry[] = [{ kind: 'user', uuid: 'u1', ts: 10, text: 'from the distro' }];
+    const parseTranscript = vi.fn(async () => ({ entries, sourcePath: '/history/agent-wsl.jsonl' }));
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript,
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveSessionTranscript(db, 'session-1');
+
+    expect(result!.source).toBe('live');
+    expect(result!.entries).toEqual(entries);
+    // The third argument is where the parser looks for the history: the row's
+    // distro and its homes. A null here reads this machine's home, which holds
+    // none of a distro session's files.
+    expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
   });
 
   it("falls back to the index when the live parser throws, and reconstructs entries per chunk role", async () => {
@@ -375,6 +436,69 @@ describe('resolveSessionTranscript', () => {
     const result = await resolveSessionTranscript(db, 'session-1');
 
     expect(result!.taskTitle).toBe('(unknown task)');
+  });
+});
+
+/**
+ * A workflow's own agent has no sessions row: `findTranscriptRecord` assembles
+ * its record from the workflow row when the id is the workflow's conversation id,
+ * and the workflow row is where its CLI's target is kept (`agent_cli_target`).
+ * These run on a real migrated database with the workflow written through the
+ * real repository, so the reader's own SELECT is what the case exercises: a fake
+ * would answer with whatever columns the test handed it, selected or not.
+ */
+describe('resolveSessionTranscript for a workflow agent\'s conversation id', () => {
+  const openDatabases: Database.Database[] = [];
+  afterEach(() => {
+    for (const database of openDatabases.splice(0)) database.close();
+  });
+
+  /** A database holding one workflow whose agent recorded `conversationId` and `cliTarget`. */
+  function databaseWithWorkflowAgent(conversationId: string, cliTarget: string | null): Database.Database {
+    const database = openTestDatabase();
+    openDatabases.push(database);
+    runProjectMigrations(database);
+    const repository = new WorkflowRepository(database);
+    const workflow = repository.create({ title: 'Usage budgets' });
+    repository.setAgentConversation(workflow.id, { agentName: 'claude', agentSessionId: conversationId, cwd: '/home/dev/project', cliTarget });
+    return database;
+  }
+
+  function stubWorkflowAgent() {
+    const entries: TranscriptEntry[] = [{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }];
+    const parseTranscript = vi.fn(async () => ({ entries, sourcePath: '/history/workflow-agent.jsonl' }));
+    vi.mocked(agentRegistry.get).mockReturnValue({ sessionType: 'claude_agent' } as unknown as ReturnType<typeof agentRegistry.get>);
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript,
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+    return parseTranscript;
+  }
+
+  it('parses the conversation in the distro the workflow recorded its CLI in', async () => {
+    // The cache is keyed by session type and agent session id, and a hit skips the parse.
+    resetForTests();
+    const database = databaseWithWorkflowAgent('conv-wf-wsl', STORED_WSL_TARGET);
+    const parseTranscript = stubWorkflowAgent();
+
+    const result = await resolveSessionTranscript(database, 'conv-wf-wsl');
+
+    expect(result!.taskTitle).toBe('Workflow agent: Usage budgets');
+    expect(result!.source).toBe('live');
+    // The third argument is where the parser looks for the history. A null here
+    // reads this machine's home, which holds none of a distro agent's files.
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+  });
+
+  it('parses the conversation on this machine when the workflow recorded no target', async () => {
+    resetForTests();
+    const database = databaseWithWorkflowAgent('conv-wf-host', null);
+    const parseTranscript = stubWorkflowAgent();
+
+    const result = await resolveSessionTranscript(database, 'conv-wf-host');
+
+    expect(result!.source).toBe('live');
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-host', '/home/dev/project', null);
   });
 });
 

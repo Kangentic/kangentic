@@ -17,7 +17,9 @@ import { quoteBridgePath } from './hook-utils';
  * - `reply`: a request goes into `requests/` the same way, and the script waits
  *   for its answer in `responses/` and prints it (plan approval, the background
  *   shell hint). It prints nothing if no answer comes in time, so the CLI asks
- *   the user, as the bridges do when they cannot decide.
+ *   the user, as the bridges do when they cannot decide, and it removes its
+ *   request, so Kangentic never answers one nobody waits on (a plan approval
+ *   answered then would mark the plan approved while the CLI asks the user).
  * - `status`: the status line's JSON replaces `status.json` by a rename.
  * - `mcp`: a stdio MCP server for Kangentic's tools. Each JSON-RPC line goes
  *   into `requests/` with the session's MCP token, Kangentic relays it to its
@@ -116,7 +118,7 @@ export const WSL_HOOK_SCRIPT = [
   '    tries=0',
   '    while [ ! -f "$response" ]; do',
   '      tries=$((tries + 1))',
-  `      [ "$tries" -gt ${REPLY_WAIT_TRIES} ] && exit 0`,
+  `      [ "$tries" -gt ${REPLY_WAIT_TRIES} ] && { rm -f "$dir/requests/$name.req"; exit 0; }`,
   '      sleep 0.01',
   '    done',
   '    cat "$response"',
@@ -145,7 +147,7 @@ export const WSL_HOOK_SCRIPT = [
   '        tries=$((tries + 1))',
   '        [ "$tries" -eq 200 ] && pause=0.05',
   '        [ "$tries" -eq 400 ] && pause=0.25',
-  '        if [ "$tries" -gt 400 ] && [ -d /proc/self ] && [ ! -d "/proc/$PPID" ]; then exit 0; fi',
+  '        if [ "$tries" -gt 400 ] && [ -d /proc/self ] && [ ! -d "/proc/$PPID" ]; then rm -f "$dir/requests/$name.req"; exit 0; fi',
   '        sleep "$pause"',
   '      done',
   '      cat "$response"',

@@ -5812,6 +5812,12 @@ export interface Workflow {
   /** The checkout that conversation ran in, where the agent CLI keeps its history; null until it first starts. */
   agent_cwd: string | null;
   /**
+   * Where that conversation's CLI ran when it was not this machine, as JSON
+   * (`StoredCliTarget`): a WSL distro, whose home holds the history. Null for
+   * this machine.
+   */
+  agent_cli_target: string | null;
+  /**
    * Registered projects the workflow agent asked to read
    * (`kangentic_request_project_access`), beyond its home project and the projects
    * its tasks are on, which it always reads. Kept, so a resume reads them too.

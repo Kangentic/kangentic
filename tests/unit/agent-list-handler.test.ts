@@ -34,7 +34,7 @@
  *   - probeServer throws a non-Error -> caught, unreachable with "Unknown error"
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentLaunchOptionInfo, AgentRemoteExecutionInfo, RemoteServerStatus } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,8 @@ vi.mock('node:child_process', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
-import { resetAgentListForTests } from '../../src/main/agent/agent-list';
+import { listAgents, resetAgentListForTests } from '../../src/main/agent/agent-list';
+import { resetWslDistroCacheForTests, resolveWslDistroFacts, type WslExec } from '../../src/main/agent/shared/wsl-distro';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -567,6 +568,134 @@ describe('AGENT_LIST IPC handler - per-project CLI paths', () => {
     await invokeAgentListFor(PROJECT_B);
 
     expect(detect.mock.calls.map((call) => call[0])).toEqual(['/opt/a/claude', '/opt/b/claude']);
+  });
+});
+
+// The cache keeps one build per set of CLI paths, but only the 8 used most
+// recently (MAX_AGENT_LIST_CACHES, least recently used out first). A
+// project-override write invalidates nothing, and the Agent tab asks for
+// another project's list as its CLI path is typed, so every keystroke can name
+// a new set. Driven through listAgents with the paths themselves, counting how
+// often detect() ran for each set (a cached set never detects again).
+describe('listAgents - the cache keeps the 8 sets of CLI paths used most recently', () => {
+  const cliPathOfSet = (setIndex: number): string => `/opt/set-${setIndex}/claude`;
+  const askForSet = (setIndex: number): Promise<AgentDetectionInfo[]> => listAgents({ claude: cliPathOfSet(setIndex) });
+
+  function makeDetect() {
+    return vi.fn(async (overridePath?: string | null) => ({ found: true, path: overridePath ?? null, version: '1.0.0' }));
+  }
+  const detectionsOfSet = (detect: ReturnType<typeof makeDetect>, setIndex: number): number =>
+    detect.mock.calls.filter((call) => call[0] === cliPathOfSet(setIndex)).length;
+
+  beforeEach(() => {
+    mockRegistryAdapters = [];
+    resetAgentListForTests();
+  });
+
+  // Red-green: with no cap the first set is still cached, so asking for it again
+  // detects nothing and set 0 stays at one detection.
+  it('evicts the first of nine distinct sets, so asking for it again rebuilds and detects again', async () => {
+    const detect = makeDetect();
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    for (let setIndex = 0; setIndex <= 8; setIndex += 1) await askForSet(setIndex);
+    expect(detect).toHaveBeenCalledTimes(9);
+
+    await askForSet(0);
+
+    expect(detectionsOfSet(detect, 0)).toBe(2);
+    expect(detect).toHaveBeenCalledTimes(10);
+  });
+
+  // Red-green: a cap below 8 evicts set 1 as well, and asking for it detects again.
+  it('keeps the eight most recent of nine sets cached', async () => {
+    const detect = makeDetect();
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    for (let setIndex = 0; setIndex <= 8; setIndex += 1) await askForSet(setIndex);
+    for (let setIndex = 1; setIndex <= 8; setIndex += 1) await askForSet(setIndex);
+
+    expect(detect).toHaveBeenCalledTimes(9);
+  });
+
+  // Red-green: evicting in insertion order (no refresh on use) drops set 0 here,
+  // and asking for it detects again; no cap at all keeps set 1, and the last
+  // assertion fails.
+  it('keeps a set that was used again in between, and evicts the least recently used one instead', async () => {
+    const detect = makeDetect();
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    for (let setIndex = 0; setIndex <= 7; setIndex += 1) await askForSet(setIndex);
+    await askForSet(0);
+    expect(detect).toHaveBeenCalledTimes(8);
+
+    // The ninth set pushes out the least recently used one, which is set 1.
+    await askForSet(8);
+    expect(detect).toHaveBeenCalledTimes(9);
+
+    await askForSet(0);
+    expect(detectionsOfSet(detect, 0)).toBe(1);
+
+    await askForSet(1);
+    expect(detectionsOfSet(detect, 1)).toBe(2);
+  });
+});
+
+// Re-detect is how a user picks up a CLI they just installed in a WSL distro or
+// a PATH their shell rc now sets, so it has to drop the distro's cached facts
+// along with the detections. Seen through the facts cache itself: a read that
+// ran wsl.exe twice is cached until the facts are invalidated.
+describe('listAgents - Re-detect drops the WSL distro facts', () => {
+  const ENVIRONMENT_OUTPUT = [
+    '__KANGENTIC_ENV_BEGIN__',
+    'HOME=/home/dev',
+    'PATH=/home/dev/.local/bin:/usr/bin',
+    '__KANGENTIC_ENV_END__',
+  ].join('\n');
+  const PATHS_OUTPUT = '\\\\wsl.localhost\\Ubuntu\\home\\dev\r\n\\\\wsl.localhost\\Ubuntu\\\r\nnat\r\n';
+
+  /** A wsl.exe that answers the facts read; one read is two runs. */
+  function fakeWsl() {
+    return vi.fn<WslExec>(async (args) =>
+      String(args[args.indexOf('-c') + 1]).includes('wslpath')
+        ? { stdout: PATHS_OUTPUT, stderr: '' }
+        : { stdout: ENVIRONMENT_OUTPUT, stderr: '' });
+  }
+
+  beforeEach(() => {
+    resetAgentListForTests();
+    resetWslDistroCacheForTests();
+    mockRegistryAdapters = [makeAdapter({ name: 'claude' })];
+  });
+
+  afterEach(() => {
+    resetWslDistroCacheForTests();
+  });
+
+  // Red-green: without the invalidateWslDistroFacts() call in listAgents' forced
+  // path the facts stay cached and the run count stays at 2.
+  it('makes the next read of a distro ask wsl.exe again after a forced refresh', async () => {
+    const run = fakeWsl();
+    await resolveWslDistroFacts('Ubuntu', run);
+    await resolveWslDistroFacts('Ubuntu', run);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await listAgents({}, true);
+    await resolveWslDistroFacts('Ubuntu', run);
+
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  // Red-green: invalidating on every build would re-read the distro for each
+  // ordinary open of Settings, and the run count would reach 4.
+  it('leaves the distro facts alone on a plain open', async () => {
+    const run = fakeWsl();
+    await resolveWslDistroFacts('Ubuntu', run);
+
+    await listAgents({});
+    await resolveWslDistroFacts('Ubuntu', run);
+
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });
 

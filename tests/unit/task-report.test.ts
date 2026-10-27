@@ -52,6 +52,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: {} }));
 
 // Imported AFTER all mocks are defined.
 import { readTaskReport, readTaskLastMessage } from '../../src/main/ipc/helpers/task-report';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 
 const PROJECT_ID = 'project-1';
 const TASK_ID = 'task-1';
@@ -117,9 +118,27 @@ function methodsCalled(): string[] {
 }
 
 /** What `getLatestAgentSessionForTask` answers: the newest record of the task that names a conversation. */
-function latestAgentSession(fields: { session_type: string; agent_session_id: string; cwd: string }): LatestAgentSessionRecord {
-  return fields;
+function latestAgentSession(fields: { session_type: string; agent_session_id: string; cwd: string; cli_target?: string | null }): LatestAgentSessionRecord {
+  return { cli_target: null, ...fields };
 }
+
+/**
+ * A `cli_target` column value as a session that ran in a WSL distro leaves it:
+ * the real serializer's output, with the homes a reader after the session needs.
+ */
+const STORED_WSL_TARGET = serializeCliTarget({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: {
+    distro: 'Ubuntu',
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    interactivePath: '',
+    env: {},
+    networkingMode: 'nat',
+  },
+});
 
 beforeEach(() => {
   for (const mock of Object.values(hoisted)) mock.mockReset();
@@ -416,6 +435,33 @@ describe('readTaskLastMessage', () => {
       },
       { timeoutMs: 15_000 },
     );
+  });
+
+  it('hands the worker the stored target of a session that ran in a WSL distro, parsed', async () => {
+    hoisted.getLatestAgentSessionForTask.mockReturnValue(latestAgentSession({
+      session_type: 'claude',
+      agent_session_id: 'conversation-wsl',
+      cwd: '/home/dev/project',
+      cli_target: STORED_WSL_TARGET,
+    }));
+    hoisted.retrievalCall.mockResolvedValue({ text: 'Done.', uuid: 'reply-1', ts: Date.parse('2026-10-13T03:00:00.000Z') });
+
+    await readTaskLastMessage(PROJECT_ID, TASK_ID);
+
+    expect(hoisted.retrievalCall).toHaveBeenCalledTimes(1);
+    const [method, params] = hoisted.retrievalCall.mock.calls[0] as [string, { facts: Record<string, unknown> }];
+    expect(method).toBe('transcript.finalReply');
+    expect(params.facts).toMatchObject({ sessionType: 'claude', agentSessionId: 'conversation-wsl', cwd: '/home/dev/project' });
+    // The worker places the read from this object's homes (`placeFromStored`). Null
+    // reads this machine's home, and the row's raw JSON string has no homes to read
+    // (so it would read this machine too); only the parsed object reaches the distro.
+    expect(params.facts.cliTarget).toMatchObject({
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      homeLinux: '/home/dev',
+      homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+      uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    });
   });
 
   it('returns null for a null reply', async () => {

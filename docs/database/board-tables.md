@@ -467,6 +467,7 @@ own boards and point back with `tasks.workflow_id` / `workflow_project_id`.
 | agent_name | TEXT | | NULL |
 | agent_session_id | TEXT | | NULL |
 | agent_cwd | TEXT | | NULL |
+| agent_cli_target | TEXT | | NULL |
 | agent_read_project_ids | TEXT | NOT NULL | '[]' |
 | agent_pty_cols | INTEGER | | NULL |
 | agent_pty_rows | INTEGER | | NULL |
@@ -493,6 +494,11 @@ start begins a new conversation from the saved plan.
 `agent_cwd` is the checkout that conversation ran in, rewritten at every start. The agent CLI keeps
 the history under it (Claude keys the file by it), so the conversation viewer and
 `kangentic_get_transcript` read the conversation through it, with no sessions row.
+
+`agent_cli_target` is where that conversation's CLI ran when it was not this machine, as
+`StoredCliTarget` JSON (a WSL distro and its homes), rewritten at every start like `agent_cwd`. The
+history is in that distro's home, so the same two readers hand it to the adapter as the place to
+read. NULL for this machine.
 
 `agent_read_project_ids` is a JSON array of project ids: the other registered projects the workflow
 agent asked to read (`kangentic_request_project_access`). It reads these, and every project its
