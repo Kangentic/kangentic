@@ -138,7 +138,8 @@ describe('a Gemini session in a WSL distro', () => {
 
 describe('Gemini\'s own files for a Gemini in a WSL distro', () => {
   it('are under the distro\'s Gemini directory, inside its GEMINI_CLI_HOME when set', () => {
-    expect(geminiChatsDir('C:\\Users\\dev\\Proj', targetOn('nat'))).toBe(
+    // A host-native cwd: the folder name is its last segment, which `path` reads per OS.
+    expect(geminiChatsDir(path.join(os.tmpdir(), 'Proj'), targetOn('nat'))).toBe(
       path.join('\\\\wsl.localhost\\Ubuntu\\home\\dev', '.gemini', 'tmp', 'proj', 'chats'),
     );
     expect(geminiHomeDir(targetOn('nat', '\\\\wsl.localhost\\Ubuntu\\home\\dev', { GEMINI_CLI_HOME: '/opt/gemini-home' })))

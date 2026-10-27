@@ -130,7 +130,7 @@ describe('leftoverSweepOptions with the real startup sweep', () => {
 
     await sweepTerminalTaskLeftovers(SWEPT_PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, leftoverSweepOptions(context, SWEPT_PROJECT_PATH));
 
-    expect(reapTaskProcesses).toHaveBeenCalledWith(SWEPT_PROJECT_PATH, [{ id: 'task-a', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
+    expect(reapTaskProcesses).toHaveBeenCalledWith(SWEPT_PROJECT_PATH, [{ id: 'task-a', worktreePath: null }], { stop: true, wslDistros: [], onLateEntries: expect.any(Function) });
     expect(publishLeftoverProcesses).toHaveBeenCalledWith(MAIN_WINDOW, [stopped], new Map([['task-a', 'Fix login']]), true, SWEPT_PROJECT_PATH);
   });
 
