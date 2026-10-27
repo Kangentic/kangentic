@@ -196,6 +196,12 @@ export interface StoredCliTarget {
   uncRoot?: string;
   /** The agent home overrides the distro's shell set (`CODEX_HOME` and the like), named keys only. */
   env?: Record<string, string>;
+  /**
+   * The CLI's path as the distro sees it, recorded when its session spawned,
+   * for a reader that asks the CLI itself after the session (OpenCode keeps its
+   * sessions in a SQLite database a share cannot read safely).
+   */
+  linuxCliPath?: string;
 }
 
 export interface AgentDetectionInfo {

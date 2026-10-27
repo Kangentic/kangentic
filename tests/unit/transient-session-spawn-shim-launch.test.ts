@@ -325,6 +325,7 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
         homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
         uncRoot: '\\\\wsl.localhost\\Ubuntu',
         env: {},
+        linuxCliPath: '/home/dev/.local/bin/claude',
       },
     }));
   });

@@ -23,6 +23,12 @@ export interface WslCliPlace {
   kind: 'wsl';
   distro: string;
   facts: WslDistroFacts;
+  /**
+   * The CLI's path as the distro sees it, when the place was read back from a
+   * session that recorded it (`placeFromStored`): what a reader runs to ask the
+   * CLI itself (`targetOfPlace`). Always set on a `CliTarget`.
+   */
+  linuxCliPath?: string;
 }
 export type CliPlace = WslCliPlace;
 
@@ -102,6 +108,7 @@ export function toStoredCliTarget(place: CliPlace | StoredCliTarget | null): Sto
       homeUnc: place.facts.homeUnc,
       uncRoot: place.facts.uncRoot,
       env: storedEnvironment(place.facts.env) ?? {},
+      ...(isLinuxPath(place.linuxCliPath) ? { linuxCliPath: place.linuxCliPath } : {}),
     };
   }
   const environment = storedEnvironment(place.env);
@@ -112,6 +119,7 @@ export function toStoredCliTarget(place: CliPlace | StoredCliTarget | null): Sto
     ...(place.homeUnc ? { homeUnc: place.homeUnc } : {}),
     ...(place.uncRoot ? { uncRoot: place.uncRoot } : {}),
     ...(environment ? { env: environment } : {}),
+    ...(isLinuxPath(place.linuxCliPath) ? { linuxCliPath: place.linuxCliPath } : {}),
   };
 }
 
@@ -123,6 +131,11 @@ export function serializeCliTarget(place: CliPlace | StoredCliTarget | null): st
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** An absolute path as a distro sees it, the only CLI path a stored target keeps. */
+function isLinuxPath(value: unknown): value is string {
+  return typeof value === 'string' && value.startsWith('/');
 }
 
 /** The agent home overrides a stored target may carry, named keys only. */
@@ -151,6 +164,7 @@ export function parseStoredCliTarget(raw: string | null | undefined): StoredCliT
           homeUnc: optionalString(record.homeUnc),
           uncRoot: optionalString(record.uncRoot),
           env: storedEnvironment(record.env),
+          linuxCliPath: optionalString(record.linuxCliPath),
         });
       }
     }
@@ -181,7 +195,17 @@ export function placeFromStored(stored: StoredCliTarget | null | undefined): Cli
       env: storedEnvironment(stored.env) ?? {},
       networkingMode: 'unknown',
     },
+    ...(isLinuxPath(stored.linuxCliPath) ? { linuxCliPath: stored.linuxCliPath } : {}),
   };
+}
+
+/**
+ * The place as a target a reader can run the CLI in, when it carries the CLI's
+ * path (a session's recorded target does): null for this machine and for a
+ * place read back from a row written before the path was kept.
+ */
+export function targetOfPlace(place: CliPlace | null): CliTarget | null {
+  return place && isLinuxPath(place.linuxCliPath) ? { ...place, linuxCliPath: place.linuxCliPath } : null;
 }
 
 /**
