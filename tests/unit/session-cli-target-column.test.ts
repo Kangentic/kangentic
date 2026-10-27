@@ -68,6 +68,24 @@ describe('sessions.cli_target', () => {
     expect(repository.getLatestAgentSessionForTask('task-1')?.cli_target).toBe(target);
     expect(repository.listEarlierRunRecords('task-1', null, 'another-record')[0]?.cli_target).toBe(target);
   });
+
+  it('lists each target the given tasks ran under once, for the reap, and nothing for a task with none', () => {
+    const database = openProjectDatabase();
+    database.prepare(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at) VALUES ('task-2', 2, 'Other', '', 'lane-1', 1, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`).run();
+    const repository = new SessionRepository(database);
+    const ubuntu = serializeCliTarget({ kind: 'wsl', distro: 'Ubuntu' });
+    repository.insert({ ...BASE_ROW, id: 'session-1', cli_target: ubuntu });
+    repository.insert({ ...BASE_ROW, id: 'session-2', cli_target: ubuntu });
+    repository.insert({ ...BASE_ROW, id: 'session-3' });
+    repository.insert({ ...BASE_ROW, id: 'session-4', task_id: 'task-2', cli_target: serializeCliTarget({ kind: 'wsl', distro: 'Debian' }) });
+
+    expect(repository.listCliTargetsOfTasks(['task-1'])).toEqual([ubuntu]);
+    expect(repository.listCliTargetsOfTasks(['task-1', 'task-2']).map((raw) => parseStoredCliTarget(raw)?.distro).sort()).toEqual(['Debian', 'Ubuntu']);
+    expect(repository.listCliTargetsOfTasks([])).toEqual([]);
+    // Past one query's chunk, as the startup sweep passes every archived task.
+    const manyIds = Array.from({ length: 1_200 }, (_unused, index) => `missing-${index}`);
+    expect(repository.listCliTargetsOfTasks([...manyIds, 'task-2']).map((raw) => parseStoredCliTarget(raw)?.distro)).toEqual(['Debian']);
+  });
 });
 
 describe('command_terminal_history.cli_target', () => {

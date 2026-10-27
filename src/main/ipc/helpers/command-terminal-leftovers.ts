@@ -28,6 +28,7 @@
 import type { Session } from '../../../shared/types';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
+import { parseWslShellSpec } from '../../pty/process-tag/task-process-tag';
 
 export const COMMAND_TERMINAL_REAP_DELAY_MS = 5_000;
 
@@ -44,8 +45,12 @@ export interface CommandTerminalLeftoverDeps {
     on(event: 'session-removed', listener: RemovedListener): unknown;
     off(event: 'session-removed', listener: RemovedListener): unknown;
   };
-  /** `reapTaskLeftovers` for one terminal: its folder, its tag, its name for the report. */
-  reap(projectPath: string, task: CommandTerminalLeftoverTask): Promise<void>;
+  /**
+   * `reapTaskLeftovers` for one terminal: its folder, its tag, its name for the
+   * report, and the distro its shell ran in when that is WSL (a CLI path into a
+   * distro gives the terminal a WSL shell whatever shell is configured).
+   */
+  reap(projectPath: string, task: CommandTerminalLeftoverTask, wslDistros: string[]): Promise<void>;
   isShuttingDown(): boolean;
   /** Injectable for tests. */
   delayMs?: number;
@@ -86,10 +91,12 @@ export class CommandTerminalLeftoverReaper {
       worktree_path: null,
       title: commandTerminalDisplayName(session.commandTerminalLabel, session.commandTerminalSlot),
     };
+    const wslDistro = parseWslShellSpec(session.shell)?.distro;
+    const wslDistros = wslDistro ? [wslDistro] : [];
     const timer = setTimeout(() => {
       this.timers.delete(timer);
       if (this.disposed || this.deps.isShuttingDown()) return;
-      void this.deps.reap(projectPath, task).catch((error: unknown) => {
+      void this.deps.reap(projectPath, task, wslDistros).catch((error: unknown) => {
         console.warn('[COMMAND_TERMINAL] leftover reap failed (non-fatal):', error instanceof Error ? error.message : String(error));
       });
     }, this.deps.delayMs ?? COMMAND_TERMINAL_REAP_DELAY_MS);

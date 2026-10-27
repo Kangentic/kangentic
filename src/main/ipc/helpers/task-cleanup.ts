@@ -6,6 +6,7 @@ import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '..
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
+import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import type { IpcContext } from '../ipc-context';
 import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
 import { getProjectRepos } from './project-repos';
@@ -50,6 +51,10 @@ export async function reapTaskLeftovers(
   context: IpcContext,
   projectPath: string | null | undefined,
   tasks: ReadonlyArray<{ id: string; worktree_path: string | null; title?: string }>,
+  options: {
+    /** Distros the caller knows a CLI ran in, beyond the ones the session records name. */
+    wslDistros?: readonly string[];
+  } = {},
 ): Promise<void> {
   if (tasks.length === 0) return;
   // Held for the whole reap, so a bulk delete's reaps, which the host runs in
@@ -76,6 +81,7 @@ export async function reapTaskLeftovers(
       tasks.map((task) => ({ id: task.id, worktreePath: task.worktree_path })),
       {
         stop: stoppingEnabled,
+        wslDistros: [...(options.wslDistros ?? []), ...wslCliDistrosOf(context, projectPath ?? null, tasks.map((task) => task.id))],
         // The host finished a reap this call stopped waiting for. By now a Done
         // move has tried its worktree removal, which a process the reap had not
         // yet stopped can fail on Windows: retry it as a Stop from the list does.
@@ -95,12 +101,36 @@ export async function reapTaskLeftovers(
 }
 
 /**
+ * The WSL distros the tasks' sessions ran a CLI in, from the session records'
+ * `cli_target`, so the reap also runs where a CLI path into a distro ran the
+ * agent, whatever shell is configured. The records outlive the sessions and a
+ * restart; a delete removes them only after its reap. [] off Windows, and when
+ * the project's database is not open.
+ */
+function wslCliDistrosOf(context: IpcContext, projectPath: string | null, taskIds: readonly string[]): string[] {
+  if (process.platform !== 'win32' || !projectPath || taskIds.length === 0) return [];
+  try {
+    const project = context.projectRepo.list().find((candidate) => candidate.path === projectPath);
+    const db = project ? getOpenProjectDb(project.id) : null;
+    if (!db) return [];
+    const distros = new SessionRepository(db).listCliTargetsOfTasks(taskIds)
+      .map((raw) => parseStoredCliTarget(raw)?.distro)
+      .filter((distro): distro is string => typeof distro === 'string');
+    return [...new Set(distros)];
+  } catch (error) {
+    console.warn('[TASK-REAP] could not read the distros the tasks ran a CLI in (non-fatal):', error);
+    return [];
+  }
+}
+
+/**
  * The startup sweep's view of the setting and the toast
  * (`sweepTerminalTaskLeftovers`): the same as a transition's reap.
  */
 export function leftoverSweepOptions(context: IpcContext, projectPath: string): LeftoverSweepOptions {
   return {
     stoppingEnabled: () => context.configManager.load().stopLeftoverProcesses !== false,
+    wslDistrosOf: (taskIds) => wslCliDistrosOf(context, projectPath, taskIds),
     onReport: (entries, taskTitles, stoppingEnabled) => {
       publishLeftoverProcesses(context.mainWindow, entries, taskTitles, stoppingEnabled, projectPath);
     },

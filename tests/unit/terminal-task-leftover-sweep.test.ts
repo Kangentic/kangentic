@@ -117,7 +117,19 @@ describe('sweepTerminalTaskLeftovers', () => {
     expect([...taskIds].sort()).toEqual(['archived-1', 'archived-2', 'todo-1']);
     expect(taskIds).not.toContain('mid-board-1');
     expect(reaped).toContainEqual({ id: 'archived-1', worktreePath: '/mock/project/.kangentic/worktrees/archived-1' });
-    expect(options).toEqual({ stop: true, onLateEntries: expect.any(Function) });
+    expect(options).toEqual({ stop: true, onLateEntries: expect.any(Function), wslDistros: [] });
+  });
+
+  it('reaps in the distros the swept tasks ran a CLI in, which their session records name', async () => {
+    const { taskRepo, swimlaneRepo } = makeRepos();
+    const reapTaskProcesses = vi.fn(async () => []);
+    const wslDistrosOf = vi.fn((_taskIds: readonly string[]) => ['Ubuntu']);
+
+    await sweepTerminalTaskLeftovers(PROJECT_PATH, taskRepo, swimlaneRepo, { reapTaskProcesses }, { ...leftovers(), wslDistrosOf });
+
+    expect([...wslDistrosOf.mock.calls[0][0]].sort()).toEqual(['archived-1', 'archived-2', 'todo-1']);
+    const options = (reapTaskProcesses.mock.calls[0] as unknown as [string, unknown, { wslDistros: string[] }])[2];
+    expect(options.wslDistros).toEqual(['Ubuntu']);
   });
 
   it('reports what a reap that finished after main stopped waiting stopped or failed to stop, and nothing it kept', async () => {
@@ -250,7 +262,7 @@ describe('cleanupStaleResourcesAsync: the sweep comes first', () => {
     );
 
     expect(tail.reapTaskProcesses).toHaveBeenCalledTimes(1);
-    expect(tail.reapTaskProcesses).toHaveBeenCalledWith(PROJECT_PATH, [{ id: 'archived-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
+    expect(tail.reapTaskProcesses).toHaveBeenCalledWith(PROJECT_PATH, [{ id: 'archived-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function), wslDistros: [] });
     const reapOrder = tail.reapTaskProcesses.mock.invocationCallOrder[0];
 
     // The backlog pass is the first to remove a worktree. Its read of the To Do

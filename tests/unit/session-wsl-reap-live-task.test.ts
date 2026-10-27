@@ -188,6 +188,39 @@ describe('the WSL reap and a task with a live or starting session', () => {
   });
 });
 
+describe('the WSL reap in the distros the tasks\' CLIs ran in', () => {
+  // Red-green: before, the in-distro pass ran only for a WSL configured shell, so
+  // a CLI path into a distro, under PowerShell, left the agent's detached
+  // processes running there at Done (measured in a /preview run).
+  it('reaps in each distro a task\'s CLI ran in, though the configured shell is not WSL', async () => {
+    const { manager, wslCalls } = setup();
+    Object.assign(manager, { getShell: async () => 'pwsh' });
+
+    await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true, wslDistros: ['Ubuntu'] });
+
+    const distroReaps = wslCalls.filter((args) => args[0] === '-d');
+    expect(distroReaps.map((args) => args[1])).toEqual(['Ubuntu']);
+    for (const taskId of [LIVE_TASK, STARTING_TASK, IDLE_TASK]) expect(distroReaps[0].slice(6)).toContain(taskId);
+  });
+
+  it('runs once in a distro that is both the configured shell\'s and a CLI\'s, whatever its case', async () => {
+    const { manager, wslCalls } = setup();
+
+    await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true, wslDistros: ['ubuntu'] });
+
+    expect(wslCalls.filter((args) => args[0] === '-d')).toHaveLength(1);
+  });
+
+  it('runs in no distro under a shell that is not WSL and with no CLI distro', async () => {
+    const { manager, wslCalls } = setup();
+    Object.assign(manager, { getShell: async () => 'pwsh' });
+
+    await manager.reapTaskProcesses(os.tmpdir(), allTasks, { stop: true });
+
+    expect(wslCalls).toEqual([]);
+  });
+});
+
 describe('the WSL reap log line for the tasks it left out', () => {
   const taskIds = [LIVE_TASK, STARTING_TASK, IDLE_TASK];
 
