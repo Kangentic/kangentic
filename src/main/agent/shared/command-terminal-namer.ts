@@ -31,8 +31,9 @@ export interface CommandTerminalNamerSessionSource {
 
 export interface CommandTerminalNamerDeps {
   sessionManager: CommandTerminalNamerSessionSource;
-  /** The Automation agent resolved for naming, or why it cannot name. */
-  resolveNamingAgent: () => Promise<ResolvedAutomationAgent>;
+  /** The Automation agent resolved for naming in the terminal's project (whose
+   *  CLI path it runs), or why it cannot name. */
+  resolveNamingAgent: (projectId: string | null) => Promise<ResolvedAutomationAgent>;
   /** `AppConfig.autoNameRateLimitPerHour` (0 means no limit). */
   readRateLimit: () => number;
   /** Where the naming call is recorded, in the terminal's project's ledger;
@@ -92,7 +93,7 @@ export class CommandTerminalNamer {
     try {
       // Resolved BEFORE the rate limit, so a terminal that cannot be named
       // spends no slot.
-      const resolved = await this.deps.resolveNamingAgent();
+      const resolved = await this.deps.resolveNamingAgent(projectId);
       if (!resolved.ok) return;
       const tryAcquireSlot = this.deps.tryAcquireSlot ?? tryAcquireSummarizeSlot;
       if (!tryAcquireSlot(this.deps.readRateLimit())) return;

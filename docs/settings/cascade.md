@@ -94,7 +94,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffWrapLines`, `diffUseInlineWhenNarrow`, `diffFileSort`, `diffFlatList`
 - `monitor` (the Agent Monitor's own toolbar controls, not a Settings-panel entry)
 - `restoreWindowPosition`
-- `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.autoResumeSessionsOnRestart`
+- `agent.maxConcurrentSessions`, `agent.autoResumeSessionsOnRestart`
 - `agent.executionServers` (per-agent remote-server url + auth; the Agent tab's Server URL / Authentication fields, shown when the selected agent declares remote-execution support)
 - `agent.launchOptions` (per-agent boolean startup toggles; the Agent tab's Launch Options rows, shown when the selected agent declares launch-option capability)
 - `terminal.*` (shell, font size, font family, cursor style, panel height, show preview, colors - the whole namespace is global-only)
@@ -126,6 +126,8 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 - `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prAutoRefresh`, `git.autoFetch`, `git.prBypassCountsAsReady`
 - `browser.enabled`, `browser.defaultUrl`
 - `agent.execution` (per-agent local/remote mode + server working directory; editable inline in the Agent tab for the currently-selected agent, but NOT seeded into new projects - see below)
+
+`agent.cliPaths` is per project with no App Settings default to edit: the Agent tab's CLI path row writes only the project's own file. A project that has no paths of its own is given the global ones once, the first time its overrides load (`loadProjectOverrides()`), which carries a path set before the scope moved; after that no run reads the global value for a project.
 
 > **Seeded vs. stored.** All settings above are stored per-project in `.kangentic/config.json` and editable in Project Settings. When a *new* project is created it is seeded with only the Theme tab's four keys (`theme`, `themeFollowsSystem`, `themeLight`, `themeDark`), `agent.permissionMode`, and `git.*` (via `pickOverridableSubset` in `config-manager.ts`). `loadProjectOverrides()` also renames the product pair's retired theme ids (`kangentic-light` / `kangentic-dark`, which existed briefly before the pair was named `clay` / `rust`) the first time a project loads, as `load()` does for the global file. `browser.*`, `agent.execution`, and non-setting project data such as `importSources`, are kept per-project and never cloned, so one project's dev-server URL, remote-server directory, or import sources cannot leak into another. `terminal.*` used to be seeded here too; it moved to global-only, and `loadProjectOverrides()` (`config-manager.ts`) one-time-migrates any pre-existing per-project `terminal.{shell,fontFamily,fontSize,scrollbackLines,cursorStyle}` out of `.kangentic/config.json` (dropped, not promoted to global) the first time that project loads, along with `terminal.backspaceSendsCtrlH`, the key of the removed "Word delete on Backspace" setting. `load()` drops that removed key and `scrollbackLines` from the global `config.json` the same way.
 
