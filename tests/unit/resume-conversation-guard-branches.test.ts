@@ -155,6 +155,8 @@ describe('assessResumeConversation - what the adapter is asked about', () => {
       agentSessionId: AGENT_SESSION_ID,
       reportedPaths: [transcriptPath],
       cwd,
+      // The record ran its CLI on this machine.
+      place: null,
     });
   });
 
