@@ -9,6 +9,7 @@ sources:
   - resource: src/main/agent/adapters/qwen-code/command-builder.ts
   - resource: src/main/agent/adapters/qwen-code/hook-manager.ts
   - resource: src/main/agent/adapters/qwen-code/trust-manager.ts
+  - resource: src/main/agent/adapters/qwen-code/qwen-home.ts
   - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
 ---
 # Qwen Code
@@ -134,6 +135,8 @@ strips it when the folder's last session ends. An undetected version takes the f
 `src/main/agent/adapters/qwen-code/trust-manager.ts`
 
 Qwen inherits Gemini's folder-trust store: `~/.qwen/trustedFolders.json` maps absolute forward-slashed paths to `TRUST_FOLDER`, `TRUST_PARENT`, or `DO_NOT_TRUST`. Kangentic only ever writes `TRUST_FOLDER`; the other two are user decisions it detects and leaves alone.
+
+Every `~/.qwen` path on this page is Qwen's global directory, `$QWEN_HOME` when set (`qwenHomeDir`, `qwen-home.ts`), the variable Qwen's settings docs name for moving it. The trust write and removal, the chats, the model scan and the relocation pass all use it, so Kangentic writes trust where Qwen reads it. A leading `~` is expanded. A relative value is left out: Qwen resolves one against its own working directory, which a global reader does not have.
 
 Two things differ from the Gemini implementation:
 

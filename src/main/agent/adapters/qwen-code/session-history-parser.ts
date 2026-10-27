@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { qwenHomeDir } from './qwen-home';
 import {
   type SessionHistoryParseResult,
   type SessionUsage,
@@ -195,7 +195,7 @@ function toNumber(value: unknown): number | undefined {
  * byte-for-byte.
  */
 export function qwenChatsDir(cwd: string): string {
-  return path.join(os.homedir(), '.qwen', 'projects', qwenProjectSlug(cwd), 'chats');
+  return path.join(qwenHomeDir(), 'projects', qwenProjectSlug(cwd), 'chats');
 }
 
 /**

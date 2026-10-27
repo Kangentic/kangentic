@@ -14,7 +14,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
-import os from 'node:os';
+import { qwenHomeDir } from './qwen-home';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -74,7 +74,7 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  */
 async function scanQwenSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
-  const projectsDir = path.join(os.homedir(), '.qwen', 'projects');
+  const projectsDir = path.join(qwenHomeDir(), 'projects');
 
   // Rank project directories by their `chats/` subdirectory's mtime so
   // test-artifact dirs (which never write to chats/) are skipped first. Cap at
