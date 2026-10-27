@@ -18,7 +18,7 @@ import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
-import { resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
+import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
@@ -252,6 +252,12 @@ export async function startCommandTerminal(
     // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
     // once for this start, as the task spawns do.
     const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+    // The conversation is in the home of the place its CLI ran in. A CLI path
+    // moved into, out of, or between WSL distros since then would hand the CLI
+    // a `--resume` it cannot find.
+    if (resume && !isSameCliPlace(resume.cliTarget, cliTarget)) {
+      throw new CommandTerminalStartError('conversation-gone', 'That conversation ran where the agent\'s CLI path no longer points.');
+    }
     // The shell the PTY types the command into: it decides the quoting style
     // and which shim variant a `.cmd` head is swapped for (shim-launch.ts). A
     // distro CLI runs in that distro's shell, whatever the Terminal setting says.
@@ -406,7 +412,7 @@ async function resolveResumedConversation(
   context: IpcContext,
   projectId: string,
   agentSessionId: string,
-): Promise<{ agentSessionId: string; agentName: string; label: string | null }> {
+): Promise<{ agentSessionId: string; agentName: string; label: string | null; cliTarget: string | null }> {
   const history = context.commandTerminalHistory;
   const row = history?.find(projectId, agentSessionId) ?? null;
   const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
@@ -418,7 +424,7 @@ async function resolveResumedConversation(
   if (!row || !resumable) {
     throw new CommandTerminalStartError('conversation-gone', 'That conversation can no longer be resumed.');
   }
-  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label };
+  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label, cliTarget: row.cli_target ?? null };
 }
 
 /** The branch the checkout is on, or "unknown" when git cannot say. */

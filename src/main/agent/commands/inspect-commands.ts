@@ -133,6 +133,7 @@ export async function handleGetTranscript(
         sessionType: workflowAdapter.sessionType,
         cwd: workflow.agent_cwd,
         startedAt: workflow.created_at,
+        cliTarget: workflow.agent_cli_target,
       });
     } else if (rawTaskId) {
       const taskRepo = new TaskRepository(db);

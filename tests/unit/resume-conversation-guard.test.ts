@@ -34,6 +34,7 @@ import {
 } from '../../src/main/transition-engine/resume-conversation-guard';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { serializeCliTarget, type CliPlace } from '../../src/main/agent/shared/cli-target';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
 const RECORD_ID = '6fc5d715-77ca-47d6-9c50-8f27ad05e4a7';
@@ -117,6 +118,8 @@ function assess(options: {
   records?: ReadonlyArray<ResumeLineageRecord | null>;
   agentSessionId?: string;
   projectPath?: string | null;
+  /** Where the spawn's CLI runs. Left undefined, the guard is called without a place. */
+  place?: CliPlace | null;
 }) {
   return assessResumeConversation({
     adapter: options.adapter ?? claudeShapedAdapter(),
@@ -124,6 +127,8 @@ function assess(options: {
     records: options.records ?? [folderRecord()],
     cwd,
     projectPath: options.projectPath === undefined ? projectPath : options.projectPath,
+    // Passed through as given: undefined means "no place asked for", null means "this machine".
+    place: options.place,
   });
 }
 
@@ -204,6 +209,128 @@ describe('assessResumeConversation - a CLI that ran in a WSL distro (#286)', () 
     fs.writeFileSync(onShare, '{"type":"user"}\n', 'utf8');
 
     await expect(assess({ records: [{ ...wslRecord(), transcript_path: onShare }] })).resolves.toBe('unknown');
+  });
+});
+
+describe('assessResumeConversation - a conversation lives in the place its CLI ran in', () => {
+  // A conversation is kept in the home of the place its CLI ran in. The newest
+  // record that kept a `cli_target` says where that was; a spawn whose CLI runs
+  // somewhere else cannot resume it, so the verdict is `expired` when the
+  // lineage had turns and `never-started` when it had none, instead of a
+  // `--resume` the CLI answers with "No conversation found".
+  //
+  // Every fixture here has a row with no reported transcript path, so the
+  // verdict without a place is `unknown` (nothing proves anything). That makes
+  // the place the only thing that can move it, which is what each case checks.
+  // Red-green: dropping the place check turns every refusal below into
+  // `unknown`; reading `records[0]` instead of the newest record that kept a
+  // `cli_target` fails the folder-only and newest-decides cases; testing the
+  // field for truthiness instead of `!== undefined` fails the `null` cases.
+  const OTHER_RECORD_ID = '2fec0dab-99d2-407a-8782-2a748dfc935e';
+  const TURNS = { total_input_tokens: 9100, total_output_tokens: 300, total_cost_usd: 0.4 };
+  const NO_TURNS = { total_input_tokens: null, total_output_tokens: null, total_cost_usd: null };
+
+  /** A row's `cli_target` column as the session layer writes it for a CLI in a distro. */
+  function storedDistroTarget(distro: string): string {
+    const serialized = serializeCliTarget({
+      kind: 'wsl',
+      distro,
+      homeLinux: '/home/dev',
+      homeUnc: `\\\\wsl.localhost\\${distro}\\home\\dev`,
+      uncRoot: `\\\\wsl.localhost\\${distro}`,
+    });
+    if (!serialized) throw new Error('serializeCliTarget gave no JSON for a distro target');
+    return serialized;
+  }
+
+  /** The place a spawn's CLI runs in when it is installed in `distro`. */
+  function distroPlace(distro: string): CliPlace {
+    return {
+      kind: 'wsl',
+      distro,
+      facts: {
+        distro,
+        homeLinux: '/home/dev',
+        homeUnc: `\\\\wsl.localhost\\${distro}\\home\\dev`,
+        uncRoot: `\\\\wsl.localhost\\${distro}`,
+        interactivePath: '/usr/bin',
+        env: {},
+        networkingMode: 'nat',
+      },
+    };
+  }
+
+  function recordRunIn(
+    cliTarget: string | null,
+    totals: Pick<ResumeLineageRecord, 'total_input_tokens' | 'total_output_tokens' | 'total_cost_usd'>,
+    id: string = RECORD_ID,
+  ): ResumeLineageRecord {
+    return { id, transcript_path: null, ...totals, cli_target: cliTarget };
+  }
+
+  it('is expired for a conversation that ran in a distro when the CLI now runs on this machine', async () => {
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), TURNS)], place: null })).resolves.toBe('expired');
+  });
+
+  it('is never-started for the same conversation when it had no turns', async () => {
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), NO_TURNS)], place: null })).resolves.toBe('never-started');
+  });
+
+  it('is expired for a conversation from this machine (cli_target null) when the CLI now runs in a distro', async () => {
+    await expect(assess({ records: [recordRunIn(null, TURNS)], place: distroPlace('Ubuntu') })).resolves.toBe('expired');
+    await expect(assess({ records: [recordRunIn(null, NO_TURNS)], place: distroPlace('Ubuntu') })).resolves.toBe('never-started');
+  });
+
+  it('is expired for a conversation from one distro when the CLI now runs in another', async () => {
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), TURNS)], place: distroPlace('Debian') })).resolves.toBe('expired');
+  });
+
+  it('keeps the verdict it had without a place when the CLI runs in the same distro, whatever the case of the name', async () => {
+    const records = [recordRunIn(storedDistroTarget('Ubuntu'), TURNS)];
+    const withoutPlace = await assess({ records });
+    expect(withoutPlace).toBe('unknown');
+    await expect(assess({ records, place: distroPlace('ubuntu') })).resolves.toBe(withoutPlace);
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), NO_TURNS)], place: distroPlace('UBUNTU') })).resolves.toBe('unknown');
+  });
+
+  it('keeps the verdict it had without a place when both ran on this machine', async () => {
+    await expect(assess({ records: [recordRunIn(null, TURNS)], place: null })).resolves.toBe('unknown');
+    await expect(assess({ records: [recordRunIn(null, NO_TURNS)], place: null })).resolves.toBe('unknown');
+  });
+
+  it('lets the newest record that kept a cli_target decide, not an older one', async () => {
+    // Newest ran on this machine, an older one in a distro: the conversation
+    // moved here, so a CLI on this machine can resume it.
+    await expect(assess({
+      records: [recordRunIn(null, TURNS), recordRunIn(storedDistroTarget('Ubuntu'), TURNS, OTHER_RECORD_ID)],
+      place: null,
+    })).resolves.toBe('unknown');
+    // The other way round, the newest record's distro is where the conversation is.
+    await expect(assess({
+      records: [recordRunIn(storedDistroTarget('Ubuntu'), TURNS), recordRunIn(null, TURNS, OTHER_RECORD_ID)],
+      place: null,
+    })).resolves.toBe('expired');
+  });
+
+  it('decides nothing from a folder-only record, which keeps no cli_target', async () => {
+    // Nothing is known about where the conversation is, so the place cannot
+    // contradict it. Read as "this machine" it would be never-started here.
+    expect(folderRecord()).not.toHaveProperty('cli_target');
+    await expect(assess({ records: [folderRecord()], place: distroPlace('Ubuntu') })).resolves.toBe('unknown');
+    await expect(assess({ records: [folderRecord()], place: null })).resolves.toBe('unknown');
+  });
+
+  it('skips a folder-only record in front of the record that does say where the conversation is', async () => {
+    await expect(assess({
+      records: [folderRecord(OTHER_RECORD_ID), recordRunIn(null, TURNS)],
+      place: distroPlace('Ubuntu'),
+    })).resolves.toBe('expired');
+  });
+
+  it('changes nothing when the spawn names no place', async () => {
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), TURNS)] })).resolves.toBe('unknown');
+    await expect(assess({ records: [recordRunIn(storedDistroTarget('Ubuntu'), NO_TURNS)] })).resolves.toBe('unknown');
+    await expect(assess({ records: [recordRunIn(null, TURNS)] })).resolves.toBe('unknown');
   });
 });
 

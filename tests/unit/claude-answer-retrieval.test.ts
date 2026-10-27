@@ -10,16 +10,26 @@
  * mid-line, and a parser fed half a JSON line yields nothing.
  */
 
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { StdinJsonSessionOptions } from '../../src/main/agent/shared/answer-session/stdin-json-session';
 
-const { sessionSpy } = vi.hoisted(() => ({ sessionSpy: vi.fn() }));
+const { sessionSpy, relaySpy } = vi.hoisted(() => ({
+  sessionSpy: vi.fn(),
+  // The run's MCP relay: a stop function, as `startRunMcpRelay` returns.
+  relaySpy: vi.fn((..._relayArguments: unknown[]): (() => void) => () => undefined),
+}));
 vi.mock('../../src/main/agent/shared/answer-session/stdin-json-session', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/agent/shared/answer-session/stdin-json-session')>();
   return { ...actual, openStdinJsonSession: sessionSpy };
+});
+// Only the relay is replaced; `kangenticMcpServer` stays real, since the
+// scoped-config cases below depend on it.
+vi.mock('../../src/main/agent/shared/kangentic-mcp-server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/kangentic-mcp-server')>();
+  return { ...actual, startRunMcpRelay: (...relayArguments: unknown[]) => relaySpy(...relayArguments) };
 });
 
 import { ClaudeAdapter, writeScopedMcpConfig, makeStreamForwarder } from '../../src/main/agent/adapters/claude/claude-adapter';
@@ -117,6 +127,86 @@ describe('ClaudeAdapter.openAnswerSession', () => {
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  // The relay is for the life of the session's process. A spawn that throws
+  // leaves no process, so no exit to stop it on: without the catch the relay's
+  // watcher stays open for the app's lifetime. Red-green: removing the
+  // `stopRelay()` in openAnswerSession's catch leaves `stopRelay` uncalled.
+  describe('the run\'s MCP relay', () => {
+    beforeEach(() => {
+      // The first case above also started a relay; count only this case's.
+      relaySpy.mockClear();
+    });
+
+    const answerInput = (runDirectory: string) => ({
+      cliPath: '/bin/claude',
+      cwd: '/answer-home',
+      runDirectory,
+      model: 'sonnet',
+      effort: 'low' as const,
+      retrieval: { url: 'http://127.0.0.1:1/mcp/p/answer-chat', token: 'secret' },
+    });
+
+    it('is stopped once, and the error rethrown as it was, when the session cannot be opened', () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-test-'));
+      try {
+        const stopRelay = vi.fn();
+        relaySpy.mockReturnValueOnce(stopRelay);
+        const spawnError = new Error('spawn EACCES');
+        sessionSpy.mockImplementationOnce(() => { throw spawnError; });
+
+        let thrown: unknown;
+        try {
+          new ClaudeAdapter().openAnswerSession(answerInput(directory));
+        } catch (error) {
+          thrown = error;
+        }
+
+        expect(thrown).toBe(spawnError);
+        // The relay was started on the run's own folder before the spawn was tried.
+        expect(relaySpy.mock.calls[0][0]).toBe(directory);
+        expect(stopRelay).toHaveBeenCalledTimes(1);
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps running while the session lives and is stopped once, when the session exits', async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-test-'));
+      try {
+        const stopRelay = vi.fn();
+        relaySpy.mockReturnValueOnce(stopRelay);
+        let endSession: () => void = () => undefined;
+        sessionSpy.mockReturnValueOnce({ exited: new Promise<void>((resolve) => { endSession = resolve; }) });
+
+        new ClaudeAdapter().openAnswerSession(answerInput(directory));
+        // Let any promise reaction queued at open time run: a stop wired to the
+        // open itself, rather than to the exit, would have fired by now.
+        await Promise.resolve();
+        expect(stopRelay).not.toHaveBeenCalled();
+
+        endSession();
+        await vi.waitFor(() => expect(stopRelay).toHaveBeenCalledTimes(1));
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
+
+    it('is stopped when the session ends in an error too', async () => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-test-'));
+      try {
+        const stopRelay = vi.fn();
+        relaySpy.mockReturnValueOnce(stopRelay);
+        sessionSpy.mockReturnValueOnce({ exited: Promise.reject(new Error('the CLI crashed')) });
+
+        new ClaudeAdapter().openAnswerSession(answerInput(directory));
+
+        await vi.waitFor(() => expect(stopRelay).toHaveBeenCalledTimes(1));
+      } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    });
   });
 });
 

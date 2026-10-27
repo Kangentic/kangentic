@@ -101,8 +101,19 @@ const agentEffort = await import('../../src/main/workflows/workflow-agent-effort
 
 import { openTestDatabase } from './helpers/test-database';
 import { canBeWorkflowAgent } from '../../src/main/agent/shared/workflow-agent-capability';
+import { parseStoredCliTarget, serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { WorkflowAgentStatus } from '../../src/shared/types';
+import type { StoredCliTarget, WorkflowAgentStatus } from '../../src/shared/types';
+
+/** Where a distro agent's CLI runs, as the session manager holds it (`getSessionCliTarget`). */
+const UBUNTU_TARGET: StoredCliTarget = {
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  homeLinux: '/home/dev',
+  homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+  uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  env: {},
+};
 
 interface FakeSession {
   id: string;
@@ -186,8 +197,10 @@ class FakeSessionManager extends EventEmitter {
   getSessionAgentName(): string {
     return this.agentName;
   }
-  getSessionCliTarget(): null {
-    return null;
+  /** The target a session's CLI runs in, by session id: a session not listed runs on this machine. */
+  cliTargets = new Map<string, StoredCliTarget>();
+  getSessionCliTarget(sessionId?: string): StoredCliTarget | null {
+    return (sessionId && this.cliTargets.get(sessionId)) || null;
   }
   getToolCallCount(): number {
     return 0;
@@ -1198,6 +1211,49 @@ describe('a workflow\'s own agent starting over', () => {
     const workflow = new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(workflowId)!;
     expect(workflow.agent_session_id).toBe('conv-forked');
     expect(workflow.agent_name).toBe('claude');
+  });
+
+  // A reported id rewrites the whole conversation, so where its CLI runs goes
+  // with it. A distro agent's late id that dropped the target would leave the
+  // transcript readers looking in this machine's home, which holds none of it.
+  describe('the place a reported conversation ran in', () => {
+    const workflowRow = () => new WorkflowRepository(harness.dbs.get('home') as Database.Database).getById(workflowId)!;
+
+    it('is the distro the agent\'s session runs in, recorded with the new id', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // The start found the CLI on this machine, so nothing is recorded yet.
+      expect(workflowRow().agent_cli_target).toBeNull();
+      manager.cliTargets.set(status.session!.id, UBUNTU_TARGET);
+
+      manager.emit('agent-session-id', status.session!.id, workflowId, 'home', 'conv-forked-wsl');
+
+      const workflow = workflowRow();
+      expect(workflow.agent_session_id).toBe('conv-forked-wsl');
+      expect(parseStoredCliTarget(workflow.agent_cli_target)).toMatchObject({
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      });
+    });
+
+    it('is this machine, replacing a distro recorded earlier, when the agent\'s session runs here', async () => {
+      const status = await agent.openWorkflowAgent(context, 'home', workflowId, {});
+      // A distro left on the row by an earlier run, as the agent's CLI path has changed since.
+      new WorkflowRepository(harness.dbs.get('home') as Database.Database).setAgentConversation(workflowId, {
+        agentName: 'claude',
+        agentSessionId: 'conv-gone',
+        cwd: path.join(root, 'home'),
+        cliTarget: serializeCliTarget(UBUNTU_TARGET),
+      });
+      expect(parseStoredCliTarget(workflowRow().agent_cli_target)?.distro).toBe('Ubuntu');
+
+      manager.emit('agent-session-id', status.session!.id, workflowId, 'home', 'conv-forked-host');
+
+      const workflow = workflowRow();
+      expect(workflow.agent_session_id).toBe('conv-forked-host');
+      expect(workflow.agent_cli_target).toBeNull();
+    });
   });
 
   // The listener writes a reported id only to a live workflow's own agent row

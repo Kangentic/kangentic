@@ -24,11 +24,13 @@ import {
   wslMcpServerLaunch,
   wslReachesLoopback,
   wslStatusLineCommand,
+  type WslHookPaths,
 } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
 import type { McpRelayInput } from '../../src/main/pty/readers/wsl-mcp-relay';
 import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import { extractTool, extractToolId } from '../../src/main/agent/shared/directive-builders';
+import { planApprovalDecisionPath } from '../../src/main/agent/shared/plan-approval-hook';
 
 /** The directives a tool_start hook carries, from the real builders. */
 function buildToolStartDirectives(): string[] {
@@ -104,6 +106,47 @@ function startInbox(sessionDirectory: string, eventsPath: string): WslHookInbox 
   inbox.start();
   return inbox;
 }
+
+/** Options for `vi.waitFor`: its default budget is 1 s, short of two 250 ms polls under CI load. */
+const WAIT = { timeout: 5_000, interval: 20 };
+
+/** A prepared session folder with an empty events file, as the spawn leaves it. */
+function prepareSession(): { sessionDirectory: string; paths: WslHookPaths; eventsPath: string } {
+  const sessionDirectory = makeSessionDirectory();
+  const paths = prepareWslHookTransport(sessionDirectory);
+  const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+  fs.writeFileSync(eventsPath, '');
+  return { sessionDirectory, paths, eventsPath };
+}
+
+/** The bytes of a published file: the version line, the head, the argument line, then the stdin. */
+function hookRecord(head: string, argument: string, body: string): string {
+  return `K1\n${head}\n${argument}\n${body}`;
+}
+
+/** Publish a file as the script does: under a dotted temporary name, then renamed into place. */
+function publishHookFile(directory: string, fileName: string, content: string): void {
+  const temporary = path.join(directory, `.${fileName}.tmp`);
+  fs.writeFileSync(temporary, content);
+  fs.renameSync(temporary, path.join(directory, fileName));
+}
+
+/** The lines of the session's bridge error log, which sits beside the events file. */
+function readErrorLogLines(eventsPath: string): string[] {
+  try {
+    return fs.readFileSync(path.join(path.dirname(eventsPath), 'events-bridge.error.log'), 'utf-8')
+      .split('\n').filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** The same plan approval spec and stdin the end-to-end plan approval case sends. */
+const PLAN_APPROVAL_SPEC = Buffer.from(JSON.stringify({
+  toolField: 'tool_name', tool: 'ExitPlanMode', inputField: 'tool_input',
+  reply: { decision: 'allow', input: '{{toolInput}}', mode: '{{mode}}' },
+})).toString('base64');
+const PLAN_APPROVAL_STDIN = JSON.stringify({ tool_name: 'ExitPlanMode', tool_input: { plan: 'do it' } });
 
 describe('the hook script', () => {
   it('is LF only, so sh runs it whatever the checkout\'s line endings', () => {
@@ -214,6 +257,233 @@ describe('the inbox relays MCP messages', () => {
     inbox.close();
 
     expect(relaySignal?.aborted).toBe(true);
+  });
+});
+
+// The test budget is wider than WAIT, so a wait that never succeeds fails with
+// its own assertion instead of vitest's bare 5 s timeout.
+describe('the inbox answers requests', { timeout: 15_000 }, () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const REQUEST_NAME = '1767225600000000001-7';
+
+  /**
+   * Publish one request, start the inbox, and return the response the hook
+   * would print. The inbox writes the response before it removes the request,
+   * so once the request is gone its response is in place. A plan approval
+   * appends its marker before it writes the response, so a caller can read the
+   * events file right after this returns, with nothing more to wait for.
+   */
+  async function answerOneRequest(session: ReturnType<typeof prepareSession>, content: string): Promise<string> {
+    const requestPath = path.join(session.paths.requests, `${REQUEST_NAME}.req`);
+    publishHookFile(session.paths.requests, `${REQUEST_NAME}.req`, content);
+    startInbox(session.sessionDirectory, session.eventsPath);
+    await vi.waitFor(() => expect(fs.existsSync(requestPath)).toBe(false), WAIT);
+    return fs.readFileSync(path.join(session.paths.responses, `${REQUEST_NAME}.res`), 'utf-8');
+  }
+
+  // Red-green: without the empty response the hook waits out its whole wait
+  // for an answer that never comes, and the `.res` read below throws.
+  it('answers a request that is not a hook record with an empty response and removes it', async () => {
+    const session = prepareSession();
+
+    const response = await answerOneRequest(session, 'this is not a hook request');
+
+    expect(response).toBe('');
+    expect(fs.readdirSync(session.paths.requests)).toEqual([]);
+  });
+
+  it('answers a request of an unknown kind with an empty response and removes it', async () => {
+    const session = prepareSession();
+
+    const response = await answerOneRequest(session, hookRecord('no-such-kind', '', '{}'));
+
+    expect(response).toBe('');
+    expect(fs.readdirSync(session.paths.requests)).toEqual([]);
+    expect(readEventLines(session.eventsPath)).toEqual([]);
+  });
+
+  // The two cases below send the request the control case at the end of this
+  // describe answers with a marker, so only the decision differs. Red-green: an
+  // inbox that answers a plan whose decision is missing or declines it appends
+  // the marker and prints the approval.
+  it('answers a plan approval with nothing, and no marker, when there is no decision file', async () => {
+    const session = prepareSession();
+
+    const response = await answerOneRequest(session, hookRecord('plan-approval', PLAN_APPROVAL_SPEC, PLAN_APPROVAL_STDIN));
+
+    expect(response).toBe('');
+    expect(readEventLines(session.eventsPath)).toEqual([]);
+  });
+
+  it('answers a plan approval with nothing, and no marker, when the decision does not approve', async () => {
+    const session = prepareSession();
+    fs.writeFileSync(
+      planApprovalDecisionPath(session.sessionDirectory),
+      JSON.stringify({ approve: false, mode: 'acceptEdits', detail: 'Moved to Executing' }),
+    );
+
+    const response = await answerOneRequest(session, hookRecord('plan-approval', PLAN_APPROVAL_SPEC, PLAN_APPROVAL_STDIN));
+
+    expect(response).toBe('');
+    expect(readEventLines(session.eventsPath)).toEqual([]);
+  });
+
+  it('writes the marker and prints the approval when the decision approves (the control for the two cases above)', async () => {
+    const session = prepareSession();
+    fs.writeFileSync(
+      planApprovalDecisionPath(session.sessionDirectory),
+      JSON.stringify({ approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' }),
+    );
+
+    const response = await answerOneRequest(session, hookRecord('plan-approval', PLAN_APPROVAL_SPEC, PLAN_APPROVAL_STDIN));
+
+    expect(JSON.parse(response)).toEqual({ decision: 'allow', input: { plan: 'do it' }, mode: 'acceptEdits' });
+    const markers = readEventLines(session.eventsPath).map((line) => JSON.parse(line) as { type: string; detail: string });
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toMatchObject({ type: 'plan_approval_sent', detail: 'Moved to Executing' });
+  });
+
+  // The session ended while the decision file was being read: its events file
+  // is gone or going, so a marker would outlive it, and nobody waits on a
+  // response. The read is held open from a readFile stub, which makes the
+  // moment exact: the inbox closes after the request has been taken and
+  // before the decision comes back. The decision approves, so an inbox that
+  // forgot the check appends the marker (a declining decision would append
+  // nothing either way). Closing from inside relayMcp instead would end the
+  // drain at its loop guard, before the decision is ever read.
+  it('appends no marker and writes no response when the inbox closes while the decision is being read', async () => {
+    const session = prepareSession();
+    const decisionPath = planApprovalDecisionPath(session.sessionDirectory);
+    const decisionText = JSON.stringify({ approve: true, mode: 'acceptEdits', detail: 'Moved to Executing' });
+    fs.writeFileSync(decisionPath, decisionText);
+    publishHookFile(session.paths.requests, `${REQUEST_NAME}.req`, hookRecord('plan-approval', PLAN_APPROVAL_SPEC, PLAN_APPROVAL_STDIN));
+
+    const originalReadFile = fs.promises.readFile.bind(fs.promises) as (file: unknown, ...rest: unknown[]) => Promise<unknown>;
+    let decisionReadRequested = false;
+    let finishDecisionRead: () => void = () => undefined;
+    vi.spyOn(fs.promises, 'readFile').mockImplementation(((file: unknown, ...rest: unknown[]) => {
+      if (file !== decisionPath) return originalReadFile(file, ...rest);
+      decisionReadRequested = true;
+      return new Promise<string>((resolve) => { finishDecisionRead = () => resolve(decisionText); });
+    }) as unknown as typeof fs.promises.readFile);
+    const writeFileSpy = vi.spyOn(fs.promises, 'writeFile');
+
+    const inbox = startInbox(session.sessionDirectory, session.eventsPath);
+    await vi.waitFor(() => expect(decisionReadRequested).toBe(true), WAIT);
+    inbox.close();
+    finishDecisionRead();
+    // Everything the inbox does with the decision once it is in hand is
+    // microtasks and synchronous calls, so one pass of the event loop lets a
+    // marker append and a response write begin. This is not a timed wait.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(readEventLines(session.eventsPath)).toEqual([]);
+    expect(writeFileSpy.mock.calls.filter(([target]) => String(target).startsWith(session.paths.responses))).toEqual([]);
+    expect(fs.readdirSync(session.paths.responses)).toEqual([]);
+  });
+
+  // A relay that fails answers nothing: the bridge reports its own timeout.
+  // Red-green: a request left in requests/ is relayed again on every poll;
+  // a name that is never released is never relayed again, so the second wait
+  // below times out; a response written on failure shows in responses/.
+  it('drops a request whose relay fails, writes no response, and relays the same name again later', async () => {
+    const session = prepareSession();
+    const requestPath = path.join(session.paths.requests, `${REQUEST_NAME}.req`);
+    const responsePath = path.join(session.paths.responses, `${REQUEST_NAME}.res`);
+    const request = hookRecord('mcp', 'secret-token http://127.0.0.1:4100/mcp/p/s', '{"jsonrpc":"2.0","id":3,"method":"tools/call"}');
+    const answer = '{"jsonrpc":"2.0","id":3,"result":{}}\n';
+    const relayMcp = vi.fn<(input: McpRelayInput) => Promise<string>>()
+      .mockRejectedValueOnce(new Error('relay refused'))
+      .mockResolvedValueOnce(answer);
+    const inbox = new WslHookInbox({ sessionDirectory: session.sessionDirectory, eventsOutputPath: session.eventsPath, onAppended: () => undefined, relayMcp });
+    openInboxes.push(inbox);
+    publishHookFile(session.paths.requests, `${REQUEST_NAME}.req`, request);
+    inbox.start();
+
+    await vi.waitFor(() => expect(fs.existsSync(requestPath)).toBe(false), WAIT);
+    expect(relayMcp).toHaveBeenCalledTimes(1);
+    expect(fs.readdirSync(session.paths.responses)).toEqual([]);
+    await vi.waitFor(() => expect(readErrorLogLines(session.eventsPath).some((line) => line.includes('mcp relay refused'))).toBe(true), WAIT);
+
+    publishHookFile(session.paths.requests, `${REQUEST_NAME}.req`, request);
+    fs.appendFileSync(session.paths.signal, 'x');
+    await vi.waitFor(() => expect(relayMcp).toHaveBeenCalledTimes(2), WAIT);
+    await vi.waitFor(() => expect(fs.readFileSync(responsePath, 'utf-8')).toBe(answer), WAIT);
+    await vi.waitFor(() => expect(fs.existsSync(requestPath)).toBe(false), WAIT);
+  });
+});
+
+describe('the inbox ingests events', { timeout: 15_000 }, () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Red-green: a file that is not a record, left in inbox/, is read again on
+  // every poll and logs again each time; a drain that drops it without a word
+  // hides a hook that writes a format Kangentic does not read.
+  it('deletes a file that is not a hook record and logs it in the bridge error log', async () => {
+    const session = prepareSession();
+    const fileName = '1767225600000000001-7.rec';
+    const onAppended = vi.fn();
+    publishHookFile(session.paths.inbox, fileName, 'this is not a hook record');
+    const inbox = new WslHookInbox({ sessionDirectory: session.sessionDirectory, eventsOutputPath: session.eventsPath, onAppended });
+    openInboxes.push(inbox);
+    inbox.start();
+
+    await vi.waitFor(() => expect(fs.existsSync(path.join(session.paths.inbox, fileName))).toBe(false), WAIT);
+    await vi.waitFor(() => expect(readErrorLogLines(session.eventsPath).some((line) => line.includes(`not a hook record: ${fileName}`))).toBe(true), WAIT);
+
+    expect(readEventLines(session.eventsPath)).toEqual([]);
+    expect(onAppended).not.toHaveBeenCalled();
+  });
+
+  // Red-green: without `lastIngestFailure` every drain logs the same failure
+  // again (the poll drains every 250 ms while files are pending, so a file the
+  // events path keeps refusing fills the log); the log-write count after the
+  // three extra drains is then at least 4, not 1. A drain that removed the
+  // files after a failed append would leave nothing for the later drains to
+  // try, so the count of append attempts stays below 3. The directory at the
+  // events path makes the append fail on every OS. The files are real records:
+  // a file that is not one adds no lines, so the append is never tried.
+  it('keeps the files and logs an append failure once, then ingests them when the events file is writable', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    const errorLogPath = path.join(sessionDirectory, 'events-bridge.error.log');
+    fs.mkdirSync(eventsPath);
+    const names = ['1767225600000000001-7.rec', '1767225600000000002-8.rec'];
+    publishHookFile(paths.inbox, names[0], hookRecord('prompt', '', '{}'));
+    publishHookFile(paths.inbox, names[1], hookRecord('session_end', '', '{}'));
+    const appendAttemptSpy = vi.spyOn(fs, 'appendFileSync');
+    const errorLogWriteSpy = vi.spyOn(fs.promises, 'appendFile');
+    const appendAttempts = (): number => appendAttemptSpy.mock.calls.filter(([target]) => target === eventsPath).length;
+    const errorLogWrites = (): number => errorLogWriteSpy.mock.calls.filter(([target]) => target === errorLogPath).length;
+    const ingestFailures = (): string[] => readErrorLogLines(eventsPath).filter((line) => line.includes(' ingest '));
+
+    const inbox = startInbox(sessionDirectory, eventsPath);
+    await vi.waitFor(() => expect(errorLogWrites()).toBe(1), WAIT);
+
+    // Three more drains that fail the same way. drainSync runs the append in
+    // the call, so the counts below are exact and wait for nothing.
+    const attemptsBefore = appendAttempts();
+    for (let drain = 0; drain < 3; drain += 1) inbox.drainSync();
+    expect(appendAttempts() - attemptsBefore).toBeGreaterThanOrEqual(3);
+    expect(errorLogWrites()).toBe(1);
+    expect(fs.readdirSync(paths.inbox).sort()).toEqual(names);
+    await vi.waitFor(() => expect(ingestFailures()).toHaveLength(1), WAIT);
+
+    // The events path is writable again: the next drain appends, then removes.
+    fs.rmdirSync(eventsPath);
+    fs.appendFileSync(paths.signal, 'x');
+    await vi.waitFor(() => {
+      const types = readEventLines(eventsPath).map((line) => (JSON.parse(line) as { type: string }).type);
+      expect(types).toEqual(['prompt', 'session_end']);
+    }, WAIT);
+    await vi.waitFor(() => expect(fs.readdirSync(paths.inbox)).toEqual([]), WAIT);
+    expect(errorLogWrites()).toBe(1);
   });
 });
 
@@ -411,6 +681,84 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
 
     expect(readEventLines(eventsPath).map((line) => (JSON.parse(line) as { type: string }).type)).toEqual(['session_end']);
     expect(fs.readdirSync(paths.inbox)).toEqual([]);
+  });
+
+  // The real wait is 1000 tries of 10 ms, so the run uses a copy of the script
+  // with 3 tries. The copy sits beside the hook folder, and finds the folder
+  // through KANGENTIC_WSL_HOOK_DIR, as a Codex workspace copy does. No inbox
+  // runs, so nothing answers.
+  // Red-green: without the `rm -f` in the timeout branch the request stays in
+  // requests/, and the inbox would answer it later, for a hook nobody waits on
+  // (a plan approval answered then marks the plan approved while the CLI asks
+  // the user). Without the exit the loop never ends and the test times out.
+  it('prints nothing, exits 0 and removes its own request when no answer comes in time', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const shortWait = WSL_HOOK_SCRIPT.replace('-gt 1000', '-gt 3');
+    // Says why, instead of waiting out the real 10 s, if the wait is ever written another way.
+    expect(shortWait).not.toBe(WSL_HOOK_SCRIPT);
+    const copy = path.join(sessionDirectory, 'wsl-hook-short-wait.sh');
+    fs.writeFileSync(copy, shortWait);
+
+    const result = await runScript(sessionDirectory, ['reply', 'plan-approval', PLAN_APPROVAL_SPEC], PLAN_APPROVAL_STDIN, {
+      scriptPath: copy,
+      env: { KANGENTIC_WSL_HOOK_DIR: paths.directory },
+    });
+
+    expect(result).toEqual({ stdout: '', code: 0 });
+    // The script writes the signal byte only after its request is renamed into
+    // place, so the empty requests/ below is the script's own removal and not
+    // a publish that never happened.
+    expect(fs.readFileSync(paths.signal, 'utf-8')).toBe('x');
+    expect(fs.readdirSync(paths.requests)).toEqual([]);
+    expect(fs.readdirSync(paths.responses)).toEqual([]);
+  });
+
+  /**
+   * The env that puts a `date` stub first on PATH: `+%s%N` gets
+   * `nanosecondsBody` (a shell command), `+%s` gets a fixed second. Null when
+   * the host's `sh` does not run the stub (a PATH entry that is not
+   * executable, such as a noexec temp folder), which the callers skip on.
+   */
+  function dateStubEnv(nanosecondsBody: string): Record<string, string> | null {
+    const stubDirectory = makeSessionDirectory();
+    const stubPath = path.join(stubDirectory, 'date');
+    const stub = ['#!/bin/sh', 'case "$1" in', `  "+%s%N") ${nanosecondsBody} ;;`, '  "+%s") echo 1767225600 ;;', 'esac', ''].join('\n');
+    fs.writeFileSync(stubPath, stub);
+    fs.chmodSync(stubPath, 0o755);
+    // Windows spells the variable `Path`: overriding `PATH` would add a second key.
+    const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const env = { [pathKey]: `${stubDirectory}${path.delimiter}${process.env[pathKey] ?? ''}` };
+    const probe = spawnSync('sh', ['-c', 'date +%s'], { env: { ...process.env, ...env }, encoding: 'utf-8' });
+    return probe.stdout.trim() === '1767225600' ? env : null;
+  }
+
+  // `stamp` asks `date` for epoch nanoseconds and falls back to whole seconds
+  // and nine zeros when the answer is not all digits: busybox prints a literal
+  // `%N`, and a `date` without the format prints nothing. The stub makes the
+  // host's `date` do each, whatever it is. Red-green: with no fallback the
+  // file is named for the literal `1767225600%N`, or for nothing, which fails
+  // the name pattern and gives the inbox no time to take the event from. The
+  // exact time also pins the nine zeros: ten would not parse as epoch ms.
+  it.for([
+    { label: 'a literal %N, as busybox prints', nanosecondsBody: 'echo "1767225600%N"' },
+    { label: 'nothing, as a date without the format does', nanosecondsBody: 'exit 1' },
+  ])('names a file by whole seconds when date answers $label', async ({ nanosecondsBody }, { skip }) => {
+    const env = dateStubEnv(nanosecondsBody);
+    // Skipped, not failed, where a PATH stub cannot reach sh on this host: the
+    // fallback is not reachable from here then, and CI's Linux runner runs it.
+    if (!env) skip('a date stub on PATH does not reach sh on this host');
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+
+    const result = await runScript(sessionDirectory, ['event', 'prompt'], '{}', { env });
+
+    expect(result).toEqual({ stdout: '', code: 0 });
+    const published = fs.readdirSync(paths.inbox);
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatch(/^\d{19}-\d+\.rec$/);
+    expect(published[0].startsWith('1767225600000000000-')).toBe(true);
+    expect(wslHookRecordTime(published[0])).toBe(1767225600000);
   });
 });
 

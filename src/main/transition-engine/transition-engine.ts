@@ -645,6 +645,7 @@ export class TransitionEngine {
         records: lineage,
         cwd,
         projectPath: appConfig.projectPath || cwd,
+        place: cliTarget,
       });
 
       if (verdict === 'never-started') {

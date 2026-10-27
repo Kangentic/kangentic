@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { isConfirmedMissing } from '../agent/shared/confirmed-missing';
-import { hostPathForTarget, placeOfRecord, type CliPlace } from '../agent/shared/cli-target';
+import { hostPathForTarget, isSameCliPlace, placeOfRecord, type CliPlace } from '../agent/shared/cli-target';
 import type { SessionRecord, SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
 
@@ -13,8 +13,9 @@ import { sessionOutputPaths } from './session-paths';
  *   wrote it. Start fresh with the spawn's own prompt; there is nothing to lose
  *   and nothing to carry.
  * - `expired`: the conversation had turns and its file is proven gone (Claude
- *   deletes transcripts older than `cleanupPeriodDays`). Start fresh with a
- *   recap of what the task holds.
+ *   deletes transcripts older than `cleanupPeriodDays`), or it is in the home
+ *   of a place the spawn's CLI no longer runs in. Start fresh with a recap of
+ *   what the task holds.
  * - `unknown`: anything else. Resume exactly as before.
  */
 export type ResumeConversationVerdict = 'never-started' | 'expired' | 'unknown';
@@ -137,8 +138,15 @@ export async function assessResumeConversation(params: {
   /** The cwd the spawn runs in. */
   cwd: string;
   projectPath: string | null | undefined;
+  /**
+   * Where the spawn's CLI runs (its WSL distro, or null for this machine). A
+   * conversation lives in the home of the place its CLI ran in, as the newest
+   * record that kept a `cli_target` says, so a CLI moved into, out of, or
+   * between distros since then cannot resume it. Omitted: not checked.
+   */
+  place?: CliPlace | null;
 }): Promise<ResumeConversationVerdict> {
-  const { adapter, agentSessionId, records, cwd, projectPath } = params;
+  const { adapter, agentSessionId, records, cwd, projectPath, place: spawnPlace } = params;
   if (!projectPath) return 'unknown';
 
   // Adapters with no status-file pipeline never report a transcript path.
@@ -180,6 +188,13 @@ export async function assessResumeConversation(params: {
     } catch (error) {
       console.warn(`[SESSION_LIFECYCLE] Resume conversation probe failed for record ${record.id.slice(0, 8)}:`, error);
     }
+  }
+
+  // A record read by its folder alone keeps no `cli_target`, so it decides
+  // nothing about where the conversation is.
+  const placeRecord = records.find((record) => record?.cli_target !== undefined);
+  if (spawnPlace !== undefined && placeRecord && !isSameCliPlace(placeRecord.cli_target, spawnPlace)) {
+    return hadTurns ? 'expired' : 'never-started';
   }
 
   if (!hadTurns) {

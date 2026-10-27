@@ -11,6 +11,7 @@ import {
   isValidTaskTagValue,
   listInWslEnv,
   parseWslShellSpec,
+  type WslShellSpec,
 } from '../../src/main/pty/process-tag/task-process-tag';
 import {
   WSL_SCRIPT_TIMEOUT_MS,
@@ -256,6 +257,27 @@ describe('WSL reap', () => {
     expect(wslReapSpecs({ distro: null }, ['Ubuntu'])).toEqual([{ distro: null }, { distro: 'Ubuntu' }]);
     expect(wslReapSpecs(null, ['Ubuntu', ''])).toEqual([{ distro: 'Ubuntu' }]);
     expect(wslReapSpecs(null, [])).toEqual([]);
+  });
+
+  // The CLI's distro is the only WSL a task can have when its configured shell
+  // is not WSL, so each one must get a reap of its own.
+  it('with no configured WSL shell, gives one spec per CLI distro, in order', () => {
+    expect(wslReapSpecs(null, ['Ubuntu', 'Debian'])).toEqual([{ distro: 'Ubuntu' }, { distro: 'Debian' }]);
+    expect(wslReapSpecs(null, ['Debian', 'Ubuntu', 'Alpine'])).toEqual([{ distro: 'Debian' }, { distro: 'Ubuntu' }, { distro: 'Alpine' }]);
+  });
+
+  it('adds nothing for an empty list, and one spec for a list that names a distro twice', () => {
+    expect(wslReapSpecs({ distro: 'Ubuntu' }, [])).toEqual([{ distro: 'Ubuntu' }]);
+    expect(wslReapSpecs({ distro: null }, [])).toEqual([{ distro: null }]);
+    // The first spelling is the one kept.
+    expect(wslReapSpecs(null, ['Debian', 'DEBIAN', 'debian'])).toEqual([{ distro: 'Debian' }]);
+    expect(wslReapSpecs(null, ['Debian', 'Ubuntu', 'debian'])).toEqual([{ distro: 'Debian' }, { distro: 'Ubuntu' }]);
+  });
+
+  it('keeps a configured shell with no distro beside a CLI distro, which it never absorbs', () => {
+    // `parseWslShellSpec('wsl')` gives `{ distro: null }`; `{}` is the same shell with the key absent.
+    expect(wslReapSpecs({} as WslShellSpec, ['Ubuntu'])).toEqual([{}, { distro: 'Ubuntu' }]);
+    expect(wslReapSpecs({ distro: null }, ['Ubuntu', 'ubuntu', 'Debian'])).toEqual([{ distro: null }, { distro: 'Ubuntu' }, { distro: 'Debian' }]);
   });
 
   it('reads the default distro from the starred row of wsl -l -v', () => {

@@ -23,12 +23,46 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 import { resolveTaskTranscript, setIndexedChunkReaderForTests } from '../../src/main/agent/transcript-service';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import { RetrievalStore } from '../../src/main/retrieval/retrieval-store';
 
 // The index fallback reads through the retrieval worker in the app; here the
 // worker's own read runs in process over the fake database.
 setIndexedChunkReaderForTests(async (db, docId) => new RetrievalStore(db).getChunksForDoc('conversation', docId));
 import { parseCodexTranscript } from '../../src/main/agent/adapters/codex/transcript-parser';
+
+/**
+ * A `cli_target` column value as a session that ran in a WSL distro leaves it:
+ * the real serializer's output, with the homes a reader after the session needs.
+ */
+const STORED_WSL_TARGET = serializeCliTarget({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: {
+    distro: 'Ubuntu',
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    interactivePath: '',
+    env: {},
+    networkingMode: 'nat',
+  },
+});
+
+/**
+ * The place a reader gets back for `STORED_WSL_TARGET`. Matched by its distro and
+ * homes only: the facts a reader rebuilds from a row carry no live distro state
+ * (`networkingMode`, `interactivePath`), so the full input does not round-trip.
+ */
+const EXPECTED_WSL_PLACE = expect.objectContaining({
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  facts: expect.objectContaining({
+    homeLinux: '/home/dev',
+    homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+    uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  }),
+});
 
 function makeRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
   return {
@@ -318,6 +352,50 @@ describe('resolveTaskTranscript', () => {
     expect(result!.entries).toEqual([{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }]);
     expect(result!.taskTitle).toBe('Workflow agent: Usage budgets');
     expect(result!.sessions).toHaveLength(1);
+  });
+
+  it('parses each session of a task in the place its own row names', async () => {
+    // Each session row carries its own target, so one task's sessions can be
+    // read from different places: the target is read per session, not once per task.
+    const hostSession = makeRecord({
+      id: 'session-place-host',
+      task_id: 'task-place',
+      session_type: 'claude_agent_place',
+      agent_session_id: 'agent-place-host',
+      started_at: '2026-06-01T10:00:00Z',
+      cwd: 'C:/Users/dev/project',
+      cli_target: null,
+    });
+    const wslSession = makeRecord({
+      id: 'session-place-wsl',
+      task_id: 'task-place',
+      session_type: 'claude_agent_place',
+      agent_session_id: 'agent-place-wsl',
+      started_at: '2026-06-01T12:00:00Z',
+      cwd: '/home/dev/project',
+      cli_target: STORED_WSL_TARGET,
+    });
+    // `resolveTaskTranscript` lists the task's sessions, then re-reads each one by
+    // id, so the rows (and their targets) must be answerable both ways.
+    const db = makeFakeDb({
+      sessionsById: { 'session-place-host': hostSession, 'session-place-wsl': wslSession },
+      sessionsByTask: { 'task-place': [wslSession, hostSession] },
+      taskTitle: 'Wire the auth flow',
+    });
+    const parseTranscript = vi.fn(async (agentSessionId: string) => ({
+      entries: [{ kind: 'user' as const, uuid: `turn-${agentSessionId}`, ts: 1, text: `turn of ${agentSessionId}` }],
+      sourcePath: `/history/${agentSessionId}.jsonl`,
+    }));
+    getBySessionType.mockReturnValue({ displayName: 'Claude Code', parseTranscript } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-place-wsl');
+
+    expect(result).not.toBeNull();
+    expect(result!.entries.filter((entry) => entry.kind === 'user')).toHaveLength(2);
+    expect(parseTranscript).toHaveBeenCalledTimes(2);
+    // The host session reads this machine; the distro session reads its distro's home.
+    expect(parseTranscript).toHaveBeenCalledWith('agent-place-host', 'C:/Users/dev/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-place-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
   });
 
   it('preserves an assistant turn\'s per-turn token usage through the stitch (so burn-rate analysis can read it off the unified conversation)', async () => {

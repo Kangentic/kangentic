@@ -5,7 +5,7 @@ import type { StoredCliTarget } from '../../../shared/types';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
-import { WSL_ENV_KEYS, isWslDistroRunning, peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
+import { WSL_ENV_KEYS, isWslDistroRunning, peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts } from './wsl-distro';
 
 /**
  * Where an agent CLI runs and keeps its files, when that is not this machine
@@ -38,9 +38,18 @@ export type CliTarget = CliPlace & {
 };
 
 /**
+ * Whether a distro name fits the session shell `wsl -d <name>`, which the PTY
+ * spawn splits on whitespace: no whitespace, and no leading `-` that wsl.exe
+ * would read as a flag.
+ */
+function isUsableDistroName(name: string): boolean {
+  return name.length > 0 && !/\s/.test(name) && !name.startsWith('-');
+}
+
+/**
  * The distro and in-distro path a CLI path names, or null. Only on Windows,
  * and only for a path into a distro's own filesystem that names a file (not a
- * bare share root).
+ * bare share root), in a distro the session shell can name.
  */
 export function parseWslCliPath(
   cliPath: string | null | undefined,
@@ -48,7 +57,7 @@ export function parseWslCliPath(
 ): { distro: string; linuxCliPath: string } | null {
   if (platform !== 'win32' || !cliPath) return null;
   const parsed = parseWslUncPath(cliPath);
-  if (!parsed || parsed.linuxPath === '/') return null;
+  if (!parsed || parsed.linuxPath === '/' || !isUsableDistroName(parsed.distro)) return null;
   return { distro: parsed.distro, linuxCliPath: parsed.linuxPath };
 }
 
@@ -156,7 +165,7 @@ export function parseStoredCliTarget(raw: string | null | undefined): StoredCliT
     const parsed: unknown = JSON.parse(raw);
     if (parsed !== null && typeof parsed === 'object') {
       const record = parsed as Record<string, unknown>;
-      if (record.kind === 'wsl' && typeof record.distro === 'string' && record.distro.length > 0) {
+      if (record.kind === 'wsl' && typeof record.distro === 'string' && isUsableDistroName(record.distro)) {
         return toStoredCliTarget({
           kind: 'wsl',
           distro: record.distro,
@@ -222,13 +231,15 @@ export function placeOfRecord(record: { cli_target?: string | null } | null | un
   return placeFromStored(parseStoredCliTarget(record?.cli_target));
 }
 
-/** The place a stored target names, with its facts read (cached), for readers after the session. */
-export async function resolveStoredCliPlace(
-  stored: StoredCliTarget | null,
-  resolveFacts: (distro: string) => Promise<WslDistroFacts> = resolveWslDistroFacts,
-): Promise<CliPlace | null> {
-  if (!stored) return null;
-  return { kind: 'wsl', distro: stored.distro, facts: await resolveFacts(stored.distro) };
+/**
+ * Whether a CLI that ran where a row's `cli_target` says ran in the same place
+ * as `place`: the same distro (WSL compares names without case), or this
+ * machine for both. A conversation lives in the home of the place its CLI ran
+ * in, so only a CLI in that place can resume it.
+ */
+export function isSameCliPlace(storedCliTarget: string | null | undefined, place: CliPlace | null): boolean {
+  const storedDistro = parseStoredCliTarget(storedCliTarget)?.distro.toLowerCase() ?? null;
+  return storedDistro === (place?.distro.toLowerCase() ?? null);
 }
 
 /**
@@ -251,10 +262,11 @@ export function cliPathForTarget(windowsPath: string, place: CliPlace | null): s
  * drive; anything else is reached through the distro's share. Unchanged for
  * this machine, and for a path that is not a Linux path (one already mapped,
  * such as a status line's transcript path the session manager mapped as it
- * arrived), so mapping twice is mapping once.
+ * arrived, which starts with the share's `\\`), so mapping twice is mapping
+ * once.
  */
 export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): string {
-  if (!place || !cliSidePath.startsWith('/') || cliSidePath.startsWith(place.facts.uncRoot)) return cliSidePath;
+  if (!place || !cliSidePath.startsWith('/')) return cliSidePath;
   const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(cliSidePath);
   if (driveMount) {
     const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');
@@ -270,15 +282,6 @@ export function cliHomeDir(place: CliPlace | null): string {
 }
 
 /**
- * An environment value as the CLI sees it: from the distro's interactive
- * shell for a WSL CLI (Kangentic's own environment does not reach it), else
- * from Kangentic's.
- */
-export function cliEnvValue(key: WslEnvKey, place: CliPlace | null): string | undefined {
-  return place ? place.facts.env[key] : process.env[key];
-}
-
-/**
  * The platform whose shell runs the CLI's hooks: Linux for a WSL CLI, so a
  * hook command is quoted for `sh`, not for PowerShell or cmd.
  */
@@ -291,9 +294,13 @@ export function shellForTarget(place: CliPlace | null): string | null {
   return place ? `wsl -d ${place.distro}` : null;
 }
 
-/** `wsl.exe` by absolute path: node-pty's ConPTY spawn does not search PATH for an extension-less name. */
+/**
+ * `wsl.exe` by absolute path: node-pty's ConPTY spawn does not search PATH for
+ * an extension-less name. A Windows path on every host, so a test on Linux
+ * sees the path Windows uses.
+ */
 export function wslExecutablePath(): string {
-  return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe');
+  return path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe');
 }
 
 /** How a CLI in a distro is started outside a terminal: the program, its arguments, and the environment to give it. */

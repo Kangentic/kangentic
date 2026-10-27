@@ -2082,6 +2082,13 @@ function migrateWorkflows(db: Database.Database): void {
       db.exec(`ALTER TABLE workflows ADD COLUMN ${columnName} TEXT DEFAULT NULL`);
     }
   }
+  // Where the agent's CLI ran when it was not this machine (#286), as JSON
+  // (`StoredCliTarget`), as `sessions.cli_target` keeps it for a task: the
+  // conversation is in that WSL distro's home, where the transcript readers
+  // find it after the agent stops. NULL = this machine, as every existing row is.
+  if (!workflowColumnNames.has('agent_cli_target')) {
+    db.exec('ALTER TABLE workflows ADD COLUMN agent_cli_target TEXT DEFAULT NULL');
+  }
   // The other registered projects the workflow agent asked to read, a JSON
   // array of project ids, so a resume grants them again.
   if (!workflowColumnNames.has('agent_read_project_ids')) {

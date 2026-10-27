@@ -9,6 +9,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
+// The real target resolution, run as on Windows with a distro's facts already
+// read, so a CLI in a distro resolves on any OS without calling wsl.exe. An
+// adapter that declares no WSL support (every one but the ones a case opts in)
+// resolves no target, as before. `isSameCliPlace` stays the real one: it is
+// what the resume check under test calls.
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    resolveCliTarget: (cliPath: string | null | undefined, adapterSupportsWsl: boolean) =>
+      original.resolveCliTarget(cliPath, adapterSupportsWsl, {
+        platform: 'win32',
+        resolveFacts: async (distro: string) => ({
+          distro,
+          homeLinux: '/home/dev',
+          homeUnc: `\\\\wsl.localhost\\${distro}\\home\\dev`,
+          uncRoot: `\\\\wsl.localhost\\${distro}`,
+          interactivePath: '/usr/bin',
+          env: {},
+          networkingMode: 'nat' as const,
+        }),
+      }),
+  };
+});
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -52,22 +77,46 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 import { registerTransientSessionHandlers } from '../../src/main/ipc/handlers/transient-sessions';
 import { IPC } from '../../src/shared/ipc-channels';
+import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import type { SpawnTransientSessionInput } from '../../src/shared/types';
 
 const PROJECT_ROOT = 'C:/Users/dev/proj';
 
-function makeAdapter(name: string, options: { resumable: boolean }) {
+/**
+ * `distro` installs the adapter's CLI in that WSL distro: it declares WSL
+ * support and detects at the distro's own path, which resolves a target.
+ * Without it the CLI is on this machine and resolves none.
+ */
+function makeAdapter(name: string, options: { resumable: boolean; distro?: string }) {
   return {
     name,
     displayName: name,
     supportsCallerSessionId: options.resumable,
-    detect: vi.fn(async () => ({ found: true, path: `/mock/${name}`, version: '1.0.0' })),
+    ...(options.distro ? { supportsWslCli: true } : {}),
+    detect: vi.fn(async () => ({
+      found: true,
+      path: options.distro ? `\\\\wsl.localhost\\${options.distro}\\home\\dev\\.local\\bin\\${name}` : `/mock/${name}`,
+      version: '1.0.0',
+    })),
     ensureTrust: vi.fn(async () => undefined),
     buildCommand: vi.fn(() => name),
   };
 }
 
-function createContext(history: Record<string, { agent_name: string; label: string | null }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
+/** A history row's `cli_target` for a CLI that ran in `distro`, as the session layer writes it. */
+function storedDistroTarget(distro: string): string {
+  const serialized = serializeCliTarget({
+    kind: 'wsl',
+    distro,
+    homeLinux: '/home/dev',
+    homeUnc: `\\\\wsl.localhost\\${distro}\\home\\dev`,
+    uncRoot: `\\\\wsl.localhost\\${distro}`,
+  });
+  if (!serialized) throw new Error('serializeCliTarget gave no JSON for a distro target');
+  return serialized;
+}
+
+function createContext(history: Record<string, { agent_name: string; label: string | null; cli_target?: string | null }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
   return {
     currentProjectId: 'proj-1',
     projectRepo: {
@@ -183,6 +232,73 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     expect(context.commandTerminalHistory.conversationAvailable).toHaveBeenCalledWith(expect.objectContaining({ agent_session_id: 'conversation-a' }));
     expect(context.commandTerminalHistory.claimResume).not.toHaveBeenCalled();
     expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  // A conversation is kept in the home of the place its CLI ran in. A CLI path
+  // moved into, out of, or between distros since then would be handed a
+  // `--resume` it cannot find. Red-green: dropping the `isSameCliPlace` check
+  // lets each refusal below through to a spawn; comparing the stored JSON text
+  // to the target (a string against an object) refuses the same-place cases.
+  describe('where the conversation ran', () => {
+    it.each([
+      ['a conversation that ran in a distro, now on a CLI on this machine', { cli_target: storedDistroTarget('Ubuntu') }, undefined],
+      ['a conversation from this machine (cli_target null), now on a CLI in a distro', { cli_target: null }, 'Ubuntu'],
+      ['a conversation from before cli_target was kept, now on a CLI in a distro', {}, 'Ubuntu'],
+      ['a conversation that ran in one distro, now on a CLI in another', { cli_target: storedDistroTarget('Ubuntu') }, 'Debian'],
+    ])('refuses %s with conversation-gone, releases the claim and spawns nothing', async (_name, place, cliDistro) => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, ...place } });
+      adapters.set('claude', makeAdapter('claude', { resumable: true, distro: cliDistro }));
+
+      await expect(spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' }))
+        .rejects.toMatchObject({ name: 'CommandTerminalStartError', code: 'conversation-gone' });
+
+      // Claimed before the check, so the refusal has to hand it back.
+      expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-a');
+      expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', null);
+      expect(adapters.get('claude')!.buildCommand).not.toHaveBeenCalled();
+      expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['Ubuntu', 'Ubuntu'],
+      ['Ubuntu', 'ubuntu'],
+    ])('resumes a conversation that ran in %s on a CLI in %s, in that distro\'s shell', async (storedDistro, cliDistro) => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, cli_target: storedDistroTarget(storedDistro) } });
+      adapters.set('claude', makeAdapter('claude', { resumable: true, distro: cliDistro }));
+
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+
+      expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'conversation-a',
+        resume: true,
+        cliTarget: expect.objectContaining({ kind: 'wsl', distro: cliDistro }),
+      }));
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+        agentSessionId: 'conversation-a',
+        resuming: true,
+        shell: `wsl -d ${cliDistro}`,
+      }));
+      expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
+    });
+
+    it('resumes a conversation from this machine (cli_target null) on a CLI on this machine', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, cli_target: null } });
+
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+
+      expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true }));
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'conversation-a', resuming: true }));
+    });
+
+    it('does not check the place for a start that resumes nothing', async () => {
+      // A fresh start on a CLI in a distro has no earlier conversation to be elsewhere.
+      const context = createContext({});
+      adapters.set('codex', makeAdapter('codex', { resumable: true, distro: 'Ubuntu' }));
+
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+      expect(context.sessionManager.spawn).toHaveBeenCalled();
+    });
   });
 });
 

@@ -40,6 +40,7 @@ interface WorkflowRow {
   agent_name: string | null;
   agent_session_id: string | null;
   agent_cwd?: string | null;
+  agent_cli_target?: string | null;
   agent_read_project_ids?: string | null;
   plan_approval?: string | null;
 }
@@ -227,10 +228,14 @@ export class WorkflowRepository {
    * the revision stays; null forgets it, so the next open starts a new one. A
    * null `agentSessionId` records an agent that ran whose own id is not known
    * yet: its next start continues from the saved plan unless the id arrives.
+   * `cliTarget` is where its CLI ran (`StoredCliTarget` JSON), null for this machine.
    */
-  setAgentConversation(id: string, conversation: { agentName: string; agentSessionId: string | null; cwd: string } | null): void {
-    this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ?, agent_cwd = ? WHERE id = ?')
-      .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, conversation?.cwd ?? null, id);
+  setAgentConversation(
+    id: string,
+    conversation: { agentName: string; agentSessionId: string | null; cwd: string; cliTarget?: string | null } | null,
+  ): void {
+    this.db.prepare('UPDATE workflows SET agent_name = ?, agent_session_id = ?, agent_cwd = ?, agent_cli_target = ? WHERE id = ?')
+      .run(conversation?.agentName ?? null, conversation?.agentSessionId ?? null, conversation?.cwd ?? null, conversation?.cliTarget ?? null, id);
   }
 
   /**
@@ -340,6 +345,7 @@ function mapRow(row: WorkflowRow): Workflow {
     agent_name: row.agent_name ?? null,
     agent_session_id: row.agent_session_id ?? null,
     agent_cwd: row.agent_cwd ?? null,
+    agent_cli_target: row.agent_cli_target ?? null,
     agent_read_project_ids: parseProjectIds(row.agent_read_project_ids),
     // Narrowed: anything this build does not know follows the columns.
     plan_approval: isPlanApproval(row.plan_approval) ? row.plan_approval : null,

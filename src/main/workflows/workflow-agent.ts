@@ -19,7 +19,7 @@ import { canBeWorkflowAgent } from '../agent/shared/workflow-agent-capability';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
-import { resolveCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
+import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
@@ -769,9 +769,15 @@ async function startWorkflowAgent(
     // the agent, so Resume finds the conversation to resume. An id the agent
     // reported while the spawn was awaited is already on the live row (and
     // recorded by the 'agent-session-id' listener); writing null over it would
-    // lose the conversation.
+    // lose the conversation. Where the CLI ran too, so a reader after the agent
+    // stops finds a distro conversation in that distro's home.
     const knownAgentSessionId = agentSessionId ?? context.sessionManager.getSession(session.id)?.agentSessionId ?? null;
-    repository.setAgentConversation(workflow.id, { agentName, agentSessionId: knownAgentSessionId, cwd: projectRoot });
+    repository.setAgentConversation(workflow.id, {
+      agentName,
+      agentSessionId: knownAgentSessionId,
+      cwd: projectRoot,
+      cliTarget: serializeCliTarget(cliTarget),
+    });
   } finally {
     await honorPausePressedDuringSpawn(context, workflow.id, session.id);
   }
@@ -937,7 +943,14 @@ function recordReportedConversation(context: IpcContext, sessionId: string, home
     if (!workflow || workflow.state === 'done' || workflow.agent_session_id === agentSessionId) return;
     const agentName = context.sessionManager.getSessionAgentName(sessionId) ?? workflow.agent_name;
     if (!agentName) return;
-    repository.setAgentConversation(workflowId, { agentName, agentSessionId, cwd: session.cwd });
+    // The whole conversation is rewritten, so where its CLI runs goes with it,
+    // or a late id from a distro CLI would leave the readers looking here.
+    repository.setAgentConversation(workflowId, {
+      agentName,
+      agentSessionId,
+      cwd: session.cwd,
+      cliTarget: serializeCliTarget(context.sessionManager.getSessionCliTarget(sessionId) ?? null),
+    });
   } catch (error) {
     console.warn('[WORKFLOW-AGENT] Could not record the conversation the agent reported:', error);
     return;

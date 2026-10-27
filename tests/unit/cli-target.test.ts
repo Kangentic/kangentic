@@ -12,26 +12,28 @@ vi.mock('../../src/main/utility-process/off-main-exec', () => ({
 }));
 
 import {
-  cliEnvValue,
   cliHomeDir,
   cliInvocationForTarget,
   cliPathForTarget,
   cliPlatformForTarget,
   execCliForTarget,
   hostPathForTarget,
+  isSameCliPlace,
   parseStoredCliTarget,
   parseWslCliPath,
   placeFromStored,
   placeOfRecord,
   resolveCliTarget,
-  resolveStoredCliPlace,
   serializeCliTarget,
   shellForTarget,
   targetOfPlace,
   toStoredCliTarget,
+  wslExecutablePath,
+  type CliPlace,
   type CliTarget,
 } from '../../src/main/agent/shared/cli-target';
 import type { WslDistroFacts } from '../../src/main/agent/shared/wsl-distro';
+import { parseWslUncPath } from '../../src/shared/paths';
 import type { StoredCliTarget } from '../../src/shared/types';
 
 const FACTS: WslDistroFacts = {
@@ -59,9 +61,31 @@ describe('parseWslCliPath', () => {
     expect(parseWslCliPath('C:\\Users\\dev\\.local\\bin\\claude.exe', 'win32')).toBeNull();
     expect(parseWslCliPath(null, 'win32')).toBeNull();
   });
+
+  // The session shell is `wsl -d <name>`, which the PTY spawn splits on
+  // whitespace, and wsl.exe reads a leading dash as a flag. Both names are valid
+  // share paths, so only the name check can refuse them.
+  it('is null for a distro name with whitespace or a leading dash, and still names Ubuntu-22.04', () => {
+    const spaced = '\\\\wsl.localhost\\My Distro\\usr\\bin\\claude';
+    const dashed = '\\\\wsl.localhost\\-x\\usr\\bin\\claude';
+    expect(parseWslUncPath(spaced)).toEqual({ distro: 'My Distro', linuxPath: '/usr/bin/claude' });
+    expect(parseWslUncPath(dashed)).toEqual({ distro: '-x', linuxPath: '/usr/bin/claude' });
+
+    expect(parseWslCliPath(spaced, 'win32')).toBeNull();
+    expect(parseWslCliPath(dashed, 'win32')).toBeNull();
+    expect(parseWslCliPath('\\\\wsl.localhost\\Ubuntu-22.04\\usr\\bin\\claude', 'win32'))
+      .toEqual({ distro: 'Ubuntu-22.04', linuxCliPath: '/usr/bin/claude' });
+  });
 });
 
 describe('resolveCliTarget', () => {
+  it('is null, reading nothing, for a distro the session shell cannot name', async () => {
+    const resolveFacts = vi.fn(async () => FACTS);
+    await expect(resolveCliTarget('\\\\wsl.localhost\\My Distro\\usr\\bin\\claude', true, { platform: 'win32', resolveFacts })).resolves.toBeNull();
+    await expect(resolveCliTarget('\\\\wsl.localhost\\-x\\usr\\bin\\claude', true, { platform: 'win32', resolveFacts })).resolves.toBeNull();
+    expect(resolveFacts).not.toHaveBeenCalled();
+  });
+
   it('reads the facts for a WSL path on an adapter that runs from WSL', async () => {
     const resolveFacts = vi.fn(async () => FACTS);
     await expect(resolveCliTarget(CLI_PATH, true, { platform: 'win32', resolveFacts })).resolves.toEqual(TARGET);
@@ -150,10 +174,41 @@ describe('the stored form', () => {
     expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: '' }))).toBeNull();
   });
 
-  it('resolves a stored target back to a place with its facts', async () => {
-    const resolveFacts = vi.fn(async () => FACTS);
-    await expect(resolveStoredCliPlace({ kind: 'wsl', distro: 'Ubuntu' }, resolveFacts)).resolves.toEqual({ kind: 'wsl', distro: 'Ubuntu', facts: FACTS });
-    await expect(resolveStoredCliPlace(null, resolveFacts)).resolves.toBeNull();
+  // A row names the distro the session shell `wsl -d <name>` was started in, so
+  // a name that shell could never have taken is not a row this version wrote.
+  it('reads a stored distro the session shell cannot name, whitespace or a leading dash, as this machine', () => {
+    expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: 'My Distro' }))).toBeNull();
+    expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: '-x' }))).toBeNull();
+    expect(parseStoredCliTarget(JSON.stringify({ ...STORED, distro: 'My Distro' }))).toBeNull();
+    // The same shape with a usable name reads back, so the name alone was refused.
+    expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: 'Ubuntu-22.04' }))).toEqual({ kind: 'wsl', distro: 'Ubuntu-22.04' });
+  });
+});
+
+describe('isSameCliPlace', () => {
+  function placeIn(distro: string): CliPlace {
+    return { kind: 'wsl', distro, facts: { ...FACTS, distro } };
+  }
+  const storedUbuntu = JSON.stringify(STORED);
+
+  it('is true when both sides are this machine, and for a damaged row, which reads as this machine', () => {
+    expect(isSameCliPlace(null, null)).toBe(true);
+    expect(isSameCliPlace(undefined, null)).toBe(true);
+    expect(isSameCliPlace('not json', null)).toBe(true);
+    // A damaged row is this machine, not a wildcard that matches a distro.
+    expect(isSameCliPlace('not json', placeIn('Ubuntu'))).toBe(false);
+  });
+
+  it('is true for the same distro, whatever the case of its name', () => {
+    expect(isSameCliPlace(storedUbuntu, placeIn('Ubuntu'))).toBe(true);
+    expect(isSameCliPlace(storedUbuntu, placeIn('ubuntu'))).toBe(true);
+    expect(isSameCliPlace(JSON.stringify({ ...STORED, distro: 'UBUNTU' }), placeIn('ubuntu'))).toBe(true);
+  });
+
+  it('is false when exactly one side is a distro, or the distros differ', () => {
+    expect(isSameCliPlace(storedUbuntu, null)).toBe(false);
+    expect(isSameCliPlace(null, placeIn('Debian'))).toBe(false);
+    expect(isSameCliPlace(storedUbuntu, placeIn('Debian'))).toBe(false);
   });
 });
 
@@ -161,6 +216,24 @@ describe('path helpers', () => {
   it('hands this machine forward slashes, byte for byte as before, and a WSL CLI the distro view', () => {
     expect(cliPathForTarget('C:\\proj\\.kangentic\\sessions\\a\\settings.json', null)).toBe('C:/proj/.kangentic/sessions/a/settings.json');
     expect(cliPathForTarget('C:\\proj\\.kangentic\\sessions\\a\\settings.json', TARGET)).toBe('/mnt/c/proj/.kangentic/sessions/a/settings.json');
+  });
+
+  // A share path into another distro has no path from inside this one, and its
+  // Linux path could name a different file here.
+  it('leaves a path into another distro as it is, and maps one into the target\'s own distro without case', () => {
+    const debianShare = '\\\\wsl.localhost\\Debian\\home\\dev\\x';
+    const debianShareOldForm = '\\\\wsl$\\Debian\\home\\dev\\x';
+    // The Linux path it would map to is real, so leaving it alone is cliPathForTarget's decision.
+    expect(parseWslUncPath(debianShare)).toEqual({ distro: 'Debian', linuxPath: '/home/dev/x' });
+    expect(TARGET.distro).toBe('Ubuntu');
+    expect(cliPathForTarget(debianShare, TARGET)).toBe(debianShare);
+    expect(cliPathForTarget(debianShareOldForm, TARGET)).toBe(debianShareOldForm);
+
+    // The same share for the target's own distro, differing only in case.
+    const lowerCaseOwnShare = '\\\\wsl.localhost\\ubuntu\\home\\dev\\x';
+    expect(parseWslUncPath(lowerCaseOwnShare)?.distro).toBe('ubuntu');
+    expect(cliPathForTarget(lowerCaseOwnShare, TARGET)).toBe('/home/dev/x');
+    expect(cliPathForTarget('\\\\wsl.localhost\\Ubuntu\\home\\dev\\x', TARGET)).toBe('/home/dev/x');
   });
 
   it('maps a path the CLI reported back to one Kangentic can open', () => {
@@ -179,11 +252,9 @@ describe('path helpers', () => {
     expect(hostPathForTarget('C:\\proj\\x.json', TARGET)).toBe('C:\\proj\\x.json');
   });
 
-  it('reads the home and environment where the CLI keeps them', () => {
+  it('reads the home where the CLI keeps its files', () => {
     expect(cliHomeDir(TARGET)).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev');
     expect(cliHomeDir(null)).toBe(os.homedir());
-    expect(cliEnvValue('CODEX_HOME', TARGET)).toBe('/home/dev/.config/codex');
-    expect(cliEnvValue('GROK_HOME', TARGET)).toBeUndefined();
   });
 
   it('quotes hooks for the shell that runs them and picks the session shell', () => {
@@ -231,6 +302,27 @@ describe('cliInvocationForTarget', () => {
       NO_COLOR: '1',
       WSLENV: 'USERPROFILE/p:KANGENTIC_MCP_TOKEN/u:NO_COLOR/u',
     });
+  });
+});
+
+// node-pty's ConPTY spawn needs the absolute path, and it is a Windows path on
+// every host. The host `path.join` gave `C:\Windows/System32/wsl.exe` on Linux,
+// so this fails there if the join stops being `path.win32`.
+describe('wslExecutablePath', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('is wsl.exe under SystemRoot\\System32 as a Windows path, whatever the host', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows');
+    expect(wslExecutablePath()).toBe('C:\\Windows\\System32\\wsl.exe');
+    vi.stubEnv('SystemRoot', 'D:\\Win');
+    expect(wslExecutablePath()).toBe('D:\\Win\\System32\\wsl.exe');
+  });
+
+  it('falls back to C:\\Windows when SystemRoot is not set', () => {
+    vi.stubEnv('SystemRoot', undefined);
+    expect(wslExecutablePath()).toBe('C:\\Windows\\System32\\wsl.exe');
   });
 });
 

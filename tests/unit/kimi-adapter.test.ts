@@ -664,20 +664,23 @@ describe('KimiAdapter', () => {
     // `kimi login`. The renderer surfaces the false case as an amber
     // warning so users know to authenticate before spawning a task.
 
+    // The CLI the project detected, which probeAuth is handed; a path on this machine.
+    const LOCAL_CLI_PATH = '/usr/local/bin/kimi';
+
     it('targets ~/.kimi/credentials/ under the home directory', async () => {
       let probedPath: string | null = null;
       mockReaddirSync = (filePath) => {
         probedPath = filePath;
         return ['default.json'];
       };
-      await adapter.probeAuth();
+      await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(probedPath).not.toBeNull();
       expect(probedPath!).toContain(path.join('.kimi', 'credentials'));
     });
 
     it('returns true when ~/.kimi/credentials/ contains files', async () => {
       mockReaddirSync = () => ['default.json', 'session.token'];
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(true);
     });
 
@@ -687,13 +690,13 @@ describe('KimiAdapter', () => {
         error.code = 'ENOENT';
         throw error;
       };
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
 
     it('returns false when ~/.kimi/credentials/ exists but is empty', async () => {
       mockReaddirSync = () => [];
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBe(false);
     });
 
@@ -703,7 +706,7 @@ describe('KimiAdapter', () => {
         error.code = 'EACCES';
         throw error;
       };
-      const result = await adapter.probeAuth();
+      const result = await adapter.probeAuth(LOCAL_CLI_PATH);
       expect(result).toBeNull();
     });
   });

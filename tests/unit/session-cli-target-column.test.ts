@@ -10,6 +10,7 @@ import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import { CommandTerminalHistoryRepository } from '../../src/main/db/repositories/command-terminal-history-repository';
+import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
 import { parseStoredCliTarget, serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 
 function openProjectDatabase(): Database.Database {
@@ -112,5 +113,36 @@ describe('command_terminal_history.cli_target', () => {
 
     repository.recordConversation({ agentSessionId: 'conversation-wsl', agentName: 'claude', cwd: '/mock/project', label: null, touched: true, cliTarget: null });
     expect(repository.get('conversation-wsl')?.cli_target).toBeNull();
+  });
+});
+
+describe('workflows.agent_cli_target', () => {
+  // A workflow's own agent has no sessions row, so where its CLI ran is kept on
+  // the workflow, and the transcript readers find a distro conversation by it.
+  const workflowColumns = (database: Database.Database) =>
+    (database.pragma('table_info(workflows)') as Array<{ name: string; type: string; dflt_value: string | null }>)
+      .filter((column) => column.name === 'agent_cli_target');
+
+  it('is added by the migrations, and running them again changes nothing', () => {
+    const database = openProjectDatabase();
+    runProjectMigrations(database);
+    const columns = workflowColumns(database);
+    expect(columns).toHaveLength(1);
+    expect(columns[0].type).toBe('TEXT');
+    expect(columns[0].dflt_value).toBe('NULL');
+  });
+
+  it('is added in place to a workflows table made before it, and the rows already there read as this machine', () => {
+    const database = openProjectDatabase();
+    const repository = new WorkflowRepository(database);
+    const workflow = repository.create({ title: 'Made before the target column' });
+    database.exec('ALTER TABLE workflows DROP COLUMN agent_cli_target');
+    expect(workflowColumns(database)).toHaveLength(0);
+
+    runProjectMigrations(database);
+    runProjectMigrations(database);
+
+    expect(workflowColumns(database)).toHaveLength(1);
+    expect(repository.getById(workflow.id)?.agent_cli_target).toBeNull();
   });
 });

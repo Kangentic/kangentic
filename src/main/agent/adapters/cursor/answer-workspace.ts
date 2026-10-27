@@ -9,7 +9,6 @@
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
 import { answerHomeForPlace } from '../../shared/answer-run-directory';
@@ -95,7 +94,7 @@ export async function removeCursorChat(chatId: string, place: CliPlace | null = 
   // recursive delete, so only a plain id is trusted: `..` would name the chats
   // folder itself, and an empty one a whole workspace.
   if (!/^[\w-]+$/.test(chatId)) return;
-  const chatsRoot = path.join(place ? cliHomeDir(place) : os.homedir(), '.cursor', 'chats');
+  const chatsRoot = path.join(cliHomeDir(place), '.cursor', 'chats');
   const workspaces = await fs.promises.readdir(chatsRoot).catch(() => [] as string[]);
   for (const workspace of workspaces) {
     const chatDirectory = path.join(chatsRoot, workspace, chatId);

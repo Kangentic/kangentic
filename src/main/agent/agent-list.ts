@@ -27,8 +27,15 @@ import type { AgentDetectionInfo } from '../../shared/types';
 
 type CliPathOverrides = Record<string, string | null | undefined>;
 
-/** One cached inventory per distinct set of configured CLI paths. */
+/** One cached inventory per distinct set of configured CLI paths, least recently used first. */
 const agentListCaches = new Map<string, CachedSingleton<AgentDetectionInfo[]>>();
+
+/**
+ * How many inventories stay cached. A project-override write invalidates
+ * nothing, and the Agent tab asks for another project's list as its CLI path
+ * is typed, so every keystroke can name a new set of paths.
+ */
+const MAX_AGENT_LIST_CACHES = 8;
 
 /** A stable key for a set of CLI paths: the configured ones, sorted by agent. */
 function cliPathsKey(cliPathOverrides: CliPathOverrides): string {
@@ -41,10 +48,18 @@ function cliPathsKey(cliPathOverrides: CliPathOverrides): string {
 function agentListCacheFor(cliPathOverrides: CliPathOverrides): CachedSingleton<AgentDetectionInfo[]> {
   const key = cliPathsKey(cliPathOverrides);
   let cache = agentListCaches.get(key);
-  if (!cache) {
+  if (cache) {
+    // Re-inserted, so the map's first key stays the least recently used.
+    agentListCaches.delete(key);
+  } else {
     cache = createCachedSingleton<AgentDetectionInfo[]>();
-    agentListCaches.set(key, cache);
+    const oldestKey = agentListCaches.size >= MAX_AGENT_LIST_CACHES ? agentListCaches.keys().next().value : undefined;
+    if (oldestKey !== undefined) {
+      agentListCaches.get(oldestKey)?.invalidate();
+      agentListCaches.delete(oldestKey);
+    }
   }
+  agentListCaches.set(key, cache);
   return cache;
 }
 

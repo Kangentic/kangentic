@@ -147,13 +147,15 @@ export async function discoverCursorCapabilities(
   if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
 
   // A distro whose facts cannot be read cannot be asked either: no override
-  // support, as for a help read that failed.
+  // support, as for a help read that failed. Not cached, since the facts read
+  // keeps no failure either: a distro still booting answers the next ask.
   const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
-  const supportsModelOverride = target === undefined ? false : await detectModelFlagSupport(cliPath, target);
+  if (target === undefined) return { supportsModelOverride: false, effortLevels: [] };
+  const supportsModelOverride = await detectModelFlagSupport(cliPath, target);
 
   let models: string[] = [];
   let displayNames: Record<string, string> = {};
-  if (supportsModelOverride && target !== undefined) {
+  if (supportsModelOverride) {
     try {
       const { stdout } = await runCursorCli(cliPath, ['--list-models'], MODELS_TIMEOUT_MS, target);
       const parsed = parseCursorModelsOutput(stdout);

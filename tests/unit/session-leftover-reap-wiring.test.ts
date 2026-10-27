@@ -24,6 +24,11 @@
  *   4. `PROJECT_DELETE` reaps after its sessions' exits and before removing
  *      worktrees (static line-order scan; the handler's mock graph is large).
  *
+ *   5. The distros a reap also runs in (`wslCliDistrosOf`, REAL, in the "real
+ *      wslCliDistrosOf" block): the session records' `cli_target` distros reach
+ *      `reapTaskProcesses`, merged after a caller's own, on Windows only; the
+ *      startup sweep gets the same lookup through `leftoverSweepOptions`.
+ *
  * The same terminal transitions close the task's windows (`closeTaskWindows`,
  * src/main/ipc/helpers/task-windows.ts: its pop-outs and its offscreen lane),
  * and the same negatives leave them open. The close sits after the sessions
@@ -34,7 +39,7 @@
  * driven at runtime in project-delete-task-windows.test.ts.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Task, Swimlane } from '../../src/shared/types';
@@ -45,7 +50,13 @@ import type { TaskRepository } from '../../src/main/db/repositories/task-reposit
 // Shared call-order tracker. Reset per test.
 // ---------------------------------------------------------------------------
 
-const { callOrder } = vi.hoisted(() => ({ callOrder: [] as string[] }));
+const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks } = vi.hoisted(() => ({
+  callOrder: [] as string[],
+  // The WSL distro lookup (`wslCliDistrosOf` in task-cleanup.ts): the project's
+  // open database, and the `cli_target` rows its sessions recorded.
+  mockGetOpenProjectDb: vi.fn((_projectId: string): unknown => null),
+  mockListCliTargetsOfTasks: vi.fn((_taskIds: readonly string[]): string[] => []),
+}));
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -59,12 +70,14 @@ vi.mock('simple-git', () => ({
 
 vi.mock('../../src/main/db/database', () => ({
   getProjectDb: vi.fn(() => ({ prepare: vi.fn(() => ({ all: vi.fn(() => []) })) })),
+  getOpenProjectDb: (projectId: string) => mockGetOpenProjectDb(projectId),
 }));
 vi.mock('../../src/main/db/repositories/task-repository', () => ({ TaskRepository: class {} }));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     // No own-record row, so the capture sites fall back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
+    listCliTargetsOfTasks = (taskIds: readonly string[]) => mockListCliTargetsOfTasks(taskIds);
     getLatestForTask = vi.fn(() => null);
     getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();
@@ -180,7 +193,7 @@ vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
 // Imports under test (after all mocks)
 // ---------------------------------------------------------------------------
 
-import { cleanupTaskSession, cleanupTaskResources } from '../../src/main/ipc/helpers/task-cleanup';
+import { cleanupTaskSession, cleanupTaskResources, reapTaskLeftovers, leftoverSweepOptions } from '../../src/main/ipc/helpers/task-cleanup';
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 
 // ---------------------------------------------------------------------------
@@ -276,6 +289,12 @@ beforeEach(() => {
   mockRemoveWorktree.mockResolvedValue(true);
   mockPrepareWorktreeForRemoval.mockClear();
   mockPrepareWorktreeForRemoval.mockResolvedValue(undefined);
+  // Back to "no project database open, no session recorded a distro", so the
+  // cases that do not look at distros keep reaping with `wslDistros: []`.
+  mockGetOpenProjectDb.mockReset();
+  mockGetOpenProjectDb.mockReturnValue(null);
+  mockListCliTargetsOfTasks.mockReset();
+  mockListCliTargetsOfTasks.mockReturnValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -418,6 +437,182 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
     expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap', 'prepare', 'withLock', 'removeWorktree']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 1b: the WSL distros a reap also runs in (`wslCliDistrosOf`)
+//
+// The in-distro reap runs in each distro a task's CLI ran in, which only the
+// task's session records know (`sessions.cli_target`). Every case above passes
+// `wslDistros: []`, so none of them notices a reap that stops asking the
+// records. Here the records name a distro, and the REAL wslCliDistrosOf reads
+// them through the project's open database. It reads them on Windows only.
+// ---------------------------------------------------------------------------
+
+describe('the distros a reap also runs in (real wslCliDistrosOf)', () => {
+  const PROJECT_PATH = '/mock/project';
+  const PROJECT_DB = { name: 'open-project-db' };
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+
+  function fakePlatform(platform: NodeJS.Platform): void {
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: platform });
+  }
+
+  /** A session record's `cli_target` column, as the repository hands it back. */
+  function recordedTarget(distro: string, extra: Record<string, string> = {}): string {
+    return JSON.stringify({ kind: 'wsl', distro, ...extra });
+  }
+
+  function makeReapContext(sessionManager: MockSessionManager): IpcContext {
+    return {
+      sessionManager,
+      currentProjectId: null,
+      // A different project from the one the reap is asked about, so a lookup
+      // that read the ambient path would miss the project below.
+      currentProjectPath: '/mock/ambient-project',
+      projectRepo: {
+        list: vi.fn(() => [
+          { id: 'proj-other', path: '/mock/other-project' },
+          { id: 'proj-wsl', path: PROJECT_PATH },
+        ]),
+      },
+      ...reapSettings(),
+    } as unknown as IpcContext;
+  }
+
+  function makeTasksStub(task: { id: string }): TaskRepository {
+    return { getById: vi.fn(() => task), update: vi.fn() } as unknown as TaskRepository;
+  }
+
+  /** The `wslDistros` the last host reap was asked for. */
+  function reapedDistros(sessionManager: MockSessionManager): string[] {
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledTimes(1);
+    return (sessionManager.reapTaskProcesses.mock.calls[0] as unknown as [unknown, unknown, { wslDistros: string[] }])[2].wslDistros;
+  }
+
+  beforeEach(() => {
+    fakePlatform('win32');
+    // Only the open project's database answers; any other id has none open.
+    mockGetOpenProjectDb.mockImplementation((projectId: string) => (projectId === 'proj-wsl' ? PROJECT_DB : null));
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
+  it('cleanupTaskSession reaps in the distro a session of the task ran its CLI in', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    const task = { id: 'task-wsl-1', session_id: null, worktree_path: null, branch_name: null };
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    await cleanupTaskSession(context, task, makeTasksStub(task), null, PROJECT_PATH);
+
+    // The records are read through the project that owns the path, for this task.
+    expect(mockListCliTargetsOfTasks).toHaveBeenCalledWith(['task-wsl-1']);
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(
+      PROJECT_PATH,
+      [{ id: 'task-wsl-1', worktreePath: null }],
+      { stop: true, onLateEntries: expect.any(Function), wslDistros: ['Ubuntu'] },
+    );
+  });
+
+  it('merges the distros the caller supplies with the ones the session records name, the caller\'s first', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    const task = { id: 'task-wsl-2', worktree_path: null, title: 'Fix login' };
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [task], { wslDistros: ['Debian'] });
+
+    expect(reapedDistros(sessionManager)).toEqual(['Debian', 'Ubuntu']);
+  });
+
+  it('keeps the distros the caller supplies when no session record names one', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-wsl-3', worktree_path: null }], { wslDistros: ['Debian'] });
+
+    expect(reapedDistros(sessionManager)).toEqual(['Debian']);
+  });
+
+  it('names a distro once when several records of the task carry it, and skips a record that names none', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    mockListCliTargetsOfTasks.mockReturnValue([
+      // One session recorded its homes, an older one did not: two rows, one distro.
+      recordedTarget('Ubuntu', { homeLinux: '/home/dev' }),
+      recordedTarget('Ubuntu'),
+      'not json',
+      recordedTarget('Debian'),
+    ]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-wsl-4', worktree_path: null }]);
+
+    expect(reapedDistros(sessionManager)).toEqual(['Ubuntu', 'Debian']);
+  });
+
+  it('reads no record off Windows: a CLI path into a distro cannot exist there', async () => {
+    fakePlatform('linux');
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-wsl-5', worktree_path: null }]);
+
+    expect(mockListCliTargetsOfTasks).not.toHaveBeenCalled();
+    expect(reapedDistros(sessionManager)).toEqual([]);
+  });
+
+  it('reaps in no distro, and opens nothing, when no project has the path the reap is asked about', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    await reapTaskLeftovers(context, '/mock/unlisted-project', [{ id: 'task-wsl-6', worktree_path: null }]);
+
+    expect(mockGetOpenProjectDb).not.toHaveBeenCalled();
+    expect(mockListCliTargetsOfTasks).not.toHaveBeenCalled();
+    expect(reapedDistros(sessionManager)).toEqual([]);
+  });
+
+  it('reaps in no distro when the project\'s database is not open, rather than opening it', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    mockGetOpenProjectDb.mockReturnValue(null);
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-wsl-7', worktree_path: null }]);
+
+    expect(mockGetOpenProjectDb).toHaveBeenCalledWith('proj-wsl');
+    expect(mockListCliTargetsOfTasks).not.toHaveBeenCalled();
+    expect(reapedDistros(sessionManager)).toEqual([]);
+  });
+
+  it('still reaps, in the caller\'s distros, when the records cannot be read', async () => {
+    const sessionManager = makeSessionManager();
+    const context = makeReapContext(sessionManager);
+    mockListCliTargetsOfTasks.mockImplementation(() => { throw new Error('database is locked'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-wsl-8', worktree_path: null }], { wslDistros: ['Debian'] });
+
+    expect(reapedDistros(sessionManager)).toEqual(['Debian']);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('could not read the distros'), expect.any(Error));
+    warn.mockRestore();
+  });
+
+  it('hands the startup sweep the distros the swept tasks ran a CLI in, read against the project it sweeps', () => {
+    const context = makeReapContext(makeSessionManager());
+    mockListCliTargetsOfTasks.mockReturnValue([recordedTarget('Ubuntu')]);
+
+    // The sweep names its own project; the context's ambient one is another.
+    const distros = leftoverSweepOptions(context, PROJECT_PATH).wslDistrosOf?.(['archived-1', 'todo-1']);
+
+    expect(mockListCliTargetsOfTasks).toHaveBeenCalledWith(['archived-1', 'todo-1']);
+    expect(distros).toEqual(['Ubuntu']);
   });
 });
 

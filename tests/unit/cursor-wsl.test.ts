@@ -25,6 +25,9 @@ vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) =
     ...actual,
     execFileAsync: async (file: string, args: readonly string[] = []) => {
       executed.push({ file, args });
+      // Capability discovery's two probes; anything else is `about`.
+      if (args.includes('--help')) return { stdout: '  --model <model>   Model to use\n', stderr: '' };
+      if (args.includes('--list-models')) return { stdout: 'Available models\ncomposer-2 - Composer 2\nTip: pick one\n', stderr: '' };
       return { stdout: '{"model":"Composer 2"}', stderr: '' };
     },
   };
@@ -43,12 +46,16 @@ const FACTS = vi.hoisted(() => ({
   distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu',
   interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as 'nat' | 'mirrored',
 }));
+// The facts read is a spy, so a test can make it reject once (a distro that is
+// stopped or still booting) and see the next read succeed.
+const resolveFacts = vi.hoisted(() => vi.fn(async (_distro: string) => FACTS));
 vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/agent/shared/wsl-distro')>();
-  return { ...actual, resolveWslDistroFacts: async () => FACTS, peekWslDistroFacts: () => FACTS };
+  return { ...actual, resolveWslDistroFacts: resolveFacts, peekWslDistroFacts: () => FACTS };
 });
 
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor';
+import { discoverCursorCapabilities, resetCursorCapabilityCacheForTests } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import {
   CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY,
   CURSOR_KANGENTIC_MCP_ENTRY,
@@ -104,6 +111,8 @@ function referencedVariables(entry: unknown): string[] {
 beforeEach(() => {
   executed.length = 0;
   started.length = 0;
+  // Drops a rejection a failed test left queued, and the call counts.
+  resolveFacts.mockReset();
 });
 
 afterEach(() => {
@@ -196,6 +205,66 @@ describe('the model a Cursor session reports at start (about)', () => {
     adapter.buildCommand(sessionOptions(null));
     const call = await aboutCall(adapter);
     expect(call).toEqual({ file: '/opt/cursor/cursor-agent', args: ['about', '--format', 'json'] });
+  });
+});
+
+describe('capability discovery for a Cursor in a WSL distro', () => {
+  const uncCliPath = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\cursor-agent';
+
+  beforeEach(() => {
+    // `resolveCliTarget` reads the real platform, and it reads a share path as a CLI in a distro only on Windows.
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    resetCursorCapabilityCacheForTests();
+  });
+
+  afterEach(() => {
+    resetCursorCapabilityCacheForTests();
+  });
+
+  it('probes the distro\'s Cursor through wsl.exe and reports what it supports', async () => {
+    const capabilities = await discoverCursorCapabilities(uncCliPath);
+
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.models).toEqual(['composer-2']);
+    expect(executed.length).toBeGreaterThan(0);
+    for (const call of executed) {
+      expect(call.file.endsWith('wsl.exe')).toBe(true);
+      expect(call.args.slice(0, 2)).toEqual(['-d', 'Ubuntu']);
+      expect(call.args.join(' ')).not.toContain('wsl.localhost');
+    }
+    expect(executed[0].args.slice(-1)).toEqual(['--help']);
+  });
+
+  it('reports no model override and keeps nothing while the distro cannot be read, then probes again once it can', async () => {
+    resolveFacts.mockRejectedValueOnce(new Error('There is no distribution with the supplied name.'));
+
+    const unread = await discoverCursorCapabilities(uncCliPath);
+    expect(unread.supportsModelOverride).toBe(false);
+    expect(unread.effortLevels).toEqual([]);
+    expect(unread.models).toBeUndefined();
+    // Nothing was asked of the CLI: a distro that cannot be read cannot be run in.
+    expect(executed).toHaveLength(0);
+    expect(resolveFacts).toHaveBeenCalledTimes(1);
+
+    // The same path, with no forceRefresh: a cached failure would answer it without a probe.
+    const read = await discoverCursorCapabilities(uncCliPath);
+    expect(resolveFacts).toHaveBeenCalledTimes(2);
+    expect(read.supportsModelOverride).toBe(true);
+    expect(read.models).toEqual(['composer-2']);
+    expect(executed.length).toBeGreaterThan(0);
+    expect(executed[0].file.endsWith('wsl.exe')).toBe(true);
+    expect(executed[0].args).toContain('--help');
+  });
+
+  it('keeps a successful discovery, so a repeat for the same path probes nothing more', async () => {
+    await discoverCursorCapabilities(uncCliPath);
+    const probes = executed.length;
+    expect(probes).toBeGreaterThan(0);
+
+    const repeat = await discoverCursorCapabilities(uncCliPath);
+    expect(repeat.supportsModelOverride).toBe(true);
+    expect(executed).toHaveLength(probes);
+    expect(resolveFacts).toHaveBeenCalledTimes(1);
   });
 });
 

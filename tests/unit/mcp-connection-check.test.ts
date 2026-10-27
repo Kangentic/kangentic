@@ -5,7 +5,7 @@
  * the check hit, never a diagnosis. Every outside call is injected, so this
  * runs on every OS without wsl.exe or a server.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -152,7 +152,202 @@ describe('the step from a WSL distro', () => {
   });
 });
 
+// The bridge check starts a relay and makes a folder of its own for each distro
+// it checks. Both must be gone when the check ends, whichever way it ends: a
+// leaked relay keeps a watcher open for the app's lifetime, and a leaked folder
+// is one more in the temp directory per click of "Test connection".
+describe('the NAT bridge check cleans up after itself', () => {
+  const directories: string[] = [];
+  const close = vi.fn();
+
+  beforeEach(() => {
+    close.mockReset();
+  });
+
+  afterEach(() => {
+    // A check that leaked its folder fails its test; this keeps it from leaking into the temp dir too.
+    for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  function bridgeDeps(overrides: Partial<McpConnectionCheckDeps> = {}): McpConnectionCheckDeps {
+    return deps({
+      makeTemporaryDirectory: async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-mcp-check-test-'));
+        directories.push(directory);
+        return directory;
+      },
+      startRelay: vi.fn(() => ({ close })),
+      ...overrides,
+    });
+  }
+
+  // Red-green: dropping `relay?.close()` from the finally fails the close
+  // counts, dropping the rm fails the existence check, and closing the relay
+  // before the bridge runs fails the "open while it ran" check.
+  it.each([
+    [
+      'passes',
+      async () => ({ stdout: '{"jsonrpc":"2.0","id":1,"result":{}}\n', stderr: '' }),
+      { connected: true },
+    ],
+    [
+      'fails on an error answer',
+      async () => ({ stdout: '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"HTTP 401"}}\n', stderr: '' }),
+      { connected: false, error: 'From Ubuntu: HTTP 401' },
+    ],
+    [
+      'fails because wsl.exe fails',
+      async (): Promise<{ stdout: string; stderr: string }> => {
+        throw Object.assign(new Error('Command failed'), { stderr: 'There is no distribution with the supplied name.\r\n' });
+      },
+      { connected: false, error: 'From Ubuntu: There is no distribution with the supplied name.' },
+    ],
+  ])('closes the relay and removes its folder after a check that %s', async (_label, answer, expected) => {
+    const seenWhileRunning = { folderExists: false, closesSoFar: -1 };
+    const injected = bridgeDeps({
+      runWsl: vi.fn(async () => {
+        seenWhileRunning.folderExists = fs.existsSync(directories[0]);
+        seenWhileRunning.closesSoFar = close.mock.calls.length;
+        return answer();
+      }),
+    });
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected)).toEqual(expected);
+
+    expect(directories).toHaveLength(1);
+    // The folder and the relay were both in place while the bridge ran...
+    expect(seenWhileRunning).toEqual({ folderExists: true, closesSoFar: 0 });
+    // ...and both are gone once the check has answered.
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(directories[0])).toBe(false);
+  });
+
+  it('removes the folder, with no relay to close, when the relay cannot start', async () => {
+    const injected = bridgeDeps({ startRelay: vi.fn(() => { throw new Error('EADDRINUSE: relay port taken'); }) });
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected))
+      .toEqual({ connected: false, error: 'From Ubuntu: EADDRINUSE: relay port taken' });
+
+    expect(injected.runWsl).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(directories).toHaveLength(1);
+    expect(fs.existsSync(directories[0])).toBe(false);
+  });
+
+  it('reports a folder that cannot be made, starting no relay and running nothing in the distro', async () => {
+    const injected = bridgeDeps({
+      makeTemporaryDirectory: async () => { throw new Error('EACCES: permission denied, mkdtemp'); },
+    });
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected))
+      .toEqual({ connected: false, error: 'From Ubuntu: EACCES: permission denied, mkdtemp' });
+
+    expect(injected.startRelay).not.toHaveBeenCalled();
+    expect(injected.runWsl).not.toHaveBeenCalled();
+  });
+});
+
+// What the bridge prints is the whole signal on NAT networking: one JSON-RPC
+// line. Anything else is the check's error, word for word, so the row shows what
+// the distro said instead of a diagnosis.
+describe('the bridge\'s answer, read as the check\'s result', () => {
+  const directories: string[] = [];
+
+  afterEach(() => {
+    for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  function checkWithOutput(output: { stdout: string; stderr: string }): Promise<{ connected: boolean; error?: string }> {
+    const injected = deps({
+      runWsl: vi.fn(async () => output),
+      makeTemporaryDirectory: async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-mcp-check-test-'));
+        directories.push(directory);
+        return directory;
+      },
+    });
+    return checkMcpConnection(input({ distros: ['Ubuntu'] }), injected);
+  }
+
+  it('reports a line that is not JSON as printed', async () => {
+    expect(await checkWithOutput({ stdout: 'garbage\n', stderr: '' }))
+      .toEqual({ connected: false, error: 'From Ubuntu: garbage' });
+  });
+
+  it('reports the first line of stderr when the bridge printed no answer on stdout', async () => {
+    expect(await checkWithOutput({ stdout: '', stderr: '\nsh: 1: /tmp/mock/wsl-hook.sh: not found\r\nsecond line\n' }))
+      .toEqual({ connected: false, error: 'From Ubuntu: sh: 1: /tmp/mock/wsl-hook.sh: not found' });
+  });
+
+  it.each([
+    ['nothing at all', ''],
+    ['only blank lines', '\r\n  \n\t\n'],
+  ])('says the bridge printed no answer when stdout and stderr hold %s', async (_label, blank) => {
+    expect(await checkWithOutput({ stdout: blank, stderr: blank }))
+      .toEqual({ connected: false, error: 'From Ubuntu: The MCP bridge printed no answer.' });
+  });
+
+  it('reads the first non-blank line of stdout as the answer, past blank lines before it', async () => {
+    expect(await checkWithOutput({ stdout: '\r\n\n  {"jsonrpc":"2.0","id":1,"result":{}}\n', stderr: 'a warning on stderr\n' }))
+      .toEqual({ connected: true });
+  });
+});
+
+describe('the mirrored-networking step when wsl.exe fails', () => {
+  function mirroredDeps(runWsl: McpConnectionCheckDeps['runWsl']): McpConnectionCheckDeps {
+    return deps({
+      resolveFacts: vi.fn(async () => facts('mirrored')),
+      runWsl,
+      makeTemporaryDirectory: vi.fn(async () => { throw new Error('a mirrored check makes no folder'); }),
+    });
+  }
+
+  it('reports what wsl.exe printed, naming the distro, and makes no folder or relay', async () => {
+    const injected = mirroredDeps(vi.fn(async () => {
+      throw Object.assign(new Error('Command failed'), { stderr: 'bash: connect: Connection refused\r\nbash: /dev/tcp/127.0.0.1/4100: Connection refused\r\n' });
+    }));
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected))
+      .toEqual({ connected: false, error: 'From Ubuntu: bash: connect: Connection refused' });
+
+    expect(injected.makeTemporaryDirectory).not.toHaveBeenCalled();
+    expect(injected.startRelay).not.toHaveBeenCalled();
+  });
+
+  it('reports that wsl.exe gave no answer when it timed out', async () => {
+    const injected = mirroredDeps(vi.fn(async () => {
+      throw Object.assign(new Error('Command failed'), { killed: true });
+    }));
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected))
+      .toEqual({ connected: false, error: 'From Ubuntu: wsl.exe gave no answer in 30 s.' });
+  });
+
+  it('stops at the first distro that fails, so a later one is not asked', async () => {
+    const injected = mirroredDeps(vi.fn(async () => {
+      throw Object.assign(new Error('Command failed'), { stderr: 'There is no distribution with the supplied name.\r\n' });
+    }));
+
+    expect(await checkMcpConnection(input({ distros: ['Ubuntu', 'Debian'] }), injected))
+      .toEqual({ connected: false, error: 'From Ubuntu: There is no distribution with the supplied name.' });
+
+    expect(injected.runWsl).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('wslDistrosOfCliPaths', () => {
+  // A CLI path into a distro names one only on Windows (`parseWslCliPath`), so
+  // the test fakes the platform rather than going red on a Linux runner.
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform') as PropertyDescriptor;
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...originalPlatform, value: 'win32' });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', originalPlatform);
+  });
+
   it('names each distro a WSL-capable agent\'s path points into, once', () => {
     const supportsWsl = (agentName: string) => agentName !== 'aider';
     expect(wslDistrosOfCliPaths({

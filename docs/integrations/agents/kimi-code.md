@@ -113,7 +113,7 @@ Kimi exposes only two permission flags. The adapter surfaces three modes:
 
 ## Authentication
 
-`KimiAdapter.probeAuth()` checks for `~/.kimi/credentials/` (the OAuth state directory written by `kimi login`). The probe is invoked by the `IPC.AGENT_LIST` handler after `detect()` reports `found: true` and surfaces a tristate field `authenticated: true | false | null` on `AgentDetectionInfo`:
+`KimiAdapter.probeAuth(cliPath)` ignores the detected path and checks for `~/.kimi/credentials/` (the OAuth state directory written by `kimi login`). The probe is invoked by the `IPC.AGENT_LIST` handler after `detect()` reports `found: true` and surfaces a tristate field `authenticated: true | false | null` on `AgentDetectionInfo`:
 
 - `true` - credentials directory exists and is non-empty
 - `false` - directory missing or empty (user has not run `kimi login`)
