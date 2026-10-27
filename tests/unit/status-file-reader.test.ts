@@ -10,6 +10,7 @@ import {
   type StatusFileHook,
 } from '../../src/main/pty/readers/status-file-reader';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { prepareWslHookTransport, wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import {
   EventType,
   type SessionUsage,
@@ -781,5 +782,78 @@ describe('StatusFileReader', () => {
     // Files preserved - disposeAll is for shutdown, not full cleanup.
     expect(fs.existsSync(statusA)).toBe(true);
     expect(fs.existsSync(statusB)).toBe(true);
+  });
+});
+
+describe('StatusFileReader - a CLI installed in a WSL distro', () => {
+  // Its hooks publish one file per call into the session's wsl-hooks/ folder
+  // (wsl-hook-transport.ts) instead of appending to events.jsonl; the reader's
+  // inbox turns them into events-file lines, which dispatch as any other.
+  //
+  // Red-green: not attaching the inbox for `wslHookSessionDirectory` fails the
+  // first case; dropping the inbox drain from flushPendingEvents fails the
+  // second, which publishes and flushes with no time for a watcher to fire.
+  let tempDir: string;
+  let callbacks: StatusFileReaderCallbacks;
+  let reader: StatusFileReader;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-file-reader-wsl-'));
+    callbacks = { onUsageParsed: vi.fn(), onEventsParsed: vi.fn(), onFirstStatus: vi.fn() };
+    reader = new StatusFileReader(callbacks);
+  });
+
+  afterEach(() => {
+    reader.disposeAll();
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  /** Publish a call as the script does: written under a dot name, renamed into place. */
+  function publish(type: string, stdin: string, nanos: string): void {
+    const inbox = wslHookPaths(tempDir).inbox;
+    const temporary = path.join(inbox, `.${nanos}-1.tmp`);
+    fs.writeFileSync(temporary, `K1\n${type}\n\n${stdin}`);
+    fs.renameSync(temporary, path.join(inbox, `${nanos}-1.rec`));
+    fs.writeFileSync(wslHookPaths(tempDir).signal, 'x');
+  }
+
+  function attachWsl(wslHookSessionDirectory: string | null): string {
+    prepareWslHookTransport(tempDir);
+    const eventsPath = path.join(tempDir, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    reader.attach({ sessionId: 'session-wsl', statusOutputPath: null, eventsOutputPath: eventsPath, statusFileHook: null, wslHookSessionDirectory });
+    return eventsPath;
+  }
+
+  function dispatchedLines(): string[] {
+    return (callbacks.onEventsParsed as ReturnType<typeof vi.fn>).mock.calls.flatMap((call) => call[1] as string[]);
+  }
+
+  it('dispatches a published call as the line the event bridge writes, timed by its name', async () => {
+    attachWsl(tempDir);
+    publish('prompt', '{}', '1767225600123456789');
+
+    await vi.waitFor(() => expect(dispatchedLines()).toHaveLength(1));
+    expect(JSON.parse(dispatchedLines()[0])).toEqual({ ts: 1767225600123, type: 'prompt' });
+  });
+
+  it('drains what is still published synchronously on the exit flush', () => {
+    attachWsl(tempDir);
+    publish('session_end', '{}', '1767225600123456789');
+
+    reader.flushPendingEvents('session-wsl');
+
+    expect(dispatchedLines().map((line) => (JSON.parse(line) as { type: string }).type)).toEqual(['session_end']);
+  });
+
+  it('reads no inbox for a session whose CLI runs on this machine', async () => {
+    const eventsPath = attachWsl(null);
+    publish('prompt', '{}', '1767225600123456789');
+
+    reader.flushPendingEvents('session-wsl');
+    await eventsChainOf(reader, 'session-wsl');
+
+    expect(dispatchedLines()).toEqual([]);
+    expect(fs.readFileSync(eventsPath, 'utf-8')).toBe('');
   });
 });

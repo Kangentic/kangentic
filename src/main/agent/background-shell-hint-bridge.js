@@ -44,12 +44,14 @@
  * id-shaped shell id, and whose command does not carry the opt-out flag. A
  * foreground call, any other tool, an oversized or malformed stdin, or any
  * error prints NOTHING and exits 0, so it can never fail or block a tool.
+ *
+ * Main also loads this file, for a CLI installed in a WSL distro: there the
+ * hook publishes its request to a file (`wsl-hook-transport.ts`) and Kangentic
+ * answers it with `backgroundShellHintReply`. Loading it has no side effect.
  */
 
 const MAX_STDIN_CHARACTERS = 1024 * 1024;
 const SHELL_ID_PLACEHOLDER = '{{shellId}}';
-
-const [, , encodedSpec] = process.argv;
 
 // BEGIN background-call-match
 // Shared verbatim by event-bridge.js and background-shell-hint-bridge.js (a
@@ -189,40 +191,62 @@ function launchId(launch, context) {
   return match.id;
 }
 
-let input = '';
-let overflowed = false;
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  if (overflowed) return;
-  input += chunk;
-  // A background launch's payload is small. A huge one is a foreground
-  // command's output, which is never answered.
-  if (input.length > MAX_STDIN_CHARACTERS) {
-    overflowed = true;
-    input = '';
-  }
-});
-process.stdin.on('end', () => {
+/**
+ * What the hook prints for one tool result, or null to print nothing. Never
+ * throws. A stdin past `MAX_STDIN_CHARACTERS` is a foreground command's
+ * output, never a background launch, and gets null.
+ *
+ * @param {string | undefined} encodedSpec
+ * @param {string} input the hook's stdin as received
+ * @returns {string | null}
+ */
+function backgroundShellHintReply(encodedSpec, input) {
   try {
-    if (overflowed || !encodedSpec) return;
+    if (!encodedSpec || input.length > MAX_STDIN_CHARACTERS) return null;
     const spec = JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'));
-    if (!spec || typeof spec !== 'object' || !spec.reply) return;
+    if (!spec || typeof spec !== 'object' || !spec.reply) return null;
 
     let context;
     try {
       context = JSON.parse(input);
     } catch {
-      return;
+      return null;
     }
-    if (!context || typeof context !== 'object') return;
+    if (!context || typeof context !== 'object') return null;
 
     const shellId = spec.launch && typeof spec.launch === 'object'
       ? launchId(spec.launch, context)
       : legacyLaunchId(spec, context);
-    if (!shellId) return;
+    if (!shellId) return null;
 
-    process.stdout.write(JSON.stringify(fill(spec.reply, shellId)));
+    return JSON.stringify(fill(spec.reply, shellId));
   } catch {
     // Prints nothing: the tool result reaches the agent as it would without the hook.
+    return null;
   }
-});
+}
+
+module.exports = { backgroundShellHintReply };
+
+if (require.main === module) {
+  const [, , encodedSpec] = process.argv;
+  let input = '';
+  let overflowed = false;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => {
+    if (overflowed) return;
+    input += chunk;
+    // A background launch's payload is small. A huge one is a foreground
+    // command's output, which is never answered; it is dropped as it arrives
+    // rather than held whole.
+    if (input.length > MAX_STDIN_CHARACTERS) {
+      overflowed = true;
+      input = '';
+    }
+  });
+  process.stdin.on('end', () => {
+    if (overflowed) return;
+    const reply = backgroundShellHintReply(encodedSpec, input);
+    if (reply !== null) process.stdout.write(reply);
+  });
+}

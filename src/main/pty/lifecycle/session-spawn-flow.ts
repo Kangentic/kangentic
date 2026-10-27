@@ -547,6 +547,9 @@ export async function performSpawn(
       statusOutputPath: input.statusOutputPath || null,
       eventsOutputPath: input.eventsOutputPath || null,
       statusFileHook: input.agentParser?.runtime?.statusFile ?? null,
+      // A distro CLI's hooks publish into its session directory instead of
+      // appending to the events file (wsl-hook-transport.ts).
+      wslHookSessionDirectory: input.cliTarget && input.eventsOutputPath ? path.dirname(input.eventsOutputPath) : null,
     });
   }
 

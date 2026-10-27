@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { FileWatcher } from './file-watcher';
+import { WslHookInbox } from './wsl-hook-inbox';
 import * as traceRecorder from '../../activity-engine/trace-recorder';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../../shared/types';
@@ -59,6 +60,13 @@ export interface StatusFileAttachOptions {
    * Gemini, Aider) and by test fixtures.
    */
   statusFileHook: StatusFileHook | null;
+  /**
+   * The session directory of an agent CLI installed in a WSL distro. Its hooks
+   * publish into `wsl-hooks/` there rather than append to the events file
+   * (`wsl-hook-transport.ts`), and a `WslHookInbox` turns what they publish into
+   * events-file lines. Null or absent for every other session.
+   */
+  wslHookSessionDirectory?: string | null;
 }
 
 /**
@@ -107,6 +115,8 @@ interface AttachedState {
   eventsChain: Promise<void>;
   /** Bumped by the synchronous exit flush, which supersedes any read in flight. */
   eventsGeneration: number;
+  /** The WSL hook inbox writing the events file, for a CLI installed in a distro. */
+  wslInbox: WslHookInbox | null;
 }
 
 /**
@@ -158,6 +168,7 @@ export class StatusFileReader {
       statusReadSequence: 0,
       eventsChain: Promise.resolve(),
       eventsGeneration: 0,
+      wslInbox: null,
     };
     // Registered before the first read below, which looks the state up: an
     // agent that wrote its status before this attach is read now, not at its
@@ -210,6 +221,17 @@ export class StatusFileReader {
           }
         },
       });
+
+      // A distro CLI's hooks publish files instead of appending; the inbox
+      // appends their lines, and the read it nudges dispatches them.
+      if (options.wslHookSessionDirectory) {
+        state.wslInbox = new WslHookInbox({
+          sessionDirectory: options.wslHookSessionDirectory,
+          eventsOutputPath,
+          onAppended: () => this.handleEventsChange(sessionId),
+        });
+        state.wslInbox.start();
+      }
     }
   }
 
@@ -293,6 +315,8 @@ export class StatusFileReader {
     // that read's range itself, so no event is dispatched twice or out of order.
     const state = this.states.get(sessionId);
     if (!state || !state.eventsOutputPath) return;
+    // A distro CLI's last hook calls are still files: append them first.
+    state.wslInbox?.drainSync();
     state.eventsGeneration += 1;
     try {
       // sync-read-ok: the exit path dispatches these before it handles the exit.
@@ -322,6 +346,8 @@ export class StatusFileReader {
     state.statusWatcher = null;
     state.eventsWatcher?.close();
     state.eventsWatcher = null;
+    state.wslInbox?.close();
+    state.wslInbox = null;
   }
 
   /**

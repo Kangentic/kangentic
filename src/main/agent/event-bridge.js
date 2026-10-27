@@ -80,45 +80,15 @@
  *
  * Stdin: Agent CLIs pipe hook context as JSON. Directives control which
  * fields are extracted for each event type.
+ *
+ * Main also loads this file, for a CLI installed in a WSL distro: there a hook
+ * publishes its raw call to a file (`wsl-hook-transport.ts`) and Kangentic runs
+ * `transformHookEvent` on it, so both paths share one implementation. Loading
+ * it has no side effect; everything that touches the process runs only when
+ * this file is the script node started (`require.main === module`).
  */
-// Stdout guard: Gemini CLI rejects any stdout output from hook scripts as
-// malformed JSON (docs: "Strict JSON" rule). Codex/Claude tolerate noise on
-// stdout but it still gets logged as hook output. We explicitly suppress
-// stdout so a stray console.log added during debugging can never silently
-// break hook parsing. All diagnostics must go to stderr.
-process.stdout.write = () => true;
 
 const fs = require('fs');
-// The events path argument is either a literal path or the sentinel
-// `env:<NAME>`, which resolves the path from the hook process environment at
-// run time. Adapters whose CLI has no per-session settings mechanism (Grok)
-// write ONE static per-cwd hook file whose commands carry the sentinel; each
-// Kangentic PTY spawn supplies its own value, so concurrent sessions in the
-// same cwd route to their own events.jsonl - and a session WITHOUT the
-// variable (the user's own manual CLI run in that cwd) resolves to an empty
-// path, which the `if (!outputPath) return` below turns into a silent no-op
-// instead of writing into some task's activity log.
-const rawOutputPath = process.argv[2];
-const outputPath = rawOutputPath && rawOutputPath.startsWith('env:')
-  ? (process.env[rawOutputPath.slice(4)] || '')
-  : rawOutputPath;
-const eventType = process.argv[3] || 'idle';
-const directives = process.argv.slice(4);
-
-/**
- * Append a diagnostic line to the sibling error log so silent pipeline
- * failures (unknown/malformed directive, file locked, disk full) are
- * discoverable instead of vanishing. Best-effort: the error log may also fail.
- */
-function logBridgeError(message) {
-  if (!outputPath) return;
-  try {
-    const errorPath = outputPath.replace(/events\.jsonl$/, 'events-bridge.error.log');
-    fs.appendFileSync(errorPath, `${new Date().toISOString()} ${eventType} ${message}\n`);
-  } catch {
-    // Truly nothing we can do
-  }
-}
 
 /** Decode a `<kind>:<base64(JSON)>` directive. payload is undefined if malformed. */
 function decodeDirective(directive) {
@@ -255,13 +225,21 @@ function commandCarries(root, commandPath, flag) {
 }
 // END background-call-match
 
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => { input += chunk; });
-process.stdin.on('end', () => {
-  if (!outputPath) return;
+/**
+ * The events.jsonl lines one hook call reports, in the order they are written:
+ * any appended background events, then the hook's own event unless a gate
+ * suppressed it. Pure apart from `logError`, which receives each diagnostic.
+ *
+ * @param {{ eventType: string, directives: string[], input: string, now: number,
+ *   logError: (message: string) => void }} options
+ *   `input` is the hook's stdin as received; `now` is the event time in epoch ms.
+ * @returns {string[]}
+ */
+function transformHookEvent(options) {
+  const { eventType, directives, input, now } = options;
+  const logBridgeError = options.logError;
 
-  const event = { ts: Date.now(), type: eventType };
+  const event = { ts: now, type: eventType };
 
   // Parse stdin JSON once for all directives
   let ctx = null;
@@ -493,14 +471,65 @@ process.stdin.on('end', () => {
     }
     lines.push(JSON.stringify(event));
   }
-  if (lines.length === 0) return;
+  return lines;
+}
 
-  try {
-    // One append, so a reader never sees the start without the tool_end beside it.
-    fs.appendFileSync(outputPath, lines.join('\n') + '\n');
-  } catch (err) {
-    // Don't swallow silently - surface genuine pipeline failures (file
-    // locked, path missing, disk full) to the sibling error log.
-    logBridgeError(err && err.message ? err.message : String(err));
-  }
-});
+module.exports = { transformHookEvent };
+
+if (require.main === module) {
+  // Stdout guard: Gemini CLI rejects any stdout output from hook scripts as
+  // malformed JSON (docs: "Strict JSON" rule). Codex/Claude tolerate noise on
+  // stdout but it still gets logged as hook output. We explicitly suppress
+  // stdout so a stray console.log added during debugging can never silently
+  // break hook parsing. All diagnostics must go to stderr.
+  process.stdout.write = () => true;
+
+  // The events path argument is either a literal path or the sentinel
+  // `env:<NAME>`, which resolves the path from the hook process environment at
+  // run time. Adapters whose CLI has no per-session settings mechanism (Grok)
+  // write ONE static per-cwd hook file whose commands carry the sentinel; each
+  // Kangentic PTY spawn supplies its own value, so concurrent sessions in the
+  // same cwd route to their own events.jsonl - and a session WITHOUT the
+  // variable (the user's own manual CLI run in that cwd) resolves to an empty
+  // path, which the `if (!outputPath) return` below turns into a silent no-op
+  // instead of writing into some task's activity log.
+  const rawOutputPath = process.argv[2];
+  const outputPath = rawOutputPath && rawOutputPath.startsWith('env:')
+    ? (process.env[rawOutputPath.slice(4)] || '')
+    : rawOutputPath;
+  const eventType = process.argv[3] || 'idle';
+  const directives = process.argv.slice(4);
+
+  /**
+   * Append a diagnostic line to the sibling error log so silent pipeline
+   * failures (unknown/malformed directive, file locked, disk full) are
+   * discoverable instead of vanishing. Best-effort: the error log may also fail.
+   */
+  const logBridgeError = (message) => {
+    if (!outputPath) return;
+    try {
+      const errorPath = outputPath.replace(/events\.jsonl$/, 'events-bridge.error.log');
+      fs.appendFileSync(errorPath, `${new Date().toISOString()} ${eventType} ${message}\n`);
+    } catch {
+      // Truly nothing we can do
+    }
+  };
+
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => { input += chunk; });
+  process.stdin.on('end', () => {
+    if (!outputPath) return;
+    const lines = transformHookEvent({ eventType, directives, input, now: Date.now(), logError: logBridgeError });
+    if (lines.length === 0) return;
+
+    try {
+      // One append, so a reader never sees the start without the tool_end beside it.
+      fs.appendFileSync(outputPath, lines.join('\n') + '\n');
+    } catch (err) {
+      // Don't swallow silently - surface genuine pipeline failures (file
+      // locked, path missing, disk full) to the sibling error log.
+      logBridgeError(err && err.message ? err.message : String(err));
+    }
+  });
+}
