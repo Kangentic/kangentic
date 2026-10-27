@@ -87,6 +87,12 @@ The merged settings carry an `mcpServers.kangentic` entry using the Gemini-famil
 
 The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events pipeline) still produces the file.
 
+## WSL
+
+A Gemini installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Gemini's Linux path in a `wsl -d <distro>` shell. `.gemini/settings.json` is shared by every session in the folder, so none of it names one session's path. The hooks call the folder's copy of the WSL hook transport's script, `<cwd>/.kangentic/gemini-wsl-hook.sh` (`copyWslHookScriptInto`), with the same events and directives, since a distro may have no node. The copy finds the session's own folder through `KANGENTIC_WSL_HOOK_DIR`, which Gemini's hooks inherit, as they inherit `KANGENTIC_EVENTS_PATH` for the node bridge. The background shell hint goes through the transport's `reply`. Gemini passes each hook its payload on stdin, which the script's `event` mode reads.
+
+On mirrored networking the MCP entry is the URL one above. On NAT networking the distro cannot reach this machine's loopback, so it is the transport's stdio bridge, `{"command": "sh", "args": ["${KANGENTIC_MCP_BRIDGE_SCRIPT}", "mcp", "${KANGENTIC_MCP_URL}"], "env": {"KANGENTIC_MCP_TOKEN": "${KANGENTIC_MCP_TOKEN}"}}`, every value a reference the session's environment fills (`buildEnv` adds the script's distro path), so the file still holds no token and no session's path. Trust, the chats, the model scan and an answer's chat cleanup read the distro's Gemini directory (its own `GEMINI_CLI_HOME`, else the distro home), keyed by the `/mnt` cwd and compared with Linux case. A removed worktree's trust entry goes from the distro's file while the distro runs. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Gemini installed in a distro: the `gemini` on this machine's Ubuntu is the Windows one through interop.
+
 Every `~/.gemini` path on this page is Gemini's user directory, `<GEMINI_CLI_HOME>/.gemini` when that variable is set (`geminiHomeDir`, `gemini-home.ts`), the folder Gemini's configuration docs say it creates there. The trust write and removal, the chats, the model scan, the answer chat cleanup and the relocation pass all use it, so trust lands where Gemini reads it. Only an absolute value is taken: a relative one would resolve against the CLI's own working directory, which a global reader does not have.
 
 Two things make this work that are easy to miss:

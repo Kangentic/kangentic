@@ -107,16 +107,32 @@ export interface GeminiBuildHooksOptions {
    * session offered `kangentic_mark_background_service`.
    */
   backgroundShellHintCommand?: string | null;
+  /**
+   * Builds each event hook's command in place of `node <event-bridge>`: for a
+   * Gemini installed in a WSL distro, the transport's `wslHookEventCommand`,
+   * with the same event types and directives. Gemini passes a hook its
+   * payload on stdin, which the transport's `event` mode reads. Absent: the
+   * node bridge, as before.
+   */
+  eventCommand?: (eventType: string, ...directives: string[]) => string;
 }
 
-/** Build a single Gemini hook entry for the event bridge. */
-function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): GeminiHookEntry {
+/** Build a single Gemini hook entry for the event bridge, or the command `eventCommand` builds in its place. */
+function bridgeEntry(
+  eventBridge: string,
+  eventsPath: string,
+  eventCommand: GeminiBuildHooksOptions['eventCommand'],
+  eventType: string,
+  ...directives: string[]
+): GeminiHookEntry {
   return {
     matcher: '*',
     hooks: [{
       name: `kangentic-${eventType}`,
       type: 'command',
-      command: buildBridgeCommand(GEMINI_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
+      command: eventCommand
+        ? eventCommand(eventType, ...directives)
+        : buildBridgeCommand(GEMINI_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
     }],
   };
 }
@@ -150,7 +166,7 @@ export function buildHooks(
     ...existingHooks,
     [H.BeforeTool]: [
       ...filterOurHooks(existingHooks[H.BeforeTool]),
-      bridgeEntry(eventBridge, eventsPath, E.ToolStart,
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.ToolStart,
         extractTool('tool_name'), extractDetail(['file_path', 'command', 'query'], { nested: 'tool_input' })),
     ],
     // A background launch rides the tool_end entry, and the hint runs beside
@@ -158,54 +174,54 @@ export function buildHooks(
     // (measured on 0.64.0).
     [H.AfterTool]: [
       ...filterOurHooks(existingHooks[H.AfterTool]),
-      bridgeEntry(eventBridge, eventsPath, E.ToolEnd, extractTool('tool_name'), APPROVED_PLAN_EXIT,
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.ToolEnd, extractTool('tool_name'), APPROVED_PLAN_EXIT,
         backgroundLaunchDirective(GEMINI_BACKGROUND_COMMAND_SPEC)),
       ...nestedBackgroundShellHintEntries(GEMINI_BACKGROUND_COMMAND_SPEC, options.backgroundShellHintCommand),
     ],
     [H.SessionStart]: [
       ...filterOurHooks(existingHooks[H.SessionStart]),
-      bridgeEntry(eventBridge, eventsPath, E.SessionStart),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.SessionStart),
     ],
     [H.SessionEnd]: [
       ...filterOurHooks(existingHooks[H.SessionEnd]),
-      bridgeEntry(eventBridge, eventsPath, E.SessionEnd),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.SessionEnd),
     ],
     [H.AfterAgent]: [
       ...filterOurHooks(existingHooks[H.AfterAgent]),
-      bridgeEntry(eventBridge, eventsPath, E.Idle),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Idle),
     ],
     [H.BeforeAgent]: [
       ...filterOurHooks(existingHooks[H.BeforeAgent]),
-      bridgeEntry(eventBridge, eventsPath, E.Prompt),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Prompt),
     ],
     [H.Notification]: [
       ...filterOurHooks(existingHooks[H.Notification]),
-      bridgeEntry(eventBridge, eventsPath, E.Notification, extractDetail(['message', 'notification'])),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Notification, extractDetail(['message', 'notification'])),
       // A tool confirmation dialog (the plan prompt included) is a permission
       // wait, so the card shows the session needs you. Gemini 0.63.0 has no
       // permission hook: it reports each dialog as a Notification whose
       // `notification_type` is "ToolPermission" (`fireToolNotificationEvent`),
       // and the AfterTool that follows the answer clears it.
-      bridgeEntry(eventBridge, eventsPath, E.Idle,
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Idle,
         extractDetail(['notification_type']),
         emitOnlyWhenDetailMatches(`^${GEMINI_TOOL_PERMISSION_NOTIFICATION}$`),
         setDetail(IdleReason.Permission)),
     ],
     [H.PreCompress]: [
       ...filterOurHooks(existingHooks[H.PreCompress]),
-      bridgeEntry(eventBridge, eventsPath, E.Compact),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Compact),
     ],
     [H.BeforeModel]: [
       ...filterOurHooks(existingHooks[H.BeforeModel]),
-      bridgeEntry(eventBridge, eventsPath, E.ModelStart, extractDetail(['model'], { nested: 'llm_request' })),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.ModelStart, extractDetail(['model'], { nested: 'llm_request' })),
     ],
     [H.AfterModel]: [
       ...filterOurHooks(existingHooks[H.AfterModel]),
-      bridgeEntry(eventBridge, eventsPath, E.ModelEnd, extractDetail(['model'], { nested: 'llm_request' })),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.ModelEnd, extractDetail(['model'], { nested: 'llm_request' })),
     ],
     [H.BeforeToolSelection]: [
       ...filterOurHooks(existingHooks[H.BeforeToolSelection]),
-      bridgeEntry(eventBridge, eventsPath, E.ToolSelectionStart),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.ToolSelectionStart),
     ],
   };
 }

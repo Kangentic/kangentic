@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { geminiHomeDir } from './gemini-home';
 import { resolveForwardSlash } from '../../../../shared/paths';
 import { createSerialLock } from '../../shared/relocation-utils';
+import { cliPathForTarget, cliPlatformForTarget, type CliPlace } from '../../shared/cli-target';
 
 // Module-level promise chain serializing all ~/.gemini/trustedFolders.json
 // access. Prevents concurrent read-modify-write races when multiple tasks
@@ -41,16 +42,26 @@ const USER_MANAGED_LEVELS = new Set(['TRUST_FOLDER', 'TRUST_PARENT', 'DO_NOT_TRU
  *    creates a worktree per task, so writing one key per worktree would bloat
  *    the user's home config without changing behavior. When any ancestor is
  *    already trusted we write nothing.
+ *
+ * A Gemini installed in a WSL distro (`place`) reads the distro's
+ * trustedFolders.json, keyed by the path the distro sees (`/mnt/c/...`), and
+ * compared as Linux compares it, case included.
  */
-export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
-  return withGeminiTrustLock(() => ensureWorktreeTrustSync(worktreePath));
+export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withGeminiTrustLock(() => ensureWorktreeTrustSync(worktreePath, place));
 }
 
-function ensureWorktreeTrustSync(worktreePath: string): void {
-  const geminiDir = geminiHomeDir();
-  const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
+/** The key Gemini records a folder under, as the CLI's own platform writes it. */
+function trustKeyOf(folderPath: string, place: CliPlace | null): string {
+  return place ? cliPathForTarget(path.resolve(folderPath), place) : resolveForwardSlash(folderPath);
+}
 
-  const resolvedPath = resolveForwardSlash(worktreePath);
+function ensureWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  const geminiDir = geminiHomeDir(place);
+  const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
+  const platform = cliPlatformForTarget(place);
+
+  const resolvedPath = trustKeyOf(worktreePath, place);
 
   let entries: Record<string, unknown>;
   try {
@@ -67,8 +78,8 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
   // this, trusting a per-task worktree would silently overrule a DO_NOT_TRUST
   // the user recorded on the repo it was created from. Codex's sibling makes
   // the same check against its project root.
-  if (hasDenyingAncestor(entries, resolvedPath)) return;
-  if (hasTrustedAncestor(entries, resolvedPath)) return;
+  if (hasDenyingAncestor(entries, resolvedPath, platform)) return;
+  if (hasTrustedAncestor(entries, resolvedPath, platform)) return;
 
   entries[resolvedPath] = 'TRUST_FOLDER';
 
@@ -96,15 +107,19 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
  * Only an entry we could have written ourselves is removed. `TRUST_PARENT`
  * and `DO_NOT_TRUST` are user decisions and are left in place even though the
  * directory is gone, so a later worktree at the same path still honors them.
+ *
+ * For a Gemini in a WSL distro (`place`), the entry is the one its trust step
+ * wrote in the distro's file.
  */
-export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
-  return withGeminiTrustLock(() => removeWorktreeTrustSync(worktreePath));
+export async function removeWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withGeminiTrustLock(() => removeWorktreeTrustSync(worktreePath, place));
 }
 
-function removeWorktreeTrustSync(worktreePath: string): void {
-  const geminiDir = geminiHomeDir();
+function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  const geminiDir = geminiHomeDir(place);
   const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
-  const resolvedPath = resolveForwardSlash(worktreePath);
+  const resolvedPath = trustKeyOf(worktreePath, place);
+  const platform = cliPlatformForTarget(place);
 
   let entries: Record<string, unknown>;
   try {
@@ -117,9 +132,9 @@ function removeWorktreeTrustSync(worktreePath: string): void {
 
   // Keys are stored in mixed styles, so match on the normalized form rather
   // than the raw string, the same way the ancestor checks below do.
-  const target = normalizeForCompare(resolvedPath);
+  const target = normalizeForCompare(resolvedPath, platform);
   const doomed = Object.keys(entries).filter(
-    (key) => entries[key] === 'TRUST_FOLDER' && normalizeForCompare(key) === target,
+    (key) => entries[key] === 'TRUST_FOLDER' && normalizeForCompare(key, platform) === target,
   );
   if (doomed.length === 0) return;
 
@@ -143,17 +158,18 @@ function removeWorktreeTrustSync(worktreePath: string): void {
  * case-sensitive, so `/home/dev/Repo` and `/home/dev/repo` are genuinely
  * different directories there and must not collapse into one. Same gate as
  * `codex/config-toml.ts`'s `normalizeForCompare` and this adapter's own
- * `project-relocation.ts` `mirrorPathStyle`.
+ * `project-relocation.ts` `mirrorPathStyle`. `platform` is the CLI's: Linux
+ * for a Gemini in a WSL distro.
  */
-function normalizeForCompare(value: string): string {
+function normalizeForCompare(value: string, platform: NodeJS.Platform): string {
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 /** True when `ancestorKey` is `resolvedPath` itself or a directory above it. */
-function covers(ancestorKey: string, resolvedPath: string): boolean {
-  const target = normalizeForCompare(resolvedPath);
-  const ancestor = normalizeForCompare(ancestorKey);
+function covers(ancestorKey: string, resolvedPath: string, platform: NodeJS.Platform): boolean {
+  const target = normalizeForCompare(resolvedPath, platform);
+  const ancestor = normalizeForCompare(ancestorKey, platform);
   // The trailing-separator boundary keeps `/repo-backup` from matching `/repo`.
   return target === ancestor || target.startsWith(`${ancestor}/`);
 }
@@ -165,10 +181,11 @@ function covers(ancestorKey: string, resolvedPath: string): boolean {
 function hasTrustedAncestor(
   entries: Record<string, unknown>,
   resolvedPath: string,
+  platform: NodeJS.Platform,
 ): boolean {
   for (const [key, level] of Object.entries(entries)) {
     if (level !== 'TRUST_FOLDER') continue;
-    if (covers(key, resolvedPath)) return true;
+    if (covers(key, resolvedPath, platform)) return true;
   }
   return false;
 }
@@ -180,10 +197,11 @@ function hasTrustedAncestor(
 function hasDenyingAncestor(
   entries: Record<string, unknown>,
   resolvedPath: string,
+  platform: NodeJS.Platform,
 ): boolean {
   for (const [key, level] of Object.entries(entries)) {
     if (level !== 'DO_NOT_TRUST') continue;
-    if (covers(key, resolvedPath)) return true;
+    if (covers(key, resolvedPath, platform)) return true;
   }
   return false;
 }

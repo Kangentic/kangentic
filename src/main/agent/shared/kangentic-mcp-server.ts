@@ -1,7 +1,21 @@
 import path from 'node:path';
 import { WslHookInbox } from '../../pty/readers/wsl-hook-inbox';
-import type { CliPlace } from './cli-target';
-import { WSL_MCP_TOKEN_ENV, prepareWslHookTransport, wslMcpServerLaunch, wslReachesLoopback } from './wsl-hook-transport';
+import { cliPathForTarget, type CliPlace } from './cli-target';
+import { WSL_MCP_TOKEN_ENV, prepareWslHookTransport, wslHookPaths, wslMcpServerLaunch, wslReachesLoopback } from './wsl-hook-transport';
+
+/**
+ * The variable a static config entry names the bridge's script by, for a CLI
+ * whose Kangentic entry lives in a file every session in a folder shares and
+ * which fills `${...}` references from its environment (Cursor, Gemini): the
+ * entry stays the same bytes, and each session's environment points it at the
+ * script in its own directory.
+ */
+export const KANGENTIC_MCP_BRIDGE_SCRIPT_ENV = 'KANGENTIC_MCP_BRIDGE_SCRIPT';
+
+/** `KANGENTIC_MCP_BRIDGE_SCRIPT_ENV` for a session or run whose bridge lives in `directory`, in the distro's form. */
+export function mcpBridgeScriptEnv(directory: string, place: CliPlace): Record<string, string> {
+  return { [KANGENTIC_MCP_BRIDGE_SCRIPT_ENV]: cliPathForTarget(wslHookPaths(directory).script, place) };
+}
 
 /**
  * Kangentic's MCP server as one CLI must be given it. Each adapter maps this to

@@ -39,6 +39,7 @@ export interface WslDistroFacts {
  */
 export const WSL_ENV_KEYS = [
   'CODEX_HOME',
+  'GEMINI_CLI_HOME',
   'GROK_HOME',
   'COPILOT_HOME',
   'KIMI_CODE_HOME',

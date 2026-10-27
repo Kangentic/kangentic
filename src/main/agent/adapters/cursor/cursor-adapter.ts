@@ -9,15 +9,13 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { cliPathForTarget, execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
-import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
-import { wslHookPaths } from '../../shared/wsl-hook-transport';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { discoverCursorCapabilities } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import {
   CURSOR_KANGENTIC_MCP_ENTRY,
-  CURSOR_MCP_BRIDGE_SCRIPT_ENV,
   CURSOR_MCP_TOKEN_ENV,
   CURSOR_MCP_URL_ENV,
   cursorAnswerHome,
@@ -73,11 +71,6 @@ function cursorSessionMcpEntry(
     console.warn('[cursor] Could not prepare the WSL MCP bridge; the session runs without Kangentic tools:', error);
     return null;
   }
-}
-
-/** The bridge entry's script as the distro sees it, for a session or run whose bridge lives in `directory`. */
-function bridgeScriptEnv(directory: string, place: CliPlace): Record<string, string> {
-  return { [CURSOR_MCP_BRIDGE_SCRIPT_ENV]: cliPathForTarget(wslHookPaths(directory).script, place) };
 }
 
 /**
@@ -363,7 +356,7 @@ export class CursorAdapter implements AgentAdapter {
     return {
       [CURSOR_MCP_URL_ENV]: options.mcpServerUrl,
       [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken,
-      ...(place && options.eventsOutputPath ? bridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
+      ...(place && options.eventsOutputPath ? mcpBridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
     };
   }
 
@@ -595,7 +588,7 @@ export class CursorAdapter implements AgentAdapter {
       const env = {
         [CURSOR_MCP_URL_ENV]: retrieval.url,
         [CURSOR_MCP_TOKEN_ENV]: retrieval.token,
-        ...(server.kind === 'stdio' && cliTarget ? bridgeScriptEnv(runDirectory, cliTarget) : {}),
+        ...(server.kind === 'stdio' && cliTarget ? mcpBridgeScriptEnv(runDirectory, cliTarget) : {}),
       };
       const stopRelay = startRunMcpRelay(runDirectory, server);
       try {

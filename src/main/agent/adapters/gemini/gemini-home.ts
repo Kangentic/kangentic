@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /**
  * Gemini CLI's user directory: `<GEMINI_CLI_HOME>/.gemini` when that variable
@@ -16,10 +17,18 @@ import path from 'node:path';
  * Only an absolute value is taken; a relative one would resolve against the
  * CLI's own working directory, which a global reader does not have.
  *
+ * A Gemini installed in a WSL distro (`place`) keeps its directory in the
+ * distro, under the `GEMINI_CLI_HOME` its own shell sets, else the distro's
+ * home, reached through the distro's share.
+ *
  * Read per call, so a test or a user that changes the variable is not
  * shadowed by a value captured at import.
  */
-export function geminiHomeDir(): string {
+export function geminiHomeDir(place: CliPlace | null = null): string {
+  if (place) {
+    const override = place.facts.env.GEMINI_CLI_HOME?.trim();
+    return path.join(override?.startsWith('/') ? hostPathForTarget(override, place) : place.facts.homeUnc, '.gemini');
+  }
   const override = process.env.GEMINI_CLI_HOME?.trim();
   return path.join(override && path.isAbsolute(override) ? override : os.homedir(), '.gemini');
 }

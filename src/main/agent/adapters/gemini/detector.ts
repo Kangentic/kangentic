@@ -14,6 +14,7 @@ export class GeminiDetector extends AgentDetector {
       binaryName: 'gemini',
       fallbackPaths: standardUnixFallbackPaths('gemini'),
       parseVersion: (raw) => raw.trim() || null,
+      supportsWslCli: true,
     });
   }
 }

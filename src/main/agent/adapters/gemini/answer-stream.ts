@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import { geminiHomeDir } from './gemini-home';
 import * as path from 'node:path';
 import type { AnswerStreamEvent } from '../../shared/cli-answer';
+import { cliPathForTarget, cliPlatformForTarget, type CliPlace } from '../../shared/cli-target';
 
 interface GeminiRecord {
   type?: unknown;
@@ -75,10 +76,10 @@ export function extractGeminiAnswer(stdout: string): string {
   return sinceLastTool.trim();
 }
 
-/** Fold a path for comparison with Gemini's project registry keys. */
-function registryKey(value: string): string {
+/** Fold a path for comparison with Gemini's project registry keys, as the CLI's `platform` compares paths. */
+function registryKey(value: string, platform: NodeJS.Platform): string {
   const forward = value.replace(/\\/g, '/').replace(/\/+$/, '');
-  return process.platform === 'win32' ? forward.toLowerCase() : forward;
+  return platform === 'win32' ? forward.toLowerCase() : forward;
 }
 
 /**
@@ -87,15 +88,18 @@ function registryKey(value: string): string {
  * them off, under `~/.gemini/tmp/<slug>/chats/` as
  * `session-<time>-<first 8 of the id>.jsonl`, with a folder named by the id
  * for any subagent it ran. The slug is the working directory's entry in
- * `~/.gemini/projects.json`, else its folder name. Best effort.
+ * `~/.gemini/projects.json`, else its folder name. Best effort. A Gemini in a
+ * WSL distro (`place`) saved it in the distro's Gemini directory, registered
+ * under the `/mnt` form of the cwd.
  */
-export async function removeGeminiChat(cwd: string, sessionId: string): Promise<void> {
-  const geminiHome = geminiHomeDir();
+export async function removeGeminiChat(cwd: string, sessionId: string, place: CliPlace | null = null): Promise<void> {
+  const geminiHome = geminiHomeDir(place);
+  const platform = cliPlatformForTarget(place);
   let slug = path.basename(cwd);
   try {
     const registry = JSON.parse(await fs.promises.readFile(path.join(geminiHome, 'projects.json'), 'utf-8')) as { projects?: Record<string, string> };
-    const wanted = registryKey(cwd);
-    const entry = Object.entries(registry.projects ?? {}).find(([key]) => registryKey(key) === wanted);
+    const wanted = registryKey(place ? cliPathForTarget(cwd, place) : cwd, platform);
+    const entry = Object.entries(registry.projects ?? {}).find(([key]) => registryKey(key, platform) === wanted);
     if (entry) slug = entry[1];
   } catch {
     // No registry yet: the folder name is what Gemini would have used.

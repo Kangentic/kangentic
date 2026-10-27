@@ -12,13 +12,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
-import type { KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { WSL_MCP_REQUEST_HEAD, WSL_MCP_TOKEN_ENV } from '../../shared/wsl-hook-transport';
 
 export const CURSOR_MCP_URL_ENV = 'KANGENTIC_MCP_URL';
 export const CURSOR_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
 /** The WSL hook transport's script, as the distro sees it, for the bridge entry. */
-export const CURSOR_MCP_BRIDGE_SCRIPT_ENV = 'KANGENTIC_MCP_BRIDGE_SCRIPT';
+export const CURSOR_MCP_BRIDGE_SCRIPT_ENV = KANGENTIC_MCP_BRIDGE_SCRIPT_ENV;
 
 /** Kangentic's entry for a Cursor that dials the server's URL itself. */
 export const CURSOR_KANGENTIC_MCP_ENTRY = {
