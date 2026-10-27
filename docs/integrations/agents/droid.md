@@ -57,6 +57,10 @@ User-defined servers in that file are preserved, and `removeHooks` strips only t
 
 Cleanup runs from the PTY exit and suspend paths, so a hard kill (Task Manager, crash, OS reboot) leaves the entry behind pointing at a dead loopback port until the next spawn rewrites it. It holds no secret, but it is a file Kangentic wrote inside the user's tree, so when Kangentic creates it the builder seeds `.factory/mcp.json` and `.kangentic/` into `.git/info/exclude` via the shared `git-exclude.ts` mechanism (see [Antigravity](antigravity.md)) - the file never shows as untracked and cannot ride a `git add -A`. A pre-existing user `mcp.json` keeps its normal git visibility (the created-by-us carve-out). A Droid session on a project with worktrees disabled writes it into the project root rather than a worktree, which is what makes that entry matter.
 
+## WSL
+
+A Droid installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Droid's Linux path in a `wsl -d <distro>` shell, with `--cwd` in the distro's form (`/mnt/c/...`). Its session files are in the distro's `~/.factory/sessions/`, under the slug of that cwd (`-mnt-c-...`), and Kangentic reads them over the distro's share for the session id, the transcript and the Conversation viewer. On mirrored networking the distro reaches this machine's loopback and the entry above is unchanged. On NAT networking it is the WSL hook transport's stdio bridge, `{"type": "stdio", "command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": "${KANGENTIC_MCP_TOKEN}"}}`, where Factory's MCP docs say Droid expands `${VAR}` in `env` as in `headers`. A title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Droid installed in a distro.
+
 ## Limitations
 
 ### No live telemetry (model, cost, tokens, context window)

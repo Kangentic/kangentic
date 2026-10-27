@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cliHomeDir, cliPathForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
+import type { StoredCliTarget } from '../../../../shared/types';
 
 /**
  * Capture a freshly-spawned Droid session UUID from the filesystem.
@@ -48,9 +50,14 @@ export function cwdToSessionSlug(cwd: string): string {
   return replaced.startsWith('-') ? replaced : '-' + replaced;
 }
 
-/** Absolute path to `~/.factory/sessions/<cwd-slug>/`. */
-function sessionsDirForCwd(cwd: string): string {
-  return path.join(os.homedir(), '.factory', 'sessions', cwdToSessionSlug(cwd));
+/**
+ * Absolute path to `~/.factory/sessions/<cwd-slug>/`. A Droid in a WSL distro
+ * keeps them in the distro's home, under the slug of the cwd it was given,
+ * the `/mnt` form of ours (`/mnt/c/...` -> `-mnt-c-...`).
+ */
+export function droidSessionsDirForCwd(cwd: string, place: CliPlace | null = null): string {
+  if (!place) return path.join(os.homedir(), '.factory', 'sessions', cwdToSessionSlug(cwd));
+  return path.join(cliHomeDir(place), '.factory', 'sessions', cwdToSessionSlug(cliPathForTarget(cwd, place)));
 }
 
 /**
@@ -65,9 +72,10 @@ function sessionsDirForCwd(cwd: string): string {
 export async function locateSessionFile(options: {
   agentSessionId: string;
   cwd: string;
+  place?: CliPlace | null;
   maxAttempts?: number;
 }): Promise<string | null> {
-  const directory = sessionsDirForCwd(options.cwd);
+  const directory = droidSessionsDirForCwd(options.cwd, options.place ?? null);
   const filename = `${options.agentSessionId}.jsonl`;
   const target = path.join(directory, filename);
   const maxAttempts = options.maxAttempts ?? 10;
@@ -89,13 +97,15 @@ export async function locateSessionFile(options: {
 export async function captureSessionIdFromFilesystem(options: {
   spawnedAt: Date;
   cwd: string;
+  /** Where the CLI runs when it is not this machine (a WSL distro). */
+  cliTarget?: StoredCliTarget | null;
   maxAttempts?: number;
 }): Promise<string | null> {
   const spawnedAtMs = options.spawnedAt.getTime();
   // Allow 30s of clock skew on the floor; the cwd-keyed directory
   // means we will not pick up sessions from other tasks anyway.
   const mtimeFloorMs = spawnedAtMs - 30_000;
-  const directory = sessionsDirForCwd(options.cwd);
+  const directory = droidSessionsDirForCwd(options.cwd, placeFromStored(options.cliTarget ?? null));
   const maxAttempts = options.maxAttempts ?? 20;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {

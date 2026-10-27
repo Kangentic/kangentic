@@ -18,6 +18,7 @@ export class DroidDetector extends AgentDetector {
         const stripped = raw.replace(/^droid\s+/i, '').trim();
         return stripped.length > 0 ? stripped : null;
       },
+      supportsWslCli: true,
     });
   }
 }
