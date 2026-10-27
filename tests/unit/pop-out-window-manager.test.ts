@@ -8,6 +8,9 @@
  * the wiring between them and the constructed window, not their own math.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { PopOutChangesFileParams } from '../../src/shared/pop-out';
 
 // vi.mock() calls are hoisted above every other statement in this file, so any
@@ -116,6 +119,8 @@ vi.mock('electron', () => {
 import { PopOutWindowManager } from '../../src/main/pop-out/pop-out-window-manager';
 import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, resolveSurfaceTitle } from '../../src/shared/pop-out';
 import { cascadePopOutPosition } from '../../src/main/pop-out/cascade';
+import { initMainI18n } from '../../src/main/i18n/main-i18n';
+import { readLocaleArgument } from '../../src/shared/i18n/locales';
 
 /** Shape of the mocked BrowserWindow beyond the real Electron interface, so
  *  tests can inspect the constructor options and the position/maximize spies
@@ -292,6 +297,46 @@ describe('PopOutWindowManager.open()', () => {
       const args = additionalArgumentsOf(win);
       expect(args).not.toContain('--kangentic-error-reporting');
       expect(args.some((arg) => arg.startsWith(POPOUT_ARG_PREFIX))).toBe(true);
+    });
+
+    /**
+     * `--kangentic-locale=<code>` is how preload hands the session's display
+     * language to the renderer before its first render (mirrors createWindow()
+     * in index.ts, whose own argument is pinned in
+     * gpu-escalation-report-wiring.test.ts). A pop-out that omits it boots in
+     * English while the rest of the session is translated.
+     */
+    describe('the session language (localeArgument)', () => {
+      const temporaryDirectories: string[] = [];
+
+      function catalogDirectory(locales: readonly string[]): string {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-pop-out-i18n-'));
+        temporaryDirectories.push(directory);
+        for (const locale of locales) {
+          fs.writeFileSync(path.join(directory, `${locale}.json`), JSON.stringify({ messages: {} }));
+        }
+        return directory;
+      }
+
+      afterEach(() => {
+        // Main's translator is module state: put English back for the rest of the file.
+        initMainI18n({ displayLanguage: 'en', catalogDirectory: catalogDirectory([]) });
+        for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+      });
+
+      it("passes the session's locale on the command line, where preload reads it back", () => {
+        initMainI18n({
+          displayLanguage: 'zh-CN',
+          shippedLocales: ['en', 'zh-CN'],
+          catalogDirectory: catalogDirectory(['en', 'zh-CN']),
+        });
+        const args = additionalArgumentsOf(manager.open('changes-file', makeChangesFileParams({ filePath: 'src/locale.tsx' })));
+
+        expect(args).toContain('--kangentic-locale=zh-CN');
+        expect(readLocaleArgument(args)).toBe('zh-CN');
+        // The locale must not displace the descriptor the pop-out renderer reads its kind and params from.
+        expect(args.some((arg) => arg.startsWith(POPOUT_ARG_PREFIX))).toBe(true);
+      });
     });
   });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { i18n } from '@lingui/core';
 import {
   __setLocaleForTests,
   formatDateTime,
@@ -341,6 +342,50 @@ describe('formatRelativeTime - sub-minute range', () => {
     // Intl.RelativeTimeFormat with numeric:'auto' renders format(0, 'second') as "now" in en-US
     const almostNow = new Date(Date.now() + 400);
     expect(formatRelativeTime(almostNow)).toBe('now');
+  });
+});
+
+describe('the display language is the default locale', () => {
+  // Every case above forces a locale through the test hook, so none of them reaches the
+  // fallback to the session's language (`i18n.locale`) that production runs on. These clear
+  // the hook, switch the global i18n the way the renderer does at boot, and assert German
+  // output a machine in any locale cannot produce by default: "Okt" and "vor 2 Stunden".
+  const moment = new Date(2026, 9, 12, 23, 4);
+  const sameYear = new Date(2026, 9, 13, 12, 0);
+  const at = Date.parse('2026-04-14T12:00:00Z');
+  const twoHoursLater = at + 2 * 60 * 60_000;
+
+  afterEach(() => {
+    // The setup file activates English for every test; put it back for the ones after.
+    i18n.activate('en');
+  });
+
+  it('formats dates and relative times in the active language when no test locale is forced', () => {
+    __setLocaleForTests(undefined);
+    i18n.loadAndActivate({ locale: 'de', messages: {} });
+
+    expect(formatMonthDay(moment, sameYear)).toMatch(/Okt/);
+    expect(formatTimeAgo(at, twoHoursLater)).toMatch(/vor 2 Stunden/);
+  });
+
+  it('follows the active language as it changes, rather than a formatter cached for the previous one', () => {
+    __setLocaleForTests(undefined);
+    const english = formatMonthDay(moment, sameYear);
+    expect(english).toBe('Oct 12');
+
+    i18n.loadAndActivate({ locale: 'de', messages: {} });
+    expect(formatMonthDay(moment, sameYear)).toMatch(/Okt/);
+
+    i18n.activate('en');
+    expect(formatMonthDay(moment, sameYear)).toBe(english);
+  });
+
+  it('lets a forced test locale win over the active language', () => {
+    i18n.loadAndActivate({ locale: 'de', messages: {} });
+    __setLocaleForTests('en-US');
+
+    expect(formatMonthDay(moment, sameYear)).toBe('Oct 12');
+    expect(formatTimeAgo(at, twoHoursLater)).toBe('2 hours ago');
   });
 });
 
