@@ -10,7 +10,7 @@ import { useModelAliases, useModelContextWindows, useModelDisplayNames } from '.
 import { ModelCombobox } from '../../dialogs/ModelCombobox';
 import { Combobox } from '../../dialogs/Combobox';
 import { Tooltip } from '../../Tooltip';
-import { INPUT_CLASS, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, ReportedError, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useSettingsProject } from '../use-settings-project';
@@ -261,8 +261,8 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 </button>
               </Tooltip>
             </div>
-            {/* A failure shows the error the probe hit, word for word and selectable,
-                so it can be pasted into a search: no diagnosis and no advice. */}
+            {/* A failure shows the error the probe hit, in its own words: no
+                diagnosis and no advice. */}
             {agent.unsupportedTarget ? (
               wslCapableAgentNames.length > 0 && (
                 <p className="mt-1 text-xs text-attention" data-testid={`agent-cli-detail-${agent.name}`}>
@@ -270,9 +270,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 </p>
               )
             ) : !agent.found && agent.detectionError ? (
-              <p className="mt-1 break-all font-mono text-xs text-red-400/80 select-text" data-testid={`agent-cli-detail-${agent.name}`}>
-                {agent.detectionError}
-              </p>
+              <ReportedError error={agent.detectionError} testId={`agent-cli-detail-${agent.name}`} />
             ) : null}
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">

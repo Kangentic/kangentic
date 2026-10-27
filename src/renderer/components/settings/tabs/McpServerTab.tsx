@@ -7,7 +7,7 @@ import {
   mcpToolDocsUrl,
   type McpToolCategoryId,
 } from '../../../../shared/mcp-tool-manifest';
-import { useScopedUpdate } from '../shared';
+import { ReportedError, useScopedUpdate } from '../shared';
 import { SettingsCard, CardTile, CardGroupTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useSettingVisible } from '../settings-search';
@@ -89,9 +89,7 @@ function McpConnectionRow() {
           </button>
         </div>
       </div>
-      {result && !result.connected ? (
-        <p className="select-text break-words font-mono text-xs text-attention" data-testid="mcp-connection-error">{result.error}</p>
-      ) : null}
+      {result && !result.connected ? <ReportedError error={result.error} testId="mcp-connection-error" /> : null}
     </CardTile>
   );
 }
