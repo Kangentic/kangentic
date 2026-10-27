@@ -45,6 +45,22 @@ describe('writeScopedMcpConfig', () => {
     });
   });
 
+  it('gives a Claude in a WSL distro on NAT networking the stdio bridge, with the token in its env', () => {
+    // The distro's 127.0.0.1 is its own, so the URL would leave the answer
+    // without its search tool. The run starts the relay the bridge publishes to.
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-'));
+    const file = writeScopedMcpConfig({ url: 'http://127.0.0.1:4321/mcp/project-1', token: 'secret' }, directory, {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' },
+    });
+    written.push(file);
+    const server = JSON.parse(fs.readFileSync(file, 'utf-8')).mcpServers.kangentic;
+    expect(server).toMatchObject({ type: 'stdio', command: 'sh', env: { KANGENTIC_MCP_TOKEN: 'secret' } });
+    expect(server.args.slice(1)).toEqual(['mcp', 'http://127.0.0.1:4321/mcp/project-1']);
+    expect(server.args.join(' ')).not.toContain('secret');
+  });
+
   it('lives under the OS temp dir, in a directory of its own per call', () => {
     // Two answers in flight must not share a file: each carries its own token,
     // and the caller deletes its own file when its call ends.
@@ -64,7 +80,8 @@ describe('ClaudeAdapter.openAnswerSession', () => {
   it('keeps the one-shot run\'s read-only flags and reads turns as stream-json', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-test-'));
     try {
-      sessionSpy.mockReturnValue({});
+      // `exited` is part of every session: the adapter ends the run's MCP relay on it.
+      sessionSpy.mockReturnValue({ exited: Promise.resolve() });
       new ClaudeAdapter().openAnswerSession({
         cliPath: '/bin/claude',
         cwd: '/answer-home',

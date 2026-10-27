@@ -20,14 +20,19 @@ import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared
 import { encodeHookSpec, quoteBridgePath } from '../../shared/hook-utils';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import {
-  WSL_MCP_TOKEN_ENV,
   prepareWslHookTransport,
   wslHookEventCommand,
   wslHookReplyCommand,
-  wslMcpServerLaunch,
-  wslReachesLoopback,
   wslStatusLineCommand,
 } from '../../shared/wsl-hook-transport';
+import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+
+/** Kangentic's MCP server as an entry of Claude's `mcp.json`: HTTP with its token header, or the stdio bridge with the token in its `env`. */
+export function claudeMcpServerEntry(server: KangenticMcpServer): Record<string, unknown> {
+  return server.kind === 'http'
+    ? { type: 'http', url: server.url, headers: { 'X-Kangentic-Token': server.token } }
+    : { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } };
+}
 import type { CommandOptions } from '../../agent-adapter';
 
 /**
@@ -579,18 +584,8 @@ export class CommandBuilder {
       // A Claude in a WSL distro on the default NAT network cannot reach this
       // machine's loopback, so it runs the transport's stdio bridge, which
       // hands each message to Kangentic with the token from its environment.
-      const kangenticServer = wslHooks && place && !wslReachesLoopback(place)
-        ? {
-          type: 'stdio' as const,
-          ...wslMcpServerLaunch(wslHooks, place, options.mcpServerUrl),
-          env: { [WSL_MCP_TOKEN_ENV]: options.mcpServerToken },
-        }
-        : {
-          type: 'http' as const,
-          url: options.mcpServerUrl,
-          headers: { 'X-Kangentic-Token': options.mcpServerToken },
-        };
-      const mcpConfig = { mcpServers: { kangentic: kangenticServer } };
+      const kangenticServer = kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: sessionDir });
+      const mcpConfig = { mcpServers: { kangentic: claudeMcpServerEntry(kangenticServer) } };
       const mcpConfigPath = path.join(sessionDir, 'mcp.json');
       // sync-write-ok: this must throw, not degrade - a swallowed failure here
       // would spawn Claude with no MCP config, silently missing every

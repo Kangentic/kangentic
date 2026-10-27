@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ClaudeDetector } from './detector';
-import { CommandBuilder } from './command-builder';
+import { CommandBuilder, claudeMcpServerEntry } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
+import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import {
   locateClaudeTranscriptFile,
   parseClaudeTranscript,
@@ -23,7 +24,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
-import { cliPathForTarget, hostPathForTarget, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, hostPathForTarget, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -93,26 +94,29 @@ const ANSWER_RETRIEVAL_TOOL = 'mcp__kangentic__kangentic_search';
  * Under the OS temp dir with a unique name, never in the project: this file
  * carries a live token, the answer call runs from a neutral cwd on purpose, and
  * two answers in flight must not share a file. Deleted by the caller when the
- * call ends.
+ * call ends. A Claude in a WSL distro on NAT networking gets the stdio bridge
+ * instead of the URL (`kangenticMcpServer`), whose relay the run starts.
  */
 export function writeScopedMcpConfig(
   retrieval: { url: string; token: string },
   directory: string = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-answer-')),
+  place: CliPlace | null = null,
 ): string {
+  return writeScopedMcpServer(retrieval, directory, place).configPath;
+}
+
+function writeScopedMcpServer(
+  retrieval: { url: string; token: string },
+  directory: string,
+  place: CliPlace | null,
+): { configPath: string; server: KangenticMcpServer } {
   const configPath = path.join(directory, 'mcp.json');
+  const server = kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place, directory });
   // sync-write-ok: the answer call names this file in --mcp-config and cannot
   // run without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER handler's catch,
   // which turns it into the reason the rail shows.
-  fs.writeFileSync(configPath, JSON.stringify({
-    mcpServers: {
-      kangentic: {
-        type: 'http',
-        url: retrieval.url,
-        headers: { 'X-Kangentic-Token': retrieval.token },
-      },
-    },
-  }, null, 2));
-  return configPath;
+  fs.writeFileSync(configPath, JSON.stringify({ mcpServers: { kangentic: claudeMcpServerEntry(server) } }, null, 2));
+  return { configPath, server };
 }
 
 /**
@@ -188,12 +192,12 @@ function answerArgs(input: {
   effort: string | null;
   /** A Claude installed in a WSL distro, which reads its config files by the path the distro sees. */
   place?: CliPlace | null;
-}): string[] {
+}): { args: string[]; mcpServer: KangenticMcpServer | null } {
   const cliFile = (windowsPath: string): string => (input.place ? cliPathForTarget(windowsPath, input.place) : windowsPath);
   const settingsPath = cliFile(writeAnswerSettings(input.directory));
-  const writtenMcpConfig = input.retrieval ? writeScopedMcpConfig(input.retrieval, input.directory) : null;
-  const mcpConfigPath = writtenMcpConfig ? cliFile(writtenMcpConfig) : null;
-  return [
+  const written = input.retrieval ? writeScopedMcpServer(input.retrieval, input.directory, input.place ?? null) : null;
+  const mcpConfigPath = written ? cliFile(written.configPath) : null;
+  const args = [
     '--print',
     // An answer is not a conversation to resume. Without this every run saved
     // its transcript, whole prompt included, as a new project under
@@ -223,6 +227,7 @@ function answerArgs(input: {
     ...(input.model ? ['--model', input.model] : []),
     ...(input.effort ? ['--effort', input.effort] : []),
   ];
+  return { args, mcpServer: written?.server ?? null };
 }
 
 /** Low, or no level at all, answers without extended thinking; see
@@ -722,7 +727,7 @@ export class ClaudeAdapter implements AgentAdapter {
     const cliTarget = await resolveCliTarget(cliPath, true);
     return withConfigDirectory(options?.runDirectory, (directory) => runCliPrintSummarize({
       cliPath,
-      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort, place: cliTarget }),
+      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort, place: cliTarget }).args,
       prompt: buildSummarizePrompt(prompt),
       cwd,
       extractRaw: createJsonResultExtractor(options?.onUsage),
@@ -789,15 +794,39 @@ export class ClaudeAdapter implements AgentAdapter {
     const retrieval = options?.retrieval;
     const streaming = options?.onEvent !== undefined;
     const effort = options?.effort ?? null;
-    const onUsage = options?.onUsage;
     // A Claude installed in a WSL distro runs there.
     const cliTarget = await resolveCliTarget(cliPath, true);
 
-    return withConfigDirectory(options?.runDirectory, (configDirectory) => runCliPrintAnswer({
+    return withConfigDirectory(options?.runDirectory, async (configDirectory) => {
+      const { args, mcpServer } = answerArgs({ directory: configDirectory, retrieval, streaming, model, effort, place: cliTarget });
+      // A distro on NAT networking reaches the search tool through the bridge,
+      // whose relay lives as long as this one call.
+      const stopRelay = startRunMcpRelay(configDirectory, mcpServer);
+      try {
+        return await this.runAnswer({ cliPath, cliTarget, args, prompt, cwd, effort, onEvent: options?.onEvent, onUsage: options?.onUsage });
+      } finally {
+        stopRelay();
+      }
+    });
+  }
+
+  /** One print-mode answer run: the flags are the caller's, the stream handling is here. */
+  private runAnswer(input: {
+    cliPath: string;
+    cliTarget: CliTarget | null;
+    args: string[];
+    prompt: string;
+    cwd: string;
+    effort: string | null;
+    onEvent: AnswerFromContextOptions['onEvent'];
+    onUsage: AnswerFromContextOptions['onUsage'];
+  }): Promise<string> {
+    const { cliPath, cliTarget, args, prompt, cwd, effort, onEvent, onUsage } = input;
+    return runCliPrintAnswer({
       cliPath,
       cliTarget,
-      args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort, place: cliTarget }),
-      ...(streaming
+      args,
+      ...(onEvent
         ? {
           // In stream mode stdout is a transcript of JSON lines, not the
           // answer. The final answer is the last assistant turn's text; the
@@ -809,7 +838,7 @@ export class ClaudeAdapter implements AgentAdapter {
           outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
           // Forward each line's events as they land. A chunk can end
           // mid-line, so lines are reassembled across chunks before parsing.
-          onChunk: makeStreamForwarder(options.onEvent!),
+          onChunk: makeStreamForwarder(onEvent),
         }
         : {
           // One JSON object: the answer inside an envelope of usage.
@@ -833,7 +862,7 @@ export class ClaudeAdapter implements AgentAdapter {
       ...answerEnv(effort),
       prompt,
       cwd,
-    }));
+    });
   }
 
   /**
@@ -848,13 +877,14 @@ export class ClaudeAdapter implements AgentAdapter {
     // A Claude installed in a WSL distro runs there. Opened synchronously, so
     // from the distro facts its detection already read.
     const cliTarget = peekCliTarget(input.cliPath, true);
-    return openStdinJsonSession({
+    const { args, mcpServer } = answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort, place: cliTarget });
+    // The bridge's relay, on a distro on NAT networking, lives as long as the
+    // session's process.
+    const stopRelay = startRunMcpRelay(input.runDirectory, mcpServer);
+    const session = openStdinJsonSession({
       cliPath: input.cliPath,
       cliTarget,
-      args: [
-        ...answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort, place: cliTarget }),
-        '--input-format', 'stream-json',
-      ],
+      args: [...args, '--input-format', 'stream-json'],
       cwd: input.cwd,
       ...answerEnv(effort),
       formatTurn: (prompt) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } }),
@@ -862,6 +892,8 @@ export class ClaudeAdapter implements AgentAdapter {
       isTurnEnd: isResultLine,
       extractAnswer: extractStreamedAnswer,
     });
+    void session.exited.then(stopRelay, stopRelay);
+    return session;
   }
 
   /**
