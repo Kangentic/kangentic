@@ -6,6 +6,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
+import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, ConversationExpiredNotice, SessionRecord, Task } from '../../../shared/types';
 import { createExpiredRecapSources } from '../expired-recap-sources';
@@ -581,6 +582,8 @@ export async function resumeSuspendedSessions(
           resuming: !input.prompt,
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
           ...(restoredGrid ? { restoredGrid } : {}),
+          shell: input.shell,
+          cliTarget: input.cliTarget,
         });
 
         retireRecord(sessionRepo, input.record.id);
@@ -601,6 +604,7 @@ export async function resumeSuspendedSessions(
           suspended_at: null,
           exited_at: null,
           suspended_by: null,
+          cli_target: serializeCliTarget(input.cliTarget),
         });
         // Record what this resume applied (the `--model` / `--effort` flags land
         // on every resume) so a later column move diffs against the true value.

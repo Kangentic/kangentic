@@ -8,6 +8,7 @@ import type {
   SessionAttachment,
   SessionRecord,
   SessionStatus,
+  StoredCliTarget,
   StreamOutputParser,
 } from '../../shared/types';
 import { isLiveSessionStatus } from '../../shared/session-liveness';
@@ -137,6 +138,10 @@ export interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
+  /** Where the agent's CLI runs when it is not this machine (a WSL distro),
+   *  from `SpawnSessionInput.cliTarget`. Main-side only: its readers and its
+   *  reap look here, and the renderer reads the shell. */
+  cliTarget?: StoredCliTarget | null;
   /** The resolved permission mode the session spawned under (see
    *  `SpawnSessionInput.permissionMode`). Null for a Command Terminal and any
    *  spawn that does not pass one. */

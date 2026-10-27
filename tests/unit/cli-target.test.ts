@@ -16,6 +16,7 @@ import {
   parseWslCliPath,
   resolveCliTarget,
   resolveStoredCliPlace,
+  serializeCliTarget,
   shellForTarget,
   toStoredCliTarget,
   type CliTarget,
@@ -75,6 +76,12 @@ describe('the stored form', () => {
     expect(toStoredCliTarget(TARGET)).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
     expect(toStoredCliTarget(null)).toBeNull();
     expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: 'Ubuntu' }))).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
+  });
+
+  it('serializes for the session row with the kind and distro only, never the facts', () => {
+    expect(serializeCliTarget(TARGET)).toBe('{"kind":"wsl","distro":"Ubuntu"}');
+    expect(serializeCliTarget(null)).toBeNull();
+    expect(parseStoredCliTarget(serializeCliTarget(TARGET))).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
   });
 
   it('reads anything else as this machine', () => {

@@ -181,6 +181,9 @@ const mockAdapter = {
   // sets this per-test and restores it to undefined afterward so later
   // describe blocks in this file are unaffected.
   launchOptions: undefined as readonly AgentLaunchOptionInfo[] | undefined,
+  // Undefined by default, as on an adapter whose CLI does not run from WSL; the
+  // WSL describe at the end of the file sets it and resets it.
+  supportsWslCli: undefined as boolean | undefined,
   detect: vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' })),
   ensureTrust: vi.fn(async () => {}),
   buildCommand: vi.fn((options: { prompt?: string }) => {
@@ -231,6 +234,29 @@ const resolveShimLaunchMock = vi.hoisted(() =>
 vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: resolveShimLaunchMock,
 }));
+
+// The real target resolution, run as on Windows with a distro's facts already
+// read, so the WSL describe at the end of the file runs on any OS without
+// calling wsl.exe. The stub adapter declares no WSL support, so every other
+// describe resolves no target, as before.
+const WSL_DISTRO_FACTS = vi.hoisted(() => ({
+  distro: 'Ubuntu',
+  homeLinux: '/home/dev',
+  homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+  uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  interactivePath: '/home/dev/.local/bin:/usr/bin',
+  env: {},
+  networkingMode: 'nat' as const,
+}));
+
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    resolveCliTarget: (cliPath: string | null | undefined, adapterSupportsWsl: boolean) =>
+      original.resolveCliTarget(cliPath, adapterSupportsWsl, { platform: 'win32', resolveFacts: async () => WSL_DISTRO_FACTS }),
+  };
+});
 
 vi.mock('node:fs', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs')>();
@@ -1742,5 +1768,57 @@ describe('TransitionEngine - Windows .cmd shim launch resolution wiring (execute
     expect(command).not.toContain('codex.CMD');
     // The multi-line prompt still rides the PowerShell backtick-n contract.
     expect(command).toContain('`n');
+  });
+});
+
+describe('TransitionEngine - a CLI installed in a WSL distro', () => {
+  // A CLI configured by its \\wsl.localhost path is resolved to a target once
+  // per spawn. The command is built for, and the PTY runs in, that distro's
+  // shell, and the row records the distro for the readers and the reap.
+  //
+  // Red-green: building with `getShell()` alone fails the first case's shell
+  // assertions; dropping `cliTarget` from the command options, the spawn input
+  // or the row fails the matching assertion; resolving a target for an adapter
+  // that does not declare WSL support fails the second case.
+  const WSL_CLI_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.detect.mockResolvedValue({ found: true, path: WSL_CLI_PATH, version: '2.1.311' });
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+  });
+
+  afterEach(() => {
+    mockAdapter.supportsWslCli = undefined;
+    mockAdapter.detect.mockResolvedValue({ found: true, path: '/usr/bin/claude', version: '1.0.0' });
+  });
+
+  it('builds and spawns in the distro shell, hands the builder the target, and records the distro', async () => {
+    mockAdapter.supportsWslCli = true;
+    const { runSpawn, sessionManager, sessionRepo } = makeEngine({});
+
+    await runSpawn(makeTask());
+
+    expect(sessionManager.getShell).not.toHaveBeenCalled();
+    expect(resolveShimLaunchMock).toHaveBeenCalledWith(expect.objectContaining({ shell: 'wsl -d Ubuntu' }));
+    expect(mockAdapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({
+      shell: 'wsl -d Ubuntu',
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/claude', facts: WSL_DISTRO_FACTS },
+    }));
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      shell: 'wsl -d Ubuntu',
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+    }));
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ cli_target: '{"kind":"wsl","distro":"Ubuntu"}' }));
+  });
+
+  it('keeps the configured shell and no target for an adapter that does not run from WSL', async () => {
+    const { runSpawn, sessionManager, sessionRepo } = makeEngine({});
+
+    await runSpawn(makeTask());
+
+    expect(mockAdapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ shell: 'bash', cliTarget: null }));
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ shell: 'bash', cliTarget: null }));
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ cli_target: null }));
   });
 });

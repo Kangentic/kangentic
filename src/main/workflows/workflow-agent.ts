@@ -19,6 +19,7 @@ import { canBeWorkflowAgent } from '../agent/shared/workflow-agent-capability';
 import { retrievalClient } from '../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../retrieval/remote-targets';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
+import { resolveCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
@@ -581,6 +582,15 @@ async function startWorkflowAgent(
   }
   const detection = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
   if (!detection.found || !detection.path) return unavailable(`Kangentic cannot find ${adapter.displayName} on this machine.`);
+  // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved once
+  // for this start, as the task spawns do. A distro that cannot be read says so
+  // in the pane, in the distro's own words.
+  let cliTarget: CliTarget | null;
+  try {
+    cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+  } catch (error) {
+    return unavailable(error instanceof Error ? error.message : String(error));
+  }
   // An agent whose CLI would start here without Kangentic's tools could not save
   // a plan; it says why, and the user's fix is retried on the next Settings close.
   const mcpBlocked = adapter.kangenticMcpBlockedReason?.(projectRoot) ?? null;
@@ -619,7 +629,7 @@ async function startWorkflowAgent(
   // its reads gets none, and its own project only.
   const readable = adapter.supportsReadableDirectories ? readableProjectsOf(context, homeProjectId, workflow) : [];
 
-  const shell = await context.sessionManager.getShell();
+  const shell = shellForTarget(cliTarget) ?? await context.sessionManager.getShell();
   const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', workflow.id);
   // sync-write-ok: the agent's status and events bridges write into this
   // folder from the moment it starts; a failure throws to the IPC handler,
@@ -664,6 +674,7 @@ async function startWorkflowAgent(
     // The session's own id, minted here so the spawn below uses it too: a
     // folder-shared adapter file is held under it until the session ends.
     ptySessionId: sessionId,
+    cliTarget,
   };
   const command = adapter.buildCommand(commandOptions);
   // From here until spawn() takes the command, a return or a throw releases
@@ -717,6 +728,9 @@ async function startWorkflowAgent(
     exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
     cols: grid.cols,
     rows: grid.rows,
+    // The shell the command was built for, and where its CLI runs.
+    shell,
+    cliTarget: toStoredCliTarget(cliTarget),
   });
   // What the spawned agent reads, recorded before anything below can throw:
   // it has these checkouts from here on, and a later grant compares against them.

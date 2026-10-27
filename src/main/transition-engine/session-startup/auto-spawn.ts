@@ -5,6 +5,7 @@ import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
+import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { ConfigManager } from '../../config/config-manager';
 import type { BoardProfile, Swimlane, Task } from '../../../shared/types';
 import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
@@ -286,6 +287,8 @@ export async function autoSpawnTasks(
           isolatedSwimlaneId: input.isolatedSwimlaneId,
           permissionMode: input.permissionMode,
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+          shell: input.shell,
+          cliTarget: input.cliTarget,
         });
 
         taskRepo.update({
@@ -310,6 +313,7 @@ export async function autoSpawnTasks(
           suspended_at: null,
           exited_at: null,
           suspended_by: null,
+          cli_target: serializeCliTarget(input.cliTarget),
         });
         // Record what this fresh spawn applied so a later column move diffs
         // against the session's true value, not the leaving column's config.
