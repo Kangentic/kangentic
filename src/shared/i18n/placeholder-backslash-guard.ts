@@ -16,6 +16,10 @@ import type { I18n, MessageDescriptor } from '@lingui/core';
  * on every I18n instance at creation: the session's, the English one, and each
  * extra locale instance. `t` is rebound too, because `useLingui()` binds
  * `i18n.t`, which Lingui bound to the original `_` when it built the instance.
+ *
+ * Only top-level string values are shielded. A value Lingui stringifies itself
+ * (a number, an Error, an object with a `toString`) still gets the decoding, so
+ * a call site places a path or a reason as a string.
  */
 
 const BACKSLASH = '\\';

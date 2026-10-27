@@ -136,6 +136,49 @@ describe('PanelErrorBoundary', () => {
     expect(collectText(boundary)).toContain('Failed to load the panel');
   });
 
+  it('shows the caller-translated message, not the label sentence, when panel and message are given', () => {
+    const children = React.createElement('span', null, 'child content');
+    const instance = withWorkingSetState(
+      new PanelErrorBoundary({
+        children,
+        panel: 'agent monitor',
+        message: 'Failed to load the agent monitor',
+      }),
+    );
+
+    instance.state = {
+      ...instance.state,
+      ...PanelErrorBoundary.getDerivedStateFromError(new Error('boom')),
+    };
+
+    const text = collectText(findByTestId(instance.render(), 'panel-error-boundary'));
+    expect(text).toContain('Failed to load the agent monitor');
+    // `panel` is the analytics key, never shown, and no label means no spliced
+    // noun: ignoring `message` would fall through to the bare "panel" sentence.
+    expect(text).not.toContain('Failed to load the panel');
+  });
+
+  it('prefers message over the label sentence when both are given', () => {
+    const children = React.createElement('span', null, 'child content');
+    const instance = withWorkingSetState(
+      new PanelErrorBoundary({
+        children,
+        label: 'Changes panel',
+        message: 'Der Agent-Monitor konnte nicht geladen werden',
+      }),
+    );
+
+    instance.state = {
+      ...instance.state,
+      ...PanelErrorBoundary.getDerivedStateFromError(new Error('boom')),
+    };
+
+    const text = collectText(findByTestId(instance.render(), 'panel-error-boundary'));
+    expect(text).toContain('Der Agent-Monitor konnte nicht geladen werden');
+    expect(text).not.toContain('Changes panel');
+    expect(text).not.toContain('Failed to load the');
+  });
+
   it('handleRetry resets error state so render() passes through children again (recovery)', () => {
     const children = React.createElement('span', null, 'recovered content');
     const instance = withWorkingSetState(new PanelErrorBoundary({ children }));
@@ -237,6 +280,68 @@ describe('componentDidCatch analytics wiring', () => {
     expect(trackRendererError).toHaveBeenCalledWith('boom', {
       boundary: 'panel',
       panel: undefined,
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('PanelErrorBoundary forwards the English panel key, not the translated message', () => {
+    const trackRendererError = stubTrackRendererError();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new PanelErrorBoundary({
+      children,
+      panel: 'agent monitor',
+      // Translated by the caller for display only; analytics must stay English.
+      message: 'Der Agent-Monitor konnte nicht geladen werden',
+    });
+
+    instance.componentDidCatch(new Error('boom'), { componentStack: '\n    at Foo (x)' });
+
+    expect(trackRendererError).toHaveBeenCalledTimes(1);
+    expect(trackRendererError).toHaveBeenCalledWith('boom', {
+      boundary: 'panel',
+      panel: 'agent monitor',
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('PanelErrorBoundary sends panel over the older label when both are given', () => {
+    const trackRendererError = stubTrackRendererError();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new PanelErrorBoundary({ children, panel: 'agent monitor', label: 'Changes panel' });
+
+    instance.componentDidCatch(new Error('boom'), { componentStack: '\n    at Foo (x)' });
+
+    expect(trackRendererError).toHaveBeenCalledWith('boom', {
+      boundary: 'panel',
+      panel: 'agent monitor',
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('PanelErrorBoundary falls back to label for analytics when a message is given without a panel', () => {
+    const trackRendererError = stubTrackRendererError();
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const children = React.createElement('span', null, 'child content');
+    const instance = new PanelErrorBoundary({
+      children,
+      label: 'Changes panel',
+      message: 'Der Agent-Monitor konnte nicht geladen werden',
+    });
+
+    instance.componentDidCatch(new Error('boom'), { componentStack: '\n    at Foo (x)' });
+
+    // `panel ?? label`: the message is display text and never reaches analytics.
+    expect(trackRendererError).toHaveBeenCalledWith('boom', {
+      boundary: 'panel',
+      panel: 'Changes panel',
     });
 
     consoleErrorSpy.mockRestore();

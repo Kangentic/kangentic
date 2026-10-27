@@ -56,13 +56,11 @@ const DELTA_BASELINE_LABELS: Record<UsageTimePeriod, LocalizedText> = {
  *  delta render as two muted pills, so the tile stays three layers - label,
  *  big value, context - and the separation is structural (containers), not
  *  punctuation. Spend/usage going UP reads warm, going DOWN calm-green. */
-/** "Claude", "Claude and Codex", "Claude, Codex and Gemini". A plain `join(' and ')`
- *  reads as "A and B and C" once a third agent ships. */
+/** "Claude", "Claude and Codex", "Claude, Codex, and Gemini" in English. The
+ *  session's own list pattern, so each language places its separators and its
+ *  "and" where it does; a translated "and" beside a hardcoded comma could not. */
 function joinAgentNames(names: string[]): string {
-  if (names.length <= 1) return names[0] ?? '';
-  const leadingNames = names.slice(0, -1).join(', ');
-  const lastName = names[names.length - 1];
-  return i18n._(msg`${leadingNames} and ${lastName}`);
+  return new Intl.ListFormat(i18n.locale || undefined, { style: 'long', type: 'conjunction' }).format(names);
 }
 
 function HeroContextLine({ sub, delta, baseline }: { sub?: string; delta: number | null; baseline: string }) {

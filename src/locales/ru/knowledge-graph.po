@@ -7,31 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ru\n"
 
-#. placeholder {0}: hits.length
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "{0, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr ""
-
-#. placeholder {0}: selectedIds.length
-#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-msgid "{0, plural, one {# project} other {# projects}}"
-msgstr ""
-
-#. placeholder {0}: scopeProjectIds.length
-#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-msgid "{0, plural, one {Ask across # project} other {Ask across # projects}}"
-msgstr ""
-
-#. placeholder {0}: turn.handedCount
-#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "{0, plural, one {Read # related task} other {Read # related tasks}}"
-msgstr ""
-
-#. placeholder {0}: turn.handedCount
-#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "{0, plural, one {Reading # related task} other {Reading # related tasks}}"
-msgstr ""
-
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
 msgid "{agentName} didn't answer. {reason}"
 msgstr ""
@@ -68,6 +43,18 @@ msgstr ""
 msgid "{earliestDate} to {latestDate}"
 msgstr ""
 
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
+msgstr ""
+
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{hours}h"
 msgstr ""
@@ -78,6 +65,14 @@ msgstr ""
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{minutes}m"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{selectedCount, plural, one {# project} other {# projects}}"
 msgstr ""
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
@@ -689,7 +684,7 @@ msgid "Tasks embedded"
 msgstr ""
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "the agent didn't answer. {reason}"
+msgid "The agent didn't answer. {reason}"
 msgstr ""
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts

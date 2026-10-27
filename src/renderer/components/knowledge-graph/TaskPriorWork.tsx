@@ -57,6 +57,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
   }, [taskId, projectId, requestKey]);
 
   if (hits.length === 0) return null;
+  const hitCount = hits.length;
 
   return (
     <div className="rounded-md border border-edge bg-surface-raised" data-testid="task-prior-work">
@@ -70,7 +71,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         {expanded ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
         <History size={13} aria-hidden />
         <span className="font-medium">
-          <Plural value={hits.length} one="# earlier conversation about this" other="# earlier conversations about this" />
+          <Plural value={hitCount} one="# earlier conversation about this" other="# earlier conversations about this" />
         </span>
       </button>
 

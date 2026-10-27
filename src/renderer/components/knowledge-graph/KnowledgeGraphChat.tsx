@@ -97,7 +97,7 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
           <div className="text-[13px] leading-[1.6] text-danger">
             {agentName
               ? <Trans>{agentName} didn&apos;t answer. {reason}</Trans>
-              : <Trans>the agent didn&apos;t answer. {reason}</Trans>}
+              : <Trans>The agent didn&apos;t answer. {reason}</Trans>}
           </div>
           {isLatest ? (
             <button
@@ -116,6 +116,7 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
 
   const inFlight = turn.status === 'finding' || turn.status === 'answering';
   const searching = inFlight && !prose && turn.searches.length > 0;
+  const handedCount = turn.handedCount;
   return (
     <div className="flex items-start gap-2.5" data-testid="knowledge-graph-chat-turn">
       <Avatar />
@@ -126,7 +127,7 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
               <div className="text-xs text-fg-muted"><Trans>Finding related work</Trans></div>
             ) : searching ? (
               <>
-                <Step done><Plural value={turn.handedCount} one="Read # related task" other="Read # related tasks" /></Step>
+                <Step done><Plural value={handedCount} one="Read # related task" other="Read # related tasks" /></Step>
                 {turn.searches.map((search, index) => {
                   const query = search.query;
                   return (
@@ -138,7 +139,7 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
               </>
             ) : (
               <div className="text-xs text-fg-muted" data-testid="knowledge-graph-chat-reading">
-                <Plural value={turn.handedCount} one="Reading # related task" other="Reading # related tasks" />
+                <Plural value={handedCount} one="Reading # related task" other="Reading # related tasks" />
               </div>
             )}
             <Shimmer width="92%" />

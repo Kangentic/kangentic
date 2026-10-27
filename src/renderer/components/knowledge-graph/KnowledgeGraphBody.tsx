@@ -683,8 +683,9 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
 
   // The box says when a question will be asked across several projects, since
   // the answer then names each task's project.
-  const askPlaceholder = scopeProjectIds && scopeProjectIds.length > 1
-    ? plural(scopeProjectIds.length, { one: 'Ask across # project', other: 'Ask across # projects' })
+  const scopedProjectCount = scopeProjectIds?.length ?? 0;
+  const askPlaceholder = scopedProjectCount > 1
+    ? plural(scopedProjectCount, { one: 'Ask across # project', other: 'Ask across # projects' })
     : codeIndexed
       ? t`Ask about your tasks, conversations and code`
       : t`Ask about your tasks and conversations`;

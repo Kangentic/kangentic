@@ -87,18 +87,16 @@ msgstr ""
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file} other {{fileCountText} uncommitted files}}"
 msgstr ""
 
-#. placeholder {0}: <>{commitCountText} commit exists only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>
-#. placeholder {1}: <>{commitCountText} commits exist only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>
-#: src/renderer/components/board/BoardDialogs.tsx
-msgid "{unpushedCommitCount, plural, one {{0}} other {{1}}}"
-msgstr ""
-
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "{unpushedCommitCount, plural, one {{commitCountText} commit exists only on the local branch and will be lost when the branch is deleted} other {{commitCountText} commits exist only on the local branch and will be lost when the branch is deleted}}"
 msgstr ""
 
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "{unpushedCommitCount, plural, one {{commitCountText} unpushed commit} other {{commitCountText} unpushed commits}}"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{unpushedCommitCount, plural, one {<0>{commitCountText} commit exists only on branch <1>{displayBranch}</1> and will be lost when the branch is deleted</0>} other {<2>{commitCountText} commits exist only on branch <3>{displayBranch}</3> and will be lost when the branch is deleted</2>}}"
 msgstr ""
 
 #: src/renderer/components/board/ViewToggle.tsx

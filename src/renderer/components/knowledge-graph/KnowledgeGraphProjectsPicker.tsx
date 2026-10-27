@@ -56,7 +56,8 @@ export function scopeLabel(
 ): string {
   if (selectedIds.length === 1) return indexed.find((project) => project.id === selectedIds[0])?.name ?? i18n._(msg`1 project`);
   if (indexed.length > 1 && indexed.every((project) => selectedIds.includes(project.id))) return i18n._(msg`All projects`);
-  return plural(selectedIds.length, { one: '# project', other: '# projects' });
+  const selectedCount = selectedIds.length;
+  return plural(selectedCount, { one: '# project', other: '# projects' });
 }
 
 export function KnowledgeGraphProjectsPicker({

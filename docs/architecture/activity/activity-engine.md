@@ -14,6 +14,7 @@ sources:
   - resource: src/main/agent/event-bridge.js
   - resource: src/shared/activity-state.ts
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx
+  - resource: src/renderer/components/board/activity-reason-text.ts
   - resource: src/shared/types.ts
     title: ActivityState, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode
 ---
@@ -157,8 +158,8 @@ read an `activity` emit as a real transition.
 needs-user state. It spans both `idle` and `permission` - a `permission <-> idle` crossing keeps
 the original park time rather than resetting it - and is cleared only on returning to `thinking`.
 The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
-(`formatActivityReasonText` and `activityReasonIcon` in
-`src/renderer/components/board/ActivityReasonTooltip.tsx`).
+(`formatActivityReasonText` in `src/renderer/components/board/activity-reason-text.ts`, and
+`activityReasonIcon` in `src/renderer/components/board/ActivityReasonTooltip.tsx`).
 
 The renderer uses `reason.kind` to pick an icon and inline label for the TaskCard hover tooltip. The
 two kinds that describe agent activity itself render the shared `@kangentic/branding` activity marks
