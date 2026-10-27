@@ -90,7 +90,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   reaped task's worktree. All four conditions, never fewer.
 - **The in-distro WSL reap applies the tag and the directory only.** A WSL task's processes run
   inside the distro, out of the host scan's sight, so `wsl-reap.ts` scans there itself and cannot
-  see the shared-subtree, connection, visible-app or tmux signals. It runs only while the distro is running,
+  see the shared-subtree, connection, visible-app or tmux signals. It runs in the configured
+  shell's distro and in each distro a task's CLI ran in (`wslDistros`, from `sessions.cli_target`,
+  or a Command Terminal's own shell), only while the distro is running,
   leaves out a task with a live or starting session (asked again just before the script runs),
   validates task ids before they enter the script text, and takes directories only as positional
   arguments. Do not interpolate a directory or any other caller value into the script. Its

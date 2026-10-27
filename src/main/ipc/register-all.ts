@@ -317,7 +317,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // terminal ends and any agent still exiting has finished.
   const commandTerminalLeftovers = new CommandTerminalLeftoverReaper({
     sessionManager,
-    reap: (projectPath, task) => reapTaskLeftovers(requireContext(), projectPath, [task]),
+    reap: (projectPath, task, wslDistros) => reapTaskLeftovers(requireContext(), projectPath, [task], { wslDistros }),
     isShuttingDown,
   });
   commandTerminalLeftovers.start();

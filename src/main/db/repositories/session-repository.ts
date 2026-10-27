@@ -151,6 +151,9 @@ function toSessionSummary(row: SummaryRow, toolBreakdown: PerToolStat[]): Sessio
   };
 }
 
+/** Task ids bound per `listCliTargetsOfTasks` query, well under SQLite's bound-parameter limit. */
+const CLI_TARGET_QUERY_CHUNK = 500;
+
 export class SessionRepository {
   constructor(private db: Database.Database) {}
 
@@ -377,6 +380,25 @@ export class SessionRepository {
               tool_call_count, compaction_count, tool_breakdown
        FROM sessions WHERE task_id = ? ORDER BY started_at DESC, id DESC`
     ).all(taskId) as TaskReportSessionRecord[];
+  }
+
+  /**
+   * Each distinct `cli_target` the given tasks' sessions ran under (stored JSON,
+   * null left out). The task reap runs its in-distro pass in every WSL distro a
+   * task's CLI ran in, which a session that ended before a restart still names.
+   * Queried in chunks: the startup sweep passes every archived task, past
+   * SQLite's limit on bound parameters.
+   */
+  listCliTargetsOfTasks(taskIds: readonly string[]): string[] {
+    const targets = new Set<string>();
+    for (let start = 0; start < taskIds.length; start += CLI_TARGET_QUERY_CHUNK) {
+      const chunk = taskIds.slice(start, start + CLI_TARGET_QUERY_CHUNK);
+      const rows = this.db.prepare(
+        `SELECT DISTINCT cli_target FROM sessions WHERE cli_target IS NOT NULL AND task_id IN (${chunk.map(() => '?').join(', ')})`
+      ).all(...chunk) as Array<{ cli_target: string }>;
+      for (const row of rows) targets.add(row.cli_target);
+    }
+    return [...targets];
   }
 
   /**

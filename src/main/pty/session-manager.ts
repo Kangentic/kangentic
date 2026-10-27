@@ -78,8 +78,8 @@ import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared
 import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
-import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
-import { reapTaggedProcessesInWsl } from './process-tag/wsl-reap';
+import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec, type WslShellSpec } from './process-tag/task-process-tag';
+import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
@@ -2632,8 +2632,9 @@ export class SessionManager extends EventEmitter {
    * `KANGENTIC_TASK_ID` tag and working inside that task's project or worktree
    * (see `process-tag/reap-plan.ts` for what is spared: shared processes,
    * visible apps, tmux servers). The pty host scans and kills, and protects
-   * this process's own tree and every PTY it still holds. When the configured
-   * shell is WSL, the same reap also runs inside the distro.
+   * this process's own tree and every PTY it still holds. The same reap also
+   * runs inside a WSL distro: the configured shell's, when it is WSL, and each
+   * of `wslDistros`, the distros the tasks' CLIs ran in.
    *
    * Call it only after every session of these tasks has exited. With `stop`
    * false (the user turned stopping off) nothing is killed and the report
@@ -2648,7 +2649,12 @@ export class SessionManager extends EventEmitter {
   async reapTaskProcesses(
     projectPath: string | null,
     tasks: ReadonlyArray<{ id: string; worktreePath: string | null }>,
-    options: { stop: boolean; onLateEntries?: (entries: LeftoverProcessEntry[]) => void },
+    options: {
+      stop: boolean;
+      onLateEntries?: (entries: LeftoverProcessEntry[]) => void;
+      /** Distros the tasks' sessions ran a CLI in, from their `cli_target`. */
+      wslDistros?: readonly string[];
+    },
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
@@ -2706,54 +2712,69 @@ export class SessionManager extends EventEmitter {
       reportTaskReapFailure('reap', hostFailureCodeOf(error));
     }
     // The distro's reap kills and reports nothing back by name, so it runs only
-    // while stopping is on.
+    // while stopping is on. A CLI path into a distro gives its session a WSL
+    // shell of its own whatever shell is configured, so the reap runs in each
+    // distro a task's CLI ran in as well as in the configured shell's.
     if (process.platform === 'win32' && options.stop) {
-      const wslSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
-      if (wslSpec) {
-        // The distro's script cannot tell which processes run under a PTY this
-        // app holds, which the host protects, so it leaves out every task that
-        // has a live session again or is starting one. That is read here, after
-        // the host reap, and again just before the script runs, since the
-        // `wsl.exe` listings before it can take seconds. The startup sweep is
-        // the caller that can meet one: a To Do task dragged back into a running
-        // column while its reap ran. A session that starts during the script's
-        // own run (about a second) can still lose its agent. Every other caller
-        // waited for its tasks' sessions to exit, so it loses nothing.
-        const leftOutTaskIds = new Set<string>();
-        const reapableInDistro = (taskId: string): boolean => {
-          if (!this.hasLiveOrStartingSession(taskId)) return true;
-          leftOutTaskIds.add(taskId);
-          return false;
-        };
-        const distroTasks = reapTasks.filter((task) => reapableInDistro(task.taskId));
-        if (distroTasks.length > 0) {
-          killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, distroTasks, async (file, args, execOptions) => {
-            // Main holds a task tag when Kangentic runs from a task's terminal.
-            // Passed on, it would tag the script's own subshells, which its
-            // scan would then read as that task's processes.
-            const environment: NodeJS.ProcessEnv = childProcessEnv(execOptions.env);
-            delete environment[TASK_PROCESS_TAG_ENV];
-            const output = await execFileAsync(file, args, {
-              timeout: execOptions.timeoutMs,
-              env: environment,
-              windowsHide: true,
-            });
-            return output.stdout;
-          }, (error) => {
-            // The error's text can name task directories: local log only.
-            console.warn('[TASK-REAP] WSL reap failed (non-fatal):', error);
-            reportTaskReapFailure('reap', 'wsl_error');
-          }, reapableInDistro));
-        }
-        if (leftOutTaskIds.size > 0) {
-          console.log(`[TASK-REAP] WSL reap left out ${leftOutTaskIds.size} task(s) with a live or starting session`);
-        }
+      const shellSpec = parseWslShellSpec(await this.getShell().catch(() => ''));
+      for (const wslSpec of wslReapSpecs(shellSpec, options.wslDistros ?? [])) {
+        killedPids.push(...await this.reapInDistro(wslSpec, reapTasks));
       }
     }
     if (killedPids.length > 0) {
       console.log(`[TASK-REAP] killed ${killedPids.length} leftover process(es) for ${validTasks.length} task(s): ${killedPids.join(', ')}`);
     }
     return entries;
+  }
+
+  /**
+   * The task reap inside one WSL distro (`wsl-reap.ts`). Returns the pids it
+   * killed; a failure is logged and reported, never thrown.
+   */
+  private async reapInDistro(
+    wslSpec: WslShellSpec,
+    reapTasks: ReadonlyArray<{ taskId: string; directories: readonly string[] }>,
+  ): Promise<number[]> {
+    const killedPids: number[] = [];
+    // The distro's script cannot tell which processes run under a PTY this
+    // app holds, which the host protects, so it leaves out every task that
+    // has a live session again or is starting one. That is read here, after
+    // the host reap, and again just before the script runs, since the
+    // `wsl.exe` listings before it can take seconds. The startup sweep is
+    // the caller that can meet one: a To Do task dragged back into a running
+    // column while its reap ran. A session that starts during the script's
+    // own run (about a second) can still lose its agent. Every other caller
+    // waited for its tasks' sessions to exit, so it loses nothing.
+    const leftOutTaskIds = new Set<string>();
+    const reapableInDistro = (taskId: string): boolean => {
+      if (!this.hasLiveOrStartingSession(taskId)) return true;
+      leftOutTaskIds.add(taskId);
+      return false;
+    };
+    const distroTasks = reapTasks.filter((task) => reapableInDistro(task.taskId));
+    if (distroTasks.length > 0) {
+      killedPids.push(...await reapTaggedProcessesInWsl(wslSpec, distroTasks, async (file, args, execOptions) => {
+        // Main holds a task tag when Kangentic runs from a task's terminal.
+        // Passed on, it would tag the script's own subshells, which its
+        // scan would then read as that task's processes.
+        const environment: NodeJS.ProcessEnv = childProcessEnv(execOptions.env);
+        delete environment[TASK_PROCESS_TAG_ENV];
+        const output = await execFileAsync(file, args, {
+          timeout: execOptions.timeoutMs,
+          env: environment,
+          windowsHide: true,
+        });
+        return output.stdout;
+      }, (error) => {
+        // The error's text can name task directories: local log only.
+        console.warn('[TASK-REAP] WSL reap failed (non-fatal):', error);
+        reportTaskReapFailure('reap', 'wsl_error');
+      }, reapableInDistro));
+    }
+    if (leftOutTaskIds.size > 0) {
+      console.log(`[TASK-REAP] WSL reap left out ${leftOutTaskIds.size} task(s) with a live or starting session`);
+    }
+    return killedPids;
   }
 
   /**

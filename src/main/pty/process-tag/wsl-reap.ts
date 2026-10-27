@@ -1,5 +1,6 @@
 /**
- * The reap for a task whose shell is WSL. The agent and everything it starts
+ * The reap for a task whose shell is WSL: the configured shell, or the shell a
+ * CLI path into a distro gives its session. The agent and everything it starts
  * are Linux processes inside the distro, invisible to the Windows process
  * table, so a scan-and-kill runs inside the distro instead, through
  * `wsl.exe -d <distro> -e sh -c <script> sh <arguments>`. The tag reaches the
@@ -157,6 +158,25 @@ export function batchWslReapTasks(tasks: readonly WslReapTask[], budget: number 
   }
   if (batch.length > 0) batches.push(batch);
   return batches;
+}
+
+/**
+ * The distros a task reap runs its in-distro pass in: the configured shell's,
+ * when it is WSL, and each distro a task's CLI ran in (a CLI path into a distro
+ * gives its session a WSL shell of its own, whatever shell is configured). Each
+ * distro once, names compared without case as WSL compares them. A shell with
+ * no `-d` stays its own entry: it names the default distro, which the reap
+ * resolves when it runs.
+ */
+export function wslReapSpecs(shellSpec: WslShellSpec | null, cliDistros: readonly string[]): WslShellSpec[] {
+  const specs: WslShellSpec[] = shellSpec ? [shellSpec] : [];
+  const seen = new Set(specs.flatMap((spec) => (spec.distro ? [spec.distro.toLowerCase()] : [])));
+  for (const distro of cliDistros) {
+    if (!distro || seen.has(distro.toLowerCase())) continue;
+    seen.add(distro.toLowerCase());
+    specs.push({ distro });
+  }
+  return specs;
 }
 
 /** Distro names from `wsl.exe -l --running -q`, which older WSL prints as UTF-16. */

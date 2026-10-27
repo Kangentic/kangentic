@@ -20,6 +20,7 @@ import {
   parseDefaultDistro,
   parseRunningDistros,
   reapTaggedProcessesInWsl,
+  wslReapSpecs,
   type WslExec,
   type WslReapTask,
 } from '../../src/main/pty/process-tag/wsl-reap';
@@ -246,6 +247,15 @@ describe('WSL reap', () => {
     // A Done move awaits this reap before removing the worktree, and a bulk
     // delete holds each task's whole cleanup to 60 s.
     expect(timeouts.reduce((sum, call) => sum + call.timeoutMs, 0)).toBeLessThanOrEqual(20_000);
+  });
+
+  it('reaps in the configured shell\'s distro and each CLI distro, each once, without case', () => {
+    expect(wslReapSpecs({ distro: 'Ubuntu' }, ['ubuntu', 'Debian', 'debian'])).toEqual([{ distro: 'Ubuntu' }, { distro: 'Debian' }]);
+    // A shell with no -d names the default distro, resolved at reap time, so a
+    // named CLI distro still runs: it may be another one.
+    expect(wslReapSpecs({ distro: null }, ['Ubuntu'])).toEqual([{ distro: null }, { distro: 'Ubuntu' }]);
+    expect(wslReapSpecs(null, ['Ubuntu', ''])).toEqual([{ distro: 'Ubuntu' }]);
+    expect(wslReapSpecs(null, [])).toEqual([]);
   });
 
   it('reads the default distro from the starred row of wsl -l -v', () => {

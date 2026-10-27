@@ -44,16 +44,18 @@ function removedSession(overrides: Partial<Session> = {}): Session {
 function makeRig(options: { shuttingDown?: boolean } = {}) {
   const sessionManager = new EventEmitter();
   const reaps: Array<{ projectPath: string; task: CommandTerminalLeftoverTask }> = [];
+  const reapDistros: string[][] = [];
   let shuttingDown = options.shuttingDown ?? false;
   const reaper = new CommandTerminalLeftoverReaper({
     sessionManager: sessionManager as never,
-    reap: async (projectPath, task) => {
+    reap: async (projectPath, task, wslDistros) => {
       reaps.push({ projectPath, task });
+      reapDistros.push(wslDistros);
     },
     isShuttingDown: () => shuttingDown,
   });
   reaper.start();
-  return { sessionManager, reaper, reaps, setShuttingDown: (value: boolean) => { shuttingDown = value; } };
+  return { sessionManager, reaper, reaps, reapDistros, setShuttingDown: (value: boolean) => { shuttingDown = value; } };
 }
 
 describe('CommandTerminalLeftoverReaper', () => {
@@ -90,6 +92,14 @@ describe('CommandTerminalLeftoverReaper', () => {
       projectPath: 'C:\\work\\project',
       task: { id: 'transient-task-uuid', worktree_path: null, title: 'Count Markdown Files in Docs Folder' },
     }]);
+  });
+
+  it('reaps in the distro its shell ran in, which a CLI path into a distro gives it, and in none for another shell', async () => {
+    const rig = makeRig();
+    rig.sessionManager.emit('session-removed', 'session-1', removedSession({ shell: 'wsl -d Ubuntu' }));
+    rig.sessionManager.emit('session-removed', 'session-2', removedSession({ id: 'session-2', shell: 'pwsh.exe' }));
+    await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+    expect(rig.reapDistros).toEqual([['Ubuntu'], []]);
   });
 
   it('names an unnamed terminal by its slot', async () => {

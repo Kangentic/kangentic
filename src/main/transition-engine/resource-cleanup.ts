@@ -174,7 +174,7 @@ export async function sweepTerminalTaskLeftovers(
       projectPath,
       [...terminalTasks].map(([id, task]) => ({ id, worktreePath: task.worktreePath })),
       // A reap the host finishes after main stopped waiting is reported then.
-      { stop: true, onLateEntries: reportActed },
+      { stop: true, onLateEntries: reportActed, wslDistros: leftovers.wslDistrosOf?.([...terminalTasks.keys()]) ?? [] },
     );
     reportActed(entries);
   } catch (error) {
@@ -189,6 +189,8 @@ export interface LeftoverSweepOptions {
   /** The user's "Stop leftover processes" setting, read when the sweep runs. */
   stoppingEnabled: () => boolean;
   onReport: (entries: LeftoverProcessEntry[], taskTitles: ReadonlyMap<string, string>, stoppingEnabled: boolean) => void;
+  /** The WSL distros the tasks' sessions ran a CLI in, so the sweep reaps there too. */
+  wslDistrosOf?: (taskIds: readonly string[]) => string[];
 }
 
 /** Forget which projects were swept. Tests only. */

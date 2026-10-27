@@ -306,7 +306,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskSession(context, task, tasks, null, null);
 
     expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap']);
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function) });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1', worktreePath: null }], { stop: true, onLateEntries: expect.any(Function), wslDistros: [] });
   });
 
   it("closes the task's windows against its own project, after its sessions are gone and before the reap", async () => {
@@ -365,7 +365,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     expect(callOrder).toEqual(['removeByTaskId', 'closeWindows', 'reap']);
     // The project and the worktree go with the id: only processes working
     // inside them are reaped.
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true, onLateEntries: expect.any(Function) });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1b', worktreePath }], { stop: true, onLateEntries: expect.any(Function), wslDistros: [] });
   });
 
   it('kills nothing when the user turned "Stop leftover processes" off, and still reports', async () => {
@@ -381,7 +381,7 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 
     await cleanupTaskSession(context, task, tasks, null, null);
 
-    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1d', worktreePath: null }], { stop: false, onLateEntries: expect.any(Function) });
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(null, [{ id: 'task-1d', worktreePath: null }], { stop: false, onLateEntries: expect.any(Function), wslDistros: [] });
   });
 
   it('never fails the teardown when the reap throws', async () => {
