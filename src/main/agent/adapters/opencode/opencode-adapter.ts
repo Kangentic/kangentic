@@ -208,7 +208,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     // ~/.local/share/opencode/auth.json.
   }
 
-  async probeAuth(): Promise<boolean | null> {
+  async probeAuth(_cliPath: string): Promise<boolean | null> {
     // `opencode auth login` writes provider credentials to
     // ~/.local/share/opencode/auth.json on every platform (the OpenCode
     // troubleshooting docs spell out the same `.local/share/opencode/`

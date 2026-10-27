@@ -108,7 +108,7 @@ export class KimiAdapter implements AgentAdapter {
     // reads ~/.kimi/credentials/.
   }
 
-  async probeAuth(): Promise<boolean | null> {
+  async probeAuth(_cliPath: string): Promise<boolean | null> {
     // `kimi login` writes OAuth state to ~/.kimi/credentials/. A
     // missing or empty directory means the user has not authenticated;
     // a fresh spawn would print "LLM not set, send /login to login"

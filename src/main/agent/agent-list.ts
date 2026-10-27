@@ -68,8 +68,9 @@ async function buildAgentList(
       const adapter = agentRegistry.getOrThrow(agentName);
       const info = await adapter.detect(cliPathOverrides[agentName] ?? null);
       const [authenticated, capabilities] = await Promise.all([
-        info.found && adapter.probeAuth
-          ? adapter.probeAuth().catch(() => null)
+        // The CLI this project detected, which its own CLI path may name.
+        info.found && info.path && adapter.probeAuth
+          ? adapter.probeAuth(info.path).catch(() => null)
           : Promise.resolve(undefined),
         info.found && info.path && adapter.discoverCapabilities
           ? adapter.discoverCapabilities(info.path, forceRefresh).catch(() => undefined)

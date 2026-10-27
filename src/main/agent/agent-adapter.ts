@@ -505,8 +505,12 @@ export interface AgentAdapter {
    * Probe whether the agent is authenticated/logged in. Returns null
    * for agents that have no auth requirement or no cheap probe. Only
    * called by IPC after detect() returns found:true. Must never throw.
+   *
+   * `cliPath` is the path that detect() found for the project asking, which
+   * may be the project's own CLI path rather than the one on PATH. An adapter
+   * whose CLI runs in a WSL distro probes it there (`resolveCliTarget`).
    */
-  probeAuth?(): Promise<boolean | null>;
+  probeAuth?(cliPath: string): Promise<boolean | null>;
 
   /**
    * Declared by adapters whose CLI can attach to an already-running server
