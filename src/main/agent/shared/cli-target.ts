@@ -324,9 +324,14 @@ export function cliInvocationForTarget(
   env: Record<string, string> = {},
 ): CliInvocation {
   const names = Object.keys(env);
+  // A place read back from a session row carries no captured PATH
+  // (`placeFromStored`): `PATH=` with nothing after it would blank the
+  // distro's own, so the run keeps the default `-e` gives (`/usr/bin`, where
+  // `git` lives) instead.
+  const pathAssignment = target.facts.interactivePath ? [`PATH=${target.facts.interactivePath}`] : [];
   return {
     file: wslExecutablePath(),
-    args: ['-d', target.distro, '-e', 'env', `PATH=${target.facts.interactivePath}`, target.linuxCliPath, ...cliArgs],
+    args: ['-d', target.distro, '-e', 'env', ...pathAssignment, target.linuxCliPath, ...cliArgs],
     env: names.length > 0 ? listInWslEnv(env, names, process.env.WSLENV) : {},
   };
 }
