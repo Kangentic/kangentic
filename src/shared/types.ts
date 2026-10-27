@@ -175,12 +175,31 @@ export interface AgentCallUsage {
   costUsd: number | null;
 }
 
+/**
+ * Where an agent CLI runs when it is not this machine, as a session record and
+ * the agent list carry it: a WSL distro, for a CLI configured by its
+ * `\\wsl.localhost\<distro>\...` path. The main process resolves the full
+ * target (`src/main/agent/shared/cli-target.ts`) from this.
+ */
+export interface StoredCliTarget {
+  kind: 'wsl';
+  distro: string;
+}
+
 export interface AgentDetectionInfo {
   name: string;
   displayName: string;
   found: boolean;
   path: string | null;
   version: string | null;
+  /** Set when the configured path runs the CLI inside a WSL distro. */
+  cliTarget?: StoredCliTarget;
+  /** The error the version probe hit for a configured path, word for word, shown under the path. */
+  detectionError?: string;
+  /** True when the configured path is a WSL path and this agent does not run from WSL. */
+  unsupportedTarget?: boolean;
+  /** True when this agent can run a CLI installed inside a WSL distro. */
+  supportsWslCli?: boolean;
   /** True = logged in, false = installed but not authenticated, null/undefined = N/A or not probed. */
   authenticated?: boolean | null;
   permissions: AgentPermissionEntry[];

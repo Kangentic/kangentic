@@ -3,7 +3,15 @@ import path from 'node:path';
 import which from 'which';
 import { execVersion } from './exec-version';
 import { isNpmShimCandidate, missingNpmShimTarget } from './npm-shim-target';
+import { cliInvocationForTarget, parseWslCliPath, type CliTarget } from './cli-target';
+import { describeWslFailure, resolveWslDistroFacts, type WslDistroFacts } from './wsl-distro';
+import { execFileAsync, type ExecOutput, type OffMainExecOptions } from '../../utility-process/off-main-exec';
+import { childProcessEnv } from '../../shared/child-env';
 import type { AgentInfo } from '../agent-adapter';
+import type { StoredCliTarget } from '../../../shared/types';
+
+/** Long enough for a probe that boots the WSL VM after a reboot. */
+const WSL_PROBE_TIMEOUT_MS = 30_000;
 
 /**
  * How many VERSION PROBES a candidate name may spend. The realistic worst case
@@ -76,6 +84,20 @@ export interface AgentDetectorConfig {
    * - Gemini: identity (raw output already is the version)
    */
   parseVersion(raw: string): string | null;
+
+  /**
+   * True when the adapter runs a CLI installed inside a WSL distro (its
+   * `supportsWslCli`). A configured `\\wsl.localhost\...` path is then probed
+   * inside the distro; without it the path is reported unsupported.
+   */
+  supportsWslCli?: boolean;
+}
+
+/** Seams for the WSL probe, so its logic runs on every OS under test. */
+export interface AgentDetectorDependencies {
+  platform?: NodeJS.Platform;
+  resolveFacts?: (distro: string) => Promise<WslDistroFacts>;
+  runWsl?: (file: string, args: readonly string[], options: OffMainExecOptions) => Promise<ExecOutput>;
 }
 
 /**
@@ -114,8 +136,15 @@ export class AgentDetector {
   private latest: AgentInfo | null = null;
   /** Bumped by `invalidateCache`, so a detection that was running then caches nothing. */
   private generation = 0;
+  private readonly platform: NodeJS.Platform;
+  private readonly resolveFacts: (distro: string) => Promise<WslDistroFacts>;
+  private readonly runWsl: (file: string, args: readonly string[], options: OffMainExecOptions) => Promise<ExecOutput>;
 
-  constructor(private readonly config: AgentDetectorConfig) {}
+  constructor(private readonly config: AgentDetectorConfig, dependencies: AgentDetectorDependencies = {}) {
+    this.platform = dependencies.platform ?? process.platform;
+    this.resolveFacts = dependencies.resolveFacts ?? ((distro) => resolveWslDistroFacts(distro));
+    this.runWsl = dependencies.runWsl ?? execFileAsync;
+  }
 
   /**
    * Resolve the CLI's path and version. Results are cached per override
@@ -182,13 +211,15 @@ export class AgentDetector {
     //    configured path with `found: false` rather than falling through
     //    to PATH lookup - that would mask the user's explicit choice.
     if (overridePath) {
+      const wslCli = parseWslCliPath(overridePath, this.platform);
+      if (wslCli) return this.detectWslOverride(overridePath, wslCli);
       const probe = await this.probeVersion(overridePath);
       if (probe.ok) {
         console.log(`[agent-detect] ${name}: found via override ${overridePath} (${probe.version})`);
         return { found: true, path: overridePath, version: probe.version };
       }
       console.warn(`[agent-detect] ${name}: override ${overridePath} did not produce a version (${probe.detail})`);
-      return { found: false, path: overridePath, version: null };
+      return { found: false, path: overridePath, version: null, detectionError: probe.detail };
     }
 
     // 2. PATH-based discovery via `which()`. Works when Electron is
@@ -311,6 +342,56 @@ export class AgentDetector {
       uniqueMatches.push(matchPath);
     }
     return uniqueMatches;
+  }
+
+  /**
+   * A configured path into a WSL distro. Windows cannot run a Linux binary or
+   * follow the distro's symlinks (`~/.local/bin/claude` is one), so neither
+   * `fs.existsSync` nor `execVersion` applies: the probe runs `--version`
+   * inside the distro, on the PATH its interactive shell gives the user, and a
+   * failure carries the error the distro printed.
+   */
+  private async detectWslOverride(
+    overridePath: string,
+    wslCli: { distro: string; linuxCliPath: string },
+  ): Promise<AgentInfo> {
+    const name = this.config.binaryName;
+    const cliTarget: StoredCliTarget = { kind: 'wsl', distro: wslCli.distro };
+    if (!this.config.supportsWslCli) {
+      console.warn(`[agent-detect] ${name}: override ${overridePath} is a WSL path, and ${name} does not run from WSL`);
+      return { found: false, path: overridePath, version: null, cliTarget, unsupportedTarget: true };
+    }
+
+    let target: CliTarget;
+    try {
+      target = { kind: 'wsl', ...wslCli, facts: await this.resolveFacts(wslCli.distro) };
+    } catch (error) {
+      const detectionError = error instanceof Error ? error.message : String(error);
+      console.warn(`[agent-detect] ${name}: could not read WSL distro ${wslCli.distro} for ${overridePath} (${detectionError})`);
+      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+    }
+
+    const invocation = cliInvocationForTarget(target, ['--version']);
+    try {
+      const output = await this.runWsl(invocation.file, invocation.args, {
+        env: childProcessEnv({ WSL_UTF8: '1' }),
+        timeout: WSL_PROBE_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      const raw = output.stdout.trim() || output.stderr.trim();
+      const parsed = raw ? this.config.parseVersion(raw) : null;
+      if (parsed) {
+        console.log(`[agent-detect] ${name}: found in WSL ${wslCli.distro} at ${wslCli.linuxCliPath} (${parsed})`);
+        return { found: true, path: overridePath, version: parsed, cliTarget };
+      }
+      const detectionError = raw ? firstLine(raw) : 'empty output';
+      console.warn(`[agent-detect] ${name}: ${overridePath} did not produce a version (${detectionError})`);
+      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+    } catch (error) {
+      const detectionError = truncate(describeWslFailure(error));
+      console.warn(`[agent-detect] ${name}: ${overridePath} failed its version probe in WSL (${detectionError})`);
+      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+    }
   }
 
   private async probeVersion(candidatePath: string): Promise<VersionProbe> {
