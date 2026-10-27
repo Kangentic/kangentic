@@ -160,6 +160,14 @@ describe('path helpers', () => {
     expect(hostPathForTarget('/home/dev/x', null)).toBe('/home/dev/x');
   });
 
+  // The session manager maps a status line's transcript path as it arrives,
+  // and the readers downstream map what they are given again.
+  it('leaves a path that is already this machine\'s as it is, so mapping twice is mapping once', () => {
+    const onShare = hostPathForTarget('/home/dev/.claude/projects/-mnt-c-proj/abc.jsonl', TARGET);
+    expect(hostPathForTarget(onShare, TARGET)).toBe(onShare);
+    expect(hostPathForTarget('C:\\proj\\x.json', TARGET)).toBe('C:\\proj\\x.json');
+  });
+
   it('reads the home and environment where the CLI keeps them', () => {
     expect(cliHomeDir(TARGET)).toBe('\\\\wsl.localhost\\Ubuntu\\home\\dev');
     expect(cliHomeDir(null)).toBe(os.homedir());

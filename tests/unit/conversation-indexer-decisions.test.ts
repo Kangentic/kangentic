@@ -427,6 +427,35 @@ describe('ConversationIndexer.indexSession', () => {
     expect(parseTranscript).not.toHaveBeenCalled();
   });
 
+  // Reading a stopped WSL distro's share starts the distro, so the walk skips
+  // its session and writes no state: a later pass with the distro running
+  // reads it. A running distro's history is read with the row's place.
+  it('skips a session whose WSL distro is stopped, and reads it with its place once it runs', async () => {
+    const wslTarget = JSON.stringify({ kind: 'wsl', distro: 'Ubuntu', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu' });
+    const state = makeFakeState(makeRecord({ cli_target: wslTarget }));
+    const parseTranscript = vi.fn(async () => ({ entries: [{ kind: 'user' as const, uuid: 'u1', ts: 10, text: 'hi' }], sourcePath: null }));
+    let running = false;
+    const mayReadPlace = vi.fn(async () => running);
+    const indexer = new ConversationIndexer({
+      getDb: () => makeFakeDb(state),
+      getAdapter: () => ({ displayName: 'Claude', parseTranscript }),
+      stat: () => null,
+      now: () => fixedNow,
+      chunker: () => oneChunk,
+      chunkerVersion: 1,
+      mayReadPlace,
+    });
+
+    expect(await indexer.indexSession('project-1', 'session-1')).toBe('skipped');
+    expect(parseTranscript).not.toHaveBeenCalled();
+    expect(state.indexStateWrites).toEqual([]);
+    expect(mayReadPlace.mock.calls[0][0]).toEqual(expect.objectContaining({ distro: 'Ubuntu' }));
+
+    running = true;
+    expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', expect.objectContaining({ distro: 'Ubuntu' }));
+  });
+
   it("returns 'indexed', upserts chunks, and writes an 'ok' state when parse yields entries", async () => {
     const state = makeFakeState(makeRecord());
     const entries: TranscriptEntry[] = [

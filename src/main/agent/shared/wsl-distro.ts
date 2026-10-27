@@ -198,6 +198,34 @@ export function peekWslDistroFacts(distro: string): WslDistroFacts | null {
   return settledFactsByDistro.get(distro) ?? null;
 }
 
+/** How long one running-distros answer is shared, so a sweep over many rows asks once. */
+const RUNNING_LIST_TTL_MS = 5_000;
+const RUNNING_LIST_TIMEOUT_MS = 10_000;
+let runningList: { readAt: number; names: Promise<ReadonlySet<string>> } | null = null;
+
+/** Distro names from `wsl.exe -l --running -q`, lowercased (distro names are case-insensitive). */
+export function parseRunningDistroNames(stdout: string): ReadonlySet<string> {
+  return new Set(cleanWslText(stdout).split(/\r?\n/).map((line) => line.trim().toLowerCase()).filter((line) => line.length > 0));
+}
+
+/**
+ * Whether `distro` is running now. Reading a stopped distro's files through
+ * its share starts it (measured: one stat of `\\wsl.localhost\Ubuntu\home`
+ * booted a stopped Ubuntu in 170 ms), so a reader nobody asked for, such as a
+ * project open's sweeps, skips a session whose distro is stopped and reads it
+ * on a later pass. False when the list cannot be read.
+ */
+export async function isWslDistroRunning(distro: string, run: WslExec = defaultWslExec, now: number = Date.now()): Promise<boolean> {
+  if (!runningList || now - runningList.readAt >= RUNNING_LIST_TTL_MS) {
+    runningList = {
+      readAt: now,
+      names: run(['-l', '--running', '-q'], RUNNING_LIST_TIMEOUT_MS)
+        .then((output) => parseRunningDistroNames(output.stdout), () => new Set<string>()),
+    };
+  }
+  return (await runningList.names).has(distro.toLowerCase());
+}
+
 /** Forget every distro's facts, so the next read asks again (Re-detect). */
 export function invalidateWslDistroFacts(): void {
   factsByDistro.clear();
@@ -208,4 +236,5 @@ export function invalidateWslDistroFacts(): void {
 export function resetWslDistroCacheForTests(): void {
   factsByDistro.clear();
   settledFactsByDistro.clear();
+  runningList = null;
 }

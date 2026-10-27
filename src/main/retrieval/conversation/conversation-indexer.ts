@@ -12,7 +12,7 @@ import type {
   SubagentTranscriptSignature,
 } from '../../agent/agent-adapter';
 import type { SessionRecord, StoredCliTarget, TranscriptEntry } from '../../../shared/types';
-import { placeFromStored, placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
+import { mayReadPlaceUnattended, placeFromStored, placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
 import { RetrievalStore } from '../retrieval-store';
 import { awaitWriteTurn } from '../write-budget';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
@@ -191,6 +191,8 @@ export interface ConversationIndexerDeps {
   /** Hash of up to `length` bytes of a file just before `offset`, or null when
    *  the file cannot be read. */
   hashBefore: (filePath: string, offset: number, length: number) => Promise<string | null>;
+  /** Whether a session's history may be read now without starting its WSL distro. */
+  mayReadPlace: (place: CliPlace | null) => Promise<boolean>;
 }
 
 function defaultStat(filePath: string): { mtimeMs: number; size: number } | null {
@@ -239,6 +241,7 @@ const defaultDeps: ConversationIndexerDeps = {
   chunkerVersion: CHUNKER_VERSION,
   windowBytes: INDEX_WINDOW_BYTES,
   hashBefore: defaultHashBefore,
+  mayReadPlace: mayReadPlaceUnattended,
 };
 
 /**
@@ -374,6 +377,9 @@ export class ConversationIndexer {
       this.writeState(store, record, { path: null, mtimeMs: null, size: null }, 'missing-source', 0, 0);
       return 'missing-source';
     }
+    // A stopped WSL distro would start if its history were read: skipped, no
+    // state written, so a later pass with the distro running reads it.
+    if (!(await this.deps.mayReadPlace(placeOfRecord(record)))) return 'skipped';
 
     const signature = await this.sourceSignature(adapter, record);
     // Key on the agent transcript (agent_session_id), consistent with the chunk
@@ -526,12 +532,13 @@ export class ConversationIndexer {
     // No subagent concept for this agent. Terminal, and cheap: no state row is
     // written, so this costs one map lookup per sweep forever.
     if (!adapter?.parseSubagentUsage || !adapter.statSubagentTranscripts) return 'skipped';
+    const place = placeOfRecord(record);
+    if (!(await this.deps.mayReadPlace(place))) return 'skipped';
 
     const store = new RetrievalStore(db);
     const docId = `${record.agent_session_id}${SUBAGENT_DOC_SUFFIX}`;
     const state = store.getIndexState(CORPUS, docId);
 
-    const place = placeOfRecord(record);
     let signature: SourceSignature;
     try {
       const stats = adapter.statSubagentTranscripts(record.agent_session_id, record.cwd, place);

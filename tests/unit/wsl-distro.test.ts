@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   describeWslFailure,
+  isWslDistroRunning,
   parseInteractiveEnvironment,
   parsePathsAndMode,
   resetWslDistroCacheForTests,
@@ -131,5 +132,32 @@ describe('describeWslFailure', () => {
       .toBe("/usr/bin/env: 'node': No such file or directory");
     expect(describeWslFailure(Object.assign(new Error('x'), { stderr: '', stdout: 'only on stdout' }))).toBe('only on stdout');
     expect(describeWslFailure(new Error('spawn wsl.exe ENOENT'))).toBe('spawn wsl.exe ENOENT');
+  });
+});
+
+describe('isWslDistroRunning', () => {
+  // Reading a stopped distro's share starts it, so the readers nobody asked
+  // for ask this first. One `wsl.exe -l --running -q` answers a whole sweep.
+  it('reads the running list, UTF-16 NULs and any case included', async () => {
+    const run = vi.fn<WslExec>(async () => ({ stdout: 'U\u0000b\u0000u\u0000n\u0000t\u0000u\u0000\r\n\u0000docker-desktop\r\n', stderr: '' }));
+    expect(await isWslDistroRunning('ubuntu', run, 1_000)).toBe(true);
+    expect(await isWslDistroRunning('Debian', run, 1_000)).toBe(false);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][0]).toEqual(['-l', '--running', '-q']);
+  });
+
+  it('asks again once its answer is a few seconds old', async () => {
+    const run = vi.fn<WslExec>()
+      .mockResolvedValueOnce({ stdout: 'docker-desktop\n', stderr: '' })
+      .mockResolvedValueOnce({ stdout: 'Ubuntu\ndocker-desktop\n', stderr: '' });
+    expect(await isWslDistroRunning('Ubuntu', run, 1_000)).toBe(false);
+    expect(await isWslDistroRunning('Ubuntu', run, 2_000)).toBe(false);
+    expect(await isWslDistroRunning('Ubuntu', run, 7_000)).toBe(true);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads a list it cannot get as nothing running', async () => {
+    const run = vi.fn<WslExec>(async () => { throw new Error('spawn wsl.exe ENOENT'); });
+    expect(await isWslDistroRunning('Ubuntu', run, 1_000)).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ import type { StoredCliTarget } from '../../../shared/types';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
-import { WSL_ENV_KEYS, peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
+import { WSL_ENV_KEYS, isWslDistroRunning, peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
 
 /**
  * Where an agent CLI runs and keeps its files, when that is not this machine
@@ -184,6 +184,15 @@ export function placeFromStored(stored: StoredCliTarget | null | undefined): Cli
   };
 }
 
+/**
+ * Whether a reader nobody asked for may read a place's files now: always for
+ * this machine, and for a distro only while it is running, since reading its
+ * share would start it (`isWslDistroRunning`).
+ */
+export async function mayReadPlaceUnattended(place: CliPlace | null): Promise<boolean> {
+  return !place || isWslDistroRunning(place.distro);
+}
+
 /** `placeFromStored` for a session row's `cli_target` column. */
 export function placeOfRecord(record: { cli_target?: string | null } | null | undefined): CliPlace | null {
   return placeFromStored(parseStoredCliTarget(record?.cli_target));
@@ -204,17 +213,24 @@ export async function resolveStoredCliPlace(
  * for a WSL CLI.
  */
 export function cliPathForTarget(windowsPath: string, place: CliPlace | null): string {
-  return place ? toWslPath(windowsPath) : toForwardSlash(windowsPath);
+  if (!place) return toForwardSlash(windowsPath);
+  // A path into another distro has no path from inside this one, and its
+  // Linux path could name a different file here, so it is left as it is.
+  const intoDistro = parseWslUncPath(windowsPath);
+  if (intoDistro && intoDistro.distro.toLowerCase() !== place.distro.toLowerCase()) return windowsPath;
+  return toWslPath(windowsPath);
 }
 
 /**
  * A path the CLI reported (a transcript path in its status, a file it wrote)
  * as Kangentic can open it. A drive mount (`/mnt/c/...`) maps back to the
  * drive; anything else is reached through the distro's share. Unchanged for
- * this machine.
+ * this machine, and for a path that is not a Linux path (one already mapped,
+ * such as a status line's transcript path the session manager mapped as it
+ * arrived), so mapping twice is mapping once.
  */
 export function hostPathForTarget(cliSidePath: string, place: CliPlace | null): string {
-  if (!place) return cliSidePath;
+  if (!place || !cliSidePath.startsWith('/') || cliSidePath.startsWith(place.facts.uncRoot)) return cliSidePath;
   const driveMount = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/.exec(cliSidePath);
   if (driveMount) {
     const rest = (driveMount[2] ?? '').split('/').filter(Boolean).join('\\');

@@ -281,7 +281,7 @@ function resolveRunTranscriptPath(input: {
   const place = input.place ?? null;
   // A Claude in a WSL distro reports its transcript by its Linux path.
   if (input.transcriptPath) {
-    return place && input.transcriptPath.startsWith('/') ? hostPathForTarget(input.transcriptPath, place) : input.transcriptPath;
+    return hostPathForTarget(input.transcriptPath, place);
   }
   return input.agentSessionId && input.cwd
     ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd, place)
