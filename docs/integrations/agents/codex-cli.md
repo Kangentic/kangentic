@@ -113,6 +113,16 @@ The legacy project-local `.codex/hooks.json` from builds before Codex 0.128 is s
 
 Codex's rollout, transcript and model-history readers resolve Codex's home through `codexHomeDir` (`config-toml.ts`), so `$CODEX_HOME` is honored there too; with `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry at all.
 
+## WSL
+
+A Codex installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Codex's Linux path in a `wsl -d <distro>` shell, and `-C` names the working directory as the distro sees it (`/mnt/c/...`). The hooks run a workspace copy of the WSL hook transport's script, `sh .kangentic/codex-wsl-hook.sh event <type> <directives>` (`copyWslHookScriptInto`), for the same seven events with the same directives, since a distro may have no node. The copy finds the session's own folder through `KANGENTIC_WSL_HOOK_DIR`, so the command is the same for every session and one trust read still covers them. That read runs `codex app-server` in the distro with a scratch `CODEX_HOME` and folder named by their `/mnt` paths. It is keyed by the detected version, because the binary cannot be stat'ed through the share. Codex's hooks only report events, so the transport's `reply` and `status` modes go unused.
+
+On mirrored networking the MCP overrides are the URL ones above. On NAT networking the distro cannot reach this machine's loopback, so they are the transport's stdio bridge, three `-c` values in TOML literal strings: `mcp_servers.kangentic.command='sh'`, `mcp_servers.kangentic.args=['<script>','mcp','<url>']` and `mcp_servers.kangentic.env_vars=['KANGENTIC_MCP_TOKEN']`. The script is the session folder's own `wsl-hooks/wsl-hook.sh`. `env_vars` forwards the token from the session environment, which reaches the distro through `WSLENV`, so it stays out of argv. A script path or URL holding a quote, `%`, a backtick or `$` gets no bridge, and the session runs without Kangentic's tools.
+
+Codex's home for a distro is the `CODEX_HOME` its interactive shell sets, mapped through the share (`hostPathForTarget`), else the distro home's `.codex` (`codexHomeDir`). This machine's `CODEX_HOME` does not apply. Trust goes into that home's `config.toml`, keyed by the `/mnt` path, and a project root's `"untrusted"` is looked up by its `/mnt` path too. The key comparison folds case, as every comparison does on Windows (`normalizeForCompare`). When Kangentic deletes the worktree, `removeWorktreeTrust(path, place)` drops that table while the distro runs (see [Directory Trust](#directory-trust)).
+
+The session id comes from the SessionStart hook, the startup banner, or a scan of the distro's `sessions/<YYYY>/<MM>/<DD>/` folders for today and yesterday (UTC), which matches a rollout's `session_meta.cwd` against the `/mnt` form of the cwd. The rollout is found by id in the same folders and tailed over the share. The transcript, the auto_command check and the model scan read the same home. `--help`, a title summary and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Codex installed in a distro.
+
 ## Limitations
 
 - No real-time token usage or cost data (no statusLine equivalent)
