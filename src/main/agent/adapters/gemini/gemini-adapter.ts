@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { buildSummarizePrompt, titleFromAnswer } from '../../shared/auto-name';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
+import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import { extractGeminiAnswer, geminiAnswerEvents, removeGeminiChat } from './answer-stream';
 import type {
   AgentAdapter,
@@ -47,6 +48,8 @@ export class GeminiAdapter implements AgentAdapter {
   // result, and an AfterTool `additionalContext` reaches the model
   // (GEMINI_BACKGROUND_COMMAND_SPEC, measured on 0.64.0).
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
+  /** A Gemini installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -79,13 +82,13 @@ export class GeminiAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(workingDirectory: string): Promise<void> {
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // Gemini DOES have a folder-trust system (this was previously documented
     // here as a no-op because Gemini had none). An untrusted folder disables
     // every configured MCP server, including ours, so pre-trusting the
     // worktree is what makes the Kangentic MCP entry take effect. See
-    // trust-manager.ts.
-    await ensureWorktreeTrust(workingDirectory);
+    // trust-manager.ts. A Gemini in a WSL distro is trusted in the distro.
+    await ensureWorktreeTrust(workingDirectory, place ?? null);
   }
 
   /**
@@ -93,8 +96,8 @@ export class GeminiAdapter implements AgentAdapter {
    * task worktree, so `~/.gemini/trustedFolders.json` needs the same cleanup
    * Codex's `config.toml` does or it grows by a dead entry per task forever.
    */
-  async onWorktreeRemoved(worktreePath: string): Promise<void> {
-    await removeWorktreeTrust(worktreePath);
+  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
+    await removeWorktreeTrust(worktreePath, place ?? null);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -222,20 +225,25 @@ export class GeminiAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    return GeminiSessionHistoryParser.locate({ agentSessionId, cwd });
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return GeminiSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    const filePath = locateGeminiTranscriptFile(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const filePath = locateGeminiTranscriptFile(agentSessionId, cwd, place ?? null);
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseGeminiTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    return readGeminiTranscriptPage(agentSessionId, locateGeminiTranscriptFile(agentSessionId, cwd), request);
+  readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    return readGeminiTranscriptPage(agentSessionId, locateGeminiTranscriptFile(agentSessionId, cwd, place ?? null), request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
@@ -300,9 +308,12 @@ export class GeminiAdapter implements AgentAdapter {
   ): Promise<string> {
     const onEvent = options?.onEvent;
     const sessionId = randomUUID();
+    // A Gemini installed in a WSL distro runs there, and saves its chat there.
+    const cliTarget = await resolveCliTarget(cliPath, true);
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model flag is OMITTED when none is chosen: passing an
         // empty value is an error.
         args: [
@@ -323,7 +334,7 @@ export class GeminiAdapter implements AgentAdapter {
     } finally {
       // Best effort, as the other adapters' cleanups are: a registry that
       // holds something other than a folder name must not replace the answer.
-      await removeGeminiChat(cwd, sessionId).catch(() => undefined);
+      await removeGeminiChat(cwd, sessionId, cliTarget).catch(() => undefined);
     }
   }
 

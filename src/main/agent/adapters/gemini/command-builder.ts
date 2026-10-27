@@ -5,7 +5,16 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { backgroundShellHintCommandFor, shippedHintBridgePath } from '../../shared/background-command-hooks';
+import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
+import type { CliTarget } from '../../shared/cli-target';
+import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV, kangenticMcpServer, mcpBridgeScriptEnv } from '../../shared/kangentic-mcp-server';
+import {
+  WSL_MCP_REQUEST_HEAD,
+  WSL_MCP_TOKEN_ENV,
+  copyWslHookScriptInto,
+  prepareWslHookTransport,
+  wslHookEventCommand,
+} from '../../shared/wsl-hook-transport';
 import { buildHooks, GEMINI_BACKGROUND_COMMAND_SPEC, GEMINI_HOOK_SHELL, stripKangenticEntries } from './hook-manager';
 import type { GeminiHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
@@ -36,6 +45,28 @@ function geminiMcpWiringEnabled(
 export const KANGENTIC_MCP_URL_ENV = 'KANGENTIC_MCP_URL';
 export const KANGENTIC_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
 
+/**
+ * The workspace copy of the WSL hook transport's script a Gemini in a WSL
+ * distro runs its hooks with (`copyWslHookScriptInto`). The settings file is
+ * shared by every session in the folder, so its commands name the folder's
+ * copy, the same for each session, and the copy finds the session's own
+ * folder through `KANGENTIC_WSL_HOOK_DIR`, which Gemini's hooks inherit.
+ */
+export const GEMINI_WSL_HOOK_COPY_NAME = 'gemini-wsl-hook.sh';
+
+/**
+ * Kangentic's entry for a Gemini in a WSL distro on NAT networking, which
+ * cannot reach this machine's loopback: the transport's stdio bridge. Static
+ * like the URL entry: the script, the URL and the token are references Gemini
+ * expands from the session's environment (every settings string), so the
+ * shared file stays the same bytes for every session.
+ */
+const GEMINI_BRIDGE_MCP_ENTRY = {
+  command: 'sh',
+  args: [`\${${KANGENTIC_MCP_BRIDGE_SCRIPT_ENV}}`, WSL_MCP_REQUEST_HEAD, `\${${KANGENTIC_MCP_URL_ENV}}`],
+  env: { [WSL_MCP_TOKEN_ENV]: `\${${KANGENTIC_MCP_TOKEN_ENV}}` },
+};
+
 /** Gemini-specific subset of settings.json that we read/write. */
 interface GeminiSettings {
   hooks?: Record<string, GeminiHookEntry[]>;
@@ -61,12 +92,22 @@ export interface GeminiCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * A Gemini installed in a WSL distro (`CommandOptions.cliTarget`): named by
+   * the path the distro sees, its hooks run the WSL hook transport's script
+   * instead of the node bridge, and on NAT networking Kangentic's server is the
+   * transport's stdio bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 export class GeminiCommandBuilder {
   buildGeminiCommand(options: GeminiCommandOptions): string {
     const { shell } = options;
-    const parts = [quoteArg(options.geminiPath, shell)];
+    // A Gemini in a WSL distro is started by the path the distro sees; the
+    // PTY's cwd reaches it as its `/mnt` path.
+    const place = options.cliTarget ?? null;
+    const parts = [quoteArg(place ? place.linuxCliPath : options.geminiPath, shell)];
 
     // Write merged settings with event-bridge hooks and / or the Kangentic
     // MCP server entry. Seed .git/info/exclude BEFORE the write so the
@@ -136,7 +177,14 @@ export class GeminiCommandBuilder {
    */
   buildGeminiEnv(options: GeminiCommandOptions): Record<string, string> | null {
     if (!geminiMcpWiringEnabled(options)) return null;
-    return { [KANGENTIC_MCP_URL_ENV]: options.mcpServerUrl, [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken };
+    const place = options.cliTarget ?? null;
+    return {
+      [KANGENTIC_MCP_URL_ENV]: options.mcpServerUrl,
+      [KANGENTIC_MCP_TOKEN_ENV]: options.mcpServerToken,
+      // The bridge entry's script, for a Gemini in a WSL distro (read on NAT
+      // networking, unused on mirrored).
+      ...(place && options.eventsOutputPath ? mcpBridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
+    };
   }
 
   /**
@@ -162,6 +210,24 @@ export class GeminiCommandBuilder {
 
     stripKangenticEntries(baseSettings);
     return baseSettings;
+  }
+
+  /**
+   * Whether this session's Gemini gets Kangentic's server as the WSL hook
+   * transport's bridge (`kangenticMcpServer` decides: a distro on NAT
+   * networking), prepared in the session's directory, whose relay the spawn
+   * attaches. A build with no session directory, which every production spawn
+   * path supplies, keeps the URL entry.
+   */
+  private usesMcpBridge(options: GeminiCommandOptions & { mcpServerUrl: string; mcpServerToken: string }): boolean {
+    const place = options.cliTarget ?? null;
+    if (!place || !options.eventsOutputPath) return false;
+    return kangenticMcpServer({
+      url: options.mcpServerUrl,
+      token: options.mcpServerToken,
+      place,
+      directory: path.dirname(options.eventsOutputPath),
+    }).kind === 'stdio';
   }
 
   /**
@@ -221,8 +287,20 @@ export class GeminiCommandBuilder {
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const merged: GeminiSettings = { ...baseSettings };
+    const place = options.cliTarget ?? null;
 
-    if (options.eventsOutputPath) {
+    if (options.eventsOutputPath && place) {
+      // A Gemini in a WSL distro may have no node, so its hooks publish through
+      // the WSL hook transport (same events and directives), and the background
+      // shell hint goes through its `reply`. The commands name the folder's
+      // copy of the script, the same for every session sharing this file.
+      const sessionHooks = prepareWslHookTransport(path.dirname(options.eventsOutputPath));
+      const folderHooks = { ...sessionHooks, script: copyWslHookScriptInto(options.cwd, GEMINI_WSL_HOOK_COPY_NAME) };
+      merged.hooks = buildHooks('', '', baseSettings.hooks || {}, {
+        backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, GEMINI_BACKGROUND_COMMAND_SPEC, folderHooks, place),
+        eventCommand: (eventType, ...directives) => wslHookEventCommand(folderHooks, place, eventType, ...directives),
+      });
+    } else if (options.eventsOutputPath) {
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
       // The file is shared by every session in the folder, so the hooks name
       // the events path from each session's own environment (the bridge's
@@ -242,7 +320,7 @@ export class GeminiCommandBuilder {
       // per-launch token never touches this file.
       merged.mcpServers = {
         ...(baseSettings.mcpServers ?? {}),
-        kangentic: {
+        kangentic: this.usesMcpBridge(options) ? GEMINI_BRIDGE_MCP_ENTRY : {
           httpUrl: `\${${KANGENTIC_MCP_URL_ENV}}`,
           headers: { 'X-Kangentic-Token': `\${${KANGENTIC_MCP_TOKEN_ENV}}` },
         },

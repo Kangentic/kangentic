@@ -15,6 +15,7 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
 import { geminiHomeDir } from './gemini-home';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -30,9 +31,14 @@ const HELP_TIMEOUT_MS = 5000;
 
 /**
  * Run `<cliPath> --help` and capture stdout.
- * On Windows, use shell invocation; on Unix, use direct execFile.
+ * On Windows, use shell invocation; on Unix, use direct execFile. A Gemini
+ * installed in a WSL distro (`target`) runs there, through `wsl.exe`.
  */
-async function readHelpText(cliPath: string): Promise<string> {
+async function readHelpText(cliPath: string, target: CliTarget | null): Promise<string> {
+  if (target) {
+    const { stdout } = await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    return stdout;
+  }
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
@@ -52,9 +58,9 @@ async function readHelpText(cliPath: string): Promise<string> {
  * Parse `gemini --help` to detect if --model flag is supported.
  * Returns true if the help text mentions a --model flag.
  */
-async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
+async function detectModelFlagSupport(cliPath: string, target: CliTarget | null): Promise<boolean> {
   try {
-    const helpText = await readHelpText(cliPath);
+    const helpText = await readHelpText(cliPath, target);
     // Look for --model or -m flag pattern
     return /--model\s+<|--model\s+[A-Za-z]|-m\s+<|-m\s+[A-Za-z]/.test(helpText);
   } catch {
@@ -89,9 +95,10 @@ function harvestGeminiModels(record: unknown, modelSet: Set<string>): void {
   }
 }
 
-async function scanGeminiSessionHistory(): Promise<string[]> {
+/** `place`: a Gemini in a WSL distro keeps its chats in the distro's Gemini directory. */
+async function scanGeminiSessionHistory(place: CliPlace | null): Promise<string[]> {
   const modelSet = new Set<string>();
-  const tmpDir = path.join(geminiHomeDir(), 'tmp');
+  const tmpDir = path.join(geminiHomeDir(place), 'tmp');
 
   // Walk the project directories, ranking by the `chats/` subdirectory's mtime
   // rather than the project root. This keeps test-artifact dirs (which never
@@ -152,18 +159,21 @@ async function scanGeminiSessionHistory(): Promise<string[]> {
  * Best-effort: always returns a capabilities object even if detection partially fails.
  */
 export async function discoverGeminiCapabilities(cliPath: string): Promise<AgentCapabilities> {
+  // A Gemini installed in a WSL distro: its --help runs there, and its history
+  // is in the distro. A distro whose facts cannot be read cannot be asked either.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
   let supportsModelOverride = false;
   try {
-    supportsModelOverride = await detectModelFlagSupport(cliPath);
+    supportsModelOverride = target === undefined ? false : await detectModelFlagSupport(cliPath, target);
   } catch {
     // Flag detection failure - continue with assumed no support
   }
 
   // Discover models from session history (best-effort)
   let discoveredModels: string[] = [];
-  if (supportsModelOverride) {
+  if (supportsModelOverride && target !== undefined) {
     try {
-      discoveredModels = await scanGeminiSessionHistory();
+      discoveredModels = await scanGeminiSessionHistory(target);
     } catch {
       // Session history scan failure - continue with empty list
     }

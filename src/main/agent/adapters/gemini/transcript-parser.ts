@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import { open } from 'node:fs/promises';
-import { geminiHomeDir } from './gemini-home';
 import path from 'node:path';
+import type { CliPlace } from '../../shared/cli-target';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
-import { computeGeminiProjectDirName } from './session-history-parser';
+import { geminiChatsDir } from './session-history-parser';
 
 /** A Gemini message without its own id is named by its line, so the tail, its notice and every page count lines. */
 const UUIDS_NUMBER_LINES = true;
@@ -280,10 +280,10 @@ function appendMessageEntries(uuid: string, message: Record<string, unknown>, en
  * Locate the Gemini chat session file for a known session id. Matches both
  * the current `.jsonl` form and the legacy `.json` form (the filename embeds
  * the first 8 chars of the session UUID). Non-polling single readdir.
+ * `place`: a Gemini in a WSL distro keeps it in the distro (`geminiChatsDir`).
  */
-export function locateGeminiTranscriptFile(agentSessionId: string, cwd: string): string | null {
-  const projectDirName = computeGeminiProjectDirName(cwd);
-  const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
+export function locateGeminiTranscriptFile(agentSessionId: string, cwd: string, place: CliPlace | null = null): string | null {
+  const directory = geminiChatsDir(cwd, place);
   const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
   let names: string[];

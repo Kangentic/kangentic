@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import { geminiHomeDir } from './gemini-home';
 import path from 'node:path';
+import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
+  type StoredCliTarget,
 } from '../../../../shared/types';
 
 /**
@@ -69,6 +71,8 @@ export class GeminiSessionHistoryParser {
   static async captureSessionIdFromFilesystem(options: {
     spawnedAt: Date;
     cwd: string;
+    /** Where the CLI runs when it is not this machine (a WSL distro): its chats are in the distro. */
+    cliTarget?: StoredCliTarget | null;
     maxAttempts?: number;
   }): Promise<string | null> {
     const spawnedAtMs = options.spawnedAt.getTime();
@@ -76,8 +80,7 @@ export class GeminiSessionHistoryParser {
     const startTimeFloorMs = spawnedAtMs - 30_000;
     const startTimeCeilMs = spawnedAtMs + 30_000;
 
-    const projectDirName = computeGeminiProjectDirName(options.cwd);
-    const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
+    const directory = geminiChatsDir(options.cwd, placeFromStored(options.cliTarget ?? null));
     // `.jsonl?` matches BOTH generations. Gemini 0.37 wrote one JSON object per
     // `.json` file; current builds write append-only `.jsonl`. An anchored
     // `\.json$` silently matched nothing on every recent install, which broke
@@ -124,11 +127,12 @@ export class GeminiSessionHistoryParser {
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
+    /** Where the CLI runs when it is not this machine (a WSL distro). */
+    cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
 
-    const projectDirName = computeGeminiProjectDirName(cwd);
-    const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
+    const directory = geminiChatsDir(cwd, placeFromStored(options.cliTarget ?? null));
 
     // Gemini 0.37 embeds only the FIRST 8 CHARS of the session UUID
     // in the filename, e.g. `session-2026-04-09T19-18-08889b8d.json`
@@ -273,6 +277,15 @@ function toNumber(value: unknown): number | undefined {
 export function computeGeminiProjectDirName(cwd: string): string {
   const basename = path.basename(path.normalize(cwd));
   return basename.toLowerCase();
+}
+
+/**
+ * `~/.gemini/tmp/<project dir>/chats` for a cwd. A Gemini in a WSL distro
+ * (`place`) keeps it in the distro's Gemini directory; the folder name is the
+ * cwd's last segment either way, which the `/mnt` form shares.
+ */
+export function geminiChatsDir(cwd: string, place: CliPlace | null = null): string {
+  return path.join(geminiHomeDir(place), 'tmp', computeGeminiProjectDirName(cwd), 'chats');
 }
 
 /**
