@@ -14,6 +14,8 @@ sources:
   - resource: src/shared/session-track.ts
   - resource: src/shared/abort-utils.ts
   - resource: src/main/ipc/handlers/session-resume-controllers.ts
+  - resource: src/main/ipc/handlers/task-move.ts
+  - resource: src/main/transition-engine/session-startup/auto-spawn.ts
   - resource: src/main/agent/handoff/index.ts
 ---
 # Spawn flow
@@ -40,7 +42,7 @@ module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, el
 | Phone Start (`start-session` verb) | "Start again" from the phone's ended state, via `startTaskSession` (`handlers/session-start.ts`), for a task with no session or an exited one | `autoSpawnForTask` -> `spawnAgent`, `explicitStart` (lifts the column's `auto_spawn` default and a user pause, as the desktop Resume button does; the role gate stays) |
 | Phone Resume (`start-session` verb) | the same verb for a PAUSED task (a `suspended` registry row), via `startTaskSession` | `resumeTaskSession` (`handlers/session-resume.ts`), the Resume button's own path: no enter automations, no column message |
 | Startup crash recovery | project open, `resumeSuspendedSessions` | `prepareAgentSpawn` (`session-startup/prepare-spawn.ts`) |
-| Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` |
+| Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` for a task with session history; a task with none goes to `autoSpawnForTask` -> `spawnAgent` (worktree, then the column's prompt and enter automations), unless those automations already ran this visit. A task a move or a resume is working on is left to it. See [Crash recovery](crash-recovery.md) step 8 |
 
 In-place restarts of an existing session (`resumeTaskSession`, which `SESSION_RESUME` and a phone
 Resume share, and `restartSessionForSettingsChange`) call the engine directly; they are not

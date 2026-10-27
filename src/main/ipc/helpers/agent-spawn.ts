@@ -855,9 +855,10 @@ function readAutoSpawnGates(
  *
  * Called from both the SessionManager `task-created` event (internal MCP
  * bridge) and the external CommandBridge `onTaskCreated` callback, from the
- * auto_spawn reconcile, and from the phone's start-session verb
- * (`handlers/session-start.ts`), which is the one caller passing
- * `explicitStart`.
+ * auto_spawn reconcile, from the startup pass for a task that never had an
+ * agent (`autoSpawnTasks`' `startFirstAgent`, wired in `handlers/projects.ts`),
+ * and from the phone's start-session verb (`handlers/session-start.ts`), which
+ * is the one caller passing `explicitStart`.
  *
  * Split-locked the way SESSION_RESUME and handleTaskMove are (see
  * `withTaskLock`'s JSDoc): Phase 1 runs the gates under the task lock, Phase 2

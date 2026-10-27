@@ -26,7 +26,12 @@ contract was kept in sync across three files by prose comments alone.
   `spawnAgent` (`src/main/ipc/helpers/agent-spawn.ts`). Handlers never call
   `engine.executeTransition` / `engine.resumeSuspendedSession` directly.
 - A **startup spawn** (crash recovery, reconcile) routes through `prepareAgentSpawn`
-  (`src/main/transition-engine/session-startup/prepare-spawn.ts`).
+  (`src/main/transition-engine/session-startup/prepare-spawn.ts`). The one exception is a task
+  the reconcile finds with no session record at all: it never had an agent, so `autoSpawnTasks`
+  hands it to the board chokepoint (`autoSpawnForTask` -> `spawnAgent`, through the
+  `startFirstAgent` callback the project-open paths in `handlers/projects.ts` pass), which makes
+  its worktree before it starts the agent with the column's prompt. That hand-off is a startup
+  caller and never passes `explicitStart`.
 - Both chokepoints run `runSpawnPreamble`
   (`src/main/transition-engine/spawn-preamble.ts`): `lockAdvancedOverridesOnFirstSpawn`, THEN
   `resolveTargetAgent`, in that order - a just-locked `agent_override` must be what resolution

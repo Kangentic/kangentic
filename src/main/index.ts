@@ -984,6 +984,12 @@ let runUptimeCheckpointInterval: ReturnType<typeof setInterval> | null = null;
 // Dev only: the previous run's ending is logged once per launch, not again for
 // a window rebuilt on macOS activate or a second-instance launch.
 let previousRunLogged = false;
+// The background activation of every other project runs once per process, at
+// the first renderer load. A reload (a Vite full reload, Ctrl+R) or a rebuilt
+// window fires did-finish-load again, but main's sessions and boards outlive
+// the renderer, so a second pass would only replay startup recovery against
+// live boards (docs/architecture/sessions/crash-recovery.md, step 8).
+let backgroundActivationScheduled = false;
 let stopHostMemorySampler: (() => void) | null = null;
 // Pauses the agent that has waited on the user longest while memory runs low
 // (diagnostics/idle-agent-pause.ts). Fed from the sampler's per-tick hook;
@@ -1652,16 +1658,20 @@ const createWindow = () => {
       createdWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
     }
 
-    // Activate all other projects' sessions in the background.
-    // Defer by 5 seconds so the primary project's recovery completes
-    // without CPU/IO contention from all other projects.
-    activateAllProjectsTimer = setTimeout(() => {
-      activateAllProjectsTimer = null;
-      phase('activateAllProjects');
-      activateAllProjects()
-        .catch((err) => console.error('[APP] Failed to activate all projects:', err))
-        .finally(() => { endPhase('activateAllProjects'); });
-    }, 5000);
+    // Activate all other projects' sessions in the background, once per
+    // process (see backgroundActivationScheduled). Defer by 5 seconds so the
+    // primary project's recovery completes without CPU/IO contention from all
+    // other projects.
+    if (!backgroundActivationScheduled) {
+      backgroundActivationScheduled = true;
+      activateAllProjectsTimer = setTimeout(() => {
+        activateAllProjectsTimer = null;
+        phase('activateAllProjects');
+        activateAllProjects()
+          .catch((error) => console.error('[APP] Failed to activate all projects:', error))
+          .finally(() => { endPhase('activateAllProjects'); });
+      }, 5000);
+    }
   });
 };
 

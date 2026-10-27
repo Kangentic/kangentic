@@ -8,6 +8,7 @@ import type {
   BackgroundCallOutcome,
   ColumnAutomation,
 } from '../../../shared/types';
+import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { isAutomationTrigger } from '../../../shared/automation-manifest';
 import { MOVED_BY_A_PERSON } from '../../../shared/task-move-origin';
 
@@ -145,6 +146,9 @@ const PERSON_MOVE_ORIGINS_SQL = Object.entries(MOVED_BY_A_PERSON)
  */
 const WORKFLOW_RUN_TYPES_SQL = "type IN ('workflow_step', 'workflow_recovery', 'workflow_stalled', 'workflow_waiting', "
   + "'workflow_recovery_start', 'workflow_interrupt')";
+
+/** The column roles that never start an agent, from the one list the startup pass also reads. */
+const NEVER_AUTO_SPAWN_ROLES_SQL = [...NEVER_AUTO_SPAWN_ROLES].map((role) => `'${role}'`).join(', ');
 
 export class AutomationRunRepository {
   constructor(private db: Database.Database) {}
@@ -560,6 +564,24 @@ export class AutomationRunRepository {
   }
 
   /**
+   * Has any of this column's enter automations recorded a run on this task
+   * since `since` (the task's entry into the column), whatever its outcome? A
+   * skip counts too: the enter group ran. Null `since` counts every run, as in
+   * `hasRunSince`. The startup pass reads it to tell a move that stopped before
+   * its enter group from one whose agent failed to start after it.
+   */
+  hasEnterRunSince(taskId: string, swimlaneId: string, since: string | null): boolean {
+    const row = since === null
+      ? this.db
+        .prepare("SELECT 1 FROM automation_runs WHERE task_id = ? AND swimlane_id = ? AND trigger = 'enter' LIMIT 1")
+        .get(taskId, swimlaneId)
+      : this.db
+        .prepare("SELECT 1 FROM automation_runs WHERE task_id = ? AND swimlane_id = ? AND trigger = 'enter' AND started_at >= ? LIMIT 1")
+        .get(taskId, swimlaneId, since);
+    return row !== undefined;
+  }
+
+  /**
    * Has this automation already been skipped on this task, for exactly this
    * reason, since `since`? Lets a turn-end group record "Set up an Automation
    * agent" once per visit rather than at every turn end of a long chat.
@@ -668,6 +690,14 @@ export class AutomationRunRepository {
    * so the newest 200 can be a single night. Only the current column's rows
    * are read, so those are all that is kept; they go once the task moves on
    * or is archived.
+   *
+   * And the newest enter run of a task that never had an agent, in the column
+   * it is in now, when that column can start one. The startup pass reads it
+   * (`hasEnterRunSince`) to tell a move a quit cut short before its enter group
+   * from one whose agent failed to start after it, and the prune runs on that
+   * same project open, unawaited, beside the pass. Pruned, the task's enter
+   * automations would run again at the next launch. One row per such task; it
+   * goes once the task has a session record, moves on, or is archived.
    */
   pruneTo(limit = AUTOMATION_RUN_RETENTION): number {
     const result = this.db
@@ -688,6 +718,19 @@ export class AutomationRunRepository {
                 AND task.workflow_id IS NOT NULL
                 AND task.swimlane_id = automation_runs.swimlane_id
             )
+          )
+          AND id IS NOT (
+            SELECT newest.id FROM automation_runs newest
+            JOIN tasks task ON task.id = newest.task_id
+            JOIN swimlanes lane ON lane.id = task.swimlane_id
+            WHERE newest.task_id = automation_runs.task_id
+              AND newest.swimlane_id = task.swimlane_id
+              AND newest.trigger = 'enter'
+              AND task.archived_at IS NULL
+              AND (lane.role IS NULL OR lane.role NOT IN (${NEVER_AUTO_SPAWN_ROLES_SQL}))
+              AND NOT EXISTS (SELECT 1 FROM sessions record WHERE record.task_id = task.id)
+            ORDER BY newest.started_at DESC, newest.rowid DESC
+            LIMIT 1
           )
       `)
       .run(limit);

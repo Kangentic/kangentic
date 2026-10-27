@@ -561,6 +561,143 @@ describe('AutomationRunRepository', () => {
     expect(runs.listForTask(taskId)).toEqual([]);
   });
 
+  // The startup pass hands a task that never had an agent to the board path,
+  // unless its column's enter group already ran this visit (its agent failed to
+  // start after it). The prune runs on the same project open, so a pruned row
+  // would run that group again at the next launch. Only the newest enter row of
+  // such a task in its current column is read, so only that one is kept.
+  //
+  // Red-green: drop the `id IS NOT (...)` clause from pruneTo and the kept row goes.
+  it('keeps the newest enter run of a task that never had an agent, in the column it is in now, and prunes the rest as before', () => {
+    const { database, runs } = setup();
+    const lanes = new SwimlaneRepository(database).list();
+    const planningId = lanes.find((lane) => lane.role === null)!.id;
+    const otherColumnId = lanes.filter((lane) => lane.role === null)[1].id;
+    const insertTask = (id: string) => database
+      .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, id, '', planningId, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+    insertTask('task-never-ran');
+    insertTask('task-ran-before');
+    database
+      .prepare('INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('session-earlier', 'task-ran-before', 'claude_agent', 'claude', '/mock/project', 'exited', '2026-01-01T00:00:00.000Z');
+
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+    const record = (id: string, swimlaneId: string, taskId: string, second: number) => {
+      runs.start({ id, automation: automation(`automation-${id}`, swimlaneId), taskId });
+      database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(at(second), id);
+    };
+    // The oldest rows: two enter runs in the task's current column, one in another column,
+    // and an enter run of a task that has a session record.
+    record('never-ran-older', planningId, 'task-never-ran', 0);
+    record('never-ran-newest', planningId, 'task-never-ran', 1);
+    record('never-ran-other-column', otherColumnId, 'task-never-ran', 2);
+    record('ran-before', planningId, 'task-ran-before', 3);
+    // Newer rows that fill the limit.
+    for (let index = 0; index < 4; index += 1) record(`filler-${index}`, planningId, 'task-ran-before', 10 + index);
+
+    runs.pruneTo(4);
+
+    const kept = new Set(database.prepare('SELECT id FROM automation_runs').all().map((row) => (row as { id: string }).id));
+    expect(kept.has('never-ran-newest')).toBe(true);
+    expect(kept.has('never-ran-older')).toBe(false);
+    expect(kept.has('never-ran-other-column')).toBe(false);
+    expect(kept.has('ran-before')).toBe(false);
+    expect([...kept].filter((id) => id.startsWith('filler-'))).toHaveLength(4);
+    // What the startup pass reads is still there.
+    expect(runs.hasEnterRunSince('task-never-ran', planningId, at(1))).toBe(true);
+
+    // Once the task has a session record, the pass no longer reads it, and it goes.
+    database
+      .prepare('INSERT INTO sessions (id, task_id, session_type, command, cwd, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('session-first', 'task-never-ran', 'claude_agent', 'claude', '/mock/project', 'running', '2026-01-02T00:00:00.000Z');
+    runs.pruneTo(4);
+    expect(runs.listForTask('task-never-ran')).toEqual([]);
+  });
+
+  it('prunes an enter run of a task that never had an agent once it sits in To Do', () => {
+    const { database, runs, columnId, taskId } = setup();
+    // `setup` puts the task in the board's first column, To Do, which never starts an agent.
+    expect(new SwimlaneRepository(database).list().find((lane) => lane.id === columnId)?.role).toBe('todo');
+    runs.start({ id: 'todo-enter', automation: automation('a1', columnId), taskId });
+    database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run('2026-01-01T00:00:00.000Z', 'todo-enter');
+
+    expect(runs.pruneTo(0)).toBe(1);
+  });
+
+  // The keep clause reads a task's newest enter run only while the startup pass
+  // still reads it. Each case below holds every other condition true, so the
+  // one it flips is the only reason the row goes. A control task that keeps its
+  // row in the same prune shows the clause is live, so a "pruned" cannot be the
+  // clause failing to match at all.
+  describe('pruneTo, the newest enter run of a task that never had an agent', () => {
+    const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`;
+
+    function pruneSetup() {
+      const fixture = setup();
+      const { database, runs } = fixture;
+      const lanes = new SwimlaneRepository(database).list();
+      // A column with no role can start an agent. Done never does.
+      const agentColumnId = lanes.find((lane) => lane.role === null)!.id;
+      const doneColumnId = lanes.find((lane) => lane.role === 'done')!.id;
+      const insertTask = (id: string, swimlaneId: string) => database
+        .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(id, id, '', swimlaneId, 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      const recordEnter = (id: string, swimlaneId: string, taskId: string, startedAt: string) => {
+        runs.start({ id, automation: automation(`automation-${id}`, swimlaneId), taskId });
+        database.prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?').run(startedAt, id);
+      };
+      const survivingIds = () => (database.prepare('SELECT id FROM automation_runs').all() as Array<{ id: string }>)
+        .map((row) => row.id)
+        .sort();
+      return { ...fixture, agentColumnId, doneColumnId, insertTask, recordEnter, survivingIds };
+    }
+
+    // Red-green: drop `AND task.archived_at IS NULL` from the keep subquery and the archived task's row stays.
+    it('prunes it once the task is archived', () => {
+      const { database, runs, columnId, taskId, agentColumnId, insertTask, recordEnter, survivingIds } = pruneSetup();
+      insertTask('task-live', agentColumnId);
+      insertTask('task-archived', agentColumnId);
+      recordEnter('live-enter', agentColumnId, 'task-live', at(0));
+      recordEnter('archived-enter', agentColumnId, 'task-archived', at(1));
+      // The newest row fills the limit of 1, so both enter runs sit outside the window.
+      recordEnter('window-filler', columnId, taskId, at(10));
+      database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', 'task-archived');
+
+      expect(runs.pruneTo(1)).toBe(1);
+      expect(survivingIds()).toEqual(['live-enter', 'window-filler']);
+    });
+
+    // Red-green: drop 'done' from NEVER_AUTO_SPAWN_ROLES_SQL (or the role NOT IN test) and the Done task's row stays.
+    it('prunes it once the task sits in Done', () => {
+      const { runs, columnId, taskId, agentColumnId, doneColumnId, insertTask, recordEnter, survivingIds } = pruneSetup();
+      insertTask('task-in-agent-column', agentColumnId);
+      insertTask('task-in-done', doneColumnId);
+      recordEnter('agent-column-enter', agentColumnId, 'task-in-agent-column', at(0));
+      recordEnter('done-enter', doneColumnId, 'task-in-done', at(1));
+      recordEnter('window-filler', columnId, taskId, at(10));
+
+      expect(runs.pruneTo(1)).toBe(1);
+      expect(survivingIds()).toEqual(['agent-column-enter', 'window-filler']);
+    });
+
+    // Red-green: flip `newest.rowid DESC` to `ASC` in the keep subquery and the first-inserted row stays instead.
+    it('keeps the later-inserted row when two enter runs share a started_at', () => {
+      const { database, runs, columnId, taskId, agentColumnId, insertTask, recordEnter, survivingIds } = pruneSetup();
+      insertTask('task-tied', agentColumnId);
+      // The first-inserted id sorts AFTER the second, so a tie broken by id (or by
+      // insertion order read backwards) cannot pass for the right reason.
+      recordEnter('tie-b-inserted-first', agentColumnId, 'task-tied', at(0));
+      recordEnter('tie-a-inserted-second', agentColumnId, 'task-tied', at(0));
+      recordEnter('window-filler', columnId, taskId, at(10));
+      const rowOrder = (database.prepare('SELECT id FROM automation_runs ORDER BY rowid').all() as Array<{ id: string }>).map((row) => row.id);
+      expect(rowOrder.indexOf('tie-a-inserted-second')).toBeGreaterThan(rowOrder.indexOf('tie-b-inserted-first'));
+
+      expect(runs.pruneTo(1)).toBe(1);
+      expect(survivingIds()).toEqual(['tie-a-inserted-second', 'window-filler']);
+    });
+  });
+
   it('drops a task runs when the task is deleted', () => {
     const { database, runs, columnId, taskId } = setup();
     runs.start({ id: 'run-1', automation: automation('a1', columnId), taskId });

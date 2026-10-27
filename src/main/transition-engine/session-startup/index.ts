@@ -6,10 +6,10 @@
  *     `orphaned` state and respawns them (resumes via `agent_session_id`
  *     when possible). Input = dirty-shutdown state in the DB.
  *   - `autoSpawnTasks` - finds tasks in `auto_spawn=true` columns that
- *     have no PTY session and starts a fresh agent. Input = the
- *     auto-spawn invariant.
+ *     have no PTY session and starts a fresh agent, or hands a task that
+ *     never had one to the board path. Input = the auto-spawn invariant.
  *
  * Shared agent-resolution + buildCommand logic lives in `./prepare-spawn`.
  */
 export { resumeSuspendedSessions, type ResumeSuspendedOptions } from './resume-suspended';
-export { autoSpawnTasks } from './auto-spawn';
+export { autoSpawnTasks, type FirstAgentStarter } from './auto-spawn';

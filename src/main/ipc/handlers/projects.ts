@@ -5,7 +5,7 @@ import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../.
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { resumeSuspendedSessions, autoSpawnTasks, type ResumeSuspendedOptions } from '../../transition-engine/session-startup';
+import { resumeSuspendedSessions, autoSpawnTasks, type ResumeSuspendedOptions, type FirstAgentStarter } from '../../transition-engine/session-startup';
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
@@ -19,7 +19,7 @@ import { timeSyncWork } from '../../diagnostics/event-loop-lag';
 import { softly } from '../../db/soft-db';
 import { PATHS } from '../../config/paths';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
-import { ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
+import { autoSpawnForTask, ensureGitignore, leftoverSweepOptions, reapTaskLeftovers } from '../helpers';
 import { closeProjectTaskWindows, closeTaskWindows } from '../helpers/task-windows';
 import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
@@ -524,6 +524,17 @@ function recoveryOptions(
 }
 
 /**
+ * Where a project open's `autoSpawnTasks` sends a task that never had an agent:
+ * the board path, which makes its worktree before it starts the agent with the
+ * column's prompt and enter automations, as the move into the column would
+ * have. One helper for the three open paths, so none of them drifts back to a
+ * spawn in the project root. The crash's scoped pass passes none.
+ */
+function firstAgentStarter(context: IpcContext, projectId: string): FirstAgentStarter {
+  return (task, swimlaneId) => autoSpawnForTask(context, projectId, task, swimlaneId);
+}
+
+/**
  * Tell the renderer that a quit left automation runs mid-flight.
  *
  * ONE notice for the whole project open, never one per row: the shutdown path
@@ -694,7 +705,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path)))
+        .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), { startFirstAgent: firstAgentStarter(context, openedProject.id) }))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err))
         .then(() => startToolBreakdownRepair(openedProject)),
     );
@@ -843,7 +854,7 @@ export async function recoverSessionsAfterPtyHostLoss(
           project.default_model,
           project.default_effort,
           boardProfiles,
-          { taskIds: lostTaskIds, lostSessionIds },
+          { lostScope: { taskIds: lostTaskIds, lostSessionIds } },
         );
       });
     } catch (error) {
@@ -914,7 +925,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
-      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path));
+      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, project.id) });
       // Deliberately AFTER the chain (unlike the open paths, which mark up
       // front to guard rapid double-opens): a failed background activation
       // stays cold, so the user's next explicit open retries recovery.
@@ -1065,7 +1076,7 @@ export function registerProjectHandlers(context: IpcContext): void {
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
-          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path))
+          await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, id) })
             .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
           startToolBreakdownRepair(project);
         });

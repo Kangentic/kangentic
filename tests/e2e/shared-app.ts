@@ -198,13 +198,12 @@ export const test = base.extend<SharedAppFixtures>({
 
     // End this test's sessions BEFORE deleting its directory. On Windows a
     // running session holds the directory as its working directory, so the
-    // delete failed silently and the directory survived; the next page
-    // reload's background activation (activateAllProjects, 5 s after
-    // did-finish-load) then found the project still on disk and resumed its
-    // killed sessions, which piled up across tests until a later test's spawn
-    // sat queued behind maxConcurrentSessions. The cleanup runs even when the
-    // reset throws (a crashed page, or sessions that outlive the wait), or
-    // the directory would survive for exactly that reason.
+    // delete fails silently and the directory survives. A surviving directory
+    // is still a registered project, so a later cold open recovers it and
+    // resumes its killed sessions, which pile up across tests until a later
+    // test's spawn sits queued behind maxConcurrentSessions. The cleanup runs
+    // even when the reset throws (a crashed page, or sessions that outlive the
+    // wait), or the directory would survive for exactly that reason.
     try {
       await resetSharedApp(page);
     } finally {

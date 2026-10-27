@@ -52,7 +52,9 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    getLatestForTask = vi.fn(() => undefined);
+    // Every lost task had an agent: its lost session is a record. A task with
+    // none goes to the board path, which a scoped pass never takes.
+    getLatestForTask = vi.fn(() => ({ id: 'record-earlier', status: 'exited' }));
     getHeldPausedTaskIds = () => new Set<string>();
     insert = (...args: unknown[]) => mockSessionInsert(...args);
     updateAppliedSettings = vi.fn();
@@ -76,6 +78,9 @@ vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => 
 }));
 
 import { autoSpawnTasks, type LostSessionScope } from '../../src/main/transition-engine/session-startup/auto-spawn';
+// The real registries: a move or a resume in flight is read off them.
+import { registerMoveController, releaseMoveController } from '../../src/main/ipc/handlers/task-move-controllers';
+import { registerResumeController, releaseResumeController } from '../../src/main/ipc/handlers/session-resume-controllers';
 // The mocked flag (see the shutdown-state mock above), so a test can raise it mid-pass.
 import { isShuttingDown } from '../../src/main/shutdown-state';
 
@@ -139,7 +144,7 @@ async function runScopedAutoSpawn(
     null,
     null,
     [],
-    lostScope,
+    { lostScope },
   );
   return sessionManager;
 }
@@ -633,5 +638,85 @@ describe('autoSpawnTasks: a skipped spawn releases its command\'s hold', () => {
     }
 
     expect(removeHooks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A move, a resume or an `autoSpawnForTask` working on the task owns its spawn.
+ * Each can sit in an unlocked gap where the task row is already in its new
+ * column with no session and no worktree yet, so nothing on the row tells this
+ * pass to keep out: its registered controller does. On 2026-10-27 a startup pass
+ * ran while a workflow's moves were making their worktrees and started four
+ * agents with no prompt in the project root.
+ *
+ * Red-green: drop `boardSpawnInFlight` from the discovery pass and the two
+ * discovery tests prepare and spawn; drop it from the locked re-check and the
+ * two preparation tests spawn.
+ */
+describe('autoSpawnTasks: a board path working on the task owns its spawn', () => {
+  const lostRegistry = (): RegistryRow[] => [{ id: 'session-lost', taskId: 'task-lost', status: 'exited' }];
+  const removeHooks = vi.fn();
+  const registered: Array<{ kind: 'move' | 'resume'; controller: AbortController }> = [];
+
+  function preparedHoldingSpawn() {
+    const prepared = preparedSpawn('task-lost');
+    return { ...prepared, data: { ...prepared.data, adapter: { ...prepared.data.adapter, removeHooks } } };
+  }
+
+  function startBoardPath(kind: 'move' | 'resume'): void {
+    const controller = new AbortController();
+    if (kind === 'move') registerMoveController('task-lost', controller);
+    else registerResumeController('task-lost', controller);
+    registered.push({ kind, controller });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskGetById.mockReset();
+    mockTaskGetById.mockImplementation(() => undefined);
+    mockSwimlaneList.mockReturnValue([activeLane()]);
+    mockTaskList.mockReturnValue([task('task-lost')]);
+  });
+
+  afterEach(() => {
+    for (const { kind, controller } of registered.splice(0)) {
+      if (kind === 'move') releaseMoveController('task-lost', controller);
+      else releaseResumeController('task-lost', controller);
+    }
+  });
+
+  it.each(['move', 'resume'] as const)('prepares nothing for a task a %s is already working on', async (kind) => {
+    startBoardPath(kind);
+
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(mockPrepareAgentSpawn).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it.each(['move', 'resume'] as const)('does not spawn a task a %s took while its agent was prepared, and releases the hold', async (kind) => {
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => {
+      startBoardPath(kind);
+      return preparedHoldingSpawn() as never;
+    });
+
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(mockTaskUpdate).not.toHaveBeenCalled();
+    expect(mockSessionInsert).not.toHaveBeenCalled();
+    expect(removeHooks).toHaveBeenCalledWith('/mock/project', 'session-new-task-lost');
+  });
+
+  it('control: spawns once the move has settled, so the check reads the registry and not a leftover', async () => {
+    startBoardPath('move');
+    const { controller } = registered.splice(0)[0];
+    releaseMoveController('task-lost', controller);
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedHoldingSpawn() as never);
+
+    const sessionManager = await runScopedAutoSpawn(lostRegistry(), new Set(['task-lost']), new Set(['session-lost']));
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
   });
 });

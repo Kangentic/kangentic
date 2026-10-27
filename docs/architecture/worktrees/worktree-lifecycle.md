@@ -446,7 +446,7 @@ App closed
 
 App reopened
   → Recover: orphaned/suspended sessions resumed or respawned
-  → Reconcile: tasks in auto_spawn columns without sessions get fresh agents
+  → Reconcile: auto_spawn tasks with no session get agents (a task that never had one goes through autoSpawnForTask, worktree first; a task a move or resume is working on is skipped)
 ```
 
 ## Cleanup

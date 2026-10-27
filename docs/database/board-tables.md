@@ -387,6 +387,10 @@ every counted run of an automation with a Frequency limit on a task that is not 
 workflow task's own rows (the six types above) in the column it is in now, while it is not
 archived. Recovery rebuilds a parked task from those rows after a restart, which is when the
 prune runs, and one board wrote 136 to 169 rows a day, so the newest 200 can be a single night.
+It also keeps the newest enter run of a live task with no session record in the column it is in
+now, when that column is not To Do or Done. The startup reconcile reads it to leave alone a task
+whose agent failed to start after its enter group ran, rather than run that group again at every
+launch, and the prune runs unawaited beside that reconcile.
 The sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
 `running` row at boot is a known orphan, and without this "these always run" is false on every
 restart.
