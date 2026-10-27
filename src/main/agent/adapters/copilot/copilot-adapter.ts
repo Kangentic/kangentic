@@ -17,6 +17,8 @@ import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOpt
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier, AgentCapabilities } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
+import { cliPathForTarget, placeFromStored, resolveCliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
@@ -58,6 +60,8 @@ export class CopilotAdapter implements AgentAdapter {
     { mode: 'bypassPermissions', label: 'YOLO (Full Access)' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+  /** A Copilot installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
 
   private readonly detector = new CopilotDetector();
   private readonly commandBuilder = new CopilotCommandBuilder();
@@ -172,7 +176,8 @@ export class CopilotAdapter implements AgentAdapter {
         const sessionFiles = [...this.sessionConfigDirs.values()]
           .filter((tracked) => folderKey === null || sharedFolderKey(tracked.folder) === folderKey)
           .map((tracked) => path.join(tracked.configDir, COPILOT_HISTORY_FILE_NAME));
-        return [...sessionFiles, resolveCopilotHistoryPath()];
+        // A distro Copilot's default config home is the distro's.
+        return [...sessionFiles, resolveCopilotHistoryPath(context.type === 'command-injection' ? placeFromStored(context.cliTarget) : null)];
       });
     }
     // 'paste': hooks fire on tool/agent boundaries (preToolUse, postToolUse,
@@ -307,21 +312,33 @@ export class CopilotAdapter implements AgentAdapter {
     const retrieval = options?.retrieval;
     const onEvent = options?.onEvent;
     const sessionId = randomUUID();
+    // A Copilot installed in a WSL distro runs there, and its session is removed there.
+    const cliTarget = await resolveCliTarget(cliPath, true);
     const searchArgs: string[] = [];
     // A run directory goes with its run. Without one the config lands in the
     // shared answer home, so this run removes it, token and all, when it ends.
     let strayConfigPath: string | null = null;
+    let stopRelay: () => void = () => undefined;
     if (retrieval) {
-      const configPath = path.join(options?.runDirectory ?? cwd, 'copilot-answer-mcp.json');
+      const configDirectory = options?.runDirectory ?? cwd;
+      const configPath = path.join(configDirectory, 'copilot-answer-mcp.json');
       if (!options?.runDirectory) strayConfigPath = configPath;
+      // On NAT networking a distro Copilot reaches the search tool through the
+      // WSL hook transport's bridge, whose relay lives as long as this run.
+      const server = kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: configDirectory });
       // sync-write-ok: the run names this file in --additional-mcp-config and
       // cannot search without it. The throw reaches the KNOWLEDGE_GRAPH_ANSWER
       // handler's catch, which shows it as the answer's failure.
       fs.writeFileSync(configPath, JSON.stringify({
-        mcpServers: { kangentic: { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } } },
+        mcpServers: {
+          kangentic: server.kind === 'stdio'
+            ? { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } }
+            : { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } },
+        },
       }));
+      stopRelay = startRunMcpRelay(configDirectory, server);
       searchArgs.push(
-        '--additional-mcp-config', `@${configPath}`,
+        '--additional-mcp-config', `@${cliTarget ? cliPathForTarget(configPath, cliTarget) : configPath}`,
         '--allow-tool', 'kangentic',
         '--available-tools', 'kangentic',
         '--disable-builtin-mcps',
@@ -331,6 +348,7 @@ export class CopilotAdapter implements AgentAdapter {
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model and effort flags are OMITTED when none is chosen: passing an
         // empty value is an error.
         args: [
@@ -352,7 +370,8 @@ export class CopilotAdapter implements AgentAdapter {
           : {}),
       });
     } finally {
-      await fs.promises.rm(path.join(copilotHomeDir(), 'session-state', sessionId), { recursive: true, force: true })
+      stopRelay();
+      await fs.promises.rm(path.join(copilotHomeDir(cliTarget), 'session-state', sessionId), { recursive: true, force: true })
         .catch(() => undefined);
       if (strayConfigPath) await fs.promises.rm(strayConfigPath, { force: true }).catch(() => undefined);
     }

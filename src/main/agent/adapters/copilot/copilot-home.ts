@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /**
  * Copilot CLI's config home: `$COPILOT_HOME` when set, else `~/.copilot`.
@@ -13,8 +14,17 @@ import path from 'node:path';
  *
  * Only an absolute value is taken; a relative one would resolve against the
  * CLI's own working directory, which a global reader does not have.
+ *
+ * A Copilot installed in a WSL distro (`place`) has its home in the distro,
+ * under the `COPILOT_HOME` its own shell sets, else the distro's
+ * `~/.copilot`, reached through the distro's share. Seeding from it is what
+ * keeps the distro's sign-in.
  */
-export function copilotHomeDir(): string {
+export function copilotHomeDir(place: CliPlace | null = null): string {
+  if (place) {
+    const distroOverride = place.facts.env.COPILOT_HOME?.trim();
+    return distroOverride?.startsWith('/') ? hostPathForTarget(distroOverride, place) : path.join(place.facts.homeUnc, '.copilot');
+  }
   const override = process.env.COPILOT_HOME?.trim();
   return override && path.isAbsolute(override) ? override : path.join(os.homedir(), '.copilot');
 }

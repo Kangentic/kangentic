@@ -9,6 +9,7 @@ import { backgroundLaunchDirective, backgroundStopDirectives, backgroundToolMatc
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
 import { copilotHomeDir } from './copilot-home';
+import type { CliPlace } from '../../shared/cli-target';
 
 /**
  * A single hook entry under one event in a Copilot hook config.
@@ -177,7 +178,9 @@ export function buildHooks(
   const hooks: Record<string, CopilotHookEntry[]> = {};
   for (const { event, bridgeEventType, directives } of COPILOT_HOOK_EVENTS) {
     hooks[event] = [{
-      command: buildBridgeCommand(COPILOT_HOOK_SHELL, eventBridge, eventsPath, bridgeEventType, ...(directives || [])),
+      command: options.eventCommand
+        ? options.eventCommand(bridgeEventType, ...(directives || []))
+        : buildBridgeCommand(COPILOT_HOOK_SHELL, eventBridge, eventsPath, bridgeEventType, ...(directives || [])),
       timeout: 10,
     }];
   }
@@ -199,13 +202,24 @@ export interface CopilotSessionHookOptions {
    * Passed only for a session offered `kangentic_mark_background_service`.
    */
   backgroundShellHintCommand?: string | null;
+  /**
+   * For a Copilot installed in a WSL distro: builds each event hook's command
+   * in place of the node bridge (the WSL hook transport's `event`, with the
+   * same event types and directives). Copilot passes a hook its payload on
+   * stdin, which the transport reads.
+   */
+  eventCommand?: (eventType: string, ...directives: string[]) => string;
+  /** For a Copilot in a WSL distro: the status line command in place of the node status bridge. */
+  statusLineCommand?: string;
+  /** Where the CLI runs when it is a WSL distro: the session is seeded from that distro's Copilot home. */
+  place?: CliPlace | null;
 }
 
 /**
  * Resolve the user's Copilot config directory (default: `~/.copilot`).
  */
-function userCopilotConfigDir(): string {
-  return copilotHomeDir();
+function userCopilotConfigDir(place: CliPlace | null): string {
+  return copilotHomeDir(place);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -291,9 +305,12 @@ function withoutKangenticHooks(config: Record<string, unknown>): Record<string, 
 function withSessionSettings(
   config: Record<string, unknown>,
   statusOutputPath: string | undefined,
+  statusLineCommand: string | undefined,
 ): Record<string, unknown> {
   const next: Record<string, unknown> = { ...config, banner: 'never' };
-  if (statusOutputPath) {
+  if (statusLineCommand) {
+    next.statusLine = { type: 'command', command: statusLineCommand };
+  } else if (statusOutputPath) {
     const statusBridge = toForwardSlash(resolveBridgeScript('status-bridge'));
     const statusPath = toForwardSlash(statusOutputPath);
     next.statusLine = {
@@ -342,10 +359,11 @@ export function writeSessionConfig(
     JSON.stringify({ version: 1, hooks: buildHooks(eventsOutputPath, hookOptions) }, null, 2),
   );
 
-  const userDir = userCopilotConfigDir();
+  const userDir = userCopilotConfigDir(hookOptions.place ?? null);
   const settings = withSessionSettings(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'settings.json'))),
     statusOutputPath,
+    hookOptions.statusLineCommand,
   );
   // sync-write-ok: same reason as the mkdir above - carries the statusLine
   // wiring and the user's own settings for the session.
@@ -354,6 +372,7 @@ export function writeSessionConfig(
   const config = withSessionSettings(
     withoutKangenticHooks(readJsonObject(path.join(userDir, 'config.json'))),
     statusOutputPath,
+    hookOptions.statusLineCommand,
   );
   // sync-write-ok: same reason as the mkdir above - carries the signed-in
   // account the session runs as.

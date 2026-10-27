@@ -18,15 +18,18 @@ import {
 } from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 
 
 const HELP_TIMEOUT_MS = 5000;
 
 /**
  * Run `<cliPath> --help` and capture stdout.
- * On Windows, use shell invocation; on Unix, use direct execFile.
+ * On Windows, use shell invocation; on Unix, use direct execFile. A Copilot
+ * installed in a WSL distro (`target`) runs there, through `wsl.exe`.
  */
-async function readHelpText(cliPath: string): Promise<string> {
+async function readHelpText(cliPath: string, target: CliTarget | null): Promise<string> {
+  if (target) return (await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 })).stdout;
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
@@ -49,10 +52,11 @@ async function readHelpText(cliPath: string): Promise<string> {
  */
 async function detectStaticCapabilities(
   cliPath: string,
+  target: CliTarget | null,
 ): Promise<AgentCapabilities & { offersAutoModel: boolean }> {
   let helpText: string;
   try {
-    helpText = await readHelpText(cliPath);
+    helpText = await readHelpText(cliPath, target);
   } catch {
     // Help parsing failure - return conservative defaults
     return { supportsModelOverride: false, effortLevels: [], offersAutoModel: false };
@@ -107,9 +111,9 @@ const SESSION_START_HEAD_BYTES = 64 * 1024;
  *
  * Bounded to the most-recent 10 sessions, head only.
  */
-async function scanCopilotSessionHistory(): Promise<string[]> {
+async function scanCopilotSessionHistory(place: CliPlace | null): Promise<string[]> {
   const modelSet = new Set<string>();
-  const sessionsRoot = path.join(copilotHomeDir(), 'session-state');
+  const sessionsRoot = path.join(copilotHomeDir(place), 'session-state');
   const sessionDirs = await listMostRecentDirs(sessionsRoot, 10);
 
   for (const sessionDir of sessionDirs) {
@@ -140,13 +144,17 @@ async function scanCopilotSessionHistory(): Promise<string[]> {
  * Best-effort: always returns a capabilities object even if detection partially fails.
  */
 export async function discoverCopilotCapabilities(cliPath: string): Promise<AgentCapabilities> {
-  const { offersAutoModel, ...staticCapabilities } = await detectStaticCapabilities(cliPath);
+  // A Copilot installed in a WSL distro: --help runs there and its sessions are
+  // the distro's. A distro whose facts cannot be read cannot be asked either.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  if (target === undefined) return { supportsModelOverride: false, effortLevels: [] };
+  const { offersAutoModel, ...staticCapabilities } = await detectStaticCapabilities(cliPath, target);
   if (!staticCapabilities.supportsModelOverride) {
     return staticCapabilities;
   }
   let selected: string[] = [];
   try {
-    selected = await scanCopilotSessionHistory();
+    selected = await scanCopilotSessionHistory(target);
   } catch {
     // Best-effort - leave models empty on any failure.
   }
