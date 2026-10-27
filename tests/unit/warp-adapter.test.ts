@@ -13,12 +13,13 @@ import {
   agentInstallUrl,
 } from '../../src/renderer/utils/agent-display-name';
 
-// Mock which, fs, and execWarpVersion before importing adapter.
-// Warp uses `dump-debug-info` instead of `--version`, so we mock
-// execWarpVersion (exported from the adapter module) directly.
+// Mock which, fs, and the shared version probe before importing the adapter.
+// Warp's detector is the shared one with `dump-debug-info` as its version
+// command, so the probe answers with that command's output.
 let mockWhichResult: string | Error = '/usr/bin/oz';
 let mockVersionResult: string | null = 'v0.2026.04.08.08.36.stable_02';
 let execCallCount = 0;
+let lastVersionArgs: readonly string[] | undefined;
 
 vi.mock('which', () => ({
   default: async () => {
@@ -38,16 +39,16 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-// Mock version-detector so we don't spawn real processes.
-// Warp uses `dump-debug-info` instead of `--version`.
-vi.mock('../../src/main/agent/adapters/warp/version-detector', () => ({
-  execWarpVersion: async () => {
+// The shared version probe, so no real process is spawned. A null version is
+// output with no version line, which the parser rejects.
+vi.mock('../../src/main/agent/shared/exec-version', () => ({
+  execVersion: async (_candidatePath: string, _timeout?: number, args?: readonly string[]) => {
     execCallCount++;
-    return mockVersionResult;
-  },
-  parseWarpVersion: (output: string) => {
-    const match = output.match(/Warp version:\s*Some\("([^"]+)"\)/);
-    return match ? match[1] : null;
+    lastVersionArgs = args;
+    return {
+      stdout: mockVersionResult === null ? 'gpu_power_preference: HighPerformance\n' : `Warp version: Some("${mockVersionResult}")\n`,
+      stderr: '',
+    };
   },
 }));
 
@@ -149,6 +150,22 @@ describe('WarpAdapter', () => {
       // Called twice because cache was invalidated
       expect(execCallCount).toBe(2);
     });
+
+    it('asks oz for its version with dump-debug-info, since it has no --version', async () => {
+      await adapter.detect('/custom/oz');
+      expect(lastVersionArgs).toEqual(['dump-debug-info']);
+    });
+
+    // Red-green: the old detector cached one result whatever path it was
+    // asked about, so two projects with two oz installs shared the first one's.
+    it('detects each configured path on its own', async () => {
+      const first = await adapter.detect('/custom/oz');
+      mockVersionResult = 'v0.2026.05.01.00.00.stable_01';
+      const second = await adapter.detect('/other/oz');
+      expect(first.path).toBe('/custom/oz');
+      expect(second.path).toBe('/other/oz');
+      expect(second.version).toBe('v0.2026.05.01.00.00.stable_01');
+    });
   });
 
   // ── buildCommand ─────────────────────────────────────────────────────────
@@ -181,6 +198,20 @@ describe('WarpAdapter', () => {
     it('omits -C flag when cwd is undefined', () => {
       const command = adapter.buildCommand(makeOptions({ cwd: undefined }));
       expect(command).not.toContain('-C');
+    });
+
+    it('starts an oz installed in a WSL distro by its Linux path, with -C as the distro sees the folder', () => {
+      const command = adapter.buildCommand(makeOptions({
+        shell: 'wsl -d Ubuntu',
+        agentPath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\oz',
+        cwd: 'C:\\Users\\dev\\repo',
+        cliTarget: {
+          kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/oz',
+          facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' },
+        },
+      }));
+      expect(command.startsWith('/home/dev/.local/bin/oz agent run')).toBe(true);
+      expect(command).toContain('-C /mnt/c/Users/dev/repo');
     });
 
     it('includes --name with task ID', () => {

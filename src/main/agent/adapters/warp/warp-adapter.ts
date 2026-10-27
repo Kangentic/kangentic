@@ -1,5 +1,5 @@
-import which from 'which';
-import { execWarpVersion } from './version-detector';
+import { WarpDetector } from './version-detector';
+import { cliPathForTarget } from '../../shared/cli-target';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
@@ -14,11 +14,10 @@ import { ActivityDetection } from '../../../../shared/types';
  * Warp is simpler than Claude Code: no session resume, no structured
  * status/event output, no trust mechanism, no hooks, and no settings
  * merging. Permissions are managed via Warp agent profiles (--profile),
- * not individual CLI flags. Detection and command building are inlined.
+ * not individual CLI flags. Command building is inlined.
  *
- * Detection is custom because `oz` does not support `--version` - it
- * uses `dump-debug-info` instead. This cannot use the shared
- * AgentDetector (which hardcodes `--version` via `execVersion`).
+ * `oz` does not support `--version`, so its detector (`WarpDetector`) is the
+ * shared one with `dump-debug-info` as the version command.
  */
 export class WarpAdapter implements AgentAdapter {
   readonly name = 'warp';
@@ -34,55 +33,19 @@ export class WarpAdapter implements AgentAdapter {
     { mode: 'bypassPermissions', label: 'Auto (Skip Confirmations)' },
   ];
   readonly defaultPermission: PermissionMode = 'default';
+  // An oz installed in a WSL distro runs there. Oz wires no hooks, reads no
+  // transcript and is handed no MCP server, so its own path and `-C` in the
+  // distro's form are all it needs.
+  readonly supportsWslCli = true;
 
-  // Custom detection: oz uses `dump-debug-info` instead of `--version`.
-  // Caches and deduplicates like AgentDetector but with a custom version command.
-  private cached: AgentInfo | null = null;
-  private inflight: Promise<AgentInfo> | null = null;
+  private readonly detector = new WarpDetector();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
-    if (this.cached) return this.cached;
-    if (this.inflight) return this.inflight;
-
-    this.inflight = this.performDetection(overridePath);
-    try {
-      return await this.inflight;
-    } finally {
-      this.inflight = null;
-    }
+    return this.detector.detect(overridePath);
   }
 
   invalidateDetectionCache(): void {
-    this.cached = null;
-    this.inflight = null;
-  }
-
-  private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
-    // 1. User-configured override path
-    if (overridePath) {
-      const version = await execWarpVersion(overridePath);
-      if (version !== null) {
-        this.cached = { found: true, path: overridePath, version };
-        return this.cached;
-      }
-      this.cached = { found: false, path: overridePath, version: null };
-      return this.cached;
-    }
-
-    // 2. PATH-based discovery via which()
-    try {
-      const whichPath = await which('oz');
-      const version = await execWarpVersion(whichPath);
-      if (version !== null) {
-        this.cached = { found: true, path: whichPath, version };
-        return this.cached;
-      }
-    } catch {
-      // Binary not on PATH
-    }
-
-    this.cached = { found: false, path: null, version: null };
-    return this.cached;
+    this.detector.invalidateCache();
   }
 
   // Warp has no trust mechanism - no-op
@@ -90,11 +53,12 @@ export class WarpAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;
-    const parts: string[] = [quoteArg(options.agentPath, shell), 'agent', 'run'];
+    const place = options.cliTarget ?? null;
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.agentPath, shell), 'agent', 'run'];
 
-    // Working directory
+    // Working directory, as the distro sees it for an oz installed in one.
     if (options.cwd) {
-      parts.push('-C', quoteArg(options.cwd, shell));
+      parts.push('-C', quoteArg(place ? cliPathForTarget(options.cwd, place) : options.cwd, shell));
     }
 
     // Name for grouping and traceability
