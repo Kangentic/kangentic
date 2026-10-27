@@ -22,6 +22,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteArg } from '../../../../shared/paths';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -53,12 +54,16 @@ export function resetCursorCapabilityCacheForTests(): void {
  * because the win32 branch builds a SHELL STRING: the moment a caller threads a
  * path or a model id through `args`, an unquoted join is a command injection,
  * and the non-win32 `execFile` branch would not share the bug to reveal it.
+ *
+ * A Cursor installed in a WSL distro (`target`) runs there, through `wsl.exe`.
  */
 async function runCursorCli(
   cliPath: string,
   args: string[],
   timeoutMs: number,
+  target: CliTarget | null,
 ): Promise<{ stdout: string; stderr: string }> {
+  if (target) return execCliForTarget(target, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 });
   if (process.platform === 'win32') {
     // `exec` runs the line through cmd.exe here, so both the head and the args
     // take cmd's escaping. With no shell hint, quoteArg would apply PowerShell's.
@@ -84,9 +89,9 @@ async function runCursorCli(
  * listing would take the input away on an auth failure - a worse degradation
  * than the empty list it would be reporting.
  */
-async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
+async function detectModelFlagSupport(cliPath: string, target: CliTarget | null): Promise<boolean> {
   try {
-    const { stdout, stderr } = await runCursorCli(cliPath, ['--help'], HELP_TIMEOUT_MS);
+    const { stdout, stderr } = await runCursorCli(cliPath, ['--help'], HELP_TIMEOUT_MS, target);
     // Look for exact flag pattern: --model followed by whitespace and arg description.
     return /--model\s+<|--model\s+[A-Za-z]/.test(stdout + stderr);
   } catch {
@@ -141,13 +146,16 @@ export async function discoverCursorCapabilities(
 ): Promise<AgentCapabilities> {
   if (!forceRefresh && cache && cache.cliPath === cliPath) return cache.capabilities;
 
-  const supportsModelOverride = await detectModelFlagSupport(cliPath);
+  // A distro whose facts cannot be read cannot be asked either: no override
+  // support, as for a help read that failed.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  const supportsModelOverride = target === undefined ? false : await detectModelFlagSupport(cliPath, target);
 
   let models: string[] = [];
   let displayNames: Record<string, string> = {};
-  if (supportsModelOverride) {
+  if (supportsModelOverride && target !== undefined) {
     try {
-      const { stdout } = await runCursorCli(cliPath, ['--list-models'], MODELS_TIMEOUT_MS);
+      const { stdout } = await runCursorCli(cliPath, ['--list-models'], MODELS_TIMEOUT_MS, target);
       const parsed = parseCursorModelsOutput(stdout);
       models = parsed.models;
       displayNames = parsed.displayNames;
