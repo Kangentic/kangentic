@@ -337,6 +337,7 @@ test.describe('the first-launch language suggestion', () => {
       await dialog.getByRole('button', { name: '取消' }).click();
 
       await expect(dialog).toHaveCount(0);
+      // toast-count-ok: the suggestion is a persistent toast, so it never auto-dismisses inside the retry window, and the count has to outwait its exit animation.
       await expect(page.getByTestId('toast').filter({ hasText: '中文(简体)' })).toHaveCount(0);
       await expect.poll(() => answeredSuggestion(page)).toBe(true);
       expect(await restartRequests(page)).toEqual([]);
@@ -362,6 +363,7 @@ test.describe('the first-launch language suggestion', () => {
     try {
       const toast = page.getByTestId('toast').filter({ hasText: '中文(简体)' });
       await toast.getByTestId('toast-dismiss').click();
+      // toast-count-ok: the suggestion is a persistent toast, so it only leaves through this click, and the count has to outwait its exit animation.
       await expect(toast).toHaveCount(0);
       await expect.poll(() => answeredSuggestion(page)).toBe(true);
       const info = await page.evaluate(() => window.electronAPI.language.getInfo());
@@ -382,6 +384,7 @@ test.describe('the first-launch language suggestion', () => {
       await expect.poll(() => languageGetInfoCalls(page)).toBeGreaterThanOrEqual(1);
       // A toast would rise after that answer is awaited. Let it settle and commit.
       await flushFrames(page);
+      // toast-count-ok: the only toast this path could raise is the persistent suggestion, which would not auto-dismiss, and getInfo has been seen to answer above.
       await expect(page.getByTestId('toast')).toHaveCount(0);
     } finally {
       await browser.close();
