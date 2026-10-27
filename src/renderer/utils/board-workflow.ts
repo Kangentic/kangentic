@@ -112,7 +112,11 @@ export function boardMoveRefusal(
   return refusal === null ? null : translateText(refusal);
 }
 
-/** Is this error text one of the lock's refusals for this task (rather than some other failure)? */
+/**
+ * Is this error text one of the lock's refusals for this task (rather than some
+ * other failure)? Main writes the error, in English, so this compares against
+ * `WORKFLOW_REFUSALS`, never the translated set.
+ */
 export function isWorkflowLockMessage(message: string, task: Pick<Task, 'display_id'>, workflow: BoardWorkflow | null): boolean {
   if (!workflow) return false;
   const label = `#${task.display_id}`;

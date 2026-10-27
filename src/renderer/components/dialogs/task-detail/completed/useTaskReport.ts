@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { asSentence, describeIpcError } from '../../../../lib/ipc-error';
 import type { GitTaskChangesResult, TaskLastMessage, TaskReport } from '../../../../../shared/types';
 
@@ -49,7 +51,7 @@ export function useTaskChanges(projectId: string, taskId: string): {
       .then((changes) => { if (!cancelled) setState({ key, changes, error: null }); })
       .catch((error: unknown) => {
         console.warn('[completed-task] changes read failed:', error);
-        if (!cancelled) setState({ key, changes: null, error: asSentence(describeIpcError(error, ''), 'The task\'s changes could not be read.') });
+        if (!cancelled) setState({ key, changes: null, error: asSentence(describeIpcError(error, ''), i18n._(msg`The task's changes could not be read.`)) });
       });
     return () => { cancelled = true; };
   }, [key, projectId, taskId]);

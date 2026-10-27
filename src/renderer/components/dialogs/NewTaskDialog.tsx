@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { FolderOpen, Pencil, Plus, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -93,6 +94,7 @@ function projectsInSidebarOrder(projects: readonly Project[], groups: readonly P
 }
 
 export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogProps) {
+  const { t } = useLingui();
   const createTask = useBoardStore((s) => s.createTask);
   const currentProject = useProjectStore((s) => s.currentProject);
   const isMaximized = useSessionStore((s) => s.maximizedTasks.has(NEW_TASK_ENTITY_ID));
@@ -298,9 +300,10 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
 
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
+      const oversizedFileName = file.name;
       useToastStore.getState().addToast({
-        title: 'File too large',
-        message: `"${file.name}" is over the 10 MB limit.`,
+        title: t`File too large`,
+        message: t`"${oversizedFileName}" is over the 10 MB limit.`,
         variant: 'warning',
       });
       return;
@@ -331,7 +334,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       media_type: mediaType,
       previewUrl,
     }]);
-  }, []);
+  }, [t]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((previous) => {
@@ -463,11 +466,12 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       });
       // Revoke all preview URLs
       attachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
+      const openBoardLaneName = openBoardLane?.name ?? '';
       useToastStore.getState().addToast({
-        title: 'Task created',
+        title: t`Task created`,
         message: openBoardLane
-          ? `"${taskTitle}" is in ${openBoardLane.name}.`
-          : `"${taskTitle}" is on the board.`,
+          ? t`"${taskTitle}" is in ${openBoardLaneName}.`
+          : t`"${taskTitle}" is on the board.`,
         variant: 'info',
         ...(createdInProjectId
           ? { onOpen: () => openTaskFromNotification(createdInProjectId, createdTask.id) }
@@ -482,7 +486,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       // are not lost and the user can retry.
       console.error('[NewTaskDialog] Failed to create task:', error);
       useToastStore.getState().addToast({
-        title: "Couldn't create task",
+        title: t`Couldn't create task`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -507,7 +511,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           // or Settings (agent) over this dialog; Escape then belongs to
           // whichever of those is on top, alone.
           suppressEscape={boardManagerOpen || settingsOpen}
-          title={workflow?.title ?? 'New Task'}
+          title={workflow?.title ?? t`New Task`}
           // Editing a planned task carries the board's Edit Task pencil; adding one, the plus.
           icon={initial
             ? <Pencil size={14} className="text-fg-muted" data-testid="new-task-dialog-edit-icon" />
@@ -524,7 +528,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
           footer={
             <DialogFooterActions
               onCancel={closeWithAnimation}
-              submitLabel={workflow?.submitLabel ?? 'Create'}
+              submitLabel={workflow?.submitLabel ?? t`Create`}
               busy={submitting}
               disabled={!!branchNameError || heldReason !== null}
               disabledReason={heldReason}
@@ -556,7 +560,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
               <input
                 ref={inputRef}
                 type="text"
-                placeholder="Task title"
+                placeholder={t`Task title`}
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
                 className="flex-1 min-w-0 bg-surface-control border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
@@ -666,7 +670,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
             {/* Drag overlay */}
             {isDragOver && (
               <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-                <span className="text-sm text-accent-fg font-medium">Drop files here</span>
+                <span className="text-sm text-accent-fg font-medium"><Trans>Drop files here</Trans></span>
               </div>
             )}
           </div>
@@ -676,11 +680,11 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
       {/* Discard-unsaved-changes confirmation (close gestures route here when dirty) */}
       {confirmDiscard && (
         <ConfirmDialog
-          title="Discard unsaved changes?"
+          title={t`Discard unsaved changes?`}
           variant="warning"
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
-          message={initial ? 'Closing now will discard your changes to this task.' : 'Closing now will discard this new task and its unsaved changes.'}
+          confirmLabel={t`Discard`}
+          cancelLabel={t`Keep editing`}
+          message={initial ? t`Closing now will discard your changes to this task.` : t`Closing now will discard this new task and its unsaved changes.`}
           onConfirm={() => { setConfirmDiscard(false); onClose(); }}
           onCancel={() => setConfirmDiscard(false)}
         />

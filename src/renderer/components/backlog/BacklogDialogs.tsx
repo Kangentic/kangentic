@@ -1,4 +1,6 @@
 import { useCallback } from 'react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { NewBacklogTaskDialog } from './NewBacklogTaskDialog';
 import { ImportDialog } from './ImportDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -12,6 +14,7 @@ import { useConfigStore } from '../../stores/config-store';
  * BoardDialogs pattern.
  */
 export function BacklogDialogs() {
+  const { t } = useLingui();
   const showNewDialog = useBacklogStore((state) => state.showNewDialog);
   const editingItem = useBacklogStore((state) => state.editingItem);
   const pendingDeleteId = useBacklogStore((state) => state.pendingDeleteId);
@@ -86,12 +89,12 @@ export function BacklogDialogs() {
 
       {pendingDeleteId && (
         <ConfirmDialog
-          title="Delete backlog task"
+          title={t`Delete backlog task`}
           message={<>
-            <p>This will permanently delete the backlog task.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p><Trans>This will permanently delete the backlog task.</Trans></p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel="Delete"
+          confirmLabel={t({ message: 'Delete', context: 'button' })}
           variant="danger"
           showDontAskAgain
           onConfirm={handleConfirmDelete}
@@ -101,12 +104,18 @@ export function BacklogDialogs() {
 
       {pendingBulkDelete && (
         <ConfirmDialog
-          title={`Delete ${selectedCount} backlog tasks`}
+          title={t`Delete ${plural(selectedCount, { one: '# backlog task', other: '# backlog tasks' })}`}
           message={<>
-            <p>This will permanently delete {selectedCount} backlog tasks.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p>
+              <Plural
+                value={selectedCount}
+                one="This will permanently delete # backlog task."
+                other="This will permanently delete # backlog tasks."
+              />
+            </p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel={`Delete ${selectedCount} items`}
+          confirmLabel={t`Delete ${plural(selectedCount, { one: '# item', other: '# items' })}`}
           variant="danger"
           showDontAskAgain
           onConfirm={handleConfirmBulkDelete}

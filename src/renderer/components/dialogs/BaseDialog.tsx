@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { Tooltip } from '../Tooltip';
@@ -139,6 +140,8 @@ export function BaseDialog({
   closeRef,
   onHeaderDoubleClick,
 }: BaseDialogProps) {
+  const { t } = useLingui();
+  const closeDialogLabel = t`Close dialog`;
   // The shared overlay phase machine (entering -> visible -> exiting) drives the
   // open/close animation and unmounts via onClose when the exit animation ends.
   const {
@@ -279,11 +282,11 @@ export function BaseDialog({
             {headerRight}
             {/* The consumer's bound close hotkey (e.g. panel.close) shows as key chips. An
                 omitted id draws none. Escape, the hidden universal closer, is never shown. */}
-            <Tooltip label="Close dialog" keys={closeHotkeyActionId}>
+            <Tooltip label={closeDialogLabel} keys={closeHotkeyActionId}>
               <button
                 type="button"
                 onClick={requestCloseViaGuard}
-                aria-label="Close dialog"
+                aria-label={closeDialogLabel}
                 className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
               >
                 <X size={16} />
@@ -341,7 +344,7 @@ export function DialogFooterActions({
   onCancel,
   onConfirm,
   confirmLabel,
-  cancelLabel = 'Cancel',
+  cancelLabel,
   confirmDisabled = false,
   cancelTestId,
   confirmTestId,
@@ -361,6 +364,8 @@ export function DialogFooterActions({
    */
   leading?: React.ReactNode;
 }) {
+  const { t } = useLingui();
+  const cancelText = cancelLabel ?? t`Cancel`;
   return (
     <div className={`flex items-center ${leading ? 'justify-between' : 'justify-end'}`}>
       {leading}
@@ -371,7 +376,7 @@ export function DialogFooterActions({
           data-testid={cancelTestId}
           className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
         >
-          {cancelLabel}
+          {cancelText}
         </button>
         <button
           type="button"

@@ -1,5 +1,7 @@
 import { Image as ImageIcon, FileText, FileCode, File as FileIcon } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../stores/toast-store';
 import { asSentence } from '../../lib/ipc-error';
 
@@ -84,15 +86,15 @@ export async function openAttachmentWithToast(
     const errorMessage = await invokeOpen();
     if (errorMessage) {
       useToastStore.getState().addToast({
-        title: `Couldn't open "${filename}"`,
-        message: 'Showing it in the file manager instead.',
+        title: i18n._(msg`Couldn't open "${{ filename }}"`),
+        message: i18n._(msg`Showing it in the file manager instead.`),
         variant: 'warning',
       });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     useToastStore.getState().addToast({
-      title: `Couldn't open "${filename}"`,
+      title: i18n._(msg`Couldn't open "${{ filename }}"`),
       message: asSentence(message),
       variant: 'warning',
     });
@@ -110,13 +112,13 @@ export function getFileTypeIcon(mediaType: string): LucideIcon {
 
 /** Return a human-readable label for a media type. */
 export function getFileTypeLabel(mediaType: string): string {
-  if (mediaType.startsWith('image/')) return 'Image';
-  if (mediaType === 'application/pdf') return 'PDF Document';
-  if (mediaType === 'application/x-ipynb+json') return 'Jupyter Notebook';
-  if (mediaType === 'application/json') return 'JSON File';
-  if (mediaType === 'application/xml') return 'XML File';
-  if (mediaType.startsWith('text/')) return 'Text File';
-  return 'File';
+  if (mediaType.startsWith('image/')) return i18n._(msg({ message: 'Image', context: 'file type' }));
+  if (mediaType === 'application/pdf') return i18n._(msg({ message: 'PDF Document', context: 'file type' }));
+  if (mediaType === 'application/x-ipynb+json') return i18n._(msg({ message: 'Jupyter Notebook', context: 'file type' }));
+  if (mediaType === 'application/json') return i18n._(msg({ message: 'JSON File', context: 'file type' }));
+  if (mediaType === 'application/xml') return i18n._(msg({ message: 'XML File', context: 'file type' }));
+  if (mediaType.startsWith('text/')) return i18n._(msg({ message: 'Text File', context: 'file type' }));
+  return i18n._(msg({ message: 'File', context: 'file type' }));
 }
 
 /**

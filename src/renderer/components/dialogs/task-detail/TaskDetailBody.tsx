@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
 import { PreSpawnContextBar } from '../../terminal/PreSpawnContextBar';
@@ -122,6 +123,7 @@ export function TaskDetailBody({
   dormant: dormantProp,
   parked = false,
 }: TaskDetailBodyProps) {
+  const { t } = useLingui();
   const retained = retainedProjectId !== undefined;
   const dormant = dormantProp ?? retained;
   // Project-scoped values come from the HOST, never from the open board: this
@@ -318,7 +320,7 @@ export function TaskDetailBody({
   }
 
   const changesContent = (
-    <PanelErrorBoundary label="Changes panel">
+    <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
       <Suspense fallback={<ChangesPanelSkeleton />}>
         <ChangesPanel
           entityId={task.id}
@@ -352,7 +354,7 @@ export function TaskDetailBody({
   // Draggable seam between the main pane (terminal / launch overlay) and the
   // right panel. Shared by the active-terminal and preparing branches.
   const splitDivider = (
-    <Tooltip label="Drag to resize">
+    <Tooltip label={t`Drag to resize`}>
       <div
         onMouseDown={onSplitResizeStart}
         data-testid="task-detail-split-divider"
@@ -553,7 +555,7 @@ export function TaskDetailBody({
             className={`${showDescriptionPanel ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
             style={showDescriptionPanel ? { flexBasis: `${splitRatio * 100}%` } : undefined}
           >
-            <LaunchOverlay label={spawnLabel ?? 'Starting agent...'} />
+            <LaunchOverlay label={spawnLabel ?? t`Starting agent...`} />
           </div>
           {showDescriptionPanel && splitDivider}
           {showDescriptionPanel && (
@@ -596,10 +598,10 @@ export function TaskDetailBody({
       ? <Loader2 size={16} className="animate-spin" />
       : <Play size={16} />;
     const toggleLabel = !toggling
-      ? 'Resume session'
+      ? t`Resume session`
       : pendingAction === 'pausing'
-        ? 'Pausing agent...'
-        : 'Resuming agent...';
+        ? t`Pausing agent...`
+        : t`Resuming agent...`;
     return (
       <>
         <div className="flex-1 min-h-0 flex">
@@ -616,14 +618,14 @@ export function TaskDetailBody({
               {resumeFailed && onResetSession && (
                 <div className="flex flex-col items-center gap-2 mt-1">
                   <p className="text-xs text-fg-muted text-center max-w-sm">
-                    {resumeError || 'Session could not be resumed.'}
+                    {resumeError || t`Session could not be resumed.`}
                   </p>
                   <button
                     onClick={onResetSession}
                     className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs text-fg-muted hover:text-fg hover:bg-surface-hover border border-edge-input transition-colors"
                   >
                     <RotateCcw size={14} />
-                    Reset session
+                    <Trans>Reset session</Trans>
                   </button>
                 </div>
               )}
@@ -653,7 +655,7 @@ export function TaskDetailBody({
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-fg-disabled text-sm p-8">
-                  No active session
+                  <Trans>No active session</Trans>
                 </div>
               )}
             </div>
@@ -670,7 +672,7 @@ export function TaskDetailBody({
     return (
       <>
         <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm p-8">
-          No active session. Drag this task into a column that starts an agent.
+          <Trans>No active session. Drag this task into a column that starts an agent.</Trans>
         </div>
         <PreSpawnContextBar taskId={task.id} />
       </>

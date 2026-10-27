@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Bot, Info, Loader2, MessageSquare, PanelLeftClose, PanelLeftOpen, Play, Settings, X } from 'lucide-react';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { workflowAgentChoice, workflowAgentSetupGap } from '../../../shared/workflow-agent-choice';
@@ -90,6 +91,7 @@ export { useWorkflowAgentWorking };
  * place in the row.
  */
 export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId: string; floating?: boolean }) {
+  const { t } = useLingui();
   const storedWidth = useConfigStore((state) => state.config.workflows?.agentPaneWidth);
   const updateConfig = useConfigStore((state) => state.updateConfig);
   // The width a finished drag set, held until the setting it saved comes back;
@@ -272,7 +274,8 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   }, [toggling, live, pauseAgent, resumeAgent]);
 
   if (collapsed || folded) {
-    const stripMarkLabel = working ? 'Workflow agent is working' : 'Workflow agent is waiting for you';
+    const stripMarkLabel = working ? t`Workflow agent is working` : t`Workflow agent is waiting for you`;
+    const showAgentLabel = t`Show the workflow agent`;
     return (
       <div
         className="flex flex-shrink-0 flex-col items-center gap-2 border-r border-edge bg-surface py-2"
@@ -281,7 +284,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         data-collapsed="true"
         data-folded={folded ? 'true' : 'false'}
       >
-        <Tooltip label="Show the workflow agent">
+        <Tooltip label={showAgentLabel}>
           <button
             type="button"
             onClick={() => {
@@ -290,7 +293,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
               if (collapsed) setCollapsed(false);
             }}
             className="rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-            aria-label="Show the workflow agent"
+            aria-label={showAgentLabel}
             data-testid="workflow-agent-pane-expand"
           >
             <PanelLeftOpen size={16} />
@@ -313,7 +316,12 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
 
   // A Resume while the setting is not complete is one main would refuse.
   const canToggle = unavailable === null && session !== null && !showSetup;
-  const toggleLabel = toggling ? 'Working' : live ? 'Pause session' : 'Resume session';
+  const toggleLabel = toggling
+    ? t({ message: 'Working', context: 'agent pane state' })
+    : live ? t`Pause session` : t`Resume session`;
+  const collapseLabel = t`Collapse agent`;
+  const viewConversationLabel = t`View conversation`;
+  const dismissLabel = t`Dismiss`;
 
   const pane = (
     <div
@@ -348,27 +356,27 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
             </button>
           </Tooltip>
         )}
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">Workflow agent</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg"><Trans>Workflow agent</Trans></span>
         {/* Task detail's own Conversation control: the transcript viewer, on the
             conversation the workflow keeps, so it opens with the agent paused too. */}
-        <Tooltip label={tipLabel({ disabled: !conversationId, disabledReason: 'No conversation yet', tip: 'View conversation' })}>
+        <Tooltip label={tipLabel({ disabled: !conversationId, disabledReason: t`No conversation yet`, tip: viewConversationLabel })}>
           <button
             type="button"
             onClick={() => { if (conversationId) useSessionStore.getState().setConversationSessionId(conversationId); }}
             disabled={!conversationId}
             className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-            aria-label="View conversation"
+            aria-label={viewConversationLabel}
             data-testid="workflow-agent-conversation"
           >
             <MessageSquare size={16} />
           </button>
         </Tooltip>
-        <Tooltip label="Collapse agent">
+        <Tooltip label={collapseLabel}>
           <button
             type="button"
             onClick={() => setCollapsed(true)}
             className="flex-shrink-0 rounded p-1 text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-tertiary"
-            aria-label="Collapse agent"
+            aria-label={collapseLabel}
             data-testid="workflow-agent-pane-collapse"
           >
             <PanelLeftClose size={16} />
@@ -386,14 +394,14 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         >
           <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
           <span className="min-w-0 flex-1 text-[13px] text-fg-secondary">
-            The earlier conversation could not be resumed, so the agent started a new one.
+            <Trans>The earlier conversation could not be resumed, so the agent started a new one.</Trans>
           </span>
-          <Tooltip label="Dismiss">
+          <Tooltip label={dismissLabel}>
             <button
               type="button"
               onClick={dismissStartedOver}
               className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg-secondary"
-              aria-label="Dismiss"
+              aria-label={dismissLabel}
               data-testid="workflow-agent-started-over-dismiss"
             >
               <X size={14} />
@@ -413,7 +421,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
         ) : queued ? (
           <PaneNotice testId="workflow-agent-queued">
             <Loader2 size={14} className="animate-spin" />
-            Waiting for a free agent slot...
+            <Trans>Waiting for a free agent slot...</Trans>
           </PaneNotice>
         ) : showSetup ? (
           <WorkflowAgentSetup chosen={!settingIncomplete} startsOnClose={!awaitsRequest} />
@@ -429,22 +437,22 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
               className="flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30 disabled:opacity-50"
             >
               {toggling ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              {toggling ? 'Resuming agent...' : 'Resume session'}
+              {toggling ? t`Resuming agent...` : t`Resume session`}
             </button>
           </div>
         ) : (
           <PaneNotice testId="workflow-agent-starting">
             <Loader2 size={14} className="animate-spin" />
-            Starting the workflow agent...
+            <Trans>Starting the workflow agent...</Trans>
           </PaneNotice>
         )}
       </div>
       {/* The edge: drag to widen or narrow the pane; the width is kept. */}
-      <Tooltip label="Drag to resize">
+      <Tooltip label={t`Drag to resize`}>
         <div
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize the workflow agent"
+          aria-label={t`Resize the workflow agent`}
           aria-valuenow={width}
           onMouseDown={startResize}
           data-no-dismiss
@@ -480,6 +488,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
  * starts nothing: the line says the agent starts when the user asks instead.
  */
 function WorkflowAgentSetup({ chosen, startsOnClose }: { chosen: boolean; startsOnClose: boolean }) {
+  const { t } = useLingui();
   return (
     <div
       className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50 px-12 text-center"
@@ -487,14 +496,14 @@ function WorkflowAgentSetup({ chosen, startsOnClose }: { chosen: boolean; starts
       data-setting={chosen ? 'chosen' : 'needed'}
     >
       <Bot size={28} className="text-fg-faint" aria-hidden="true" />
-      <h2 className="text-base font-semibold text-fg">{chosen ? 'Workflow agent chosen' : 'Choose a workflow agent'}</h2>
+      <h2 className="text-base font-semibold text-fg">{chosen ? t`Workflow agent chosen` : t`Choose a workflow agent`}</h2>
       {/* One line at the pane's default width; a narrowed pane wraps it evenly. */}
       <p className="text-balance text-sm text-fg-muted">
         {chosen
-          ? 'It starts when you close Settings.'
+          ? t`It starts when you close Settings.`
           : startsOnClose
-            ? 'It plans your workflows, and starts when you close Settings.'
-            : 'It plans your workflows, and starts when you ask for changes.'}
+            ? t`It plans your workflows, and starts when you close Settings.`
+            : t`It plans your workflows, and starts when you ask for changes.`}
       </p>
       {!chosen && (
         <button
@@ -504,7 +513,7 @@ function WorkflowAgentSetup({ chosen, startsOnClose }: { chosen: boolean; starts
           className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30"
         >
           <Settings size={16} />
-          Open Settings
+          <Trans>Open Settings</Trans>
         </button>
       )}
     </div>
@@ -522,13 +531,14 @@ function WorkflowAgentSetup({ chosen, startsOnClose }: { chosen: boolean; starts
  * may have written the plan but the workflow's own agent has not read it.
  */
 function WorkflowAgentPlanSaved({ starting, onAsk }: { starting: boolean; onAsk: () => void }) {
+  const { t } = useLingui();
   return (
     <div
       className="flex h-full flex-col items-center justify-center gap-3 bg-surface/50 px-12 text-center"
       data-testid="workflow-agent-plan-saved"
     >
       <Bot size={28} className="text-fg-faint" aria-hidden="true" />
-      <h2 className="text-base font-semibold text-fg">The workflow agent has not seen this plan</h2>
+      <h2 className="text-base font-semibold text-fg"><Trans>The workflow agent has not seen this plan</Trans></h2>
       <button
         type="button"
         onClick={onAsk}
@@ -537,7 +547,7 @@ function WorkflowAgentPlanSaved({ starting, onAsk }: { starting: boolean; onAsk:
         className="mt-1.5 flex items-center gap-2.5 rounded-lg border border-accent/40 bg-accent/20 px-6 py-3 text-base text-accent-fg transition-colors hover:bg-accent/30 disabled:opacity-50"
       >
         {starting ? <Loader2 size={16} className="animate-spin" /> : <MessageSquare size={16} />}
-        {starting ? 'Starting agent...' : 'Ask for changes'}
+        {starting ? t`Starting agent...` : t`Ask for changes`}
       </button>
     </div>
   );

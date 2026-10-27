@@ -38,6 +38,8 @@ src/renderer/components/workflows/
   workflow-canvas-context.ts # the workflow a node reads for its link hint
   workflow-graph.ts        # pure: waiting, link and route guards, run order
   workflow-layout.ts       # pure: the layered auto layout
+  workflow-text.ts         # pure: count, stalled and progress sentences, each a whole translated message
+  workflow-aria-labels.ts  # the canvas's screen-reader labels, in the session's language
 src/renderer/components/board/
   WorkflowTaskCardBody.tsx # a workflow task's board card: the strip, and the To Do footer
   card-links-preview.ts    # a 400ms rest on a workflow card previews its links; a press on it holds them through the drag and after the drop while the pointer stays on it
@@ -47,7 +49,7 @@ src/renderer/components/board/
 src/renderer/utils/
   board-workflow.ts        # a card's workflow facts from the summaries, and the lock asked on the board
   motion-reduced.ts        # the Animations setting (or the web build's reduced motion), read when a motion starts
-  workflow-refusal.ts      # a refused move: main's sentence, a click that opens the workflow, the links overlay
+  workflow-refusal.ts      # a refused move: the refusal sentence in the session's language, a click that opens the workflow, the links overlay
 ```
 
 - **One store** (`workflow-store.ts`): the project's summaries (each carries `boardTasks`, every

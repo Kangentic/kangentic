@@ -6,3 +6,68 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: ja\n"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Cancel"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Connect"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Connect Asana"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Could not save the token."
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Create a Personal Access Token"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Hide token"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open app.asana.com/0/my-apps"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open Asana developer settings"
+msgstr ""
+
+#. The two highlighted phrases are labels in Asana's own English interface. Keep them as written.
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste it here"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste your Personal Access Token to continue."
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste your token"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Personal Access Token"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Show token"
+msgstr ""
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."
+msgstr ""

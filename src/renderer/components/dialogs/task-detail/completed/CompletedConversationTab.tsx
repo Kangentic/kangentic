@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2, MessageSquare } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { ConversationBody } from '../../../conversation/ConversationBody';
 import { useConversationState } from '../../../conversation/use-conversation-state';
 import type { ConversationTabRequest } from '../../../../../shared/types';
@@ -51,7 +52,7 @@ export function CompletedConversationTab({ taskId, projectId, isFocused, tabRequ
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center" data-testid="completed-conversation-empty">
         <MessageSquare size={24} className="text-fg-disabled" />
-        <div className="text-sm text-fg-muted">This task has no conversation history</div>
+        <div className="text-sm text-fg-muted"><Trans>This task has no conversation history</Trans></div>
       </div>
     );
   }

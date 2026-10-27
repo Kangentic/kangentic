@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 
 interface ConfirmDialogProps {
@@ -31,11 +32,11 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  confirmLabel,
+  cancelLabel,
   variant = 'default',
   showDontAskAgain = false,
-  dontAskAgainLabel = "Don't ask again",
+  dontAskAgainLabel,
   testId,
   icon,
   confirmIcon,
@@ -43,6 +44,11 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useLingui();
+  // The defaults resolve here, not in the parameter list, so they read the session's catalog.
+  const confirmText = confirmLabel ?? t`Confirm`;
+  const cancelText = cancelLabel ?? t`Cancel`;
+  const dontAskAgainText = dontAskAgainLabel ?? t`Don't ask again`;
   const [dontAskAgainChecked, setDontAskAgainChecked] = useState(false);
   const hasSecondaryAction = secondaryAction !== undefined;
 
@@ -95,7 +101,7 @@ export function ConfirmDialog({
                 onChange={(event) => setDontAskAgainChecked(event.target.checked)}
                 className="accent-accent rounded border-edge-input bg-surface"
               />
-              <span className="text-xs text-fg-muted">{dontAskAgainLabel}</span>
+              <span className="text-xs text-fg-muted">{dontAskAgainText}</span>
             </label>
           )}
           <div className="flex justify-end gap-3 ml-auto">
@@ -103,7 +109,7 @@ export function ConfirmDialog({
               onClick={onCancel}
               className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
             >
-              {cancelLabel}
+              {cancelText}
             </button>
             {secondaryAction && (
               <button
@@ -122,7 +128,7 @@ export function ConfirmDialog({
               className={`px-4 py-1.5 text-xs rounded transition-colors ${confirmIcon ? 'inline-flex items-center gap-1.5' : ''} ${confirmStyles[variant]}`}
             >
               {confirmIcon}
-              {confirmLabel}
+              {confirmText}
             </button>
           </div>
         </div>

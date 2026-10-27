@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import animations from '@kangentic/branding/assets/mascot/animations.json';
 import overseerRestUrl from '@kangentic/branding/assets/mascot/overseer.svg?url';
 import overseerBlinkUrl from '@kangentic/branding/assets/mascot/overseer-blink.svg?url';
@@ -114,6 +115,7 @@ export interface OverseerMascotProps {
  * - At most one Overseer per view (sprite-drafting convention).
  */
 export function OverseerMascot({ scale, sequence = 'none', intro, className = '' }: OverseerMascotProps) {
+  const { t } = useLingui();
   // Whether the current intro has finished. State rather than a ref, so the
   // playing flag is derived from it and the intro prop, and a swap of intro
   // resets it during render (React's "adjusting state when a prop changes"
@@ -173,7 +175,7 @@ export function OverseerMascot({ scale, sequence = 'none', intro, className = ''
       ref={rootRef}
       className={`overseer ${sequenceClass} ${className}`}
       role="img"
-      aria-label="Pixel-art Kangentic mascot"
+      aria-label={t`Pixel-art Kangentic mascot`}
       style={{ width: scale * 18 }}
       onAnimationEnd={() => {
         // wave-once animates both its rest and wave tracks, so two events land;

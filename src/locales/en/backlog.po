@@ -6,3 +6,545 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "\"{fileName}\" is over the 10 MB limit."
+msgstr "\"{fileName}\" is over the 10 MB limit."
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{duplicateCount} already in the backlog"
+msgstr "{duplicateCount} already in the backlog"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{importedCount} imported"
+msgstr "{importedCount} imported"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
+msgstr "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
+msgstr "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source"
+msgid "{provider} {sourceType}"
+msgstr "{provider} {sourceType}"
+
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+msgid "{selectedCount, plural, one {This will permanently delete # backlog task.} other {This will permanently delete # backlog tasks.}}"
+msgstr "{selectedCount, plural, one {This will permanently delete # backlog task.} other {This will permanently delete # backlog tasks.}}"
+
+#: src/renderer/components/backlog/BacklogBulkToolbar.tsx
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{selectedCount} selected"
+msgstr "{selectedCount} selected"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
+msgstr "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
+msgstr "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "{summary}."
+msgstr "{summary}."
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "Add Label"
+msgstr "Add Label"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "Add labels when creating tasks"
+msgstr "Add labels when creating tasks"
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "Add Priority"
+msgstr "Add Priority"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Add Source"
+msgstr "Add Source"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import state filter"
+msgid "All"
+msgstr "All"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "All items have been imported"
+msgstr "All items have been imported"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import filter"
+msgid "Assignee"
+msgstr "Assignee"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgctxt "button"
+msgid "Back"
+msgstr "Back"
+
+#: src/renderer/components/backlog/BacklogView.tsx
+msgid "Backlog is empty"
+msgstr "Backlog is empty"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgctxt "button"
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "Change color"
+msgstr "Change color"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Clear filters"
+msgstr "Clear filters"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "CLI check failed"
+msgstr "CLI check failed"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "CLI not available"
+msgstr "CLI not available"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "CLI not available or not authenticated"
+msgstr "CLI not available or not authenticated"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import state filter"
+msgid "Closed"
+msgstr "Closed"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Closing now will discard this new backlog task and its unsaved changes."
+msgstr "Closing now will discard this new backlog task and its unsaved changes."
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Closing now will discard your unsaved edits to this backlog task."
+msgstr "Closing now will discard your unsaved edits to this backlog task."
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Coming soon"
+msgstr "Coming soon"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
+msgstr "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Connect"
+msgstr "Connect"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Couldn't delete backlog task"
+msgstr "Couldn't delete backlog task"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Couldn't remove attachment"
+msgstr "Couldn't remove attachment"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Couldn't save backlog task"
+msgstr "Couldn't save backlog task"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgctxt "button"
+msgid "Create"
+msgstr "Create"
+
+#: src/renderer/components/backlog/BacklogView.tsx
+msgid "Create or import items to stage work before promoting to the board"
+msgstr "Create or import items to stage work before promoting to the board"
+
+#: src/renderer/components/backlog/BacklogView.tsx
+msgid "Create your first task"
+msgstr "Create your first task"
+
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgctxt "column header"
+msgid "Created"
+msgstr "Created"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Created {createdAgo}, updated {updatedAgo}"
+msgstr "Created {createdAgo}, updated {updatedAgo}"
+
+#: src/renderer/components/backlog/manage-labels/ColorPickerPopover.tsx
+msgid "Custom color"
+msgstr "Custom color"
+
+#: src/renderer/components/backlog/BacklogBulkToolbar.tsx
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgctxt "button"
+msgid "Delete"
+msgstr "Delete"
+
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+msgid "Delete {selectedCount, plural, one {# backlog task} other {# backlog tasks}}"
+msgstr "Delete {selectedCount, plural, one {# backlog task} other {# backlog tasks}}"
+
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+msgid "Delete {selectedCount, plural, one {# item} other {# items}}"
+msgstr "Delete {selectedCount, plural, one {# item} other {# items}}"
+
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Delete backlog task"
+msgstr "Delete backlog task"
+
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+msgid "Delete item"
+msgstr "Delete item"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "Delete label"
+msgstr "Delete label"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "Delete label \"{pendingDeleteLabelName}\""
+msgstr "Delete label \"{pendingDeleteLabelName}\""
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "Delete priority"
+msgstr "Delete priority"
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgid "Delete priority \"{pendingDeletePriorityLabel}\""
+msgstr "Delete priority \"{pendingDeletePriorityLabel}\""
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Discard"
+msgstr "Discard"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Discard unsaved changes?"
+msgstr "Discard unsaved changes?"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Drop files here"
+msgstr "Drop files here"
+
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+msgctxt "button"
+msgid "Edit"
+msgstr "Edit"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Edit Backlog Task"
+msgstr "Edit Backlog Task"
+
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+msgid "Edit item"
+msgstr "Edit item"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Failed to add source"
+msgstr "Failed to add source"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Failed to sync issues"
+msgstr "Failed to sync issues"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "File too large"
+msgstr "File too large"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Filter by ID, title, label, or assignee..."
+msgstr "Filter by ID, title, label, or assignee..."
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Hide imported items"
+msgstr "Hide imported items"
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "High"
+msgstr "High"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "button"
+msgid "Import"
+msgstr "Import"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Import ({selectedCount})"
+msgstr "Import ({selectedCount})"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Import failed"
+msgstr "Import failed"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a GitHub Project board"
+msgstr "Import from a GitHub Project board"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from a repository issue tracker"
+msgstr "Import from a repository issue tracker"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import from Azure DevOps boards"
+msgstr "Import from Azure DevOps boards"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Import Sources"
+msgstr "Import Sources"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "Import Tasks"
+msgstr "Import Tasks"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Import tasks from an Asana project"
+msgstr "Import tasks from an Asana project"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import row badge"
+msgid "imported"
+msgstr "imported"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import filter"
+msgid "Imported"
+msgstr "Imported"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Importing..."
+msgstr "Importing..."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Issues"
+msgstr "Issues"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Issues imported"
+msgstr "Issues imported"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Keep editing"
+msgstr "Keep editing"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import filter"
+msgid "Label"
+msgstr "Label"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "Label name"
+msgstr "Label name"
+
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgctxt "column header"
+msgid "Labels"
+msgstr "Labels"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgctxt "toolbar button"
+msgid "Labels"
+msgstr "Labels"
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "Low"
+msgstr "Low"
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "Medium"
+msgstr "Medium"
+
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+msgid "Move {selectedCount} to Board"
+msgstr "Move {selectedCount} to Board"
+
+#: src/renderer/components/backlog/PromotePopover.tsx
+msgid "Move to"
+msgstr "Move to"
+
+#: src/renderer/components/backlog/view/BacklogRowActions.tsx
+msgid "Move to board"
+msgstr "Move to board"
+
+#: src/renderer/components/backlog/BacklogBulkToolbar.tsx
+#: src/renderer/components/backlog/BacklogContextMenu.tsx
+msgid "Move to Board"
+msgstr "Move to Board"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "New Backlog Task"
+msgstr "New Backlog Task"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "No items found"
+msgstr "No items found"
+
+#: src/renderer/components/backlog/BacklogView.tsx
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "No items match your filters"
+msgstr "No items match your filters"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "No labels yet"
+msgstr "No labels yet"
+
+#: src/renderer/components/backlog/ImportPopover.tsx
+msgid "No sources configured. Add one to start."
+msgstr "No sources configured. Add one to start."
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "None"
+msgstr "None"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import state filter"
+msgid "Open"
+msgstr "Open"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgid "Open in {sourceName}"
+msgstr "Open in {sourceName}"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste any Asana project URL (list, board, or calendar view)."
+msgstr "Paste any Asana project URL (list, board, or calendar view)."
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
+msgstr "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste the full URL to your GitHub Project"
+msgstr "Paste the full URL to your GitHub Project"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Paste the full URL to your GitHub repository"
+msgstr "Paste the full URL to your GitHub repository"
+
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgctxt "toolbar button"
+msgid "Priorities"
+msgstr "Priorities"
+
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgctxt "column header"
+msgid "Priority"
+msgstr "Priority"
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "Priority {number}"
+msgstr "Priority {number}"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Project"
+msgstr "Project"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Projects"
+msgstr "Projects"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Refresh to check for new items"
+msgstr "Refresh to check for new items"
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+msgctxt "button"
+msgid "Rename"
+msgstr "Rename"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Retry"
+msgstr "Retry"
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgctxt "button"
+msgid "Save"
+msgstr "Save"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Select all"
+msgstr "Select all"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Show imported items"
+msgstr "Show imported items"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import filter"
+msgid "Status"
+msgstr "Status"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgid "Syncing..."
+msgstr "Syncing..."
+
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "Task title"
+msgstr "Task title"
+
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "This action cannot be undone."
+msgstr "This action cannot be undone."
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "This label is not assigned to any items."
+msgstr "This label is not assigned to any items."
+
+#: src/renderer/components/backlog/BacklogDialogs.tsx
+#: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+msgid "This will permanently delete the backlog task."
+msgstr "This will permanently delete the backlog task."
+
+#: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+msgid "This will remove the label from {pendingDeleteLabelCount, plural, one {# item} other {# items}}."
+msgstr "This will remove the label from {pendingDeleteLabelCount, plural, one {# item} other {# items}}."
+
+#: src/renderer/components/backlog/view/useBacklogColumns.tsx
+msgctxt "column header"
+msgid "Title"
+msgstr "Title"
+
+#: src/renderer/components/backlog/ImportDialog.tsx
+msgctxt "import filter"
+msgid "Type"
+msgstr "Type"
+
+#: src/renderer/components/backlog/priority-labels.ts
+msgctxt "priority"
+msgid "Urgent"
+msgstr "Urgent"
+
+#: src/renderer/components/backlog/import-providers.tsx
+msgctxt "import source type"
+msgid "Work Items"
+msgstr "Work Items"

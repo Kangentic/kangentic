@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { GitPullRequest } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Field, FIELD_CONTROL_CLASS } from '../../Field';
 import { TaskBranchRow } from '../TaskBranchRow';
 import { PriorityLabelsRow } from '../PriorityLabelsRow';
@@ -75,6 +76,7 @@ export function TaskDetailEditForm({
   isArchived,
   isInTodo,
 }: TaskDetailEditFormProps) {
+  const { t } = useLingui();
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   // The HOSTING project's path, not the open board's: an @-mention search must
@@ -100,7 +102,7 @@ export function TaskDetailEditForm({
         <input
           ref={titleInputRef}
           type="text"
-          placeholder="Task title"
+          placeholder={t`Task title`}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           className="flex-1 min-w-0 bg-surface-control border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
@@ -137,9 +139,10 @@ export function TaskDetailEditForm({
         testIdPrefix="task-"
       />
       {!isInTodo && (
-        <Field label={<span className="flex items-center gap-1"><GitPullRequest size={12} />Pull Request</span>}>
+        <Field label={<span className="flex items-center gap-1"><GitPullRequest size={12} /><Trans>Pull Request</Trans></span>}>
           <input
             type="url"
+            // i18n-ok: a URL-shaped example, not prose
             placeholder="https://github.com/owner/repo/pull/123"
             value={prUrl}
             onChange={(e) => setPrUrl(e.target.value)}
@@ -199,7 +202,7 @@ export function TaskDetailEditForm({
       )}
       {attachments.isDragOver && (
         <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-          <span className="text-sm text-accent-fg font-medium">Drop files here</span>
+          <span className="text-sm text-accent-fg font-medium"><Trans>Drop files here</Trans></span>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Check } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { OverseerMascot } from './OverseerMascot';
@@ -13,6 +14,7 @@ import {
 } from '../../hooks/useOnboardingProgress';
 import { WALKTHROUGH_STEPS, resolveNextStep, resolveStepLabel } from './walkthrough-steps';
 import { useWalkthroughActivation } from './useWalkthroughActivation';
+import { translateText } from '../../i18n/translate';
 
 /**
  * The onboarding checklist: five steps, each opening the surface where it happens.
@@ -23,6 +25,7 @@ import { useWalkthroughActivation } from './useWalkthroughActivation';
  * control, but never fills anything in.
  */
 export function WelcomeChecklistDialog() {
+  const { t } = useLingui();
   const currentProject = useProjectStore((state) => state.currentProject);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   const setOnboardingChecklistOpen = useConfigStore((state) => state.setOnboardingChecklistOpen);
@@ -98,8 +101,11 @@ export function WelcomeChecklistDialog() {
   // Three states, because one label cannot honestly cover them. "Next step" on a list where
   // nothing has been done yet names a place the user has not been.
   const primaryLabel = progress.complete
-    ? 'Done'
-    : progress.doneCount === 0 ? 'Start' : 'Next step';
+    ? t({ message: 'Done', context: 'onboarding button' })
+    : progress.doneCount === 0 ? t({ message: 'Start', context: 'onboarding button' }) : t({ message: 'Next step', context: 'onboarding button' });
+  // Named, so the translator reads {doneCount} and {stepCount}.
+  const doneCount = progress.doneCount;
+  const stepCount = ONBOARDING_STEP_COUNT;
 
   const handlePrimaryClick = () => {
     const next = resolveNextStep(stepDone, null);
@@ -132,9 +138,9 @@ export function WelcomeChecklistDialog() {
           <OverseerMascot scale={5} intro="wave-once" sequence="blink-loop" />
         </div>
         <div className="text-center mb-5">
-          <h2 className="text-base font-medium text-fg">Welcome to Kangentic</h2>
+          <h2 className="text-base font-medium text-fg"><Trans>Welcome to Kangentic</Trans></h2>
           <p className="text-sm text-fg-muted mt-1">
-            Five steps to your first agent run. Take them in any order.
+            <Trans>Five steps to your first agent run. Take them in any order.</Trans>
           </p>
         </div>
 
@@ -179,7 +185,7 @@ export function WelcomeChecklistDialog() {
                     {/* text-sm, not text-xs: ui-conventions.md puts descriptions and hints at
                         14px or larger, and this is the first copy a brand-new user reads. */}
                     <span className="block text-sm text-fg-muted mt-0.5 leading-relaxed">
-                      {step.description}
+                      {translateText(step.description)}
                     </span>
                   </span>
                 </button>
@@ -190,7 +196,7 @@ export function WelcomeChecklistDialog() {
 
         <div className="flex items-center justify-between gap-3 mt-5 pt-4 border-t border-edge/50">
           <span className="text-xs text-fg-faint" data-testid="onboarding-progress">
-            {progress.doneCount} of {ONBOARDING_STEP_COUNT} done
+            <Trans>{doneCount} of {stepCount} done</Trans>
           </span>
           {/* A primary action, so the way forward is never something to hunt for in the list.
               It starts the next unfinished step directly; the rows stay clickable for anyone
@@ -204,7 +210,7 @@ export function WelcomeChecklistDialog() {
                 className="px-3 py-1.5 text-sm font-medium rounded text-fg-muted hover:text-fg hover:bg-surface-hover cursor-pointer transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 data-testid="onboarding-skip"
               >
-                Skip for now
+                <Trans>Skip for now</Trans>
               </button>
             )}
             <button

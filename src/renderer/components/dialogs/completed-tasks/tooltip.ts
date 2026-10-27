@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import type { SessionSummary } from '../../../../shared/types';
 
 /**
@@ -12,7 +14,10 @@ import type { SessionSummary } from '../../../../shared/types';
  */
 export function buildToolsTooltip(summary: SessionSummary): string {
   const breakdown = summary.toolBreakdown ?? [];
-  if (breakdown.length === 0) return `${summary.toolCallCount} tool calls`;
+  if (breakdown.length === 0) {
+    const toolCallCount = summary.toolCallCount;
+    return i18n._(msg`${plural(toolCallCount, { one: '# tool call', other: '# tool calls' })}`);
+  }
   const sorted = breakdown
     .slice()
     .sort((a, b) => (b.callCount + b.interruptedCount) - (a.callCount + a.interruptedCount))

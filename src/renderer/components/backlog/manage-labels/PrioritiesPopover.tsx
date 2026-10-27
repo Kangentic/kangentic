@@ -14,6 +14,8 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
@@ -22,7 +24,8 @@ import { useConfigStore } from '../../../stores/config-store';
 import { useHmrGeneration } from '../../../utils/hmr-generation';
 import { IntentKeyboardSensor } from '../../../utils/intent-keyboard-sensor';
 import { KEYBOARD_SENSOR_OPTIONS, POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
-import type { AppConfig } from '../../../../shared/types';
+import { DEFAULT_PRIORITY_CONFIG, type AppConfig } from '../../../../shared/types';
+import { displayPriorityLabel, storedPriorityLabel } from '../priority-labels';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { PopoverShell } from './PopoverShell';
 import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
@@ -33,6 +36,7 @@ interface PrioritiesPopoverProps {
 }
 
 export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [pendingDeletePriority, setPendingDeletePriority] = useState<{ index: number; label: string; count: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -44,16 +48,13 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts.
   const hmrGeneration = useHmrGeneration();
 
-  // useMemo so the default-array fallback keeps a stable identity across renders;
-  // otherwise `?? [...]` makes a fresh array each render and destabilizes every
-  // hook below that depends on priorities.
-  const priorities = useMemo(() => config.backlog?.priorities ?? [
-    { label: 'None', color: '#6b7280' },
-    { label: 'Low', color: '#6b7280' },
-    { label: 'Medium', color: '#eab308' },
-    { label: 'High', color: '#f97316' },
-    { label: 'Urgent', color: '#ef4444' },
-  ], [config.backlog?.priorities]);
+  // The fallback is a module constant, so its identity is stable across renders.
+  const priorities = config.backlog?.priorities ?? DEFAULT_PRIORITY_CONFIG;
+  const prioritiesLabel = t({ message: 'Priorities', context: 'toolbar button' });
+  // Named locals, so a translator reads `{pendingDeletePriorityLabel}`, not `{0}`.
+  const pendingDeletePriorityLabel = displayPriorityLabel(pendingDeletePriority?.label ?? '');
+  const pendingDeletePriorityCount = pendingDeletePriority?.count ?? 0;
+  const fallbackPriorityLabel = displayPriorityLabel(priorities[0]?.label ?? 'None');
 
   // Close on click outside
   useEffect(() => {
@@ -109,6 +110,7 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
   }, [priorities, config.backlog, updateConfig]);
 
   const handleAdd = useCallback(() => {
+    // Stored English, like the seeded names: displayPriorityLabel translates it on display.
     const updated = [...priorities, { label: `Priority ${priorities.length}`, color: '#6b7280' }];
     updateConfig({ backlog: { ...config.backlog, priorities: updated } } as Partial<AppConfig>);
   }, [priorities, config.backlog, updateConfig]);
@@ -159,12 +161,12 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label="Priorities" enabled={!open}>
+      <Tooltip label={prioritiesLabel} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setOpen(!open)}
-          aria-label="Priorities"
+          aria-label={prioritiesLabel}
           className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
             open
               ? 'text-fg border-accent/50 bg-surface-control/40'
@@ -173,7 +175,7 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
           data-testid="manage-priorities-btn"
         >
           <Flag size={14} className="shrink-0" />
-          <span className={collapse?.label}>Priorities</span>
+          <span className={collapse?.label}>{prioritiesLabel}</span>
         </button>
       </Tooltip>
 
@@ -229,16 +231,16 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
             className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
           >
             <Plus size={14} />
-            Add Priority
+            <Trans>Add Priority</Trans>
           </button>
         </div>
       </PopoverShell>
 
       {pendingDeletePriority && (
         <ConfirmDialog
-          title={`Delete priority "${pendingDeletePriority.label}"`}
-          message={`${pendingDeletePriority.count} item${pendingDeletePriority.count !== 1 ? 's' : ''} with this priority will be reset to "${priorities[0]?.label ?? 'None'}".`}
-          confirmLabel="Delete"
+          title={t`Delete priority "${pendingDeletePriorityLabel}"`}
+          message={t`${plural(pendingDeletePriorityCount, { one: '# item', other: '# items' })} with this priority will be reset to "${fallbackPriorityLabel}".`}
+          confirmLabel={t({ message: 'Delete', context: 'button' })}
           variant="danger"
           showDontAskAgain
           onConfirm={(dontAskAgain) => {
@@ -269,21 +271,28 @@ function PriorityRow({
   onColorChange: (newColor: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useLingui();
   const [showColorPicker, setShowColorPicker] = useState(false);
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(false);
-  const [editValue, setEditValue] = useState(label);
+  // `label` is the stored English name; the pill and the rename field show it as the
+  // session's language reads it, and a rename saves it back through storedPriorityLabel.
+  const shownLabel = displayPriorityLabel(label);
+  const [editValue, setEditValue] = useState(shownLabel);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const changeColorLabel = t`Change color`;
+  const renameLabel = t({ message: 'Rename', context: 'button' });
+  const deletePriorityLabel = t`Delete priority`;
 
   const startEditing = () => {
-    setEditValue(label);
+    setEditValue(shownLabel);
     setEditing(true);
     setTimeout(() => editInputRef.current?.focus(), 0);
   };
 
   const saveEdit = () => {
     const trimmed = editValue.trim();
-    if (trimmed && trimmed !== label) onRename(trimmed);
+    if (trimmed && trimmed !== shownLabel) onRename(storedPriorityLabel(trimmed));
     setEditing(false);
   };
 
@@ -322,12 +331,12 @@ function PriorityRow({
       )}
 
       <div className="relative flex-shrink-0">
-        <Tooltip label="Change color" enabled={!showColorPicker}>
+        <Tooltip label={changeColorLabel} enabled={!showColorPicker}>
           <button
             ref={colorButtonRef}
             type="button"
             onClick={() => setShowColorPicker(!showColorPicker)}
-            aria-label="Change color"
+            aria-label={changeColorLabel}
           >
             {editing ? (
               <span
@@ -340,7 +349,7 @@ function PriorityRow({
                 className="font-medium border cursor-pointer"
                 style={{ color, backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
               >
-                {label}
+                {shownLabel}
               </Pill>
             )}
           </button>
@@ -374,24 +383,24 @@ function PriorityRow({
 
       {!editing && <div className="flex-1" />}
 
-      <Tooltip label="Rename">
+      <Tooltip label={renameLabel}>
         <button
           type="button"
           onClick={startEditing}
           className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
-          aria-label="Rename"
+          aria-label={renameLabel}
         >
           <Pencil size={12} />
         </button>
       </Tooltip>
 
       {!isLocked ? (
-        <Tooltip label="Delete priority">
+        <Tooltip label={deletePriorityLabel}>
           <button
             type="button"
             onClick={onDelete}
             className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
-            aria-label="Delete priority"
+            aria-label={deletePriorityLabel}
           >
             <Trash2 size={13} />
           </button>

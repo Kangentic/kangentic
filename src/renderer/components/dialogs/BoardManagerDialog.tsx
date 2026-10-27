@@ -4,6 +4,10 @@ import {
   RotateCcw, Palette, ChevronRight, Trash2, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
+import { i18n } from '@lingui/core';
+import { plural } from '@lingui/core/macro';
+import { msg } from '@lingui/core/runtime-macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { Tooltip } from '../Tooltip';
 import { IsolatedIcon } from '../IsolatedBadge';
@@ -89,6 +93,7 @@ import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import type { LocalizedText } from '../../../shared/i18n/text';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
 const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
@@ -117,11 +122,17 @@ type SectionId = 'general' | 'agent' | 'auto';
  * is reinforced by its own contents. `Columns3Cog` stays free for the
  * automations card.
  */
-const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
-  { id: 'general', label: 'General', icon: Sliders },
-  { id: 'agent', label: 'Agent', icon: Bot },
-  { id: 'auto', label: 'Conversation', icon: MessageSquare },
+const SECTIONS: { id: SectionId; label: LocalizedText; icon: typeof Sliders }[] = [
+  { id: 'general', label: msg`General`, icon: Sliders },
+  { id: 'agent', label: msg`Agent`, icon: Bot },
+  { id: 'auto', label: msg`Conversation`, icon: MessageSquare },
 ];
+
+/** The Main and Isolated session names, shared by the Session control and the overview's Session cell. */
+const SESSION_TARGET_LABELS = {
+  main: msg({ message: 'Main', context: 'session target' }),
+  isolated: msg({ message: 'Isolated', context: 'session target' }),
+};
 
 /**
  * A session is a CHANNEL the board owns, not something a task owns: a task rides
@@ -129,26 +140,56 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Sliders }[] = [
  * "the task's session". These are the channels, in the app's own words, the same
  * ones `session_target`, the docs and the MCP column tools use.
  *
- * Module scope because `SegmentedControl` keys its measuring effect on the
+ * Cached per language because `SegmentedControl` keys its measuring effect on the
  * `options` array and this dialog re-renders on every keystroke in Name. A fresh
  * array per render would rebuild its ResizeObserver, and force a synchronous
- * layout read, once per character.
+ * layout read, once per character. Built at render, after the catalog loads.
  */
-const SESSION_TARGET_OPTIONS: readonly SegmentedControlOption<SessionTarget>[] = [
-  { value: 'main', label: 'Main', tip: 'Share the task\'s conversation with the other columns.', testId: 'column-session-target-main' },
-  { value: 'isolated', label: 'Isolated', icon: <IsolatedIcon size={12} />, tip: 'Start a clean conversation on every entry.', testId: 'column-session-target-isolated' },
-];
+const sessionTargetOptionsByLocale = new Map<string, readonly SegmentedControlOption<SessionTarget>[]>();
+function sessionTargetOptions(): readonly SegmentedControlOption<SessionTarget>[] {
+  const cached = sessionTargetOptionsByLocale.get(i18n.locale);
+  if (cached) return cached;
+  const built: readonly SegmentedControlOption<SessionTarget>[] = [
+    {
+      value: 'main',
+      label: translateText(SESSION_TARGET_LABELS.main),
+      tip: translateText(msg`Share the task's conversation with the other columns.`),
+      testId: 'column-session-target-main',
+    },
+    {
+      value: 'isolated',
+      label: translateText(SESSION_TARGET_LABELS.isolated),
+      icon: <IsolatedIcon size={12} />,
+      tip: translateText(msg`Start a clean conversation on every entry.`),
+      testId: 'column-session-target-isolated',
+    },
+  ];
+  sessionTargetOptionsByLocale.set(i18n.locale, built);
+  return built;
+}
 
-const SESSION_TARGET_INFO = 'Columns share the task\'s main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.';
-
-const PLAN_APPROVAL_INFO = 'Whether you approve each plan or Kangentic does. A workflow task can override it for itself.';
-const AFTER_PLAN_MODE_INFO = 'Where the task goes when the agent exits Plan mode.';
-
-/** Automatic first, the order the design settled on; Manual stays the default. Module scope for the reason above. */
-const PLAN_APPROVAL_OPTIONS: readonly SegmentedControlOption<PlanApproval>[] = [
-  { value: 'automatic', label: 'Automatic', tip: 'Approve each plan for you. Questions the agent asks still wait.', testId: 'column-plan-approval-automatic' },
-  { value: 'manual', label: 'Manual', tip: 'You approve each plan in the agent\'s terminal.', testId: 'column-plan-approval-manual' },
-];
+/** Automatic first, the order the design settled on; Manual stays the default. Cached per language for the reason above. */
+const planApprovalOptionsByLocale = new Map<string, readonly SegmentedControlOption<PlanApproval>[]>();
+function planApprovalBaseOptions(): readonly SegmentedControlOption<PlanApproval>[] {
+  const cached = planApprovalOptionsByLocale.get(i18n.locale);
+  if (cached) return cached;
+  const built: readonly SegmentedControlOption<PlanApproval>[] = [
+    {
+      value: 'automatic',
+      label: translateText(msg({ message: 'Automatic', context: 'plan approval' })),
+      tip: translateText(msg`Approve each plan for you. Questions the agent asks still wait.`),
+      testId: 'column-plan-approval-automatic',
+    },
+    {
+      value: 'manual',
+      label: translateText(msg({ message: 'Manual', context: 'plan approval' })),
+      tip: translateText(msg`You approve each plan in the agent's terminal.`),
+      testId: 'column-plan-approval-manual',
+    },
+  ];
+  planApprovalOptionsByLocale.set(i18n.locale, built);
+  return built;
+}
 
 /**
  * The Plan approval options for the column's agent. Automatic is offered only
@@ -161,15 +202,17 @@ function planApprovalOptionsFor({ agentCanApprove, agentDisplayName, underProfil
   agentDisplayName: string;
   underProfile: boolean;
 }): readonly SegmentedControlOption<PlanApproval>[] {
+  const baseOptions = planApprovalBaseOptions();
   if (underProfile) {
-    return PLAN_APPROVAL_OPTIONS.map((option) => ({
+    const profileReason = translateText(msg`Plan approval is shared by every profile. Switch to Default to change it.`);
+    return baseOptions.map((option) => ({
       ...option,
       disabled: true,
-      disabledReason: 'Plan approval is shared by every profile. Switch to Default to change it.',
+      disabledReason: profileReason,
     }));
   }
-  if (agentCanApprove) return PLAN_APPROVAL_OPTIONS;
-  return PLAN_APPROVAL_OPTIONS.map((option) => (option.value === 'automatic'
+  if (agentCanApprove) return baseOptions;
+  return baseOptions.map((option) => (option.value === 'automatic'
     ? { ...option, disabled: true, disabledReason: translateText(agentCannotApprovePlans(agentDisplayName)) }
     : option));
 }
@@ -487,6 +530,8 @@ function makeNewDraft(): Swimlane {
   const id = `${NEW_DRAFT_PREFIX}${crypto.randomUUID()}`;
   return {
     id,
+    // Persisted and shared through kangentic.json: English, never translated.
+    // Column names are matched by name in search-commands.ts and apply-config.ts.
     name: 'New column',
     description: null,
     role: null,
@@ -557,7 +602,7 @@ function ResetHint({ onClick, tip }: { onClick: () => void; tip: string }) {
         className="flex flex-shrink-0 items-center gap-1 text-xs text-fg-faint hover:text-fg-tertiary transition-colors"
       >
         <RotateCcw size={11} />
-        Reset
+        <Trans>Reset</Trans>
       </button>
     </Tooltip>
   );
@@ -579,7 +624,7 @@ function SettingsSection({ section, children, className }: {
   className?: string;
 }) {
   return (
-    <SectionCard id={section.id} label={section.label} icon={section.icon} className={className}>
+    <SectionCard id={section.id} label={translateText(section.label)} icon={section.icon} className={className}>
       {children}
     </SectionCard>
   );
@@ -611,6 +656,7 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
    */
   profileName?: string | null;
 }) {
+  const { t } = useLingui();
   const iconName = useSwimlaneIconName(draft);
   // Identity only: small tinted icon + name + role badge + position + the
   // active profile. Removal is the dialog footer's leading control, so the
@@ -622,13 +668,13 @@ function DetailIdentityHeader({ draft, position, total, profileName }: {
       ) : (
         <span className="block w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: draft.color }} />
       )}
-      <span className="text-sm font-semibold text-fg truncate">{draft.name || 'Untitled'}</span>
+      <span className="text-sm font-semibold text-fg truncate">{draft.name || t`Untitled`}</span>
       {draft.role && (
         <Pill size="sm" className="bg-surface-control/60 text-fg-faint flex-shrink-0">
-          {draft.role === 'todo' ? 'To Do' : 'Done'}
+          {draft.role === 'todo' ? t({ message: 'To Do', context: 'column role' }) : t({ message: 'Done', context: 'column role' })}
         </Pill>
       )}
-      <Pill size="sm" className="bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+      <Pill size="sm" className="bg-surface-control/60 text-fg-faint flex-shrink-0"><Trans>{position} of {total}</Trans></Pill>
       {profileName && (
         <Pill
           size="sm"
@@ -653,8 +699,9 @@ function RemoveColumnTarget({ column, position, total }: {
   position: number;
   total: number;
 }) {
+  const { t } = useLingui();
   const iconName = useSwimlaneIconName(column);
-  const name = column.name.trim() || 'Untitled';
+  const name = column.name.trim() || t`Untitled`;
   return (
     <div className="flex items-center gap-2.5 rounded bg-surface px-3 py-2 text-sm font-medium text-fg">
       {iconName ? (
@@ -665,7 +712,7 @@ function RemoveColumnTarget({ column, position, total }: {
       <Tooltip label={name}>
         <span className="min-w-0 truncate" data-testid="board-manager-remove-target">{name}</span>
       </Tooltip>
-      <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+      <Pill size="sm" className="ml-auto bg-surface-control/60 text-fg-faint flex-shrink-0"><Trans>{position} of {total}</Trans></Pill>
     </div>
   );
 }
@@ -692,6 +739,7 @@ interface BoardManagerDialogProps {
 }
 
 export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequest, onClose }: BoardManagerDialogProps) {
+  const { t } = useLingui();
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const tasks = useBoardStore((s) => s.tasks);
   const updateSwimlane = useBoardStore((s) => s.updateSwimlane);
@@ -1009,9 +1057,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     () => describeAutomationChanges(
       automationOriginals,
       automationDrafts,
-      (columnId) => drafts[columnId]?.name?.trim() || 'Untitled column',
+      (columnId) => drafts[columnId]?.name?.trim() || t`Untitled column`,
     ),
-    [automationOriginals, automationDrafts, drafts],
+    [automationOriginals, automationDrafts, drafts, t],
   );
 
   const dirtyIds = useMemo(
@@ -1079,10 +1127,17 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // here" is off has no agent or session settings to inherit. Both dash, and
       // the `title` says which.
       const isTerminal = laneDraft.role === 'todo' || laneDraft.role === 'done';
-      const terminalName = laneDraft.role === 'todo' ? 'To Do' : 'Done';
+      const terminalName = laneDraft.role === 'todo'
+        ? t({ message: 'To Do', context: 'column role' })
+        : t({ message: 'Done', context: 'column role' });
+      // The same message the Automations pane and the Edit automation dialog show.
+      const columnName = terminalName;
+      const defaultLabel = t({ message: 'Default', context: 'board overview value' });
+      const startAgentLabel = t`Start an agent here`;
+      const handoffLabel = t`Hand off context when the agent changes`;
       const agentReason = isTerminal
-        ? `Sessions don't run in ${terminalName} columns.`
-        : 'Start an agent here is off.';
+        ? t`Sessions don't run in ${terminalName} columns.`
+        : t`Start an agent here is off.`;
       const agentApplies = !isTerminal && laneDraft.auto_spawn;
 
       // A value cell: the real wording, and whether anyone chose it.
@@ -1134,11 +1189,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         // rather than showing a ghost switch in the off position, which would
         // claim the setting exists. A normal column always has it.
         autoSpawn: isTerminal
-          ? { on: false, applicable: false, reason: agentReason, ariaLabel: 'Start an agent here' }
-          : { on: laneDraft.auto_spawn, applicable: true, ariaLabel: 'Start an agent here' },
+          ? { on: false, applicable: false, reason: agentReason, ariaLabel: startAgentLabel }
+          : { on: laneDraft.auto_spawn, applicable: true, ariaLabel: startAgentLabel },
         agent: value(agentLabel, !!overrideName),
         model: {
-          ...value(modelOverride ? modelRowLabel(modelOverride, laneDisplayNames) : 'Default', !!modelOverride),
+          ...value(modelOverride ? modelRowLabel(modelOverride, laneDisplayNames) : defaultLabel, !!modelOverride),
           ...(agentApplies && modelOverride
             ? {
                 tip: modelAliasTitle(modelOverride, laneAliases, laneDisplayNames) ?? undefined,
@@ -1146,19 +1201,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               }
             : {}),
         },
-        effort: value(laneDraft.effort_override || 'Default', !!laneDraft.effort_override),
+        effort: value(laneDraft.effort_override || defaultLabel, !!laneDraft.effort_override),
         permission: value(
           laneDraft.permission_mode
             ? getPermissionLabel(laneAgentInfo?.permissions ?? DEFAULT_PERMISSIONS, laneDraft.permission_mode)
-            : 'Default',
+            : defaultLabel,
           !!laneDraft.permission_mode,
         ),
         handoff: agentApplies
-          ? { on: laneDraft.handoff_context, applicable: true, ariaLabel: 'Hand off context when the agent changes' }
-          : { on: false, applicable: false, reason: agentReason, ariaLabel: 'Hand off context when the agent changes' },
+          ? { on: laneDraft.handoff_context, applicable: true, ariaLabel: handoffLabel }
+          : { on: false, applicable: false, reason: agentReason, ariaLabel: handoffLabel },
         session: laneDraft.session_target === 'isolated'
-          ? { ...value('Isolated', true), icon: <IsolatedIcon size={14} /> }
-          : value('Main', false),
+          ? { ...value(translateText(SESSION_TARGET_LABELS.isolated), true), icon: <IsolatedIcon size={14} /> }
+          : value(translateText(SESSION_TARGET_LABELS.main), false),
         // The counts are what will RUN: a switched-off or blocked row is not
         // counted and not named. This view answers "what happens when a task
         // moves", and an off row is visible and fixable one click away.
@@ -1166,12 +1221,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         // An enter row can never fire on To Do or Done, so that cell dashes
         // there while On exit stays a real count.
         onEnter: isTerminal
-          ? { label: '0', changed: false, applicable: false, reason: `Nothing runs when a task enters ${terminalName}.` }
+          ? { label: '0', changed: false, applicable: false, reason: t`Nothing runs when a task enters ${columnName}.` }
           : { label: String(counts.enter), changed: counts.enter > 0, applicable: true, reason: nameRows('enter') },
         // No agent works in To Do or Done, so no turn ends there either; nor in
         // a column with no agent, or one whose agent reports no turn end.
         onTurnEnd: isTerminal
-          ? { label: '0', changed: false, applicable: false, reason: `Nothing runs at a turn end in ${terminalName}.` }
+          ? { label: '0', changed: false, applicable: false, reason: t`Nothing runs at a turn end in ${terminalName}.` }
           : !turnEndGroup.ok
             ? { label: '0', changed: false, applicable: false, reason: translateText(turnEndGroup.reason) }
             : { label: String(counts.turn_end), changed: counts.turn_end > 0, applicable: true, reason: nameRows('turn_end') },
@@ -1180,7 +1235,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     });
   }, [
     laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgent, projectDefaultAgentLabel,
-    automationDrafts, automationOriginals, discoveredModelsByAgent,
+    automationDrafts, automationOriginals, discoveredModelsByAgent, t,
   ]);
 
   // Effective-agent resolution for the column manager: column draft's
@@ -1320,8 +1375,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       setActiveId(invalid);
       setAutoFocusNameId(invalid);
       useToastStore.getState().addToast({
-        title: 'Column needs a name',
-        message: 'Name it before saving.',
+        title: t`Column needs a name`,
+        message: t`Name it before saving.`,
         variant: 'error',
       });
       return;
@@ -1335,7 +1390,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       if (!unnamed) continue;
       setActiveId(columnId);
       setEditing({ columnId, rowId: unnamed.id, isNew: false });
-      useToastStore.getState().addToast({ title: 'Automation needs a name', message: 'Name it before saving.', variant: 'error' });
+      useToastStore.getState().addToast({ title: t`Automation needs a name`, message: t`Name it before saving.`, variant: 'error' });
       return;
     }
 
@@ -1379,6 +1434,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     // `pendingDeleteIds`; ones that fail stay staged so the user can fix the
     // cause (a task moved in behind them) and re-save just those.
     for (const id of pendingDeleteIds) {
+      // Also the key `pruneProfileReferencesForColumn` matches by name, so the
+      // 'column' fallback is data, not copy, and stays English.
       const deletedColumnName = originals[id]?.name ?? 'column';
       try {
         await deleteSwimlane(id);
@@ -1410,9 +1467,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         savedDeletes += 1;
       } catch (error) {
         if (!firstError) {
+          const reasonText = error instanceof Error ? error.message : '';
           firstError = error instanceof Error
-            ? new Error(`Couldn't delete "${deletedColumnName}": ${error.message}`)
-            : new Error(`Couldn't delete "${deletedColumnName}"`);
+            ? new Error(t`Couldn't delete "${deletedColumnName}": ${reasonText}`)
+            : new Error(t`Couldn't delete "${deletedColumnName}"`);
         }
       }
     }
@@ -1552,10 +1610,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           }));
         } catch (error) {
           if (!firstError) {
-            const columnName = drafts[entry.columnId]?.name ?? 'column';
+            const columnName = drafts[entry.columnId]?.name ?? t({ message: 'column', context: 'column name fallback' });
+            const reasonText = error instanceof Error ? error.message : '';
             firstError = error instanceof Error
-              ? new Error(`Couldn't save automations on "${columnName}": ${error.message}`)
-              : new Error(`Couldn't save automations on "${columnName}"`);
+              ? new Error(t`Couldn't save automations on "${columnName}": ${reasonText}`)
+              : new Error(t`Couldn't save automations on "${columnName}"`);
           }
         }
       }
@@ -1584,45 +1643,53 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         if (await saveBoardProfiles(profilesToSave)) {
           setProfileOriginals(structuredClone(profilesToSave) as BoardProfile[]);
         } else {
-          firstError = new Error("Couldn't save profiles");
+          firstError = new Error(t`Couldn't save profiles`);
         }
       } catch (error) {
         firstError = error instanceof Error ? error : new Error(String(error));
       }
     }
 
+    // Parts joined into one clause: "a, b and c". The leading parts join with a
+    // comma and the last is one message, so a language can order them as it needs.
+    const joinParts = (parts: string[]): string => {
+      if (parts.length < 2) return parts[0] ?? '';
+      const leadingParts = parts.slice(0, -1).join(', ');
+      const lastPart = parts[parts.length - 1];
+      return t`${leadingParts} and ${lastPart}`;
+    };
+
     if (firstError) {
       const savedTotal = savedUpdates + savedCreates + savedDeletes;
       const partialParts: string[] = [];
-      if (savedTotal > 0) partialParts.push(`${savedTotal} column${savedTotal > 1 ? 's' : ''}`);
-      if (savedAutomationColumns > 0) partialParts.push(`automations on ${savedAutomationColumns} column${savedAutomationColumns > 1 ? 's' : ''}`);
+      if (savedTotal > 0) partialParts.push(t`${plural(savedTotal, { one: '# column', other: '# columns' })}`);
+      if (savedAutomationColumns > 0) partialParts.push(t`automations on ${plural(savedAutomationColumns, { one: '# column', other: '# columns' })}`);
       const reason = asSentence(firstError.message);
+      const savedBeforeFailing = joinParts(partialParts);
       // "Stopped partway" only when something did land; a save that failed on
       // its first write is the plain "Couldn't save".
       useToastStore.getState().addToast(partialParts.length > 0
         ? {
-          title: 'Save stopped partway',
-          message: `${reason} Saved ${partialParts.join(' and ')} before failing.`,
+          title: t`Save stopped partway`,
+          message: t`${reason} Saved ${savedBeforeFailing} before failing.`,
           variant: 'error',
         }
-        : { title: "Couldn't save", message: reason, variant: 'error' });
+        : { title: t`Couldn't save`, message: reason, variant: 'error' });
       setSaving(false);
       return;
     }
 
     const parts: string[] = [];
-    if (savedUpdates > 0) parts.push(`saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
-    if (savedCreates > 0) parts.push(`created ${savedCreates} column${savedCreates > 1 ? 's' : ''}`);
-    if (savedDeletes > 0) parts.push(`deleted ${savedDeletes} column${savedDeletes > 1 ? 's' : ''}`);
-    if (orderDirty) parts.push('updated the column order');
-    if (profilesDirty) parts.push('saved profiles');
-    if (savedAutomationColumns > 0) parts.push('saved automations');
+    if (savedUpdates > 0) parts.push(t`saved ${plural(savedUpdates, { one: '# column', other: '# columns' })}`);
+    if (savedCreates > 0) parts.push(t`created ${plural(savedCreates, { one: '# column', other: '# columns' })}`);
+    if (savedDeletes > 0) parts.push(t`deleted ${plural(savedDeletes, { one: '# column', other: '# columns' })}`);
+    if (orderDirty) parts.push(t`updated the column order`);
+    if (profilesDirty) parts.push(t`saved profiles`);
+    if (savedAutomationColumns > 0) parts.push(t`saved automations`);
     // One sentence: "Saved 2 columns, created 1 column and updated the column order."
-    const summary = parts.length > 1
-      ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
-      : (parts[0] ?? 'no changes to save');
+    const summary = parts.length > 1 ? joinParts(parts) : (parts[0] ?? t`no changes to save`);
     useToastStore.getState().addToast({
-      title: 'Board saved',
+      title: t`Board saved`,
       message: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.`,
       variant: 'info',
     });
@@ -1633,7 +1700,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     setSaving(false);
     onClose();
   }, [saving, laneOrder, drafts, originals, newDraftIds, pendingDeleteIds, orderDirty, profilesDirty, profileDrafts, saveBoardProfiles, updateSwimlane, createSwimlane, deleteSwimlane, reorderSwimlanes, onClose,
-    automationsDirty, automationOriginals, automationDrafts, replaceAutomationsForColumn]);
+    automationsDirty, automationOriginals, automationDrafts, replaceAutomationsForColumn, t]);
 
   /**
    * The only way handleSave is invoked, so a throw escaping it cannot strand
@@ -1653,12 +1720,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     handleSave().catch((error) => {
       setSaving(false);
       useToastStore.getState().addToast({
-        title: "Couldn't save",
+        title: t`Couldn't save`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
     });
-  }, [handleSave]);
+  }, [handleSave, t]);
 
   // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
   // bubble phase, preventDefault only - matching the original listener.
@@ -1760,14 +1827,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // time, so this is feedback, not the authority. Returns the refusal toast's
   // title and body, or null when the removal can go ahead.
   const removalRefusal = useCallback((id: string): { title: string; message: string } | null => {
-    const name = drafts[id]?.name.trim() || 'Untitled';
+    const name = drafts[id]?.name.trim() || t`Untitled`;
     const taskCount = tasks.filter((task) => task.swimlane_id === id).length;
     if (taskCount === 0) return null;
     return {
-      title: `Can't remove "${name}"`,
-      message: taskCount === 1 ? 'Move or delete its task first.' : `Move or delete all ${taskCount} tasks first.`,
+      title: t`Can't remove "${name}"`,
+      message: t`${plural(taskCount, { one: 'Move or delete its task first.', other: 'Move or delete all # tasks first.' })}`,
     };
-  }, [drafts, tasks]);
+  }, [drafts, tasks, t]);
 
   // The footer's Remove column. An unsaved draft is simply discarded: it has
   // never existed. A persisted column is checked for tasks BEFORE the confirm
@@ -1800,15 +1867,15 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       useToastStore.getState().addToast({ ...refusal, variant: 'error' });
       return;
     }
-    const name = drafts[id]?.name.trim() || 'Untitled';
+    const name = drafts[id]?.name.trim() || t`Untitled`;
     removeDraftLocally(id);
     setPendingDeleteIds((previous) => new Set(previous).add(id));
     useToastStore.getState().addToast({
-      title: 'Removal staged',
-      message: `"${name}" will be removed when you save.`,
+      title: t`Removal staged`,
+      message: t`"${name}" will be removed when you save.`,
       variant: 'info',
     });
-  }, [activeId, newDraftIds, drafts, removalRefusal, removeDraftLocally]);
+  }, [activeId, newDraftIds, drafts, removalRefusal, removeDraftLocally, t]);
 
   // ── Rendering ─────────────────────────────────────────────────────
   if (!isOverview && !draft) {
@@ -1868,10 +1935,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
   // Disabled-section explanation strings (preserve the exact wording the old
   // native tooltips used, now shown inline).
-  const disabledReasonFor = (label: string): string =>
-    isTodoOrDone
-      ? `Sessions don't run in ${draftRole === 'todo' ? 'To Do' : 'Done'} columns, so ${label} doesn't apply.`
-      : `Turn on "Start an agent here" in the Agent section to enable ${label}.`;
+  const disabledReasonFor = (label: string): string => {
+    if (!isTodoOrDone) return t`Turn on "Start an agent here" in the Agent section to enable ${label}.`;
+    const roleName = draftRole === 'todo'
+      ? t({ message: 'To Do', context: 'column role' })
+      : t({ message: 'Done', context: 'column role' });
+    return t`Sessions don't run in ${roleName} columns, so ${label} doesn't apply.`;
+  };
+  // Named once, for the footer's Remove column button.
+  const removeTargetName = draft?.name.trim() || t`Untitled`;
+  // The Icon field's accessible name, with the icon's name when one is chosen.
+  const chosenIconName = draft?.icon ?? '';
+  const chooseIconLabel = chosenIconName ? t`Choose icon: ${chosenIconName}` : t`Choose icon`;
+  // What the Icon field shows: the chosen icon, else the role's default, else None.
+  const iconRole = draft?.role ?? null;
+  const iconText = chosenIconName || (iconRole ? t`Default (${iconRole})` : t`None`);
 
   // The automation row being edited, resolved in plain render code rather than
   // an inline IIFE in the JSX: the compiler rules cannot see through an IIFE
@@ -1901,12 +1979,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               ProfileBar.tsx, swimlane-slice.ts). Everything in it is a column: a
               profile is a per-column override set, the overview is of columns,
               and an automation belongs to exactly one column. */}
-          <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">Column Manager</h3>
+          <h3 className="text-sm font-semibold text-fg flex-1 min-w-0"><Trans>Column Manager</Trans></h3>
           <MaximizeToggleButton isMaximized={isMaximized} onToggle={handleToggleMaximized} />
           <button
             type="button"
             onClick={requestCancel}
-            aria-label="Close"
+            aria-label={t({ message: 'Close', context: 'button' })}
             className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
           >
             <X size={16} />
@@ -1936,21 +2014,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         <DialogFooterActions
           onCancel={requestCancel}
           onConfirm={requestSave}
-          confirmLabel="Save"
+          confirmLabel={t({ message: 'Save', context: 'button' })}
           confirmDisabled={saving || !hasDirty}
           cancelTestId="board-manager-cancel"
           confirmTestId="board-manager-save"
           leading={!isOverview && draft && !isTodoOrDone && !activeProfileId ? (
-            <Tooltip label={`Remove column "${draft.name.trim() || 'Untitled'}"`}>
+            <Tooltip label={t`Remove column "${removeTargetName}"`}>
               <button
                 type="button"
                 onClick={requestRemoveColumn}
                 data-testid="board-manager-delete"
-                aria-label={`Remove column "${draft.name.trim() || 'Untitled'}"`}
+                aria-label={t`Remove column "${removeTargetName}"`}
                 className="inline-flex items-center gap-2 px-4 py-1.5 text-xs rounded border border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60 transition-colors"
               >
                 <Trash2 size={14} />
-                Remove column
+                <Trans>Remove column</Trans>
               </button>
             </Tooltip>
           ) : undefined}
@@ -1974,6 +2052,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               onNew={() => setProfileNameDialog({ mode: 'new', value: '' })}
               onDuplicate={() => setProfileNameDialog({
                 mode: 'duplicate',
+                // Persisted and shared through kangentic.json once the user keeps it: English, never translated.
                 value: activeProfile ? `${activeProfile.name} copy` : '',
               })}
               onRename={() => setProfileNameDialog({ mode: 'rename', value: activeProfile?.name ?? '' })}
@@ -2057,17 +2136,17 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   actually change. */}
               {activeProfileId ? (
                 <div className="pt-4">
-                  <DisabledSectionNotice reason="Name, description, color, and icon are shared by every profile. Switch to Default to edit them." />
+                  <DisabledSectionNotice reason={t`Name, description, color, and icon are shared by every profile. Switch to Default to edit them.`} />
                 </div>
               ) : (
               <SettingsSection section={SECTIONS[0]}>
               <div className={SECTION_GRID_CLASS}>
-                <SettingField label="Name" className={SECTION_FULL_SPAN}>
+                <SettingField label={t`Name`} className={SECTION_FULL_SPAN}>
                   <input
                     ref={nameInputRef}
                     type="text"
                     value={draft.name}
-                    placeholder="Column name"
+                    placeholder={t`Column name`}
                     onChange={(event) => updateDraft((current) => ({ ...current, name: event.target.value }))}
                     onKeyDown={(event) => { if (event.key === 'Enter') requestSave(); }}
                     data-testid="board-manager-name"
@@ -2076,12 +2155,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                 </SettingField>
 
                 <SettingField
-                  label="Description"
+                  label={t`Description`}
                   className={SECTION_FULL_SPAN}
                 >
                   <textarea
                     value={draft.description ?? ''}
-                    placeholder="What is this column for?"
+                    placeholder={t`What is this column for?`}
                     onChange={(event) => updateDraft((current) => ({ ...current, description: event.target.value }))}
                     rows={1}
                     maxLength={1000}
@@ -2096,7 +2175,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     even (the color swatches under-fill their cell). */}
                 <div className={`${SECTION_FULL_SPAN} flex flex-col @[720px]:flex-row @[720px]:items-start gap-3 @[720px]:gap-6`}>
                   <div className="@[720px]:flex-1 min-w-0 order-3">
-                <SettingField label="Color">
+                <SettingField label={t`Color`}>
                   <div className="flex gap-2 flex-wrap items-center">
                     {PRESET_COLORS.map((presetColor) => {
                       const selected = draft.color.toLowerCase() === presetColor;
@@ -2108,7 +2187,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                             updateDraft((current) => ({ ...current, color: presetColor }));
                             setShowCustomPicker(false);
                           }}
-                          aria-label={`Color ${presetColor}${selected ? ' (selected)' : ''}`}
+                          aria-label={selected ? t`Color ${presetColor} (selected)` : t`Color ${presetColor}`}
                           className={`w-6 h-6 rounded-full border-2 transition-all duration-200 ${
                             selected ? 'border-white/60 scale-110' : 'border-transparent hover:border-fg-faint'
                           }`}
@@ -2116,7 +2195,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         />
                       );
                     })}
-                    <Tooltip label="Custom color">
+                    <Tooltip label={t`Custom color`}>
                       <button
                         type="button"
                         onClick={() => setShowCustomPicker((open) => !open)}
@@ -2128,7 +2207,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                               : 'border-edge-input hover:border-fg-muted bg-surface'
                         }`}
                         style={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? { backgroundColor: draft.color } : undefined}
-                        aria-label="Custom color"
+                        aria-label={t`Custom color`}
                       >
                         <Palette size={12} className={!PRESET_COLORS.includes(draft.color.toLowerCase()) ? 'text-white' : 'text-fg-muted'} />
                       </button>
@@ -2157,7 +2236,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         onBlur={() => {
                           if (!/^#[0-9a-fA-F]{6}$/.test(hexInput)) setHexInput(draft.color);
                         }}
-                        aria-label="Hex color value"
+                        aria-label={t`Hex color value`}
                         className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary font-mono focus:outline-none focus:border-accent"
                         placeholder="#000000"
                         maxLength={7}
@@ -2168,14 +2247,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   </div>
                   <div className="hidden @[720px]:block w-px self-stretch bg-edge/50 order-2" />
                   <div className="@[720px]:flex-1 min-w-0 order-1">
-                <SettingField label="Icon">
+                <SettingField label={t`Icon`}>
                   <button
                     type="button"
                     onClick={() => setShowIconPicker(true)}
                     onPointerEnter={warmIconCatalog}
                     onFocus={warmIconCatalog}
                     data-testid="board-manager-icon"
-                    aria-label={`Choose icon${draft.icon ? `: ${draft.icon}` : ''}`}
+                    aria-label={chooseIconLabel}
                     className="w-full flex items-center gap-2.5 bg-surface-control border border-edge-input hover:border-fg-faint rounded px-3 py-1.5 transition-colors group"
                   >
                     <div className="flex-shrink-0">
@@ -2187,7 +2266,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       <SwimlaneIcon swimlane={draft} size={14} dotClassName="w-2.5 h-2.5 rounded-full" />
                     </div>
                     <span className="text-xs text-fg-tertiary flex-1 text-left truncate">
-                      {draft.icon ?? (draft.role ? `Default (${draft.role})` : 'None')}
+                      {iconText}
                     </span>
                     <ChevronRight size={14} className="text-fg-faint group-hover:text-fg-muted flex-shrink-0" />
                   </button>
@@ -2201,7 +2280,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
               <SettingsSection section={SECTIONS[1]}>
               {isTodoOrDone ? (
-                <DisabledSectionNotice reason={disabledReasonFor('Agent')} />
+                <DisabledSectionNotice reason={disabledReasonFor(t`Agent`)} />
               ) : (
                 <div className={SECTION_GRID_CLASS}>
                   {/* Auto-spawn leads the section: it gates whether the agent
@@ -2209,18 +2288,18 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       Effort / Permissions then pair up as two-column rows. */}
                   <div className={SECTION_FULL_SPAN}>
                     <ToggleCard
-                      label="Start an agent here"
-                      description="Start an agent automatically when a task enters this column."
+                      label={t`Start an agent here`}
+                      description={t`Start an agent automatically when a task enters this column.`}
                       checked={draft.auto_spawn}
                       onChange={(next) => updateDraft((current) => ({ ...current, auto_spawn: next }))}
                     />
                   </div>
                   {draft.auto_spawn && (<>
                   <SettingField
-                    label="Agent"
+                    label={t`Agent`}
                     hint={draft.agent_override ? (
                       <ResetHint
-                        tip="Reset to project setting"
+                        tip={t`Reset to project setting`}
                         onClick={() => {
                           updateDraft((current) => {
                             let nextPermission = current.permission_mode;
@@ -2269,10 +2348,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
                   {supportsModelOverride && (
                     <SettingField
-                      label="Model"
+                      label={t`Model`}
                       hint={draft.model_override ? (
                         <ResetHint
-                          tip={projectDefaultModelLabel ? 'Reset to project default' : 'Reset to agent default'}
+                          tip={projectDefaultModelLabel ? t`Reset to project default` : t`Reset to agent default`}
                           onClick={() => updateDraft((current) => ({ ...current, model_override: null }))}
                         />
                       ) : undefined}
@@ -2282,7 +2361,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           value={draft.model_override ?? ''}
                           onChange={(nextValue) => updateDraft((current) => ({ ...current, model_override: nextValue }))}
                           availableModels={discoveredModels}
-                          placeholder={projectDefaultModelLabel ?? 'Agent default'}
+                          placeholder={projectDefaultModelLabel ?? t`Agent default`}
                           placeholderVariant={projectDefaultModelLabel ? 'resolved' : 'muted'}
                           testId="column-model-override"
                           onOpen={() => useConfigStore.getState().rescanModels()}
@@ -2296,10 +2375,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
                   {effortLevels.length > 0 && (
                     <SettingField
-                      label="Effort"
+                      label={t`Effort`}
                       hint={draft.effort_override ? (
                         <ResetHint
-                          tip={projectDefaultEffort ? 'Reset to project default' : 'Reset to agent default'}
+                          tip={projectDefaultEffort ? t`Reset to project default` : t`Reset to agent default`}
                           onClick={() => updateDraft((current) => ({ ...current, effort_override: null }))}
                         />
                       ) : undefined}
@@ -2308,7 +2387,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         value={draft.effort_override ?? ''}
                         onChange={(nextValue) => updateDraft((current) => ({ ...current, effort_override: nextValue || null }))}
                         options={effortLevels.map((level) => ({ value: level, label: level }))}
-                        placeholder={projectDefaultEffort ?? 'Agent default'}
+                        placeholder={projectDefaultEffort ?? t`Agent default`}
                         placeholderVariant={projectDefaultEffort ? 'resolved' : 'muted'}
                         testId="column-effort-override"
                       />
@@ -2316,10 +2395,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   )}
 
                   <SettingField
-                    label="Permissions"
+                    label={t`Permissions`}
                     hint={draft.permission_mode ? (
                       <ResetHint
-                        tip="Reset to project setting"
+                        tip={t`Reset to project setting`}
                         onClick={() => updateDraft((current) => ({ ...current, permission_mode: null }))}
                       />
                     ) : undefined}
@@ -2341,7 +2420,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       explanations sit behind the info icons, so the row stays
                       one line. */}
                   {draft.permission_mode === 'plan' && (<>
-                    <SettingField label="Plan approval" info={PLAN_APPROVAL_INFO}>
+                    <SettingField label={t`Plan approval`} info={t`Whether you approve each plan or Kangentic does. A workflow task can override it for itself.`}>
                       <SegmentedControl
                         options={planApprovalOptions}
                         // An agent that cannot approve plans always waits for
@@ -2349,16 +2428,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         value={planApprovalForAgent(agentList, effectiveAgent, draft.plan_approval)}
                         onChange={(next) => updateDraft((current) => ({ ...current, plan_approval: next }))}
                         fullWidth
-                        ariaLabel="Plan approval"
+                        ariaLabel={t`Plan approval`}
                         testId="column-plan-approval"
                       />
                     </SettingField>
-                    <SettingField label="After Plan Mode" info={AFTER_PLAN_MODE_INFO}>
+                    <SettingField label={t`After Plan Mode`} info={t`Where the task goes when the agent exits Plan mode.`}>
                       {/* The column itself means "stay", stored as no target,
                           so a column never points at itself. */}
                       <ColumnPicker
                         testId="plan-exit-target"
-                        ariaLabel="After Plan Mode"
+                        ariaLabel={t`After Plan Mode`}
                         value={draft.plan_exit_target_id ?? draft.id}
                         columns={planExitChoices(laneOrder, drafts, draft, newDraftIds)}
                         onChange={(next) => updateDraft((current) => ({
@@ -2385,11 +2464,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         the reader is deciding between. */}
                     <div className={SECTION_FULL_SPAN}>
                       <ToggleCard
-                        label="Hand off context when the agent changes"
-                        description="The new agent picks up the previous agent's conversation instead of starting from the task description."
+                        label={t`Hand off context when the agent changes`}
+                        description={t`The new agent picks up the previous agent's conversation instead of starting from the task description.`}
                         checked={draft.handoff_context}
                         onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
-                        info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
+                        info={`${t`When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.`}\n\n${t`Same-agent moves (e.g. Claude to Claude) resume natively via the agent's own session id and ignore this setting.`}`}
                       />
                     </div>
 
@@ -2399,10 +2478,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         tip, which names the default. */}
                     <div className={SECTION_FULL_SPAN}>
                       <ChoiceCard
-                        label="Session"
-                        description="Main continues the task's conversation, and Isolated starts clean on every entry."
-                        info={SESSION_TARGET_INFO}
-                        options={SESSION_TARGET_OPTIONS}
+                        label={t({ message: 'Session', context: 'board manager field' })}
+                        description={t`Main continues the task's conversation, and Isolated starts clean on every entry.`}
+                        info={t`Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.`}
+                        options={sessionTargetOptions()}
                         value={draft.session_target ?? 'main'}
                         onChange={(next) => updateDraft((current) => ({
                           ...current,
@@ -2443,7 +2522,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     note in its place: standing copy explaining a one-time change
                     is paid on every open and learned once. */}
                 </div>
-              ) : <DisabledSectionNotice reason={disabledReasonFor('Conversation')} />}
+              ) : <DisabledSectionNotice reason={disabledReasonFor(t`Conversation`)} />}
               </SettingsSection>
             </div>
             </div>
@@ -2590,7 +2669,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           // New starts with no overrides, so every column resolves to the
           // board's own settings - the synthetic "Default". Duplicate inherits
           // from the profile it is copying.
-          sourceName={profileNameDialog.mode === 'duplicate' && activeProfile ? activeProfile.name : 'Default'}
+          sourceName={profileNameDialog.mode === 'duplicate' && activeProfile ? activeProfile.name : t({ message: 'Default', context: 'board profile' })}
           onChange={(value) => setProfileNameDialog((previous) => (previous ? { ...previous, value } : previous))}
           onCancel={() => setProfileNameDialog(null)}
           onConfirm={(name) => {
@@ -2618,7 +2697,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
       {confirmDeleteId && drafts[confirmDeleteId] && (
         <ConfirmDialog
-          title="Remove column"
+          title={t`Remove column`}
           // The body is the column and nothing else. The footer button that
           // opened this says "Remove column" with no name, so this is where the
           // target is spelled out, and it is drawn the way its rail row is so
@@ -2635,7 +2714,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               total={laneOrder.length}
             />
           )}
-          confirmLabel="Remove"
+          confirmLabel={t`Remove`}
           variant="danger"
           onConfirm={handleDeletePersisted}
           onCancel={() => setConfirmDeleteId(null)}
@@ -2644,20 +2723,20 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
       {showCancelConfirm && (
         <ConfirmDialog
-          title="Discard unsaved changes?"
+          title={t`Discard unsaved changes?`}
           variant="warning"
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
+          confirmLabel={t`Discard`}
+          cancelLabel={t`Keep editing`}
           message={
             <div className="space-y-2.5">
               {dirtyIds.length > 0 && (
                 <>
-                  <p>Closing now will discard unsaved changes in:</p>
+                  <p><Trans>Closing now will discard unsaved changes in:</Trans></p>
                   <ul className="space-y-1">
                     {dirtyIds.map((id) => (
                       <li key={id} className="flex items-baseline gap-2">
                         <span className="text-fg-faint">•</span>
-                        <span className="font-medium text-fg-secondary">{drafts[id]?.name?.trim() || 'Untitled column'}</span>
+                        <span className="font-medium text-fg-secondary">{drafts[id]?.name?.trim() || t`Untitled column`}</span>
                       </li>
                     ))}
                   </ul>
@@ -2665,11 +2744,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               )}
               {automationChangeLines.length > 0 && (
                 <>
-                  <p>Automations changed on:</p>
+                  <p><Trans>Automations changed on:</Trans></p>
                   <ul className="space-y-1">
                     {automationChangeLines.map((line) => (
                       <li key={line} className="flex items-baseline gap-2">
-                        <span className="text-fg-faint">&bull;</span>
+                        <span className="text-fg-faint">•</span>
                         <span className="font-medium text-fg-secondary">{line}</span>
                       </li>
                     ))}
@@ -2678,12 +2757,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               )}
               {pendingDeleteIds.size > 0 && (
                 <>
-                  <p>{dirtyIds.length > 0 ? 'These columns are staged for removal and will be kept:' : 'These columns are staged for removal. Discarding keeps them:'}</p>
+                  <p>{dirtyIds.length > 0 ? t`These columns are staged for removal and will be kept:` : t`These columns are staged for removal. Discarding keeps them:`}</p>
                   <ul className="space-y-1" data-testid="board-manager-staged-removals">
                     {[...pendingDeleteIds].map((id) => (
                       <li key={id} className="flex items-baseline gap-2">
                         <span className="text-fg-faint">•</span>
-                        <span className="font-medium text-fg-secondary">{originals[id]?.name?.trim() || 'Untitled column'}</span>
+                        <span className="font-medium text-fg-secondary">{originals[id]?.name?.trim() || t`Untitled column`}</span>
                       </li>
                     ))}
                   </ul>
@@ -2691,7 +2770,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               )}
               {orderDirty && (
                 <p className="text-fg-secondary">
-                  {dirtyIds.length > 0 ? 'Column order changes will also be discarded.' : 'Your column order changes will be discarded.'}
+                  {dirtyIds.length > 0 ? t`Column order changes will also be discarded.` : t`Your column order changes will be discarded.`}
                 </p>
               )}
               {/* Profile edits live in profileDrafts, never in `drafts`, so without
@@ -2699,8 +2778,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
               {profilesDirty && (
                 <p className="text-fg-secondary">
                   {dirtyIds.length > 0 || pendingDeleteIds.size > 0 || orderDirty
-                    ? 'Board Profile changes will also be discarded.'
-                    : 'Your Board Profile changes will be discarded.'}
+                    ? t`Board Profile changes will also be discarded.`
+                    : t`Your Board Profile changes will be discarded.`}
                 </p>
               )}
             </div>

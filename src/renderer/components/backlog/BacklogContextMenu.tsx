@@ -1,5 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import type { Swimlane } from '../../../shared/types';
 
 interface BacklogContextMenuProps {
@@ -21,6 +23,7 @@ export function BacklogContextMenu({
   onDelete,
   onClose,
 }: BacklogContextMenuProps) {
+  const { t } = useLingui();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -63,7 +66,7 @@ export function BacklogContextMenu({
       {targets.length > 0 && (
         <>
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-            {selectedCount > 1 ? `Move ${selectedCount} to Board` : 'Move to Board'}
+            {selectedCount > 1 ? t`Move ${selectedCount} to Board` : t`Move to Board`}
           </div>
           {targets.map((lane) => (
             <button
@@ -91,7 +94,7 @@ export function BacklogContextMenu({
         data-testid="context-edit-item"
       >
         <Pencil size={14} className="text-fg-faint" />
-        Edit
+        <Trans context="button">Edit</Trans>
       </button>
 
       <div className="border-t border-edge my-1" />
@@ -103,7 +106,9 @@ export function BacklogContextMenu({
         data-testid="context-delete-item"
       >
         <Trash2 size={14} />
-        {selectedCount > 1 ? `Delete ${selectedCount} items` : 'Delete'}
+        {selectedCount > 1
+          ? t`Delete ${plural(selectedCount, { one: '# item', other: '# items' })}`
+          : t({ message: 'Delete', context: 'button' })}
       </button>
     </div>
   );

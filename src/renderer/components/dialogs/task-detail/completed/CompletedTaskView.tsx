@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tabs, tabIds } from '../../../Tabs';
 import type { TabItem } from '../../../Tabs';
 import { useSessionStore } from '../../../../stores/session-store';
@@ -11,14 +12,6 @@ import { SummaryTab } from './SummaryTab';
 import { UsageTab } from './UsageTab';
 import { useTaskChanges, useTaskReport } from './useTaskReport';
 import type { ConversationTabRequest, Task } from '../../../../../shared/types';
-
-const TABS: ReadonlyArray<TabItem<CompletedTab>> = [
-  { id: 'summary', label: 'Summary' },
-  { id: 'changes', label: 'Changes' },
-  { id: 'conversation', label: 'Conversation' },
-  { id: 'usage', label: 'Usage' },
-  { id: 'description', label: 'Description' },
-];
 
 const ID_PREFIX = 'completed-task';
 
@@ -55,6 +48,16 @@ export function CompletedTaskView({
   /** Whether this window is the focused one: gates the Changes and Conversation keyboard. */
   isFocused?: boolean;
 }) {
+  const { t } = useLingui();
+  // Resolved at render, one array per language, so the tab bar keeps the options
+  // identity the module-level list used to give it.
+  const tabs = useMemo<ReadonlyArray<TabItem<CompletedTab>>>(() => [
+    { id: 'summary', label: t({ message: 'Summary', context: 'tab' }) },
+    { id: 'changes', label: t({ message: 'Changes', context: 'tab' }) },
+    { id: 'conversation', label: t({ message: 'Conversation', context: 'tab' }) },
+    { id: 'usage', label: t({ message: 'Usage', context: 'tab' }) },
+    { id: 'description', label: t({ message: 'Description', context: 'tab' }) },
+  ], [t]);
   const request = useSessionStore((state) => (state.completedViewRequest?.taskId === task.id ? state.completedViewRequest : null));
   const clearCompletedViewRequest = useSessionStore((state) => state.clearCompletedViewRequest);
   const setChangesSelectedCommit = useSessionStore((state) => state.setChangesSelectedCommit);
@@ -102,10 +105,10 @@ export function CompletedTaskView({
     <div className="flex min-h-0 flex-1 flex-col" data-testid="completed-task-view">
       {report && <CompletedHeaderStrip task={task} report={report} gitTotals={gitTotals} />}
       <Tabs
-        tabs={TABS}
+        tabs={tabs}
         selectedId={selectedTab}
         onSelect={setSelectedTab}
-        ariaLabel="Completed task"
+        ariaLabel={t`Completed task`}
         idPrefix={ID_PREFIX}
         testId="completed-task-tabs"
       />
@@ -119,7 +122,7 @@ export function CompletedTaskView({
         {selectedTab === 'description' && (
           description
             ? <div className="space-y-3">{description}</div>
-            : <div className="py-8 text-center text-sm text-fg-disabled">No description</div>
+            : <div className="py-8 text-center text-sm text-fg-disabled"><Trans>No description</Trans></div>
         )}
         {selectedTab === 'changes' && (
           <CompletedChangesTab
@@ -142,7 +145,7 @@ export function CompletedTaskView({
         )}
         {(selectedTab === 'summary' || selectedTab === 'usage') && loading && <ReportSkeleton />}
         {(selectedTab === 'summary' || selectedTab === 'usage') && !loading && !report && (
-          <div className="py-8 text-center text-sm text-fg-disabled">Could not read this task&apos;s record</div>
+          <div className="py-8 text-center text-sm text-fg-disabled"><Trans>Could not read this task&apos;s record</Trans></div>
         )}
         {selectedTab === 'summary' && report && (
           <SummaryTab

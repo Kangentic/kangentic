@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { AppWindow } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../../../PanelErrorBoundary';
 import { ChangesPanelSkeleton } from '../changes/ChangesPanelSkeleton';
 import { usePopOut } from '../../../../pop-out/usePopOut';
@@ -30,20 +31,21 @@ export function CompletedChangesTab({ task, projectId, isFocused, changes, loadi
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useLingui();
   const changesPopOut = usePopOut('changes', { taskId: task.id, projectId });
 
   if (loading) return <ChangesPanelSkeleton />;
   if (error || !changes) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4" data-testid="completed-changes-error">
-        <span className="text-sm text-fg-muted">{error ?? 'The task\'s changes could not be read'}</span>
+        <span className="text-sm text-fg-muted">{error ?? t`The task's changes could not be read`}</span>
         <button
           type="button"
           onClick={onRetry}
           className="rounded bg-surface-raised px-3 py-1 text-xs text-fg-secondary transition-colors hover:bg-surface-raised/80"
           data-testid="completed-changes-retry"
         >
-          Retry
+          <Trans>Retry</Trans>
         </button>
       </div>
     );
@@ -55,12 +57,12 @@ export function CompletedChangesTab({ task, projectId, isFocused, changes, loadi
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center" data-testid="completed-changes-popped-out">
         <AppWindow size={24} className="text-fg-disabled" />
-        <span className="text-sm text-fg-muted">Changes are open in their own window</span>
+        <span className="text-sm text-fg-muted"><Trans>Changes are open in their own window</Trans></span>
       </div>
     );
   }
   return (
-    <PanelErrorBoundary label="Changes panel">
+    <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
       <Suspense fallback={<ChangesPanelSkeleton />}>
         <ChangesPanel
           entityId={completedChangesEntityId(task.id)}

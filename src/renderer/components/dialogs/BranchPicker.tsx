@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
@@ -48,6 +49,7 @@ export function BranchPicker({
   anchorRef,
   projectId = null,
 }: BranchPickerProps) {
+  const { t } = useLingui();
   const [internalOpen, setInternalOpen] = useState(false);
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
@@ -192,7 +194,7 @@ export function BranchPicker({
   // The tip names the field and the full branch the segment's width may cut
   // short. Shut while the menu is open, which already lists it.
   const segmentButton = (
-    <Tooltip label={`Base branch: ${displayBranch}`} enabled={!open}>
+    <Tooltip label={t`Base branch: ${displayBranch}`} enabled={!open}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -241,7 +243,7 @@ export function BranchPicker({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search branches..."
+            placeholder={t`Search branches...`}
             className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-muted pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
           />
         </div>
@@ -252,13 +254,13 @@ export function BranchPicker({
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-4 text-xs text-fg-faint">
             <Loader2 size={14} className="animate-spin" />
-            Loading branches...
+            <Trans>Loading branches...</Trans>
           </div>
         ) : filtered.length === 0 ? (
           <div className="py-4 text-center text-xs text-fg-faint">
             {branches.length === 0
-              ? 'No branches found'
-              : `No branches match "${query}"`}
+              ? <Trans>No branches found</Trans>
+              : <Trans>No branches match "{query}"</Trans>}
           </div>
         ) : (
           filtered.map(branch => (

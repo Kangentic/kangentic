@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Plus, Pencil, ExternalLink, Trash2, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../dialogs/dialog-maximize';
@@ -59,7 +60,13 @@ interface NewBacklogTaskDialogProps {
 const NEW_BACKLOG_TASK_ENTITY_ID = 'new-backlog-task-dialog';
 
 export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, onDelete }: NewBacklogTaskDialogProps) {
+  const { t } = useLingui();
   const isEditMode = !!editTask;
+  // A provider's own name is not translated; any other source shows its raw id.
+  const sourceName = editTask?.external_source?.startsWith('github') ? 'GitHub' : editTask?.external_source; // i18n-ok: a provider's own name
+  const openInSourceLabel = t`Open in ${sourceName}`;
+  const createdAgo = editTask ? formatRelativeTime(editTask.created_at) : '';
+  const updatedAgo = editTask ? formatRelativeTime(editTask.updated_at) : '';
   const currentProject = useProjectStore((state) => state.currentProject);
   const isMaximized = useSessionStore((state) => state.maximizedTasks.has(NEW_BACKLOG_TASK_ENTITY_ID));
   const toggleMaximized = useSessionStore((state) => state.toggleMaximized);
@@ -183,9 +190,11 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
 
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
+      const fileName = file.name;
       useToastStore.getState().addToast({
-        title: 'File too large',
-        message: `"${file.name}" is over the 10 MB limit.`,
+        title: t`File too large`,
+        // "10 MB" matches MAX_ATTACHMENT_BYTES and keeps its English inside the message.
+        message: t`"${fileName}" is over the 10 MB limit.`,
         variant: 'warning',
       });
       return;
@@ -210,7 +219,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
     const id = `pending-${nextIdRef.current++}`;
     const filename = filenameOverride || file.name;
     setAttachments((previous) => [...previous, { id, filename, data: base64, media_type: mediaType, previewUrl }]);
-  }, []);
+  }, [t]);
 
   const removeAttachment = useCallback((id: string) => {
     const target = attachments.find((attachment) => attachment.id === id);
@@ -223,7 +232,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       }).catch((error: unknown) => {
         console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
         useToastStore.getState().addToast({
-          title: "Couldn't remove attachment",
+          title: t`Couldn't remove attachment`,
           message: asSentence(describeIpcError(error)),
           variant: 'warning',
         });
@@ -232,7 +241,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       URL.revokeObjectURL(target.previewUrl);
       setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
     }
-  }, [attachments]);
+  }, [attachments, t]);
 
   const handleOpenAttachment = useCallback(async (attachment: DisplayAttachment) => {
     if (isImageMediaType(attachment.media_type)) {
@@ -345,7 +354,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       // are not lost and the user can retry.
       console.error('[NewBacklogTaskDialog] Failed to save backlog task:', error);
       useToastStore.getState().addToast({
-        title: "Couldn't save backlog task",
+        title: t`Couldn't save backlog task`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -371,13 +380,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
     } catch (error) {
       console.error('[NewBacklogTaskDialog] Failed to delete backlog task:', error);
       useToastStore.getState().addToast({
-        title: "Couldn't delete backlog task",
+        title: t`Couldn't delete backlog task`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
       setDeleting(false);
     }
-  }, [editTask, onDelete, deleting, updateConfig, onClose]);
+  }, [editTask, onDelete, deleting, updateConfig, onClose, t]);
 
   const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
     maximizedDialogLayout(isMaximized, 'w-[840px] max-w-[90vw] h-[80vh]');
@@ -391,14 +400,14 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
           onCloseRequest={handleCloseAttempt}
           title={
             <span className="flex items-center gap-2 min-w-0">
-              <span className="flex-shrink-0">{isEditMode ? 'Edit Backlog Task' : 'New Backlog Task'}</span>
+              <span className="flex-shrink-0">{isEditMode ? t`Edit Backlog Task` : t`New Backlog Task`}</span>
               {editTask?.external_source && editTask.external_url && (
-                <Tooltip label={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}>
+                <Tooltip label={openInSourceLabel}>
                   <button
                     type="button"
                     onClick={() => window.electronAPI.shell.openExternal(editTask.external_url!)}
                     className="flex-shrink-0 text-fg-faint hover:text-fg-secondary transition-colors"
-                    aria-label={`Open in ${editTask.external_source.startsWith('github') ? 'GitHub' : editTask.external_source}`}
+                    aria-label={openInSourceLabel}
                     data-testid="backlog-task-external-link"
                   >
                     {editTask.external_source.startsWith('github')
@@ -426,7 +435,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
           footer={
             <DialogFooterActions
               onCancel={onClose}
-              submitLabel={isEditMode ? 'Save' : 'Create'}
+              submitLabel={isEditMode ? t({ message: 'Save', context: 'button' }) : t({ message: 'Create', context: 'button' })}
               busy={submitting}
               disabled={!title.trim()}
               submitTestId="create-backlog-task-btn"
@@ -438,7 +447,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                   className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs text-fg-faint transition-colors hover:bg-danger/10 hover:text-danger"
                 >
                   <Trash2 size={14} />
-                  Delete
+                  <Trans context="button">Delete</Trans>
                 </button>
               ) : undefined}
             />
@@ -456,7 +465,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                 type="text"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="Task title"
+                placeholder={t`Task title`}
                 className="flex-1 min-w-0 bg-surface-control border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
                 data-testid="backlog-task-title"
               />
@@ -498,8 +507,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
                     into a clause continuation reads as one fact with two parts
                     instead of two competing labels. */}
                 <span>
-                  Created {formatRelativeTime(editTask.created_at)}, updated{' '}
-                  {formatRelativeTime(editTask.updated_at)}
+                  {t`Created ${createdAgo}, updated ${updatedAgo}`}
                 </span>
                 {editTask.assignee && <span>@{editTask.assignee}</span>}
               </div>
@@ -508,7 +516,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
             {/* Drag overlay */}
             {isDragOver && (
               <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-                <span className="text-sm text-accent-fg font-medium">Drop files here</span>
+                <span className="text-sm text-accent-fg font-medium"><Trans>Drop files here</Trans></span>
               </div>
             )}
           </div>
@@ -518,13 +526,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       {/* Discard-unsaved-changes confirmation (close gestures route here when dirty) */}
       {confirmDiscard && (
         <ConfirmDialog
-          title="Discard unsaved changes?"
+          title={t`Discard unsaved changes?`}
           variant="warning"
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
+          confirmLabel={t`Discard`}
+          cancelLabel={t`Keep editing`}
           message={isEditMode
-            ? 'Closing now will discard your unsaved edits to this backlog task.'
-            : 'Closing now will discard this new backlog task and its unsaved changes.'}
+            ? t`Closing now will discard your unsaved edits to this backlog task.`
+            : t`Closing now will discard this new backlog task and its unsaved changes.`}
           onConfirm={() => { setConfirmDiscard(false); onClose(); }}
           onCancel={() => setConfirmDiscard(false)}
         />
@@ -533,12 +541,12 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
       {/* Delete confirmation */}
       {confirmDelete && (
         <ConfirmDialog
-          title="Delete backlog task"
+          title={t`Delete backlog task`}
           message={<>
-            <p>This will permanently delete the backlog task.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p><Trans>This will permanently delete the backlog task.</Trans></p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel="Delete"
+          confirmLabel={t({ message: 'Delete', context: 'button' })}
           variant="danger"
           showDontAskAgain
           onConfirm={(dontAskAgain) => { void performDelete(dontAskAgain); }}

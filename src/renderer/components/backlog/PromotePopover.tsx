@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { Trans } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import type { Swimlane } from '../../../shared/types';
@@ -62,7 +63,7 @@ export function PromotePopover({ triggerRef, swimlanes, onSelect, onClose }: Pro
       data-testid="promote-popover"
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-        Move to
+        <Trans>Move to</Trans>
       </div>
       {targets.map((lane) => (
         <button

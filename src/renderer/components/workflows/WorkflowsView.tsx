@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import { Plus } from 'lucide-react';
@@ -52,18 +53,6 @@ type ViewDialog =
   | { kind: 'editPlanned'; key: string }
   | { kind: 'deleteTask'; task: Task; projectId: string };
 
-/** A route step toggle the inspector refused, with its reason as the body. */
-function refuse(message: string): void {
-  useToastStore.getState().addToast({ title: 'Route step refused', message, variant: 'warning' });
-}
-
-/** What an empty workflow's canvas walks through, in order (sign-off 10). */
-const WELCOME_STEPS = [
-  'Tell the workflow agent what to build, and it plans the tasks.',
-  'Review the plan, and click a task to change its route or blockers.',
-  'Press Start and the tasks run automatically in order until complete.',
-] as const;
-
 /**
  * An empty workflow's canvas (sign-off 10): the No workflows drawing, a title,
  * and the three steps from a plan to a run, one line each. No button: Add task
@@ -72,20 +61,27 @@ const WELCOME_STEPS = [
  * under it still reaches the pane. Static, like the No workflows state.
  */
 function EmptyWorkflowWelcome() {
+  const { t } = useLingui();
+  // What the canvas walks through, in order (sign-off 10). Each step's id is its React key.
+  const welcomeSteps = [
+    { id: 'plan', text: t`Tell the workflow agent what to build, and it plans the tasks.` },
+    { id: 'review', text: t`Review the plan, and click a task to change its route or blockers.` },
+    { id: 'start', text: t`Press Start and the tasks run automatically in order until complete.` },
+  ];
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="workflow-canvas-welcome">
       {/* A touch above center, as drawn, so the canvas tools below keep their room. */}
       <div className="absolute left-1/2 top-[47%] flex w-max max-w-full -translate-x-1/2 -translate-y-1/2 flex-col items-center px-4">
         <NoWorkflowsIllustration />
-        <div className="mt-[18px] text-lg font-semibold text-fg" data-testid="workflow-canvas-welcome-title">Nothing planned yet</div>
+        <div className="mt-[18px] text-lg font-semibold text-fg" data-testid="workflow-canvas-welcome-title"><Trans>Nothing planned yet</Trans></div>
         <ol className="mt-3 flex flex-col gap-2">
-          {WELCOME_STEPS.map((step, index) => (
-            <li key={step} className="flex items-start gap-2.5" data-testid="workflow-canvas-welcome-step">
+          {welcomeSteps.map((step, index) => (
+            <li key={step.id} className="flex items-start gap-2.5" data-testid="workflow-canvas-welcome-step">
               <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-fg-faint/20 text-[11px] font-semibold text-fg-muted">
                 {index + 1}
               </span>
               {/* text-sm, ui-conventions.md's floor for an empty state's text. */}
-              <span className="text-sm leading-5 text-fg-muted">{step}</span>
+              <span className="text-sm leading-5 text-fg-muted">{step.text}</span>
             </li>
           ))}
         </ol>
@@ -94,40 +90,8 @@ function EmptyWorkflowWelcome() {
   );
 }
 
-/** A failed delete from the canvas menu. The task is still there, so a click on the card opens it. */
-function reportDeleteFailure(task: Task, taskProjectId: string, error: unknown): void {
-  useToastStore.getState().addToast({
-    title: "Couldn't delete task",
-    message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
-    variant: 'warning',
-    onOpen: () => openTaskFromNotification(taskProjectId, task.id),
-  });
-}
-
-/** Delete a workflow task from its canvas menu: as the board card does on its own board, by id elsewhere. */
-async function deleteWorkflowTask(task: Task, taskProjectId: string): Promise<void> {
-  if (taskProjectId === useProjectStore.getState().currentProject?.id) {
-    const session = useSessionStore.getState()._sessionByTaskId.get(task.id);
-    if (session) {
-      try {
-        await useSessionStore.getState().killSession(session.id);
-      } catch (error) {
-        reportDeleteFailure(task, taskProjectId, error);
-        return;
-      }
-    }
-    // The board store reports its own failure.
-    await useBoardStore.getState().deleteTask(task.id).catch(() => undefined);
-    return;
-  }
-  try {
-    await window.electronAPI.tasks.delete(task.id, taskProjectId);
-  } catch (error) {
-    reportDeleteFailure(task, taskProjectId, error);
-  }
-}
-
 export function WorkflowsView() {
+  const { t } = useLingui();
   const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const detail = useWorkflowStore((state) => state.detail);
   const summaries = useWorkflowStore((state) => state.summaries);
@@ -307,13 +271,53 @@ export function WorkflowsView() {
     void useProjectStore.getState().openProject(viewTask.projectId);
   }, []);
 
+  /** A route step toggle the inspector refused, with its reason as the body. */
+  const refuse = useCallback((message: string): void => {
+    useToastStore.getState().addToast({ title: t`Route step refused`, message, variant: 'warning' });
+  }, [t]);
+
+  /** A failed delete from the canvas menu. The task is still there, so a click on the card opens it. */
+  const reportDeleteFailure = useCallback((task: Task, taskProjectId: string, error: unknown): void => {
+    const taskTitle = task.title;
+    const reason = asSentence(describeIpcError(error));
+    useToastStore.getState().addToast({
+      title: t`Couldn't delete task`,
+      message: t`"${taskTitle}": ${reason}`,
+      variant: 'warning',
+      onOpen: () => openTaskFromNotification(taskProjectId, task.id),
+    });
+  }, [t]);
+
+  /** Delete a workflow task from its canvas menu: as the board card does on its own board, by id elsewhere. */
+  const deleteWorkflowTask = useCallback(async (task: Task, taskProjectId: string): Promise<void> => {
+    if (taskProjectId === useProjectStore.getState().currentProject?.id) {
+      const session = useSessionStore.getState()._sessionByTaskId.get(task.id);
+      if (session) {
+        try {
+          await useSessionStore.getState().killSession(session.id);
+        } catch (error) {
+          reportDeleteFailure(task, taskProjectId, error);
+          return;
+        }
+      }
+      // The board store reports its own failure.
+      await useBoardStore.getState().deleteTask(task.id).catch(() => undefined);
+      return;
+    }
+    try {
+      await window.electronAPI.tasks.delete(task.id, taskProjectId);
+    } catch (error) {
+      reportDeleteFailure(task, taskProjectId, error);
+    }
+  }, [reportDeleteFailure]);
+
   const deleteTask = useCallback((task: Task, taskProjectId: string) => {
     if (useConfigStore.getState().config.skipDeleteConfirm) {
       void deleteWorkflowTask(task, taskProjectId);
       return;
     }
     setDialog({ kind: 'deleteTask', task, projectId: taskProjectId });
-  }, []);
+  }, [deleteWorkflowTask]);
 
   const handleCardContextMenu = useCallback((key: string, position: { x: number; y: number }) => {
     // A planned task is not a board task yet: it has no board menu.
@@ -382,9 +386,9 @@ export function WorkflowsView() {
             and the other way in (Final 7). Static: nothing here moves. */}
         <div className="flex flex-1 min-h-0 flex-col items-center justify-center px-8 text-center" data-testid="workflows-empty">
           <NoWorkflowsIllustration />
-          <div className="mt-[18px] text-lg font-semibold text-fg">No workflows</div>
+          <div className="mt-[18px] text-lg font-semibold text-fg"><Trans>No workflows</Trans></div>
           <div className="mt-1.5 max-w-[460px] text-sm text-fg-muted" data-testid="workflows-empty-line">
-            Linked tasks that run through your board on their own.
+            <Trans>Linked tasks that run through your board on their own.</Trans>
           </div>
           <button
             type="button"
@@ -393,10 +397,10 @@ export function WorkflowsView() {
             data-testid="workflows-create-first"
           >
             <Plus size={15} />
-            Create your first workflow
+            <Trans>Create your first workflow</Trans>
           </button>
           <div className="mt-3 text-sm text-fg-faint" data-testid="workflows-empty-hint">
-            Or right-click a task and choose New workflow.
+            <Trans>Or right-click a task and choose New workflow.</Trans>
           </div>
         </div>
       </div>
@@ -434,7 +438,7 @@ export function WorkflowsView() {
             <div className={`absolute inset-0 ring-2 ring-inset ring-accent/70 ${planHeld ? 'kng-drive-pulse' : ''}`} />
             <span className="absolute left-3 top-3 flex items-center gap-1.5 rounded bg-surface-raised/95 px-2.5 py-1 text-xs text-fg-secondary shadow" data-testid="workflow-agent-working-label">
               <span className={`h-1.5 w-1.5 rounded-full bg-active ${planHeld ? 'kng-drive-pulse' : ''}`} />
-              Workflow agent is working
+              <Trans>Workflow agent is working</Trans>
             </span>
           </div>
           {detail && (
@@ -544,8 +548,8 @@ export function WorkflowsView() {
           swimlaneId={todoLane.id}
           onClose={() => setDialog(null)}
           workflow={{
-            title: 'Edit Task',
-            submitLabel: 'Save',
+            title: t`Edit Task`,
+            submitLabel: t`Save`,
             // The planned row itself: its board and run settings open as stored.
             initial: editing.planned,
             onSubmit: (input) => updateTask(editing.key, input),

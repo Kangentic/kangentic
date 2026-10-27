@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Funnel, Info, Repeat, Settings, TextSearch, Zap } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { translateText } from '../../../i18n/translate';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGER_LABELS,
@@ -10,7 +14,6 @@ import {
   isTypeOfferedOnTrigger,
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
-import { translateText } from '../../../i18n/translate';
 import type { AutomationField } from '../../../../shared/automation-manifest';
 import { TEXT_MATCH_PLACEHOLDER, TEXT_MATCH_UNAVAILABLE_REASON } from '../../../../shared/final-line-match';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
@@ -35,9 +38,6 @@ import {
   spliceAtRange,
   type AutomationDraft,
 } from './automation-drafts';
-
-/** Move to column's first choice: the next column on the task's route, else the board. */
-const NEXT_COLUMN_OPTION = { value: '', label: 'Next column' };
 
 /**
  * The ONE place an automation is edited, laid out as the rule reads: a Name,
@@ -64,9 +64,6 @@ const NEXT_COLUMN_OPTION = { value: '', label: 'Next column' };
  */
 const SLOW_TYPES = new Set<AutomationType>(['run_script', 'webhook']);
 
-/** What a switched-off Condition shows, and the placeholder of an empty one. */
-const CONDITION_EXAMPLE = 'All tests pass';
-
 /**
  * How the Condition is checked: the Automation agent judging prose, or a Text
  * match in code against the agent's last line. A row holds one at a time.
@@ -76,38 +73,41 @@ type ConditionKind = 'agent' | 'text';
 /**
  * Agent evaluation first: it runs on every trigger and is what a Condition has
  * always meant, so the one option that can be unavailable (Text match, off a
- * turn end) sits last. Module scope for the same ResizeObserver reason as
- * `TRIGGER_OPTIONS` below, one array per state.
+ * turn end) sits last. Built once per language and cached, for the same
+ * ResizeObserver reason as `triggerOptionsForLocale` below, one array per state.
+ * The labels are descriptors resolved when the arrays are built, at render and
+ * after the catalog has loaded, never at module load.
  */
-const AGENT_KIND_OPTION: SegmentedControlOption<ConditionKind> = {
-  value: 'agent',
-  label: 'Agent evaluation',
-  icon: <Bot size={14} />,
-  testId: 'edit-automation-condition-kind-agent',
-};
-const TEXT_KIND_OPTION: SegmentedControlOption<ConditionKind> = {
-  value: 'text',
-  label: 'Text match',
-  icon: <TextSearch size={14} />,
-  testId: 'edit-automation-condition-kind-text',
-};
-const CONDITION_KIND_OPTIONS: SegmentedControlOption<ConditionKind>[] = [AGENT_KIND_OPTION, TEXT_KIND_OPTION];
-let conditionKindOptionsNoText: SegmentedControlOption<ConditionKind>[] | null = null;
-/**
- * Off a turn end there is no final message, so Text match is shown and
- * disabled, with the reason as its tip. Built on first render, since the reason
- * is translated (see `baseTriggerOptions`).
- */
-function noTextConditionKindOptions(): SegmentedControlOption<ConditionKind>[] {
-  conditionKindOptionsNoText ??= [
-    AGENT_KIND_OPTION,
-    { ...TEXT_KIND_OPTION, disabled: true, disabledReason: translateText(TEXT_MATCH_UNAVAILABLE_REASON) },
-  ];
-  return conditionKindOptionsNoText;
+const AGENT_KIND_LABEL = msg`Agent evaluation`;
+const TEXT_KIND_LABEL = msg`Text match`;
+interface ConditionKindOptionSets {
+  withText: SegmentedControlOption<ConditionKind>[];
+  /** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
+  withoutText: SegmentedControlOption<ConditionKind>[];
 }
-
-/** The Text match hint, under its field. */
-const TEXT_MATCH_HINT = "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.";
+const conditionKindOptionsByLocale = new Map<string, ConditionKindOptionSets>();
+function conditionKindOptions(): ConditionKindOptionSets {
+  const cached = conditionKindOptionsByLocale.get(i18n.locale);
+  if (cached) return cached;
+  const agentOption: SegmentedControlOption<ConditionKind> = {
+    value: 'agent',
+    label: translateText(AGENT_KIND_LABEL),
+    icon: <Bot size={14} />,
+    testId: 'edit-automation-condition-kind-agent',
+  };
+  const textOption: SegmentedControlOption<ConditionKind> = {
+    value: 'text',
+    label: translateText(TEXT_KIND_LABEL),
+    icon: <TextSearch size={14} />,
+    testId: 'edit-automation-condition-kind-text',
+  };
+  const built: ConditionKindOptionSets = {
+    withText: [agentOption, textOption],
+    withoutText: [agentOption, { ...textOption, disabled: true, disabledReason: translateText(TEXT_MATCH_UNAVAILABLE_REASON) }],
+  };
+  conditionKindOptionsByLocale.set(i18n.locale, built);
+  return built;
+}
 
 /**
  * The kind a Condition opens on. A saved one keeps its own; a new one starts
@@ -122,30 +122,30 @@ function initialConditionKind(draft: AutomationDraft, automationAgentReady: bool
 }
 /** How tall a growing prose field may get before it scrolls. */
 const PROSE_MAX_ROWS = 8;
-/** The Type label's info tip. Type is the dialog's own field, not a manifest one, so its note lives here. */
-const TYPE_INFO = 'What runs. Each type brings its own fields.';
 
 /**
- * Module scope, not an inline literal: `SegmentedControl` keys its measuring
- * effect on `options`, and this dialog re-renders on every keystroke in Name or
- * any text field, so a fresh array per render would tear down and rebuild the
- * control's ResizeObserver (and force a synchronous layout read) per character.
+ * Cached per language, not an inline literal: `SegmentedControl` keys its
+ * measuring effect on `options`, and this dialog re-renders on every keystroke
+ * in Name or any text field, so a fresh array per render would tear down and
+ * rebuild the control's ResizeObserver (and force a synchronous layout read)
+ * per character.
+ *
+ * Built at render rather than at module load: the trigger labels are read from
+ * the shared manifest, which holds them as text to translate, and a read at
+ * module load would freeze them in English. This line is intentionally
+ * translated at render with `translateText`.
  */
-let triggerOptions: SegmentedControlOption<AutomationTrigger>[] | null = null;
-/**
- * Built on first render rather than at module load: the labels are translated,
- * and the session's catalog is not loaded when this module is. The language
- * never changes within a session, so one array serves the rest of it. In dev a
- * catalog hot update (`vite-lingui-catalog-hmr.mjs`) does not reach this array
- * or the option caches below; their labels change on the next reload.
- */
-function baseTriggerOptions(): SegmentedControlOption<AutomationTrigger>[] {
-  triggerOptions ??= AUTOMATION_TRIGGERS.map((trigger) => ({
+const triggerOptionsByLocale = new Map<string, SegmentedControlOption<AutomationTrigger>[]>();
+function triggerOptionsForLocale(): SegmentedControlOption<AutomationTrigger>[] {
+  const cached = triggerOptionsByLocale.get(i18n.locale);
+  if (cached) return cached;
+  const built = AUTOMATION_TRIGGERS.map((trigger) => ({
     value: trigger,
     label: translateText(AUTOMATION_TRIGGER_LABELS[trigger]),
     testId: `edit-automation-trigger-${trigger}`,
   }));
-  return triggerOptions;
+  triggerOptionsByLocale.set(i18n.locale, built);
+  return built;
 }
 
 /**
@@ -162,11 +162,13 @@ function triggerOptionsFor(
   reportsTurnEnd: boolean | undefined,
 ): SegmentedControlOption<AutomationTrigger>[] {
   const reasons = triggerReasons(type, column, reportsTurnEnd);
-  if (reasons.every((reason) => reason === null)) return baseTriggerOptions();
-  const cacheKey = reasons.map((reason) => reason ?? '').join('\n');
+  const triggerOptions = triggerOptionsForLocale();
+  if (reasons.every((reason) => reason === null)) return triggerOptions;
+  // The language is part of the key: the reasons and the labels read in it.
+  const cacheKey = `${i18n.locale}\n${reasons.map((reason) => reason ?? '').join('\n')}`;
   const cached = blockedTriggerOptions.get(cacheKey);
   if (cached) return cached;
-  const built = baseTriggerOptions().map((option, index) => {
+  const built = triggerOptions.map((option, index) => {
     const reason = reasons[index];
     return reason === null ? option : { ...option, disabled: true, disabledReason: reason };
   });
@@ -177,12 +179,13 @@ function triggerOptionsFor(
 /** Why each trigger is unavailable for this type in this column, or null where it is fine. */
 function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: boolean | undefined): Array<string | null> {
   const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
+  const columnName = column.name;
   return AUTOMATION_TRIGGERS.map((trigger) => {
     const group = canTriggerRun(facts, trigger);
-    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : translateText(group.reason);
+    if (!group.ok) return trigger === 'enter' ? i18n._(msg`Nothing runs when a task enters ${{ columnName }}.`) : translateText(group.reason);
     if (!isTypeOfferedOnTrigger(type, trigger)) {
       const typeReason = AUTOMATION_MANIFEST[type].triggerUnavailableReason;
-      return typeReason ? translateText(typeReason) : 'Not offered on this trigger.';
+      return typeReason ? translateText(typeReason) : i18n._(msg`Not offered on this trigger.`);
     }
     return null;
   });
@@ -256,6 +259,8 @@ export interface EditAutomationDialogProps {
 }
 
 export function EditAutomationDialog(props: EditAutomationDialogProps) {
+  const { t } = useLingui();
+  const conditionKindSets = conditionKindOptions();
   // A LOCAL copy: Done applies it to the board draft, Cancel discards it. That
   // is what makes the dialog safe to experiment in.
   const [local, setLocal] = useState<AutomationDraft>(props.draft);
@@ -349,6 +354,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     setLocal((current) => ({ ...current, max_runs: on ? maxRunsDraft : null }));
   };
 
+  const exitBudgetSeconds = Math.round(EXIT_GROUP_BUDGET_MS / 1000);
   const pairColumn = entry.fields.find((field) => field.kind === 'column' && !field.hidden) ?? null;
   const otherFields = entry.fields.filter((field) => !field.hidden && field !== pairColumn);
 
@@ -360,7 +366,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
       // automation arrived at a window titled "Edit automation" for something
       // that did not exist a moment ago. `isNew` already distinguishes the two
       // (it selects the generated name for overtyping); the title now says so.
-      title={props.isNew ? 'Add automation' : 'Edit automation'}
+      title={props.isNew ? t`Add automation` : t`Edit automation`}
       // With every card on the dialog is about 990px tall, past the 600px
       // window floor, so the body scrolls and the header and footer stay put.
       // Its menus (Type, Template variable, Column) portal, so the scroll clips
@@ -376,7 +382,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           // Saved with one Condition kind, and no Text match off a turn end:
           // the line kept for a Trigger switched back goes no further than Done.
           onConfirm={() => props.onDone({ ...local, ...draftConditionKinds(local) })}
-          confirmLabel="Done"
+          confirmLabel={t({ message: 'Done', context: 'button' })}
           confirmDisabled={blocked}
           cancelTestId="edit-automation-cancel"
           confirmTestId="edit-automation-done"
@@ -388,7 +394,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           and inset the body 36px against the header's 16px. */}
       <div className="flex flex-col gap-3">
         <label className="flex flex-col gap-1">
-          <span className={SETTING_LABEL_CLASS}>Name</span>
+          <span className={SETTING_LABEL_CLASS}><Trans>Name</Trans></span>
           <input
             ref={nameRef}
             autoFocus
@@ -402,17 +408,17 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             // Short on purpose: the field is about 310px wide, and naming the
             // column as well wrapped this to two lines.
             <span data-testid="edit-automation-name-error" className="text-[11px] text-warning">
-              Already used on this column.
+              <Trans>Already used on this column.</Trans>
             </span>
           )}
         </label>
 
-        <RuleCard testId="edit-automation-card-trigger" icon={<Zap size={16} />} title="Trigger" description="What starts it.">
+        <RuleCard testId="edit-automation-card-trigger" icon={<Zap size={16} />} title={t`Trigger`} description={t`What starts it.`}>
           {/* Full width: three options that each name who acts. */}
           <SegmentedControl
             quiet
             fullWidth
-            ariaLabel="Trigger"
+            ariaLabel={t`Trigger`}
             testId="edit-automation-trigger"
             options={triggerOptions}
             value={local.trigger}
@@ -427,7 +433,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               too late. */}
           {local.trigger === 'exit' && SLOW_TYPES.has(local.type) && (
             <p data-testid="edit-automation-exit-budget" className={SETTING_DESCRIPTION_CLASS}>
-              {`On exit, this column's automations share ${Math.round(EXIT_GROUP_BUDGET_MS / 1000)} seconds in total. Put longer work on enter.`}
+              {t`On exit, this column's automations share ${exitBudgetSeconds} seconds in total. Put longer work on enter.`}
             </p>
           )}
         </RuleCard>
@@ -435,11 +441,11 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
         <RuleCard
           testId="edit-automation-card-condition"
           icon={<Funnel size={16} />}
-          title="Condition"
-          description="Runs only when this holds."
+          title={t`Condition`}
+          description={t`Runs only when this holds.`}
           checked={conditionOn}
           onToggle={setConditionOn}
-          switchLabel="Condition"
+          switchLabel={t`Condition`}
         >
           {/* Full width, as the Trigger is: two options that each name who
               checks. Dimmed with the field while the Condition is off, still
@@ -448,9 +454,9 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             <SegmentedControl
               quiet
               fullWidth
-              ariaLabel="Condition kind"
+              ariaLabel={t`Condition kind`}
               testId="edit-automation-condition-kind"
-              options={textMatchAvailable ? CONDITION_KIND_OPTIONS : noTextConditionKindOptions()}
+              options={textMatchAvailable ? conditionKindSets.withText : conditionKindSets.withoutText}
               value={conditionKind}
               onChange={changeConditionKind}
             />
@@ -471,8 +477,8 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                     }}
                     context="automation"
                     testId="edit-automation-condition"
-                    placeholder={CONDITION_EXAMPLE}
-                    ariaLabel="Condition"
+                    placeholder={t`All tests pass`}
+                    ariaLabel={t`Condition`}
                     grow={{ maxRows: PROSE_MAX_ROWS }}
                     disabled={!conditionOn}
                     insertRef={conditionInsertRef}
@@ -491,7 +497,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                 >
                   <Info size={16} className="flex-shrink-0 text-accent-fg" aria-hidden="true" />
                   <span data-testid="edit-automation-condition-setup-text" className="min-w-0 flex-1 text-[13px] font-semibold text-fg">
-                    Set up an Automation agent
+                    <Trans>Set up an Automation agent</Trans>
                   </span>
                   {/* Accent outline and text: the one thing to do here, so it reads as
                       the way forward rather than a neutral secondary button. */}
@@ -502,7 +508,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
                     className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded border border-accent/50 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/10"
                   >
                     <Settings size={14} aria-hidden="true" />
-                    Open Settings
+                    <Trans>Open Settings</Trans>
                   </button>
                 </div>
               )}
@@ -510,7 +516,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
             <ConditionKindBody active={conditionKind === 'text'} testId="edit-automation-condition-text-body">
               <input
                 data-testid="edit-automation-final-line"
-                aria-label="Text match"
+                aria-label={t`Text match`}
                 value={conditionOn && conditionKind === 'text' ? (local.final_line ?? '') : ''}
                 placeholder={TEXT_MATCH_PLACEHOLDER}
                 disabled={!conditionOn}
@@ -523,7 +529,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               />
               {/* The template picker's height, so the two bodies line up. */}
               <span className={`flex min-h-7 items-center gap-1.5 ${SETTING_DESCRIPTION_CLASS} ${conditionOn ? '' : 'opacity-50'}`}>
-                <span data-testid="edit-automation-final-line-hint">{TEXT_MATCH_HINT}</span>
+                <span data-testid="edit-automation-final-line-hint">{t`Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.`}</span>
                 <WildcardExamplesTip />
               </span>
             </ConditionKindBody>
@@ -533,11 +539,11 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
         <RuleCard
           testId="edit-automation-card-frequency"
           icon={<Repeat size={16} />}
-          title="Frequency"
-          description="How many times it can run on a task."
+          title={t`Frequency`}
+          description={t`How many times it can run on a task.`}
           checked={frequencyOn}
           onToggle={setFrequencyOn}
-          switchLabel="Frequency"
+          switchLabel={t`Frequency`}
         >
           <div className="flex items-center gap-3">
             {/* Off, the whole panel reads dimmed, its label included, not only
@@ -549,12 +555,12 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               data-dimmed={!frequencyOn}
               className={`flex min-w-0 flex-1 items-center gap-1.5 ${frequencyOn ? '' : 'opacity-50'}`}
             >
-              <span className={SETTING_LABEL_CLASS}>Maximum runs</span>
-              <InfoTip label="Maximum runs" text="Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere." />
+              <span className={SETTING_LABEL_CLASS}><Trans>Maximum runs</Trans></span>
+              <InfoTip label={t`Maximum runs`} text={t`Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere.`} />
             </span>
             <NumberStepper
               testId="edit-automation-max-runs"
-              ariaLabel="Maximum runs"
+              ariaLabel={t`Maximum runs`}
               value={frequencyOn ? (local.max_runs ?? 1) : 1}
               disabled={!frequencyOn}
               onChange={(next) => {
@@ -571,22 +577,22 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
           // the card's header changes with Type below it. `data-icon` names it
           // for the specs, which should not lean on lucide's class names.
           icon={<AutomationIcon name={entry.icon} size={16} data-icon={entry.icon} />}
-          title="Action"
-          description="What it does."
+          title={t`Action`}
+          description={t`What it does.`}
         >
           <div className={pairColumn ? 'grid grid-cols-2 gap-3' : 'flex flex-col'}>
             {/* A <div>, not a <label>: the control is a button, and a label
                 wrapping one steals its click. */}
             <div className="flex min-w-0 flex-col gap-1.5">
               <span className="flex items-center gap-1.5">
-                <span className={SETTING_LABEL_CLASS}>Type</span>
-                <InfoTip label="Type" text={TYPE_INFO} />
+                <span className={SETTING_LABEL_CLASS}><Trans>Type</Trans></span>
+                <InfoTip label={t`Type`} text={t`What runs. Each type brings its own fields.`} />
               </span>
               {/* Carries each type's icon, which a native <select> cannot: an
                   <option> holds text only. */}
               <AutomationTypePicker
                 testId="edit-automation-type"
-                ariaLabel="Type"
+                ariaLabel={t`Type`}
                 value={local.type}
                 // The offerable set this column can run. The picker lists the
                 // current value too, which keeps a legacy row's type readable.
@@ -728,6 +734,9 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
   /** The row's trigger, which decides whether the field applies (`unavailableOn`). */
   trigger: AutomationTrigger;
 }) {
+  const { t } = useLingui();
+  // Move to column's first choice: the next column on the task's route, else the board.
+  const nextColumnOption = useMemo(() => ({ value: '', label: t`Next column` }), [t]);
   const text = typeof value === 'string' ? value : '';
   const testId = `automation-config-${field.key}`;
   // A field the manifest declares does nothing on this trigger (Delivery at a
@@ -886,7 +895,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           ariaLabel={label}
           value={text}
           columns={columns}
-          leadingOption={NEXT_COLUMN_OPTION}
+          leadingOption={nextColumnOption}
           onChange={onChange}
         />
       )}

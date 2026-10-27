@@ -1,5 +1,7 @@
 import React from 'react';
 import { Plus, GripVertical, LayoutGrid, Bot, Columns3Cog } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import {
   DndContext,
   closestCenter,
@@ -81,6 +83,9 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
   sortable: boolean;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useLingui();
+  const agentOverrideLabel = row.agentOverrideLabel;
+  const automationCount = row.automationCount;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: row.id,
     disabled: !sortable,
@@ -109,12 +114,12 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
            window behind the dialog even though its cursor is not `pointer`.
            The tip is shut while the row is lifted: a Tab-placed focus opens it at once, and
            an open tip would take the Escape that cancels a keyboard drag. */
-        <Tooltip label="Drag to reorder" enabled={!isDragging}>
+        <Tooltip label={t`Drag to reorder`} enabled={!isDragging}>
           <div
             {...attributes}
             {...listeners}
             data-drag-handle
-            aria-label="Drag to reorder"
+            aria-label={t`Drag to reorder`}
             className="flex items-center px-0.5 cursor-grab active:cursor-grabbing text-fg-disabled hover:text-fg-muted flex-shrink-0"
           >
             <GripVertical size={13} />
@@ -142,19 +147,19 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
         ) : (
           <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: row.color }} />
         )}
-        <span className="flex-1 min-w-0 truncate text-sm">{row.name || 'Untitled'}</span>
+        <span className="flex-1 min-w-0 truncate text-sm">{row.name || t`Untitled`}</span>
         {/* `text-fg-muted`, one step up from the faint the hints used to share:
             at 12px on the row's own fill, faint was reported as hard to see. */}
-        {row.agentOverrideLabel && (
-          <Tooltip label={`Agent: ${row.agentOverrideLabel}`}>
+        {agentOverrideLabel && (
+          <Tooltip label={t`Agent: ${agentOverrideLabel}`}>
             <span className="flex-shrink-0 text-fg-muted">
               <Bot size={12} strokeWidth={2} />
             </span>
           </Tooltip>
         )}
         {row.isolated && <IsolatedIcon size={12} explained />}
-        {row.automationCount > 0 && (
-          <Tooltip label={row.automationCount === 1 ? '1 automation runs here' : `${row.automationCount} automations run here`}>
+        {automationCount > 0 && (
+          <Tooltip label={t`${plural(automationCount, { one: '# automation runs here', other: '# automations run here' })}`}>
             <span
               data-testid="board-manager-tab-automation"
               className="flex-shrink-0 text-fg-muted"
@@ -165,7 +170,7 @@ function ColumnRailRow({ row, active, sortable, onSelect }: {
         )}
         {row.dirty && (
           <span
-            aria-label="unsaved changes"
+            aria-label={t`unsaved changes`}
             data-testid="board-manager-tab-dirty"
             className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"
           />
@@ -189,6 +194,7 @@ export function ColumnRail({
   rows, activeId, onSelect, onSelectOverview, onReorder, onAddColumn, profileBar,
   structureLocked = false,
 }: ColumnRailProps) {
+  const { t } = useLingui();
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts (Pattern C).
   const hmrGeneration = useHmrGeneration();
   // Never the stock KeyboardSensor: a click on the grip focuses it, Enter would
@@ -249,8 +255,8 @@ export function ColumnRail({
           What it compares is all columns AS SEEN THROUGH the selected profile,
           so it sits below the selector and above the list. */}
       <div className="flex-shrink-0 border-b border-edge/50 px-2 pt-3 pb-2">
-        <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint">Overview</div>
-        <Tooltip label="Compare every column's settings side by side">
+        <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint"><Trans>Overview</Trans></div>
+        <Tooltip label={t`Compare every column's settings side by side`}>
           <button
             type="button"
             role="tab"
@@ -264,13 +270,13 @@ export function ColumnRail({
             }`}
           >
             <LayoutGrid size={14} className="flex-shrink-0" />
-            All columns
+            <Trans>All columns</Trans>
           </button>
         </Tooltip>
       </div>
 
       <div className="pl-4 pr-2 pt-3 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint flex-shrink-0">
-        Columns
+        <Trans>Columns</Trans>
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
@@ -316,7 +322,7 @@ export function ColumnRail({
               text-xs text-fg-faint hover:text-fg-secondary hover:border-edge hover:bg-surface-hover/40 transition-colors"
           >
             <Plus size={13} className="flex-shrink-0" />
-            Add column
+            <Trans>Add column</Trans>
           </button>
         )}
 

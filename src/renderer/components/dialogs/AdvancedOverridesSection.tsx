@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Pencil } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -58,9 +59,6 @@ export interface AdvancedOverridesBoard {
   /** Its profiles have not arrived yet. */
   loading: boolean;
 }
-
-/** The profile pencil's tooltip on another board: the Board Manager edits only the open board's. */
-const OTHER_BOARD_PROFILES_EDIT = 'Open that board to edit its profiles';
 
 interface EditPencilButtonProps {
   onClick: () => void;
@@ -186,6 +184,7 @@ export function AdvancedOverridesSection({
   setProfileId,
   board,
 }: AdvancedOverridesSectionProps) {
+  const { t } = useLingui();
   const openProject = useProjectStore((state) => state.currentProject);
   const openBoardLane = useBoardStore((state) => state.swimlanes.find((lane) => lane.id === swimlaneId));
   const openBoardProfiles = useBoardStore((state) => state.boardProfiles);
@@ -255,12 +254,12 @@ export function AdvancedOverridesSection({
   // never fills it), so one fixed "install another" string is wrong copy in the
   // second case.
   const agentFieldTip = canPickAgent
-    ? 'The agent CLI this task runs on'
+    ? t`The agent CLI this task runs on`
     : availableAgents.length === 1
-      ? 'Only one agent CLI detected - install another to choose'
-      : 'No agent CLI detected yet';
-  const modelInheritLabel = fallbackModelLabel ?? 'Agent default';
-  const effortInheritLabel = fallbackEffort ?? 'Agent default';
+      ? t`Only one agent CLI detected - install another to choose`
+      : t`No agent CLI detected yet`;
+  const modelInheritLabel = fallbackModelLabel ?? t`Agent default`;
+  const effortInheritLabel = fallbackEffort ?? t`Agent default`;
   const permissionInheritLabel = fallbackPermissionLabel;
 
   const handleAgentChange = (nextAgent: string) => {
@@ -401,7 +400,7 @@ export function AdvancedOverridesSection({
       <div
         className="space-y-2"
         role="radiogroup"
-        aria-label="How this task runs"
+        aria-label={t`How this task runs`}
         data-testid="task-run-mode"
       >
         {/* Named for the MECHANISM, not for the picker inside it. The mechanism
@@ -412,8 +411,8 @@ export function AdvancedOverridesSection({
             though it were. */}
         {modeCard(
           'column_settings',
-          'Column Settings',
-          "Each column applies its own settings as the task moves.",
+          t`Column Settings`,
+          t`Each column applies its own settings as the task moves.`,
           'task-run-mode-profile',
           <div className="flex items-center gap-2" data-testid="task-profile-row">
             {/* No visible "Profile" label: inside a card headed "Column Settings"
@@ -427,23 +426,23 @@ export function AdvancedOverridesSection({
             {/* Select spreads its props onto the native select, so the tip lands there. */}
             <Tooltip
               label={hasProfiles
-                ? 'An alternate set of per-column agent, model, and effort settings'
-                : 'No profiles yet - create one in Edit Columns'}
+                ? t`An alternate set of per-column agent, model, and effort settings`
+                : t`No profiles yet - create one in Edit Columns`}
             >
               <Select
                 value={profileId ?? ''}
                 disabled={!hasProfiles}
-                aria-label="Profile"
+                aria-label={t`Profile`}
                 onChange={(event) => setProfileId(event.target.value || null)}
                 className={FIELD_SELECT_CLASS}
                 wrapperClassName="relative flex-1 min-w-0"
                 data-testid="task-profile-select"
               >
-                <option value="">Default</option>
+                <option value="">{t({ message: 'Default', context: 'profile option' })}</option>
                 {boardProfiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>{profile.name}</option>
                 ))}
-                {unlistedProfile && <option value={profileId ?? ''}>Removed profile</option>}
+                {unlistedProfile && <option value={profileId ?? ''}>{t`Removed profile`}</option>}
               </Select>
             </Tooltip>
             {/* An affordance where a line of instructions used to be. It is the
@@ -453,7 +452,7 @@ export function AdvancedOverridesSection({
                 edit-column button. */}
             <EditPencilButton
               onClick={() => openBoardManager()}
-              label={profilesEditableHere ? 'Edit profiles in Edit Columns' : OTHER_BOARD_PROFILES_EDIT}
+              label={profilesEditableHere ? t`Edit profiles in Edit Columns` : t`Open that board to edit its profiles`}
               testId="task-profile-edit"
               disabled={!profilesEditableHere}
             />
@@ -462,11 +461,11 @@ export function AdvancedOverridesSection({
 
         {modeCard(
           'agent_override',
-          'Agent Override',
+          t`Agent Override`,
             // Declarative like the rest of the dialog, and parallel with the
             // other card on the axis that matters: "as the task moves" against
             // "for the whole task".
-            'Pinned for the whole task, ignoring column settings.',
+            t`Pinned for the whole task, ignoring column settings.`,
             'task-advanced-toggle',
             // space-y-3 matches the form these cards sit in (NewTaskDialog /
             // TaskDetailEditForm). On space-y-2 the override fields stacked
@@ -484,7 +483,7 @@ export function AdvancedOverridesSection({
                 both read correctly with no prop added to a shared control. */}
             <Tooltip label={agentFieldTip}>
               <div data-testid="task-agent-field">
-                <Field label="Agent">
+                <Field label={t`Agent`}>
                   <div className="flex items-center gap-2">
                     <Combobox
                       value={agentOverride}
@@ -506,7 +505,7 @@ export function AdvancedOverridesSection({
                         click would do nothing. */}
                     <EditPencilButton
                       onClick={() => currentProject && openProjectSettings(currentProject.path, currentProject.name, 'agent')}
-                      label="Edit agent defaults in Settings"
+                      label={t`Edit agent defaults in Settings`}
                       testId="task-agent-edit"
                       disabled={!currentProject}
                     />
@@ -517,7 +516,7 @@ export function AdvancedOverridesSection({
             {(showModelPicker || showEffortPicker) && (
               <div className="flex gap-3">
                 {showModelPicker && (
-                  <Field label="Model" className="flex-1 min-w-0">
+                  <Field label={t`Model`} className="flex-1 min-w-0">
                     <ModelCombobox
                       value={modelOverride}
                       onChange={setModelOverride}
@@ -533,7 +532,7 @@ export function AdvancedOverridesSection({
                   </Field>
                 )}
                 {showEffortPicker && (
-                  <Field label="Effort" className="flex-1 min-w-0">
+                  <Field label={t`Effort`} className="flex-1 min-w-0">
                     <Combobox
                       value={effortOverride}
                       onChange={setEffortOverride}
@@ -547,7 +546,7 @@ export function AdvancedOverridesSection({
               </div>
             )}
             {showPermissionPicker && (
-              <Field label="Permission">
+              <Field label={t`Permission`}>
                 <Combobox
                   value={permissionOverride}
                   onChange={setPermissionOverride}

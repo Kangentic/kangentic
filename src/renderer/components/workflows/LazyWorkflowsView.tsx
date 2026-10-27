@@ -5,6 +5,7 @@
  */
 
 import { lazy, Suspense } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const WorkflowsViewBody = lazy(() =>
@@ -16,8 +17,9 @@ function WorkflowsSkeleton() {
 }
 
 export function LazyWorkflowsView() {
+  const { t } = useLingui();
   return (
-    <PanelErrorBoundary label="Workflows">
+    <PanelErrorBoundary panel="Workflows" message={t`Failed to load the workflows`}>
       <Suspense fallback={<WorkflowsSkeleton />}>
         <WorkflowsViewBody />
       </Suspense>

@@ -1,5 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { GitCompare, Loader2 } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { BaseDialog } from './BaseDialog';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -20,9 +22,14 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
   const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
 
+  // Hookless on purpose (tests/unit/pop-out-changes-root-guard.test.ts calls this as a
+  // plain function), so the text resolves with i18n._ at render time, after the catalog loads.
+  const displayId = task.display_id;
+  const taskTitle = task.title;
+  const emptyMessage = i18n._(msg`No changes on this branch`);
   const title = (
     <span className="truncate">
-      Changes - #{task.display_id} {task.title}
+      {i18n._(msg`Changes - #${{ displayId }} ${{ taskTitle }}`)}
     </span>
   );
 
@@ -39,10 +46,10 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
       <div className="flex-1 min-h-0">
         {!projectPath ? (
           <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
-            No changes on this branch
+            {emptyMessage}
           </div>
         ) : (
-          <PanelErrorBoundary label="Changes panel">
+          <PanelErrorBoundary panel="Changes panel" message={i18n._(msg`Failed to load the Changes panel`)}>
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">
@@ -56,7 +63,7 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
                 projectPath={projectPath}
                 worktreePath={task.worktree_path ?? undefined}
                 baseBranch={task.base_branch || defaultBaseBranch || 'main'}
-                emptyMessage="No changes on this branch"
+                emptyMessage={emptyMessage}
                 task={task}
                 filePopOutParams={projectId ? { taskId: task.id, projectId } : undefined}
               />

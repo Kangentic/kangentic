@@ -1,5 +1,9 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Clock, Settings } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../../../../i18n/translate';
+import type { LocalizedText } from '../../../../../shared/i18n/text';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { Tooltip } from '../../../Tooltip';
 import { openKnowledgeGraphSettings } from '../../../knowledge-graph/open-knowledge-graph-settings';
@@ -62,10 +66,10 @@ export function SummaryTab({ report, projectId, taskId, taskChanges, taskChanges
   );
 }
 
-const SUMMARY_STATE_COPY: Record<Exclude<TaskReportSummaryState['kind'], 'written'>, { text: string; settings: boolean }> = {
-  pending: { text: 'Summary pending', settings: false },
-  off: { text: 'Task summaries are off', settings: true },
-  'indexing-off': { text: 'Knowledge Graph indexing is off', settings: true },
+const SUMMARY_STATE_COPY: Record<Exclude<TaskReportSummaryState['kind'], 'written'>, { text: LocalizedText; settings: boolean }> = {
+  pending: { text: msg`Summary pending`, settings: false },
+  off: { text: msg`Task summaries are off`, settings: true },
+  'indexing-off': { text: msg`Knowledge Graph indexing is off`, settings: true },
 };
 
 /**
@@ -94,13 +98,14 @@ function useSummaryRequirement(): string | undefined {
  * parsed only when the view shows it.
  */
 function TaskSummaryCard({ state, projectId, taskId }: { state: TaskReportSummaryState; projectId: string; taskId: string }) {
+  const { t } = useLingui();
   const written = state.kind === 'written';
   const { lastMessage, loading } = useTaskLastMessage(projectId, taskId, !written);
   const requirement = useSummaryRequirement();
 
   if (state.kind === 'written') {
     return (
-      <ReportCard title="Task summary" testId="completed-task-summary">
+      <ReportCard title={t`Task summary`} testId="completed-task-summary">
         <p className="max-w-[900px] whitespace-pre-wrap text-sm leading-relaxed text-fg-secondary" data-testid="completed-task-summary-text">{state.text}</p>
       </ReportCard>
     );
@@ -112,10 +117,10 @@ function TaskSummaryCard({ state, projectId, taskId }: { state: TaskReportSummar
     ? { text: requirement, settings: true }
     : SUMMARY_STATE_COPY[state.kind];
   return (
-    <ReportCard title="Task summary" testId="completed-task-summary">
+    <ReportCard title={t`Task summary`} testId="completed-task-summary">
       <div className="flex items-center gap-3 text-sm text-fg-muted" data-testid={`completed-summary-state-${state.kind}`}>
         {state.kind === 'pending' && !requirement && <Clock size={14} className="flex-shrink-0 text-fg-faint" />}
-        <span>{copy.text}</span>
+        <span>{translateText(copy.text)}</span>
         {copy.settings && (
           <button
             type="button"
@@ -124,13 +129,13 @@ function TaskSummaryCard({ state, projectId, taskId }: { state: TaskReportSummar
             data-testid="completed-summary-open-settings"
           >
             <Settings size={12} />
-            Open Settings
+            <Trans>Open Settings</Trans>
           </button>
         )}
       </div>
       {(loading || lastMessage) && (
         <div className="mt-3.5" data-testid="completed-last-message">
-          <div className="mb-1.5 text-xs font-semibold text-fg-muted">Last message</div>
+          <div className="mb-1.5 text-xs font-semibold text-fg-muted"><Trans>Last message</Trans></div>
           {lastMessage ? <ClampedMarkdown text={lastMessage.text} /> : <div className="h-4 w-2/3 animate-pulse rounded bg-surface-hover" />}
         </div>
       )}
@@ -140,6 +145,7 @@ function TaskSummaryCard({ state, projectId, taskId }: { state: TaskReportSummar
 
 /** Markdown cut to a few lines, with "Show all" when there is more. */
 function ClampedMarkdown({ text }: { text: string }) {
+  const { t } = useLingui();
   const bodyRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -164,7 +170,7 @@ function ClampedMarkdown({ text }: { text: string }) {
       {(overflows || expanded) && (
         <div className="mt-1.5">
           <LinkButton onClick={() => setExpanded((previous) => !previous)} testId="completed-last-message-toggle">
-            {expanded ? 'Show less' : 'Show all'}
+            {expanded ? t`Show less` : t`Show all`}
           </LinkButton>
         </div>
       )}
@@ -184,8 +190,9 @@ function RouteCard({ route, onOpenConversation }: {
   route: TaskReportRouteColumn[];
   onOpenConversation: (target: ConversationTabRequest) => void;
 }) {
+  const { t } = useLingui();
   return (
-    <ReportCard title="Route" testId="completed-route">
+    <ReportCard title={t({ message: 'Route', context: 'completed task card' })} testId="completed-route">
       <div className="flex items-start gap-[3px] overflow-x-auto">
         {route.map((column) => {
           const stays = column.visits.filter((visit) => visit.durationMs >= VISIT_CARD_MIN_MS);
@@ -201,7 +208,7 @@ function RouteCard({ route, onOpenConversation }: {
                 <Tooltip
                   key={visit.startedAt}
                   label={`${formatDateTime(visit.startedAt)}: ${formatSpan(visit.durationMs)}`}
-                  detail={OPENS_CONVERSATION_DETAIL}
+                  detail={translateText(OPENS_CONVERSATION_DETAIL)}
                 >
                   <button
                     type="button"
@@ -232,10 +239,13 @@ function CommitsCard({ knowledge, taskChanges, onOpenCommit }: {
   taskChanges: GitTaskChangesResult | null;
   onOpenCommit: (commitSha: string) => void;
 }) {
-  const aside = knowledge.commitCount > knowledge.commits.length ? `${knowledge.commits.length} of ${knowledge.commitCount}` : undefined;
+  const { t } = useLingui();
+  const shownCount = knowledge.commits.length;
+  const totalCount = knowledge.commitCount;
+  const aside = totalCount > shownCount ? t`${shownCount} of ${totalCount}` : undefined;
   const openable = new Set((taskChanges?.commits ?? []).map((commit) => commit.hash));
   return (
-    <ReportCard title="Commits" aside={aside} testId="completed-commits">
+    <ReportCard title={t`Commits`} aside={aside} testId="completed-commits">
       {knowledge.commits.map((commit) => {
         const shortSha = commit.sha.slice(0, 7);
         const content = (
@@ -255,7 +265,7 @@ function CommitsCard({ knowledge, taskChanges, onOpenCommit }: {
           );
         }
         return (
-          <Tooltip key={commit.sha} label={`Show ${shortSha} in Changes`} detail={`${commit.subject}\n${formatDateTime(commit.committedAt)}`}>
+          <Tooltip key={commit.sha} label={t`Show ${shortSha} in Changes`} detail={`${commit.subject}\n${formatDateTime(commit.committedAt)}`}>
             <button
               type="button"
               onClick={() => onOpenCommit(commit.sha)}
@@ -287,6 +297,7 @@ function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
   loading: boolean;
   onOpenFile: (filePath: string, newestCommitSha: string | null) => void;
 }) {
+  const { t } = useLingui();
   const gitFiles = taskChanges?.files ?? [];
   const indexFiles = knowledge?.changedFiles ?? [];
   const boxStyle = { maxHeight: FILES_BOX_ROWS * FILE_ROW_PX };
@@ -295,7 +306,7 @@ function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
 
   if (loading) {
     return (
-      <ReportCard title="Files changed" testId="completed-files-changed">
+      <ReportCard title={t`Files changed`} testId="completed-files-changed">
         <div className="grid grid-cols-2 gap-x-8 gap-y-2" data-testid="completed-files-loading">
           {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className="h-4 animate-pulse rounded bg-surface-hover" />
@@ -307,7 +318,7 @@ function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
 
   if (gitFiles.length === 0) {
     return (
-      <ReportCard title="Files changed" aside={knowledge?.changedFileCount} testId="completed-files-changed">
+      <ReportCard title={t`Files changed`} aside={knowledge?.changedFileCount} testId="completed-files-changed">
         <div className="grid grid-cols-2 gap-x-8 overflow-y-auto" style={boxStyle}>
           {indexFiles.map((file) => (
             <Tooltip key={file} label={file}>
@@ -323,7 +334,7 @@ function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
 
   const hasRange = Boolean(taskChanges?.range);
   return (
-    <ReportCard title="Files changed" aside={gitFiles.length} testId="completed-files-changed">
+    <ReportCard title={t`Files changed`} aside={gitFiles.length} testId="completed-files-changed">
       {/* The box, not each row, takes the negative margin: rows pad their hover
           back in, so their text lines up with the title, and nothing reaches
           past the scrolling box to raise a sideways scrollbar. */}
@@ -337,11 +348,14 @@ function FilesChangedCard({ knowledge, taskChanges, loading, onOpenFile }: {
 }
 
 function FileRow({ file, onOpen }: { file: GitTaskChangesFile; onOpen: () => void }) {
+  const { t } = useLingui();
   const status = FILE_STATUS_CONFIG[file.status];
   const StatusIcon = status.icon;
   const fileName = file.path.split('/').pop() ?? file.path;
+  const oldPath = file.oldPath;
+  const newPath = file.path;
   return (
-    <Tooltip label={`Show ${fileName} in Changes`} detail={file.oldPath ? `${file.oldPath} to ${file.path}` : file.path}>
+    <Tooltip label={t`Show ${fileName} in Changes`} detail={oldPath ? t`${oldPath} to ${newPath}` : file.path}>
       <button
         type="button"
         onClick={onOpen}
@@ -349,11 +363,11 @@ function FileRow({ file, onOpen }: { file: GitTaskChangesFile; onOpen: () => voi
         style={{ height: FILE_ROW_PX }}
         data-testid="completed-changed-file"
       >
-        <StatusIcon size={12} className={`flex-shrink-0 ${status.colorClass}`} aria-label={status.label} />
+        <StatusIcon size={12} className={`flex-shrink-0 ${status.colorClass}`} aria-label={translateText(status.label)} />
         <span className="min-w-0 truncate font-mono text-xs text-fg-secondary">{file.path}</span>
         <span className="ml-auto flex flex-shrink-0 gap-1 pl-3 text-[11px] tabular-nums">
           {file.binary ? (
-            <span className="text-fg-faint">binary</span>
+            <span className="text-fg-faint">{t`binary`}</span>
           ) : (
             <>
               <span className="text-green-400">+{file.insertions}</span>

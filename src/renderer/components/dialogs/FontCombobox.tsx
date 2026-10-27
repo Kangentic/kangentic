@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -31,11 +32,14 @@ export function FontCombobox({
   value,
   onChange,
   fonts,
+  // i18n-ok: a CSS font stack, an example of the value typed here, never translated.
   placeholder = 'Menlo, Consolas, "Courier New", monospace',
   className = '',
   testId = 'font-combobox',
 }: FontComboboxProps) {
+  const { t } = useLingui();
   const [isOpen, setIsOpen] = useState(false);
+  const dropdownToggleLabel = isOpen ? t`Close dropdown` : t`Open dropdown`;
   // `null` means "not typed since opening" (show the committed `value`); any
   // string - INCLUDING the empty string when the user clears the field - is
   // the live edit. Distinguishing the two matters because `onChange` persists
@@ -58,6 +62,7 @@ export function FontCombobox({
     [fonts, searchQuery],
   );
   const showSuggestions = isOpen && fonts.length > 0;
+  const typedFilter = filterText ?? '';
 
   // Portaled to document.body (see render below), so measure and position against
   // the visible field rather than relying on an in-flow absolute offset that would
@@ -203,12 +208,12 @@ export function FontCombobox({
           className="flex-1 bg-transparent px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none"
         />
         {fonts.length > 0 && (
-          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+          <Tooltip label={dropdownToggleLabel}>
             <button
               type="button"
               onClick={handleToggleDropdown}
               className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
-              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+              aria-label={dropdownToggleLabel}
             >
               <ChevronDown
                 size={16}
@@ -258,7 +263,7 @@ export function FontCombobox({
             );
           })
         ) : (
-          <div className="px-3 py-2 text-xs text-fg-faint text-center">No fonts match "{filterText}"</div>
+          <div className="px-3 py-2 text-xs text-fg-faint text-center"><Trans>No fonts match "{typedFilter}"</Trans></div>
         )}
       </OverlayPopover>
     </div>

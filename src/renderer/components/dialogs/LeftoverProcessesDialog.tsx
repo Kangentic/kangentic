@@ -1,4 +1,5 @@
 import { Check, Cpu, LoaderCircle, Square } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../../shared/types';
 import { BaseDialog } from './BaseDialog';
 import { CountBadge } from '../CountBadge';
@@ -46,6 +47,7 @@ function openBehaviorSettings(onClose: () => void): void {
 const AGE_TICK_MS = 30_000;
 
 function LeftoverProcessesDialogBody({ report, onClose }: { report: LeftoverProcessReport; onClose: () => void }) {
+  const { t } = useLingui();
   const { stillRunning, stopped } = sectionsOf(report);
   const spansTasks = new Set(report.processes.map((entry) => entry.taskId)).size > 1;
   const now = useNow(AGE_TICK_MS);
@@ -72,7 +74,7 @@ function LeftoverProcessesDialogBody({ report, onClose }: { report: LeftoverProc
             data-testid="leftover-processes-close"
             className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
           >
-            Close
+            {t({ message: 'Close', context: 'button' })}
           </button>
         </div>
       }
@@ -80,18 +82,18 @@ function LeftoverProcessesDialogBody({ report, onClose }: { report: LeftoverProc
       <div className="flex flex-col gap-4">
         {!report.stoppingEnabled && (
           <p className="text-sm text-fg-muted" data-testid="leftover-processes-stopping-off">
-            Stopping leftover processes is off, so these kept running.{' '}
+            <Trans>Stopping leftover processes is off, so these kept running.</Trans>{' '}
             <button
               type="button"
               onClick={() => openBehaviorSettings(onClose)}
               className="text-accent-fg underline underline-offset-2 hover:opacity-80"
             >
-              Change in Settings
+              <Trans>Change in Settings</Trans>
             </button>
           </p>
         )}
-        <LeftoverSection label="Still running" processes={stillRunning} spansTasks={spansTasks} testId="leftover-processes-running" />
-        <LeftoverSection label="Stopped" processes={stopped} spansTasks={spansTasks} testId="leftover-processes-stopped" />
+        <LeftoverSection label={t({ message: 'Still running', context: 'leftover section' })} processes={stillRunning} spansTasks={spansTasks} testId="leftover-processes-running" />
+        <LeftoverSection label={t({ message: 'Stopped', context: 'leftover section' })} processes={stopped} spansTasks={spansTasks} testId="leftover-processes-stopped" />
       </div>
     </BaseDialog>
   );
@@ -139,6 +141,7 @@ function LeftoverRow({ entry }: { entry: LeftoverProcess }) {
         <div className={`truncate text-xs ${detail.failure ? 'text-red-400' : 'text-fg-tertiary'}`}>{detail.text}</div>
       </div>
       <span className="w-[76px] flex-shrink-0 text-right font-mono text-[11px] text-fg-faint tabular-nums select-text">
+        {/* i18n-ok: PID is the operating system's own term */}
         PID {entry.pid}
       </span>
       <RowAction state={state} label={entry.label} onStop={() => { void stopProcess(entry.id); }} />
@@ -149,25 +152,26 @@ function LeftoverRow({ entry }: { entry: LeftoverProcess }) {
 const ACTION_BASE_CLASS = 'flex h-7 w-[92px] flex-shrink-0 items-center justify-center gap-1.5 rounded border text-xs transition-colors';
 
 function RowAction({ state, label, onStop }: { state: LeftoverRowState; label: string; onStop: () => void }) {
+  const { t } = useLingui();
   if (state === 'running' || state === 'failed') {
     return (
       <button
         type="button"
         onClick={onStop}
-        aria-label={`Stop ${label}`}
+        aria-label={t`Stop ${label}`}
         data-testid="leftover-process-stop"
         className={`${ACTION_BASE_CLASS} border-red-500/40 text-red-400 hover:bg-red-500/10`}
       >
         <Square size={12} strokeWidth={2.5} aria-hidden="true" />
-        Stop
+        {t({ message: 'Stop', context: 'process action' })}
       </button>
     );
   }
   const content = state === 'stopping'
-    ? <><LoaderCircle size={12} strokeWidth={2.5} className="animate-spin" aria-hidden="true" />Stopping</>
+    ? <><LoaderCircle size={12} strokeWidth={2.5} className="animate-spin" aria-hidden="true" />{t({ message: 'Stopping', context: 'process state' })}</>
     : state === 'stopped'
-      ? <><Check size={12} strokeWidth={2.5} aria-hidden="true" />Stopped</>
-      : <>Ended</>;
+      ? <><Check size={12} strokeWidth={2.5} aria-hidden="true" />{t({ message: 'Stopped', context: 'process state' })}</>
+      : <>{t({ message: 'Ended', context: 'process state' })}</>;
   return (
     <button
       type="button"

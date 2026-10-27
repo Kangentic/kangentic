@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Plus, Inbox, GripVertical } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { DataTable } from '../DataTable';
@@ -15,6 +16,7 @@ import type { BacklogTask } from '../../../shared/types';
 import { useBacklogColumns, type SortKey } from './view/useBacklogColumns';
 
 export function BacklogView() {
+  const { t } = useLingui();
   const hydrated = useBacklogStore((state) => state.hydrated);
   const items = useBacklogStore((state) => state.items);
   const selectedIds = useBacklogStore((state) => state.selectedIds);
@@ -173,7 +175,7 @@ export function BacklogView() {
   const hmrGeneration = useHmrGeneration();
 
   const emptyMessage = backlogSearchQuery || hasActiveFilters
-    ? 'No items match your filters'
+    ? t`No items match your filters`
     : undefined;
 
   if (!hydrated) return null;
@@ -186,8 +188,8 @@ export function BacklogView() {
           <div className="flex flex-col items-center justify-center h-full text-fg-faint gap-4">
             <Inbox size={48} strokeWidth={1} />
             <div className="text-center">
-              <div className="text-lg font-medium text-fg-muted">Backlog is empty</div>
-              <div className="text-sm mt-1">Create or import items to stage work before promoting to the board</div>
+              <div className="text-lg font-medium text-fg-muted"><Trans>Backlog is empty</Trans></div>
+              <div className="text-sm mt-1"><Trans>Create or import items to stage work before promoting to the board</Trans></div>
             </div>
             <div className="flex items-center gap-3 mt-2">
               <button
@@ -196,7 +198,7 @@ export function BacklogView() {
                 className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
               >
                 <Plus size={14} />
-                Create your first task
+                <Trans>Create your first task</Trans>
               </button>
               <ImportPopover onOpenImportDialog={setImportSource} />
             </div>

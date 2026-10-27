@@ -1,4 +1,5 @@
 import React, { useContext } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
 import type { WorkflowBoardEnds, WorkflowViewTask } from '../../../shared/types';
 import { PORT_OFFSET_Y } from './workflow-layout';
@@ -66,6 +67,7 @@ export const LINK_HINT_CLASS = 'workflow-link-hint pointer-events-none whitespac
 
 /** What releasing the link being drawn over this card would do. */
 function LinkDropHint({ nodeId, portTop }: { nodeId: string; portTop: number }) {
+  const { t } = useLingui();
   const detail = useContext(WorkflowDetailContext);
   // Only this card's hover, so the hint re-renders when the hover changes, not on every pointer move.
   const hover = useConnection((connection) => (
@@ -78,6 +80,8 @@ function LinkDropHint({ nodeId, portTop }: { nodeId: string; portTop: number }) 
   const blocked = findTask(detail, nodeId);
   if (!blocker || !blocked) return null;
   const refusal = hover.valid ? null : linkRefusal(detail, hover.blockerKey, nodeId);
+  const blockedLabel = taskLabel(blocked);
+  const blockerLabel = taskLabel(blocker);
   // Refused by the port under the pointer, not by the workflow (an outgoing
   // port is no drop target): the hint beside the pointer speaks instead.
   if (!hover.valid && refusal === null) return null;
@@ -100,7 +104,7 @@ function LinkDropHint({ nodeId, portTop }: { nodeId: string; portTop: number }) 
         data-testid="workflow-link-hint"
         data-link-verdict={refusal === null ? 'valid' : 'refused'}
       >
-        {refusal ?? `Release to make ${taskLabel(blocked)} wait for ${taskLabel(blocker)}`}
+        {refusal ?? t`Release to make ${blockedLabel} wait for ${blockerLabel}`}
       </div>
     </>
   );

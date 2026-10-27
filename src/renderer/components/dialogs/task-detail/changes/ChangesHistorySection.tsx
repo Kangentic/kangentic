@@ -1,5 +1,7 @@
 import React from 'react';
 import { ChevronRight } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { CountBadge } from '../../../CountBadge';
 import { Tooltip } from '../../../Tooltip';
 
@@ -18,8 +20,9 @@ interface ChangesHistorySectionProps {
   commitCount: number | null;
   /** Whether the commit list hit its cap (the count is a floor, not a total). */
   truncated: boolean;
-  /** What the commits are: "on this branch" (a live task), "for this task" (a completed one). */
-  countSubject?: string;
+  /** What the commits belong to: the live task's branch (the default) or a completed task.
+   *  Picks a whole sentence, so a translation can order the words as it needs to. */
+  countScope?: 'branch' | 'task';
   /** False while the user is dragging the section's resize handle, so the
    *  height tracks the pointer 1:1 (never animate during a drag); the height
    *  transition applies only to the discrete open/close toggle. */
@@ -39,10 +42,18 @@ interface ChangesHistorySectionProps {
  * commit needs no marker here: the selection bar at the top of the rail names
  * it whether or not this section is open.
  */
-export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, countSubject = 'on this branch', animateHeight, children }: ChangesHistorySectionProps) {
+export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount, truncated, countScope = 'branch', animateHeight, children }: ChangesHistorySectionProps) {
+  const { t } = useLingui();
+  const countTip = commitCount === null
+    ? ''
+    : truncated
+      ? t`Showing the latest ${plural(commitCount, { one: '# commit', other: '# commits' })}`
+      : countScope === 'task'
+        ? t`${plural(commitCount, { one: '# commit for this task', other: '# commits for this task' })}`
+        : t`${plural(commitCount, { one: '# commit on this branch', other: '# commits on this branch' })}`;
   return (
     <div className="flex flex-col min-h-0 flex-shrink border-t border-edge" data-testid="changes-history-section">
-      <Tooltip label={open ? 'Collapse history' : 'Expand history'}>
+      <Tooltip label={open ? t`Collapse history` : t`Expand history`}>
         <button
           type="button"
           onClick={onToggle}
@@ -52,12 +63,12 @@ export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount,
           data-testid="changes-history-toggle"
         >
           <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
-          <span className="text-xs font-medium">History</span>
+          <span className="text-xs font-medium"><Trans>History</Trans></span>
           {commitCount !== null && (
             // The pill widens with each digit, so the graph's 200-commit cap
             // renders without clipping. Tinted from the toggle's tone, so it
             // brightens with the label on hover.
-            <Tooltip label={truncated ? `Showing the latest ${commitCount} commits` : `${commitCount} commits ${countSubject}`}>
+            <Tooltip label={countTip}>
               <span className="inline-flex">
                 <CountBadge count={commitCount} variant="tinted" size="pill" testId="changes-history-count" />
               </span>

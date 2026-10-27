@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Check, X } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -372,6 +373,7 @@ function placeUnanchoredCallout(dialogs: Rect[]): { left: number; top: number } 
  * implemented, rather than merely promised by a Skip button.
  */
 export function WalkthroughLayer() {
+  const { t } = useLingui();
   const walkthroughStep = useConfigStore((state) => state.walkthroughStep);
   const setWalkthroughStep = useConfigStore((state) => state.setWalkthroughStep);
   const checklistOpen = useConfigStore((state) => state.onboardingChecklistOpen);
@@ -523,6 +525,7 @@ export function WalkthroughLayer() {
     ? placeCallout(cutout, dialogRects)
     : placeUnanchoredCallout(dialogRects);
   const stepNumber = WALKTHROUGH_STEPS.findIndex((candidate) => candidate.key === step.key) + 1;
+  const stepCount = WALKTHROUGH_STEPS.length;
 
   const scrimClass = 'fixed bg-surface/40 backdrop-blur-xs pointer-events-none';
   const calloutBody = (
@@ -551,7 +554,7 @@ export function WalkthroughLayer() {
           type="button"
           onClick={() => setWalkthroughStep(null)}
           className="flex-shrink-0 p-1 rounded text-fg-faint hover:text-fg hover:bg-surface-hover cursor-pointer transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          aria-label="Stop showing me this step"
+          aria-label={t`Stop showing me this step`}
           data-testid="walkthrough-skip"
         >
           <X size={14} />
@@ -563,7 +566,7 @@ export function WalkthroughLayer() {
           as one flow. driver.js's `{{current}} of {{total}}` convention for the label. */}
       <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-edge/50">
         <span className="text-xs text-fg-faint">
-          Step {stepNumber} of {WALKTHROUGH_STEPS.length}
+          <Trans>Step {stepNumber} of {stepCount}</Trans>
         </span>
         <button
           type="button"
@@ -571,7 +574,7 @@ export function WalkthroughLayer() {
           className="px-3 py-1 text-xs font-medium rounded bg-accent-emphasis hover:bg-accent text-accent-on cursor-pointer transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           data-testid="walkthrough-next-step"
         >
-          {nextStep ? 'Next step' : 'Finish'}
+          {nextStep ? t({ message: 'Next step', context: 'onboarding button' }) : t({ message: 'Finish', context: 'onboarding button' })}
         </button>
       </div>
     </div>

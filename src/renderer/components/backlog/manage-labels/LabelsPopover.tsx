@@ -1,5 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { Tags, Trash2, Plus, Pencil } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
@@ -21,6 +23,7 @@ interface LabelsPopoverProps {
 }
 
 export function LabelsPopover({ collapse }: LabelsPopoverProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [pendingDeleteLabel, setPendingDeleteLabel] = useState<{ name: string; count: number } | null>(null);
   const [addingLabel, setAddingLabel] = useState(false);
@@ -39,6 +42,10 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
   // otherwise `?? {}` makes a fresh object each render and destabilizes every
   // hook below that depends on labelColors.
   const labelColors = useMemo(() => config.backlog?.labelColors ?? {}, [config.backlog?.labelColors]);
+  const labelsButtonLabel = t({ message: 'Labels', context: 'toolbar button' });
+  // Named locals, so a translator reads `{pendingDeleteLabelName}`, not `{0}`.
+  const pendingDeleteLabelName = pendingDeleteLabel?.name ?? '';
+  const pendingDeleteLabelCount = pendingDeleteLabel?.count ?? 0;
 
   // Close on click outside
   useEffect(() => {
@@ -119,12 +126,12 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label="Labels" enabled={!open}>
+      <Tooltip label={labelsButtonLabel} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setOpen(!open)}
-          aria-label="Labels"
+          aria-label={labelsButtonLabel}
           className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${collapse ? collapse.button : 'px-3'} ${
             open
               ? 'text-fg border-accent/50 bg-surface-control/40'
@@ -133,7 +140,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
           data-testid="manage-labels-btn"
         >
           <Tags size={14} className="shrink-0" />
-          <span className={collapse?.label}>Labels</span>
+          <span className={collapse?.label}>{labelsButtonLabel}</span>
         </button>
       </Tooltip>
 
@@ -142,8 +149,8 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
           {labelEntries.length === 0 ? (
             <div className="text-center text-fg-faint py-6 px-3">
               <Tags size={28} strokeWidth={1} className="mx-auto mb-2" />
-              <p className="text-sm">No labels yet</p>
-              <p className="text-xs mt-1">Add labels when creating tasks</p>
+              <p className="text-sm"><Trans>No labels yet</Trans></p>
+              <p className="text-xs mt-1"><Trans>Add labels when creating tasks</Trans></p>
             </div>
           ) : (
             <div className="space-y-0.5 p-2">
@@ -198,7 +205,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
                   setNewLabelName('');
                   setAddingLabel(false);
                 }}
-                placeholder="Label name"
+                placeholder={t`Label name`}
                 className="flex-1 bg-surface-control border border-edge-input rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
               />
             </div>
@@ -212,7 +219,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
               className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
             >
               <Plus size={14} />
-              Add Label
+              <Trans>Add Label</Trans>
             </button>
           )}
         </div>
@@ -220,11 +227,11 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
 
       {pendingDeleteLabel && (
         <ConfirmDialog
-          title={`Delete label "${pendingDeleteLabel.name}"`}
-          message={pendingDeleteLabel.count > 0
-            ? `This will remove the label from ${pendingDeleteLabel.count} item${pendingDeleteLabel.count !== 1 ? 's' : ''}.`
-            : 'This label is not assigned to any items.'}
-          confirmLabel="Delete"
+          title={t`Delete label "${pendingDeleteLabelName}"`}
+          message={pendingDeleteLabelCount > 0
+            ? t`This will remove the label from ${plural(pendingDeleteLabelCount, { one: '# item', other: '# items' })}.`
+            : t`This label is not assigned to any items.`}
+          confirmLabel={t({ message: 'Delete', context: 'button' })}
           variant="danger"
           showDontAskAgain
           onConfirm={(dontAskAgain) => {
@@ -251,6 +258,10 @@ function LabelRow({
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useLingui();
+  const changeColorLabel = t`Change color`;
+  const renameLabel = t({ message: 'Rename', context: 'button' });
+  const deleteLabelLabel = t`Delete label`;
   const [showColorPicker, setShowColorPicker] = useState(false);
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const [editing, setEditing] = useState(false);
@@ -274,12 +285,12 @@ function LabelRow({
   return (
     <div className="flex items-center gap-2 h-9 px-1.5 rounded hover:bg-surface-hover/30">
       <div className="relative flex-shrink-0">
-        <Tooltip label="Change color" enabled={!showColorPicker}>
+        <Tooltip label={changeColorLabel} enabled={!showColorPicker}>
           <button
             ref={colorButtonRef}
             type="button"
             onClick={() => setShowColorPicker(!showColorPicker)}
-            aria-label="Change color"
+            aria-label={changeColorLabel}
           >
             {editing ? (
               <span
@@ -326,23 +337,23 @@ function LabelRow({
 
       {!editing && <div className="flex-1" />}
 
-      <Tooltip label="Rename">
+      <Tooltip label={renameLabel}>
         <button
           type="button"
           onClick={startEditing}
           className="p-1 text-fg-disabled hover:text-fg-muted rounded transition-colors flex-shrink-0"
-          aria-label="Rename"
+          aria-label={renameLabel}
         >
           <Pencil size={12} />
         </button>
       </Tooltip>
 
-      <Tooltip label="Delete label">
+      <Tooltip label={deleteLabelLabel}>
         <button
           type="button"
           onClick={onDelete}
           className="p-1 text-fg-disabled hover:text-red-400 rounded transition-colors flex-shrink-0"
-          aria-label="Delete label"
+          aria-label={deleteLabelLabel}
         >
           <Trash2 size={13} />
         </button>

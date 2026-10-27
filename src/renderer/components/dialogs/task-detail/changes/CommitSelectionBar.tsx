@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../../../Tooltip';
 
 /**
@@ -20,6 +21,7 @@ export function CommitSelectionBar({ shortHash, subject, backLabel, onClose }: {
   backLabel: string;
   onClose: () => void;
 }) {
+  const { t } = useLingui();
   return (
     <div
       className="flex h-[30px] min-w-0 items-center gap-1.5 rounded border border-accent/45 bg-accent/10 pl-2 pr-1 text-xs"
@@ -35,7 +37,7 @@ export function CommitSelectionBar({ shortHash, subject, backLabel, onClose }: {
         <button
           type="button"
           onClick={onClose}
-          aria-label="Deselect commit"
+          aria-label={t`Deselect commit`}
           className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-accent-fg transition-colors hover:bg-accent/25 focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           data-testid="commit-selection-close"
         >

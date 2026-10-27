@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, pastedAttachmentPrefix, reserveNextPastedIndex, openAttachmentWithToast } from '../attachment-utils';
@@ -49,9 +51,10 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
 
   const addFile = useCallback(async (file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
+      const fileName = file.name;
       useToastStore.getState().addToast({
-        title: 'File too large',
-        message: `"${file.name}" is over the 10 MB limit.`,
+        title: i18n._(msg`File too large`),
+        message: i18n._(msg`"${{ fileName }}" is over the 10 MB limit.`),
         variant: 'warning',
       });
       return;
@@ -94,7 +97,7 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
     } catch (error) {
       console.error('Failed to add attachment:', error);
       useToastStore.getState().addToast({
-        title: `Couldn't add "${filename}"`,
+        title: i18n._(msg`Couldn't add "${{ filename }}"`),
         message: asSentence(describeIpcError(error)),
         variant: 'warning',
       });
@@ -109,7 +112,7 @@ export function useAttachments(taskId: string, updateAttachmentCount: (taskId: s
     } catch (error) {
       console.error('Failed to remove attachment:', error);
       useToastStore.getState().addToast({
-        title: "Couldn't remove attachment",
+        title: i18n._(msg`Couldn't remove attachment`),
         message: asSentence(describeIpcError(error)),
         variant: 'warning',
       });

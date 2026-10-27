@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { RotateCcw, Trash2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { Swimlane } from '../../../../shared/types';
 import { RestorePopover } from './RestorePopover';
 
@@ -19,13 +20,14 @@ export function BulkToolbar({
   onRestore: (swimlaneId: string) => void;
   onDelete: () => void;
 }) {
+  const { t } = useLingui();
   const [showRestorePicker, setShowRestorePicker] = useState(false);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   return (
     <div ref={toolbarRef} className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 bg-surface-raised border border-edge rounded-lg shadow-xl px-4 py-2.5 flex items-center gap-4">
       <span className="text-sm text-fg-muted font-medium tabular-nums">
-        {selectedCount} selected
+        <Trans>{selectedCount} selected</Trans>
       </span>
       <div className="w-px h-5 bg-edge" />
       <button
@@ -35,7 +37,7 @@ export function BulkToolbar({
         data-testid="bulk-restore-btn"
       >
         <RotateCcw size={14} />
-        Restore
+        {t({ message: 'Restore', context: 'task action' })}
       </button>
       <button
         type="button"
@@ -44,7 +46,7 @@ export function BulkToolbar({
         data-testid="bulk-delete-btn"
       >
         <Trash2 size={14} />
-        Delete
+        {t`Delete`}
       </button>
       {showRestorePicker && (
         <RestorePopover

@@ -1,6 +1,8 @@
 import '../../../../monacoConfig';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowUp, ArrowDown, Check, GitCommitHorizontal } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { Tooltip } from '../../../Tooltip';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
@@ -49,8 +51,6 @@ const HISTORY_DEFAULT_HEIGHT = 200;
 // Min body height: about 2.5 commit rows at 44px.
 const HISTORY_DRAG_MIN = 120;
 
-/** The scope control's labels, for the selection bar's way back ("Back to Working"). */
-const SCOPE_LABELS: Record<GitDiffScope, string> = { working: 'Working', staged: 'Staged', branch: 'Branch' };
 // Min height kept for the tree region above the section while dragging.
 const TREE_REGION_DRAG_MIN = 160;
 
@@ -121,6 +121,7 @@ interface DisplayedFileContent {
 }
 
 export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams, filePopOutParams, completedChanges }: ChangesPanelProps) {
+  const { t } = useLingui();
   const effectiveScrollKey = scrollKey ?? entityId;
   const completed = completedChanges ?? null;
   // Live combo for the empty-state hint (tracks rebinds; '' when unbound).
@@ -133,10 +134,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // collapse are mutually exclusive: only one is relevant per mode.
   const expandCollapseControl =
     panelMode === 'split' && onExpand ? (
-      <Tooltip label="Expand changes">
+      <Tooltip label={t`Expand changes`}>
         <button
           onClick={onExpand}
-          aria-label="Expand changes"
+          aria-label={t`Expand changes`}
           className="p-1.5 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
           data-testid="changes-expand"
         >
@@ -144,10 +145,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         </button>
       </Tooltip>
     ) : panelMode === 'expanded' && onCollapse ? (
-      <Tooltip label="Collapse to split view">
+      <Tooltip label={t`Collapse to split view`}>
         <button
           onClick={onCollapse}
-          aria-label="Collapse to split view"
+          aria-label={t`Collapse to split view`}
           className="p-1.5 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
           data-testid="changes-collapse"
         >
@@ -300,7 +301,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // Only show errors on initial load - transient failures during live
       // updates (e.g. git lock contention) are silently ignored.
       if (generation === filesFetchGenerationRef.current && !initialFetchDoneRef.current) {
-        setError(fetchError instanceof Error ? fetchError.message : 'Failed to load diff');
+        setError(fetchError instanceof Error ? fetchError.message : t`Failed to load diff`);
       }
     } finally {
       filesFetchInFlightRef.current = false;
@@ -309,7 +310,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         void fetchFilesRef.current();
       }
     }
-  }, [worktreePath, projectPath, baseBranch, liveScope, changesSelectedCommit, completed]);
+  }, [worktreePath, projectPath, baseBranch, liveScope, changesSelectedCommit, completed, t]);
 
   // What one file's content is read against: the selected commit, else a
   // completed task's range, else the live scope.
@@ -641,22 +642,26 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           taskTitle: currentTask.title,
         });
         if (!opened) {
-          const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances;
+          // changes-file always declares a cap; the fallback only satisfies the type.
+          const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances ?? 0;
           useToastStore.getState().addToast({
-            title: 'Window limit reached',
-            message: `${maxInstances} file diff windows are open. Close one to open another.`,
+            title: t`Window limit reached`,
+            message: t`${plural(maxInstances, {
+              one: '# file diff window is open. Close it to open another.',
+              other: '# file diff windows are open. Close one to open another.',
+            })}`,
             variant: 'info',
           });
         }
       } catch (error) {
         useToastStore.getState().addToast({
-          title: "Couldn't open file diff",
-          message: asSentence(describeIpcError(error, 'The window could not be created.')),
+          title: t`Couldn't open file diff`,
+          message: asSentence(describeIpcError(error, t`The window could not be created.`)),
           variant: 'error',
         });
       }
     })();
-  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, liveScope, projectPath, worktreePath, baseBranch, contentRange]);
+  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, liveScope, projectPath, worktreePath, baseBranch, contentRange, t]);
 
   const markChangesFileViewed = useSessionStore((state) => state.markChangesFileViewed);
 
@@ -803,14 +808,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // guessing whether the panel failed or they are simply looking at the wrong
   // scope - naming it points at where the changes actually are.
   const emptyDiffMessage = changesSelectedCommit
-    ? 'This commit changed no files'
+    ? t`This commit changed no files`
     : completed
-      ? 'No files changed'
+      ? t`No files changed`
       : scope === 'staged'
-        ? 'No staged changes'
+        ? t`No staged changes`
         : scope === 'branch'
-          ? `No changes vs ${baseLabel}`
-          : 'No uncommitted changes';
+          ? t`No changes vs ${baseLabel}`
+          : t`No uncommitted changes`;
 
   // The selected commit's metadata, for the selection bar: set by a click this
   // session, else read from History's commits once they load (a restored
@@ -927,6 +932,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // and the commits are History's. Panel-level actions (expand-full) and the
   // pop-out control sit on the right - the one predictable home for pop-out
   // across every surface. Diff/git tools stay in the diff toolbar below.
+  const fileCount = files.length;
   const surfaceHeaderAhead = headerSummary?.ahead ?? 0;
   const surfaceHeaderBehind = headerSummary?.behind ?? 0;
   // Review progress (n/m viewed) in the surface header, hidden until the first
@@ -938,7 +944,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     [files, viewedFiles],
   );
   const surfaceHeaderViewed = files.length > 0 && viewedCount > 0 ? (
-    <Tooltip label={`${viewedCount} of ${files.length} files marked viewed`}>
+    <Tooltip label={t`${viewedCount} of ${plural(fileCount, { one: '# file marked viewed', other: '# files marked viewed' })}`}>
       <span
         className="flex items-center gap-1 text-[11px] text-fg-muted tabular-nums flex-shrink-0"
         data-testid="changes-header-viewed"
@@ -956,11 +962,11 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           className="text-xs font-medium text-fg-secondary truncate flex-shrink-0 max-w-[45%]"
           data-testid="changes-branch-name"
         >
-          {headerSummary?.currentBranch ?? 'Changes'}
+          {headerSummary?.currentBranch ?? t({ message: 'Changes', context: 'tab' })}
         </span>
       </Tooltip>
       {baseLabel && (
-        <Tooltip label={isCustomBase ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
+        <Tooltip label={isCustomBase ? t`Based on ${baseLabel}, not the project default` : t`Based on ${baseLabel}, the project default`}>
           <span
             className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${
               isCustomBase ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
@@ -972,7 +978,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         </Tooltip>
       )}
       {(surfaceHeaderAhead > 0 || surfaceHeaderBehind > 0) && (
-        <Tooltip label={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
+        <Tooltip label={t`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
           <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0 text-[11px]" data-testid="changes-ahead-behind">
             {surfaceHeaderAhead > 0 && (
               <span className="flex items-center gap-0.5 tabular-nums"><ArrowUp size={11} className="text-green-400" />{surfaceHeaderAhead}</span>
@@ -999,7 +1005,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       <CommitSelectionBar
         shortHash={selectedCommitInfo?.shortHash ?? changesSelectedCommit.slice(0, 7)}
         subject={selectedCommitInfo?.subject ?? null}
-        backLabel={completed ? 'Back to all changes' : `Back to ${SCOPE_LABELS[scope]}`}
+        backLabel={completed ? t`Back to all changes` : scope === 'staged' ? t`Back to Staged` : scope === 'branch' ? t`Back to Branch` : t`Back to Working`}
         onClose={handleClearCommit}
       />
     </div>
@@ -1018,7 +1024,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
             onClick={fetchFiles}
             className="text-xs px-3 py-1 rounded bg-surface-raised hover:bg-surface-raised/80 text-fg-secondary transition-colors"
           >
-            Retry
+            <Trans>Retry</Trans>
           </button>
         </div>
       </div>
@@ -1076,14 +1082,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               resizable). 1px visual line, ~9px invisible hit zone; double-click
               resets to the default height (VS Code convention). */}
           {task && historyOpen && (
-            <Tooltip label="Drag to resize" detail="Double-click to reset">
+            <Tooltip label={t`Drag to resize`} detail={t`Double-click to reset`}>
               <div
                 onMouseDown={handleHistoryResizeStart}
                 onDoubleClick={handleHistoryResizeReset}
                 className={`relative h-1 flex-shrink-0 cursor-row-resize transition-colors ${isResizingHistory ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
                 role="separator"
                 aria-orientation="horizontal"
-                aria-label="Resize history"
+                aria-label={t`Resize history`}
                 data-testid="changes-history-resize"
                 // The drag state as DATA, not just as a Tailwind class. A drag
                 // test that dispatches moves straight after mousedown races the
@@ -1109,7 +1115,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               bodyHeight={historyHeight}
               commitCount={historyCommitCount}
               truncated={historyTruncated}
-              countSubject={completed ? 'for this task' : undefined}
+              countScope={completed ? 'task' : undefined}
               animateHeight={!isResizingHistory}
             >
               <CommitGraphPanel
@@ -1131,14 +1137,14 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         {/* Drag handle: widen the file tree to see long branch names / file
             paths. 1px visual line, ~9px invisible hit zone; double-click
             resets to the proportional default width (VS Code convention). */}
-        <Tooltip label="Drag to resize" detail="Double-click to reset">
+        <Tooltip label={t`Drag to resize`} detail={t`Double-click to reset`}>
           <div
             onMouseDown={handleTreeResizeStart}
             onDoubleClick={handleTreeResizeReset}
             className={`relative w-1 flex-shrink-0 cursor-col-resize transition-colors ${isResizingTree ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize file list"
+            aria-label={t`Resize file list`}
             data-testid="changes-tree-resize"
             // Same drag-state signal as the history resizer above.
             data-resizing={isResizingTree ? 'true' : 'false'}
@@ -1182,7 +1188,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 // single diff of all of them: each commit is its own.
                 <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4 text-center" data-testid="diff-select-commit">
                   <GitCommitHorizontal size={22} className="text-fg-disabled" />
-                  <span className="text-sm text-fg-muted">Select a commit to see its changes</span>
+                  <span className="text-sm text-fg-muted"><Trans>Select a commit to see its changes</Trans></span>
                 </div>
               ) : files.length === 0 ? (
                 loaded ? (
@@ -1200,9 +1206,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4 text-center">
                   <MousePointerClick size={22} className="text-fg-disabled" />
-                  <span className="text-sm text-fg-muted">Select a file to view changes</span>
+                  <span className="text-sm text-fg-muted"><Trans>Select a file to view changes</Trans></span>
                   {nextFileCombo && (
-                    <span className="text-xs text-fg-faint">{nextFileCombo} - next changed file</span>
+                    <span className="text-xs text-fg-faint"><Trans>{nextFileCombo} - next changed file</Trans></span>
                   )}
                 </div>
               )}

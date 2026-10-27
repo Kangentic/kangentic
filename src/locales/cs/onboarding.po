@@ -6,3 +6,140 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: cs\n"
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgid "{doneCount} of {stepCount} done"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "{laneName} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Add your first task"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Choose your defaults"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Create a task"
+msgstr ""
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgctxt "onboarding button"
+msgid "Done"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Drag a task into {laneName}"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Drag a task into a column that starts an agent"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Drag it to {laneName}"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Drag it to a column that starts an agent"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Dropping a task in a column that starts an agent runs it."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Every task starts with these unless a column overrides them. Change any one and this step is done."
+msgstr ""
+
+#: src/renderer/components/onboarding/WalkthroughLayer.tsx
+msgctxt "onboarding button"
+msgid "Finish"
+msgstr ""
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgid "Five steps to your first agent run. Take them in any order."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Make the board yours"
+msgstr ""
+
+#: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgctxt "onboarding button"
+msgid "Next step"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "No column starts an agent yet. Turn that on for a column in Board manager."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Open the task"
+msgstr ""
+
+#: src/renderer/components/onboarding/OverseerMascot.tsx
+msgid "Pixel-art Kangentic mascot"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Rename a column, or give it a different icon, color, or agent. Click any column header to open this again."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Rename columns, change their colors and icons, or add your own."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Say what you want done in a sentence or two."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Set the agent, model, effort, or permission mode new tasks inherit."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Set your defaults"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Shape your board"
+msgstr ""
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgid "Skip for now"
+msgstr ""
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgctxt "onboarding button"
+msgid "Start"
+msgstr ""
+
+#: src/renderer/components/onboarding/WalkthroughLayer.tsx
+msgid "Step {stepNumber} of {stepCount}"
+msgstr ""
+
+#: src/renderer/components/onboarding/WalkthroughLayer.tsx
+msgid "Stop showing me this step"
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Tasks start from this button. An agent can also create them for you through Kangentic's MCP server."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "This is where the run lives: the agent's terminal, its changes, and a prompt to steer it. Moves to later columns carry this same conversation along."
+msgstr ""
+
+#: src/renderer/components/onboarding/walkthrough-steps.ts
+msgid "Watch the agent work, read its output, and steer it."
+msgstr ""
+
+#: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+msgid "Welcome to Kangentic"
+msgstr ""

@@ -2,6 +2,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import { Trans } from '@lingui/react/macro';
 import { Pill } from './Pill';
+import { displayPriorityLabel } from './backlog/priority-labels';
 
 interface FilterPopoverProps {
   priorities: Array<{ label: string; color: string }>;
@@ -83,7 +84,7 @@ export const FilterPopover = React.memo(function FilterPopover({
                 className={pillClassName({ isActive, colored: isColored, fullWidth: false })}
                 style={isColored ? { color: priority.color } : undefined}
               >
-                {priority.label}
+                {displayPriorityLabel(priority.label)}
               </Pill>
             </button>
           );

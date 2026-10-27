@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import type { CommitGraphLayout } from '../../../../lib/commit-graph-layout';
 
 /**
@@ -42,6 +43,7 @@ interface CommitGraphSvgProps {
 }
 
 export const CommitGraphSvg = memo(function CommitGraphSvg({ layout, tipHash, maxLanes }: CommitGraphSvgProps) {
+  const { t } = useLingui();
   const renderedLaneCount = maxLanes !== undefined ? Math.min(layout.laneCount, maxLanes) : layout.laneCount;
   const width = Math.max(LANE_WIDTH_PX, renderedLaneCount * LANE_WIDTH_PX);
   const height = layout.nodes.length * ROW_HEIGHT_PX;
@@ -53,7 +55,7 @@ export const CommitGraphSvg = memo(function CommitGraphSvg({ layout, tipHash, ma
       viewBox={`0 0 ${width} ${height}`}
       className="block shrink-0"
       role="img"
-      aria-label="Commit graph"
+      aria-label={t`Commit graph`}
       data-testid="commit-graph-svg"
     >
       {/* Edges first so nodes render on top. Color by the parent's lane so a

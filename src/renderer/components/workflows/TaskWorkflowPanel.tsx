@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { Task } from '../../../shared/types';
 import { useWorkflowStore } from '../../stores/workflow-store';
@@ -33,6 +34,7 @@ interface TaskWorkflowPanelProps {
 }
 
 export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflowPanelProps) {
+  const { t } = useLingui();
   const workflowId = task.workflow_id;
   const homeProjectId = task.workflow_project_id ?? taskProjectId;
   const watched = useWorkflowStore((state) => (workflowId ? state.watchedDetails[workflowId] : undefined));
@@ -72,17 +74,18 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
 
   let body: React.ReactNode;
   if (!workflowId || !homeProjectId) {
-    body = <div className="p-4 text-sm text-fg-faint">This task is not in a workflow.</div>;
+    body = <div className="p-4 text-sm text-fg-faint"><Trans>This task is not in a workflow.</Trans></div>;
   } else if (watched?.readFailure === 'gone') {
-    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-gone">The workflow this task was in no longer exists.</div>;
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-gone"><Trans>The workflow this task was in no longer exists.</Trans></div>;
   } else if (!detail && watched?.readFailure === 'unreadable') {
     // A read that failed for another reason keeps the last detail it had; only
     // a panel with none says so, and the next change push reads again.
-    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-unreadable">The workflow this task is in could not be loaded.</div>;
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-unreadable"><Trans>The workflow this task is in could not be loaded.</Trans></div>;
   } else if (!detail) {
-    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-loading">Loading...</div>;
+    body = <div className="p-4 text-sm text-fg-faint" data-testid="workflow-panel-loading"><Trans>Loading...</Trans></div>;
   } else if (!viewTask) {
-    body = <div className="p-4 text-sm text-fg-faint">This task is no longer in {detail.workflow.title}.</div>;
+    const workflowTitle = detail.workflow.title;
+    body = <div className="p-4 text-sm text-fg-faint"><Trans>This task is no longer in {workflowTitle}.</Trans></div>;
   } else {
     body = (
       <WorkflowInspector
@@ -98,7 +101,7 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
         onSetRoute={(key, columns) => { void useWorkflowStore.getState().setRouteIn(homeProjectId, workflowId, key, columns); }}
         onSetLink={(blockerKey, blockedKey, linked) => { void useWorkflowStore.getState().setLinkIn(homeProjectId, workflowId, blockerKey, blockedKey, linked); }}
         onSetTaskPlanApproval={(key, planApproval) => { void useWorkflowStore.getState().setTaskPlanApprovalIn(homeProjectId, workflowId, key, planApproval); }}
-        onRefuse={(message) => useToastStore.getState().addToast({ title: 'Route step refused', message, variant: 'warning' })}
+        onRefuse={(message) => useToastStore.getState().addToast({ title: t`Route step refused`, message, variant: 'warning' })}
         // A popped-out window (the Agent Monitor's) has no Workflows view of its own.
         onOpenWorkflow={inPopOut ? undefined : () => {
           // Task detail is also hosted over the Agent Monitor, the Knowledge Graph
@@ -124,12 +127,12 @@ export function TaskWorkflowPanel({ task, taskProjectId, onClose }: TaskWorkflow
         data-testid="task-workflow-panel-header"
       >
         <WorkflowIcon size={15} className="text-fg-muted" />
-        Workflow
-        <Tooltip label="Close workflow panel">
+        <Trans>Workflow</Trans>
+        <Tooltip label={t`Close workflow panel`}>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close workflow panel"
+            aria-label={t`Close workflow panel`}
             className="ml-auto p-1 rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover transition-colors"
             data-testid="task-workflow-panel-close"
           >

@@ -1,4 +1,6 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
+import { useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { useCopyDisplayId } from './useCopyDisplayId';
 import { X, Trash2, Pencil, Loader2, FolderGit2, FolderGit, GitPullRequest, GitCompare, GitMerge, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, CircleStop, Clock, SquareChevronRight, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft, Workflow as WorkflowIcon } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -191,6 +193,7 @@ export function TaskDetailHeader({
   onToggleMaximized,
   onUndock,
 }: TaskDetailHeaderProps) {
+  const { t } = useLingui();
   const headerRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
@@ -270,7 +273,7 @@ export function TaskDetailHeader({
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
-        <Tooltip label={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}>
+        <Tooltip label={toggling ? t`Working...` : isQueued ? t`Queued (click to pause)` : isSessionActive ? t`Pause session` : t`Resume session`}>
           <button
             onClick={onToggle}
             disabled={toggling}
@@ -285,7 +288,7 @@ export function TaskDetailHeader({
                     ? 'text-active hover:bg-surface-hover'
                     : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
             }`}
-            aria-label={isSessionActive || isQueued ? 'Pause session' : 'Resume session'}
+            aria-label={isSessionActive || isQueued ? t`Pause session` : t`Resume session`}
           >
             <PauseButtonIcon
               toggling={toggling}
@@ -299,7 +302,7 @@ export function TaskDetailHeader({
       )}
 
       {/* Display ID - clickable to copy */}
-      <Tooltip label="Copy task ID">
+      <Tooltip label={t`Copy task ID`}>
         <button
           type="button"
           className="group/copyid flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
@@ -330,9 +333,9 @@ export function TaskDetailHeader({
         <h2 className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2">
           <span ref={titleSpanRef} className="truncate" data-testid="task-title-text">{task.title}</span>
           {isArchived && (
-            <Tooltip label="This task is archived. It does not appear on the board.">
+            <Tooltip label={t`This task is archived. It does not appear on the board.`}>
               <span className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5">
-                Archived
+                {t({ message: 'Archived', context: 'task status' })}
               </span>
             </Tooltip>
           )}
@@ -356,8 +359,8 @@ export function TaskDetailHeader({
               <HeaderActionButton
                 icon={task.worktree_path ? FolderGit2 : FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
-                tip={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
-                ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
+                tip={task.worktree_path ? t`Open Worktree` : t`Open Folder`}
+                ariaLabel={task.worktree_path ? t`Open worktree folder` : t`Open project folder`}
                 testId="branch-pill"
               />
             </div>
@@ -370,9 +373,9 @@ export function TaskDetailHeader({
                 icon={GitCompare}
                 onClick={onToggleChanges}
                 active={changesOpen}
-                tip={changesOpen ? 'Hide changes' : 'Show changes'}
+                tip={changesOpen ? t`Hide changes` : t`Show changes`}
                 keys="taskDetail.toggleChanges"
-                ariaLabel="Toggle changes"
+                ariaLabel={t`Toggle changes`}
                 testId="changes-toggle"
               />
             </div>
@@ -385,11 +388,11 @@ export function TaskDetailHeader({
                 icon={Globe}
                 onClick={onToggleBrowser}
                 active={browserOpen}
-                tip={browserOpen ? 'Hide browser' : 'Show browser'}
+                tip={browserOpen ? t`Hide browser` : t`Show browser`}
                 keys="taskDetail.toggleBrowser"
                 // Hiding is not closing: the page stays loaded, which the name does not say.
-                detail={browserOpen ? 'Kept alive until you close it' : browserAlive ? 'Page kept' : undefined}
-                ariaLabel="Toggle browser"
+                detail={browserOpen ? t`Kept alive until you close it` : browserAlive ? t`Page kept` : undefined}
+                ariaLabel={t`Toggle browser`}
                 testId="browser-toggle"
               />
               {/* Running dot: a browser guest is alive for this task, in ANY
@@ -422,8 +425,8 @@ export function TaskDetailHeader({
                 icon={MessageSquare}
                 onClick={() => void openTaskConversation(task.id, hostProjectId || null)}
                 disabled={!conversationAvailable}
-                tip="View conversation"
-                disabledReason="No conversation history for this task yet"
+                tip={t`View conversation`}
+                disabledReason={t`No conversation history for this task yet`}
                 testId="conversation-pill"
               />
             </div>
@@ -438,8 +441,8 @@ export function TaskDetailHeader({
                 icon={WorkflowIcon}
                 onClick={onToggleWorkflow}
                 active={workflowPanelOpen}
-                tip={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
-                ariaLabel="Toggle workflow"
+                tip={workflowPanelOpen ? t`Hide workflow` : t`Show workflow`}
+                ariaLabel={t`Toggle workflow`}
                 testId="workflow-toggle"
               />
             </div>
@@ -514,11 +517,11 @@ export function TaskDetailHeader({
         {/* Divider + Pop out (tiled only) + Maximize + Close */}
         <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
         {onUndock && (
-          <Tooltip label="Pop out of tiling">
+          <Tooltip label={t`Pop out of tiling`}>
             <button
               onClick={onUndock}
               data-testid="task-detail-undock"
-              aria-label="Pop out of tiling"
+              aria-label={t`Pop out of tiling`}
               className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
             >
               <PictureInPicture2 size={16} />
@@ -530,11 +533,11 @@ export function TaskDetailHeader({
           onToggle={onToggleMaximized}
           testId="task-detail-maximize"
         />
-        <Tooltip label="Close" keys="panel.close">
+        <Tooltip label={t({ message: 'Close', context: 'button' })} keys="panel.close">
           <button
             onClick={onClose}
             data-testid="task-detail-close"
-            aria-label="Close"
+            aria-label={t({ message: 'Close', context: 'button' })}
             className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
           >
             <X size={16} />
@@ -620,8 +623,10 @@ function TaskDetailKebabItems({
   workflowPanelOpen = false,
   onToggleWorkflow,
 }: TaskDetailKebabItemsProps) {
+  const { t } = useLingui();
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
+  const prNumber = task.pr_number;
   const [linkingPr, setLinkingPr] = useState(false);
   const [updatingFromBase, setUpdatingFromBase] = useState(false);
   const { projectId: hostProjectId, canOpenConversation } = useTaskDetailHost();
@@ -633,51 +638,62 @@ function TaskDetailKebabItems({
       const result = await window.electronAPI.tasks.updateFromBase({ taskId: task.id }, hostProjectId || null);
       const toast = useToastStore.getState();
       switch (result.status) {
-        case 'updated':
+        case 'updated': {
+          const baseBranch = result.baseBranch;
+          const commitCount = result.commitCount;
           toast.addToast({
-            title: `Updated from ${result.baseBranch}`,
-            message: `Fast-forwarded ${result.commitCount} commit${result.commitCount === 1 ? '' : 's'}.`,
+            title: t`Updated from ${baseBranch}`,
+            message: t`Fast-forwarded ${plural(commitCount, { one: '# commit', other: '# commits' })}.`,
             variant: 'success',
           });
           break;
-        case 'already-up-to-date':
-          toast.addToast({ title: 'Already up to date', message: `Nothing new on ${result.baseBranch}.`, variant: 'info' });
+        }
+        case 'already-up-to-date': {
+          const baseBranch = result.baseBranch;
+          toast.addToast({ title: t`Already up to date`, message: t`Nothing new on ${baseBranch}.`, variant: 'info' });
           break;
+        }
         case 'cannot-ff':
           toast.addToast({
-            title: "Can't fast-forward",
-            message: 'Rebase or merge it in the session instead.',
+            title: t`Can't fast-forward`,
+            message: t`Rebase or merge it in the session instead.`,
             variant: 'warning',
           });
           break;
-        case 'dirty-tree':
+        case 'dirty-tree': {
+          const baseBranch = result.baseBranch;
           toast.addToast({
-            title: `Can't update from ${result.baseBranch}`,
-            message: 'The worktree has uncommitted changes.',
-            variant: 'warning',
-          });
-          break;
-        case 'fetch-failed': {
-          const fetchReason = (result.reason.split('\n')[0] ?? '').trim();
-          toast.addToast({
-            title: `Couldn't fetch ${result.baseBranch}`,
-            message: fetchReason ? asSentence(fetchReason) : 'Git could not reach origin.',
+            title: t`Can't update from ${baseBranch}`,
+            message: t`The worktree has uncommitted changes.`,
             variant: 'warning',
           });
           break;
         }
-        case 'no-remote':
+        case 'fetch-failed': {
+          const baseBranch = result.baseBranch;
+          // A git line, shown as main wrote it.
+          const fetchReason = (result.reason.split('\n')[0] ?? '').trim();
           toast.addToast({
-            title: 'No origin remote',
-            message: `There is no remote to fetch ${result.baseBranch} from.`,
+            title: t`Couldn't fetch ${baseBranch}`,
+            message: fetchReason ? asSentence(fetchReason) : t`Git could not reach origin.`,
+            variant: 'warning',
+          });
+          break;
+        }
+        case 'no-remote': {
+          const baseBranch = result.baseBranch;
+          toast.addToast({
+            title: t`No origin remote`,
+            message: t`There is no remote to fetch ${baseBranch} from.`,
             variant: 'info',
           });
           break;
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       useToastStore.getState().addToast({
-        title: 'Update from base failed',
+        title: t`Update from base failed`,
         message: asSentence(message),
         variant: 'warning',
       });
@@ -697,46 +713,48 @@ function TaskDetailKebabItems({
         // hardcoded gh wording told an Azure DevOps user to run `gh auth login`
         // when gh was installed and working. Mirrors task-commands.ts.
         useToastStore.getState().addToast({
-          title: 'No PR resolver',
-          message: result.message ? asSentence(result.message) : 'None is available for this repository.',
+          title: t`No PR resolver`,
+          // result.message is the resolver's own text, shown as main wrote it.
+          message: result.message ? asSentence(result.message) : t`None is available for this repository.`,
           variant: 'error',
         });
       } else if (result.reason === 'transient-error') {
         useToastStore.getState().addToast({
-          title: 'PR host unreachable',
-          message: result.message ? asSentence(result.message) : 'Try again in a moment.',
+          title: t`PR host unreachable`,
+          message: result.message ? asSentence(result.message) : t`Try again in a moment.`,
           variant: 'error',
         });
       } else if (result.reason === 'no-anchor') {
         // Nothing was searched. Distinct from not-found so the user does not
         // conclude the PR does not exist when the task simply has no anchor.
         useToastStore.getState().addToast({
-          title: 'Nothing to search by',
-          message: 'This task has no branch, commit or PR number yet.',
+          title: t`Nothing to search by`,
+          message: t`This task has no branch, commit or PR number yet.`,
           variant: 'info',
         });
       } else if (result.linked && result.task?.pr_number != null) {
         // The same word the card's chip shows, so a refresh that changed only
         // the merge verdict still reports a visible result ("blocked", not a
         // second "open"). A null state falls back to "open" as before.
-        const chipWord = prStatePresentation(result.task.pr_state, result.task.pr_merge_readiness).label || 'open';
+        const chipWord = prStatePresentation(result.task.pr_state, result.task.pr_merge_readiness).label
+          || t({ message: 'open', context: 'pull request state' });
         useToastStore.getState().addToast({
-          title: 'PR linked',
+          title: t`PR linked`,
           message: `#${result.task.pr_number} (${chipWord.charAt(0).toUpperCase()}${chipWord.slice(1)})`,
           variant: 'success',
         });
       } else {
         const searchedBranch = task.branch_name ?? task.pushed_branch;
         useToastStore.getState().addToast({
-          title: 'No PR found',
-          message: searchedBranch ? `Nothing matches branch "${searchedBranch}".` : 'Nothing matches this task.',
+          title: t`No PR found`,
+          message: searchedBranch ? t`Nothing matches branch "${searchedBranch}".` : t`Nothing matches this task.`,
           variant: 'info',
         });
       }
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't resolve PR",
-        message: asSentence(describeIpcError(error, 'The PR host returned an error.')),
+        title: t`Couldn't resolve PR`,
+        message: asSentence(describeIpcError(error, t`The PR host returned an error.`)),
         variant: 'error',
       });
     } finally {
@@ -763,7 +781,7 @@ function TaskDetailKebabItems({
       {/* Edit */}
       <KebabMenuItem
         icon={<Pencil size={14} />}
-        label="Edit"
+        label={t({ message: 'Edit', context: 'task action' })}
         onClick={() => { closeAll(); setIsEditing(true); }}
       />
 
@@ -773,7 +791,7 @@ function TaskDetailKebabItems({
       {canOpenConversation && (
         <KebabMenuItem
           icon={<MessageSquare size={14} />}
-          label="View conversation"
+          label={t`View conversation`}
           onClick={() => { closeAll(); void openTaskConversation(task.id, hostProjectId || null); }}
           disabled={!conversationAvailable}
           data-testid="view-conversation-btn"
@@ -784,7 +802,7 @@ function TaskDetailKebabItems({
       {(task.worktree_path || projectPath) && (
         <KebabMenuItem
           icon={task.worktree_path ? <FolderGit2 size={14} /> : <FolderGit size={14} />}
-          label={task.worktree_path ? 'Open worktree' : 'Open project folder'}
+          label={task.worktree_path ? t`Open worktree` : t`Open project folder`}
           onClick={() => { closeAll(); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
         />
       )}
@@ -793,7 +811,7 @@ function TaskDetailKebabItems({
       {canShowChanges && (
         <KebabMenuItem
           icon={<GitCompare size={14} />}
-          label={changesOpen ? 'Hide changes' : 'Show changes'}
+          label={changesOpen ? t`Hide changes` : t`Show changes`}
           onClick={() => { closeAll(); onToggleChanges(); }}
         />
       )}
@@ -802,7 +820,7 @@ function TaskDetailKebabItems({
       {canShowWorkflow && onToggleWorkflow && (
         <KebabMenuItem
           icon={<WorkflowIcon size={14} />}
-          label={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
+          label={workflowPanelOpen ? t`Hide workflow` : t`Show workflow`}
           onClick={() => { closeAll(); onToggleWorkflow(); }}
           data-testid="kebab-toggle-workflow"
         />
@@ -812,7 +830,7 @@ function TaskDetailKebabItems({
       {canShowDescription && onToggleDescription && (
         <KebabMenuItem
           icon={<AlignLeft size={14} />}
-          label={descriptionPeekOpen ? 'Hide description' : 'Show description'}
+          label={descriptionPeekOpen ? t`Hide description` : t`Show description`}
           onClick={() => { closeAll(); onToggleDescription(); }}
         />
       )}
@@ -822,7 +840,7 @@ function TaskDetailKebabItems({
       {canShowBrowser && (
         <KebabMenuItem
           icon={<Globe size={14} />}
-          label={browserOpen ? 'Hide browser' : 'Show browser'}
+          label={browserOpen ? t`Hide browser` : t`Show browser`}
           onClick={() => { closeAll(); onToggleBrowser(); }}
         />
       )}
@@ -837,7 +855,7 @@ function TaskDetailKebabItems({
       {browserAlive && (
         <KebabMenuItem
           icon={<CircleStop size={14} />}
-          label="Close browser"
+          label={t`Close browser`}
           onClick={() => { closeAll(); onCloseBrowser(); }}
           data-testid="kebab-close-browser"
         />
@@ -847,7 +865,7 @@ function TaskDetailKebabItems({
       {task.pr_url && (
         <KebabMenuItem
           icon={<GitPullRequest size={14} />}
-          label={`View PR #${task.pr_number}`}
+          label={t`View PR #${prNumber}`}
           onClick={() => { closeAll(); window.electronAPI.shell.openExternal(task.pr_url!); }}
         />
       )}
@@ -860,7 +878,7 @@ function TaskDetailKebabItems({
       {(task.branch_name || task.worktree_path || task.pushed_branch || task.pr_number != null) && (
         <KebabMenuItem
           icon={linkingPr ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-          label={task.pr_url ? 'Refresh PR' : 'Link PR'}
+          label={task.pr_url ? t`Refresh PR` : t`Link PR`}
           onClick={() => { closeAll(); void handleLinkPr(); }}
           disabled={linkingPr}
         />
@@ -874,7 +892,7 @@ function TaskDetailKebabItems({
       {Boolean(task.worktree_path) && !isArchived && (
         <KebabMenuItem
           icon={updatingFromBase ? <Loader2 size={14} className="animate-spin" /> : <GitMerge size={14} />}
-          label="Update from base"
+          label={t`Update from base`}
           onClick={() => { closeAll(); void handleUpdateFromBase(); }}
           disabled={updatingFromBase || isSessionActive}
           data-testid="update-from-base-btn"
@@ -885,7 +903,7 @@ function TaskDetailKebabItems({
       {canToggle && (
         <KebabMenuItem
           icon={isSessionActive ? <CirclePause size={14} /> : <CirclePlay size={14} />}
-          label={isSessionActive ? 'Pause session' : 'Resume session'}
+          label={isSessionActive ? t`Pause session` : t`Resume session`}
           onClick={() => { closeAll(); onToggle(); }}
           disabled={toggling}
           data-testid="toggle-session-btn"
@@ -910,7 +928,7 @@ function TaskDetailKebabItems({
             data-testid="kebab-commands-button"
           >
             <SquareChevronRight size={14} />
-            <span className="flex-1">Commands</span>
+            <span className="flex-1">{t`Commands`}</span>
             {commandsFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
           </button>
           {showCommandsSubmenu && (
@@ -942,7 +960,7 @@ function TaskDetailKebabItems({
             className={`w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showMoveSubmenu ? 'bg-surface-hover text-fg' : ''}`}
           >
             <ArrowRightLeft size={14} />
-            <span className="flex-1">Move to</span>
+            <span className="flex-1">{t`Move to`}</span>
             {moveFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
           </button>
           {showMoveSubmenu && (
@@ -986,7 +1004,7 @@ function TaskDetailKebabItems({
       {!isArchived && (
         <KebabMenuItem
           icon={<Inbox size={14} />}
-          label="Send to Backlog"
+          label={t`Send to Backlog`}
           onClick={() => { closeAll(); onSendToBacklog(); }}
           data-testid="send-to-backlog-btn"
         />
@@ -995,7 +1013,7 @@ function TaskDetailKebabItems({
       {!isArchived && (
         <KebabMenuItem
           icon={<Archive size={14} />}
-          label="Archive"
+          label={t({ message: 'Archive', context: 'task action' })}
           onClick={() => { closeAll(); onArchive(); }}
         />
       )}
@@ -1003,7 +1021,7 @@ function TaskDetailKebabItems({
       {/* Delete - always available */}
       <KebabMenuItem
         icon={<Trash2 size={14} />}
-        label="Delete"
+        label={t({ message: 'Delete', context: 'task action' })}
         onClick={() => { closeAll(); onDelete(); }}
         destructive
       />

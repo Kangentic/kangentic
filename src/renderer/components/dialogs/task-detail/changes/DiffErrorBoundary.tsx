@@ -1,5 +1,8 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import { Trans } from '@lingui/react/macro';
 import { reportBoundaryError } from '../../../../error-reporting';
 
 /** Scoped error boundary prevents Monaco failures from crashing the entire app. */
@@ -37,14 +40,14 @@ export class DiffErrorBoundary extends React.Component<
       return (
         <div className="flex flex-col items-center justify-center h-full gap-2 p-4">
           <span className="text-xs text-red-400">
-            {this.state.error?.message || 'Failed to load diff viewer'}
+            {this.state.error?.message || i18n._(msg`Failed to load diff viewer`)}
           </span>
           <button
             onClick={() => this.setState({ hasError: false, error: null })}
             className="flex items-center gap-1.5 text-xs px-3 py-1 rounded bg-surface-raised hover:bg-surface-raised/80 text-fg-secondary transition-colors"
           >
             <RefreshCw size={12} />
-            Retry
+            <Trans>Retry</Trans>
           </button>
         </div>
       );

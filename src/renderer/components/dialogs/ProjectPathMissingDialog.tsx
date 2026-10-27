@@ -1,4 +1,4 @@
-import { Trans } from '@lingui/react/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -14,6 +14,7 @@ import { asSentence, describeIpcError } from '../../lib/ipc-error';
  * Mounted in AppLayout so it appears regardless of sidebar state.
  */
 export function ProjectPathMissingDialog() {
+  const { t } = useLingui();
   const missingPathProject = useProjectStore((state) => state.missingPathProject);
   const setMissingPathProject = useProjectStore((state) => state.setMissingPathProject);
   const relocateProject = useProjectStore((state) => state.relocateProject);
@@ -42,16 +43,18 @@ export function ProjectPathMissingDialog() {
       // `missingPathProject` armed again); a success toast here would lie
       // about a switch that did not happen.
       if (reopened) {
+        const relocatedName = updated.name;
+        const relocatedPath = updated.path;
         useToastStore.getState().addToast({
-          title: 'Project relocated',
-          message: `"${updated.name}" now points at ${updated.path}.`,
+          title: t`Project relocated`,
+          message: t`"${relocatedName}" now points at ${relocatedPath}.`,
           variant: 'success',
         });
       }
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't relocate project",
-        message: asSentence(describeIpcError(error, ''), 'The folder could not be used.'),
+        title: t`Couldn't relocate project`,
+        message: asSentence(describeIpcError(error, ''), t`The folder could not be used.`),
         variant: 'error',
       });
     }
@@ -59,7 +62,7 @@ export function ProjectPathMissingDialog() {
 
   return (
     <ConfirmDialog
-      title="Project Folder Not Found"
+      title={t`Project Folder Not Found`}
       variant="warning"
       message={
         <div className="space-y-2" data-testid="project-path-missing-dialog">
@@ -68,12 +71,11 @@ export function ProjectPathMissingDialog() {
           </p>
           <p className="text-xs break-all">{project.path}</p>
           <p>
-            If it was moved or renamed, locate the new folder to keep all
-            tasks and board history.
+            <Trans>If it was moved or renamed, locate the new folder to keep all tasks and board history.</Trans>
           </p>
         </div>
       }
-      confirmLabel="Locate Folder..."
+      confirmLabel={t`Locate Folder...`}
       onConfirm={handleLocate}
       onCancel={() => setMissingPathProject(null)}
     />

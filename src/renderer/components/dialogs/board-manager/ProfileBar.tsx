@@ -1,4 +1,5 @@
 import { Copy, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { BoardProfile } from '../../../../shared/types';
 import { Tooltip } from '../../Tooltip';
 import { Select } from '../../settings/shared';
@@ -38,6 +39,7 @@ export function ProfileBar({
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useLingui();
   // Both action rows are pinned to ACTION_ROW_HEIGHT rather than sized by their
   // content, so switching Default <-> a profile cannot move the sections below.
   // Left to intrinsic sizing they differ: the Default button carries a border
@@ -57,7 +59,7 @@ export function ProfileBar({
       className="flex-shrink-0 border-b border-edge/50 px-2 pt-3 pb-2"
       data-testid="board-manager-profile-bar"
     >
-      <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint">Profile</div>
+      <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint"><Trans>Profile</Trans></div>
 
       <div className="px-1">
         {/* Flat like the rows below rather than a heavy form input: the rail is
@@ -72,7 +74,7 @@ export function ProfileBar({
             rounded pl-2 pr-8 py-1.5 text-sm text-fg focus:outline-none focus:border-accent transition-colors"
           data-testid="board-manager-profile-select"
         >
-          <option value="">Default</option>
+          <option value="">{t({ message: 'Default', context: 'board profile' })}</option>
           {profiles.map((profile) => (
             <option key={profile.id} value={profile.id}>{profile.name}</option>
           ))}
@@ -93,49 +95,49 @@ export function ProfileBar({
               text-xs text-fg-faint hover:text-fg-secondary hover:border-edge hover:bg-surface-hover/40 transition-colors`}
           >
             <Plus size={13} className="flex-shrink-0" />
-            New profile
+            <Trans>New profile</Trans>
           </button>
         ) : (
           <div className={`flex items-stretch ${ACTION_ROW_HEIGHT} rounded border border-edge/40 divide-x divide-edge/40 overflow-hidden`}>
-            <Tooltip label="New profile">
+            <Tooltip label={t`New profile`}>
               <button
                 type="button"
                 onClick={onNew}
                 className={action}
-                aria-label="New profile"
+                aria-label={t`New profile`}
                 data-testid="board-manager-profile-new"
               >
                 <Plus size={14} />
               </button>
             </Tooltip>
-            <Tooltip label="Duplicate this profile">
+            <Tooltip label={t`Duplicate this profile`}>
               <button
                 type="button"
                 onClick={onDuplicate}
                 className={action}
-                aria-label="Duplicate this profile"
+                aria-label={t`Duplicate this profile`}
                 data-testid="board-manager-profile-duplicate"
               >
                 <Copy size={14} />
               </button>
             </Tooltip>
-            <Tooltip label="Rename this profile">
+            <Tooltip label={t`Rename this profile`}>
               <button
                 type="button"
                 onClick={onRename}
                 className={action}
-                aria-label="Rename this profile"
+                aria-label={t`Rename this profile`}
                 data-testid="board-manager-profile-rename"
               >
                 <Pencil size={14} />
               </button>
             </Tooltip>
-            <Tooltip label="Delete this profile">
+            <Tooltip label={t`Delete this profile`}>
               <button
                 type="button"
                 onClick={onDelete}
                 className={`${action} hover:text-red-400 hover:bg-red-500/10`}
-                aria-label="Delete this profile"
+                aria-label={t`Delete this profile`}
                 data-testid="board-manager-profile-delete"
               >
                 <Trash2 size={14} />

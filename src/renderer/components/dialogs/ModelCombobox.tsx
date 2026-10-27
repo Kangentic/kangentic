@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Check, ChevronDown, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { newerModelFor, planModelPickerRows, type ModelDisplayGroup } from '../../../shared/model-id';
 import type { ModelAliasOption } from '../../../shared/types';
 import {
@@ -81,7 +82,7 @@ export function ModelCombobox({
   value,
   onChange,
   availableModels,
-  placeholder = 'Default',
+  placeholder,
   className = '',
   testId = 'model-combobox',
   onOpen,
@@ -90,7 +91,12 @@ export function ModelCombobox({
   modelAliases = NO_ALIASES,
   placeholderVariant = 'resolved',
 }: ModelComboboxProps) {
+  const { t } = useLingui();
+  // The default resolves here, not in the parameter list, so it reads the session's catalog.
+  const placeholderText = placeholder ?? t({ message: 'Default', context: 'placeholder' });
+  const clearLabel = t`Clear`;
   const [isOpen, setIsOpen] = useState(false);
+  const dropdownToggleLabel = isOpen ? t`Close dropdown` : t`Open dropdown`;
   const [filterText, setFilterText] = useState('');
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -395,12 +401,15 @@ export function ModelCombobox({
   // "Sonnet 5.5 available" on the row that holds the current value, when a
   // newer generation of its family is known. Shown only there: it describes
   // the choice already made, not every older row.
-  const renderNewerHint = (rowIds: Array<string | null>) =>
-    newerThanValue !== null && rowIds.includes(value) ? (
+  const renderNewerHint = (rowIds: Array<string | null>) => {
+    if (newerThanValue === null || !rowIds.includes(value)) return null;
+    const newerModelLabel = modelRowLabel(newerThanValue, modelDisplayNames);
+    return (
       <span data-model-newer className="ml-auto pl-2 text-xs text-fg-faint flex-shrink-0">
-        {modelRowLabel(newerThanValue, modelDisplayNames)} available
+        <Trans>{newerModelLabel} available</Trans>
       </span>
-    ) : null;
+    );
+  };
 
   // The current row's mark, at the row's end after its 1M chip and hints, as
   // Combobox, ColumnPicker and AutomationTypePicker draw it.
@@ -473,7 +482,7 @@ export function ModelCombobox({
           </button>
         </Tooltip>
         {contextLabel && (
-          <Tooltip label={`${contextLabel} context window`}>
+          <Tooltip label={t`${contextLabel} context window`}>
             <span
               data-model-context-window
               className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-faint flex-shrink-0"
@@ -494,6 +503,7 @@ export function ModelCombobox({
               onKeyDown={handleChipKeyDown}
               className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
             >
+              {/* i18n-ok: the model's context window size, the agent CLI's own vocabulary */}
               1M
             </button>
           </Tooltip>
@@ -519,7 +529,7 @@ export function ModelCombobox({
             onChange={(event) => handleInputChange(event.target.value)}
             onFocus={handleInputFocus}
             onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
+            placeholder={placeholderText}
             data-testid={testId}
             className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none ${
               placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
@@ -527,24 +537,24 @@ export function ModelCombobox({
           />
         </Tooltip>
         {displayValue && (
-          <Tooltip label="Clear">
+          <Tooltip label={clearLabel}>
             <button
               type="button"
               onClick={handleClear}
               className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
-              aria-label="Clear"
+              aria-label={clearLabel}
             >
               <X size={16} />
             </button>
           </Tooltip>
         )}
         {hasOptions && (
-          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'}>
+          <Tooltip label={dropdownToggleLabel}>
             <button
               type="button"
               onClick={handleToggleDropdown}
               className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input"
-              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+              aria-label={dropdownToggleLabel}
             >
               <ChevronDown
                 size={16}
@@ -631,7 +641,7 @@ export function ModelCombobox({
           </div>
         ) : (
           <div className="px-3 py-2 text-xs text-fg-faint text-center">
-            No models match "{filterText}"
+            <Trans>No models match "{filterText}"</Trans>
           </div>
         )}
       </OverlayPopover>

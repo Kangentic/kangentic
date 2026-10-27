@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 
@@ -53,6 +55,9 @@ export function DialogFooterActions({
   leading,
   submitTestId,
 }: DialogFooterActionsProps) {
+  // Hookless on purpose (tests/unit/dialog-form-primitives.test.ts calls this as a plain
+  // function), so the text resolves with i18n._ at render time, after the catalog loads.
+  const cancelText = i18n._(msg`Cancel`);
   return (
     <div className={`flex items-center ${leading ? 'justify-between' : 'justify-end'}`}>
       {leading}
@@ -62,7 +67,7 @@ export function DialogFooterActions({
           onClick={onCancel}
           className="rounded border border-edge-input px-4 py-1.5 text-xs text-fg-muted transition-colors hover:border-fg-faint hover:text-fg-secondary"
         >
-          Cancel
+          {cancelText}
         </button>
         <Tooltip label={tipLabel({ disabled, disabledReason })}>
           <button

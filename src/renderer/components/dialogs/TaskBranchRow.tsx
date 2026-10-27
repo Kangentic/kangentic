@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { Field } from '../Field';
 import { BranchPicker } from './BranchPicker';
 import { WorktreePlacementControl } from './WorktreePlacementControl';
@@ -80,6 +81,7 @@ export function TaskBranchRow({
   worktreeBlocker = null,
   projectId = null,
 }: TaskBranchRowProps) {
+  const { t } = useLingui();
   const editableName = setCustomBranchName !== undefined;
 
   return (
@@ -87,7 +89,7 @@ export function TaskBranchRow({
     // base branch - which is what it says. Naming it "Branch" there would promise
     // an editable branch name that is not on offer.
     <Field
-      label={editableName ? 'Branch' : 'Base branch'}
+      label={editableName ? t`Branch` : t`Base branch`}
       error={branchNameError}
       hint={branchHint}
     >

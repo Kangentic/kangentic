@@ -16,7 +16,9 @@ its home project's database with its links (`workflows`, `task_links`); its task
 boards. A task's route (the columns it visits) is one pure shared module,
 `src/shared/workflow-route.ts`, and so is who may move a workflow task,
 `src/shared/workflow-lock.ts`, which main and the board both ask. Every refusal sentence is in
-`src/shared/workflow-refusals.ts`, so main's error and the view's disabled tooltip read the same.
+`src/shared/workflow-refusals.ts`. Main throws `WORKFLOW_REFUSALS`, in English. The view resolves the
+paired `WORKFLOW_REFUSAL_MESSAGES` descriptors with `translateText`, so the two read the same in
+English and differ in a translated locale.
 
 ```
 src/main/workflows/

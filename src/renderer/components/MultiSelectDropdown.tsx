@@ -21,6 +21,12 @@ interface MultiSelectDropdownProps {
    */
   triggerText?: string;
   /**
+   * The key the testids are built from. Defaults to `label.toLowerCase()`, which
+   * is the English label; a caller whose label is translated passes a fixed key
+   * so its testids do not change with the language.
+   */
+  testIdKey?: string;
+  /**
    * Which trigger edge the menu anchors to. `right` (default) aligns trailing
    * edges - the Import dialog's filter cluster sits at the dialog's right edge,
    * so its menus hang left. Pass `left` for a trigger in a left-to-right
@@ -39,6 +45,7 @@ interface MultiSelectDropdownProps {
 export function MultiSelectDropdown({
   label,
   triggerText,
+  testIdKey,
   align = 'right',
   options,
   selected,
@@ -50,6 +57,7 @@ export function MultiSelectDropdown({
   const containerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const hasActiveFilter = selected.size > 0;
+  const testKey = testIdKey ?? label.toLowerCase();
   const normalizedOptions = useMemo(
     () => options.map((option) =>
       typeof option === 'string' ? { value: option, label: option } : option,
@@ -116,12 +124,12 @@ export function MultiSelectDropdown({
         // animation originates at the anchored corner even on an overflow flip.
         transformOrigin={`${placement.vertical === 'above' ? 'bottom' : 'top'} ${placement.horizontal}`}
         className="fixed z-[2147483646] w-max min-w-[140px] bg-surface border border-edge rounded-lg shadow-xl"
-        data-testid={`filter-menu-${label.toLowerCase()}`}
+        data-testid={`filter-menu-${testKey}`}
       >
         {normalizedOptions.map((option) => (
           <label
             key={option.value}
-            data-testid={`filter-option-${label.toLowerCase()}-${option.value}`}
+            data-testid={`filter-option-${testKey}-${option.value}`}
             className="flex items-center gap-2.5 px-3 py-2 text-sm text-fg hover:bg-surface-hover/40 cursor-pointer whitespace-nowrap"
           >
             <input

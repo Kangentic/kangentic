@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../stores/toast-store';
 import { IMAGE_LONG_EDGE_CAP, resolveResizeTarget } from '../../../shared/image-fidelity';
 import { isImageMediaType, resolveMediaType } from './attachment-utils';
@@ -159,8 +161,8 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
 
       if (blob.size > TARGET_BYTES) {
         useToastStore.getState().addToast({
-          title: 'Image sent at lower quality',
-          message: 'It was still large after compression.',
+          title: i18n._(msg`Image sent at lower quality`),
+          message: i18n._(msg`It was still large after compression.`),
           variant: 'warning',
         });
       }
@@ -174,8 +176,8 @@ export async function compressClipboardImage(input: File): Promise<CompressResul
   } catch (error) {
     console.error('[image-compress] Failed to compress pasted image:', error);
     useToastStore.getState().addToast({
-      title: "Couldn't compress image",
-      message: 'Sending the original instead.',
+      title: i18n._(msg`Couldn't compress image`),
+      message: i18n._(msg`Sending the original instead.`),
       variant: 'warning',
     });
     return { file: input, compressed: false };

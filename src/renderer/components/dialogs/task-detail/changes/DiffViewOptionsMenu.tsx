@@ -1,4 +1,5 @@
 import { SlidersHorizontal, Settings } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { KebabMenu, KebabMenuItem, KebabMenuCheckItem, KebabMenuDivider } from '../../../KebabMenu';
 import { useConfigStore } from '../../../../stores/config-store';
 
@@ -45,6 +46,7 @@ interface DiffViewOptionsMenuProps {
  * renders the same menu in a file-less toolbar row.
  */
 export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
+  const { t } = useLingui();
   const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
   const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
   const wrapLines = useConfigStore((state) => state.config.diffWrapLines);
@@ -56,7 +58,7 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
   return (
     <KebabMenu
       icon={<SlidersHorizontal size={16} />}
-      label="View options"
+      label={t`View options`}
       triggerClassName={diffToolbarButtonClass(false)}
       triggerTestId="diff-view-options"
       menuTestId="diff-view-options-menu"
@@ -64,25 +66,25 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
       {(close) => (
         <>
           <KebabMenuCheckItem
-            label="Ignore whitespace"
+            label={t`Ignore whitespace`}
             checked={ignoreWhitespace}
             onChange={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
             data-testid="diff-ignore-whitespace"
           />
           <KebabMenuCheckItem
-            label="Collapse unchanged"
+            label={t`Collapse unchanged`}
             checked={collapseUnchanged}
             onChange={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
             data-testid="diff-collapse-unchanged"
           />
           <KebabMenuCheckItem
-            label="Wrap long lines"
+            label={t`Wrap long lines`}
             checked={wrapLines}
             onChange={() => updateConfig({ diffWrapLines: !wrapLines })}
             data-testid="diff-wrap-lines"
           />
           <KebabMenuCheckItem
-            label="Inline when narrow"
+            label={t`Inline when narrow`}
             checked={inlineWhenNarrow}
             onChange={() => updateConfig({ diffUseInlineWhenNarrow: !inlineWhenNarrow })}
             data-testid="diff-inline-when-narrow"
@@ -91,10 +93,10 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
             <>
               <KebabMenuDivider />
               <KebabMenuCheckItem
-                label="Show blame"
+                label={t`Show blame`}
                 checked={blame.on}
                 disabled={blame.unavailable}
-                disabledReason="Blame is unavailable for this file"
+                disabledReason={t`Blame is unavailable for this file`}
                 onChange={blame.onToggle}
                 data-testid="diff-blame-toggle"
               />
@@ -108,7 +110,7 @@ export function DiffViewOptionsMenu({ blame }: DiffViewOptionsMenuProps) {
               the menu is already attached to. It does land on the Changes tab. */}
           <KebabMenuItem
             icon={<Settings size={12} />}
-            label="Open settings"
+            label={t`Open settings`}
             onClick={() => {
               setLastSettingsTab('changes');
               setSettingsOpen(true);
