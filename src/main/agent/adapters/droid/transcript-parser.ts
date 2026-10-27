@@ -1,11 +1,11 @@
-import os from 'node:os';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
-import { cwdToSessionSlug } from './session-id-capture';
+import { droidSessionsDirForCwd } from './session-id-capture';
+import type { CliPlace } from '../../shared/cli-target';
 
 /** A Droid record without its own id is named by its line, so the tail, its notice and every page count lines. */
 const UUIDS_NUMBER_LINES = true;
@@ -184,14 +184,8 @@ function parseDroidRecord(agentSessionId: string, line: string, lineNumber: numb
  * called long after the file has been written, so polling would only add
  * latency to the negative case.
  */
-export function droidTranscriptFilePath(agentSessionId: string, cwd: string): string {
-  return path.join(
-    os.homedir(),
-    '.factory',
-    'sessions',
-    cwdToSessionSlug(cwd),
-    `${agentSessionId}.jsonl`,
-  );
+export function droidTranscriptFilePath(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
+  return path.join(droidSessionsDirForCwd(cwd, place), `${agentSessionId}.jsonl`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

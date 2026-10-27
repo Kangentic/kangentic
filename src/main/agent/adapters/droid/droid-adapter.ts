@@ -7,6 +7,7 @@ import { discoverDroidCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -65,6 +66,8 @@ export class DroidAdapter implements AgentAdapter {
   readonly capturesInteractiveSessionId = true;
   // The literal URL goes into the folder's `.factory/mcp.json`.
   readonly kangenticMcp = 'shared-folder' as const;
+  /** A Droid installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   /**
    * Droid's interactive TUI handles permission/autonomy decisions
    * in-band: shift+tab cycles low/medium/high autonomy, and `/model`
@@ -196,19 +199,24 @@ export class DroidAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    return locateSessionFile({ agentSessionId, cwd });
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return locateSessionFile({ agentSessionId, cwd, place });
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    const filePath = droidTranscriptFilePath(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const filePath = droidTranscriptFilePath(agentSessionId, cwd, place ?? null);
     const entries = await parseDroidTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    return readDroidTranscriptPage(agentSessionId, droidTranscriptFilePath(agentSessionId, cwd), request);
+  readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    return readDroidTranscriptPage(agentSessionId, droidTranscriptFilePath(agentSessionId, cwd, place ?? null), request);
   }
 
   async discoverCapabilities(_cliPath: string): Promise<AgentCapabilities> {
@@ -232,6 +240,8 @@ export class DroidAdapter implements AgentAdapter {
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
+      // A Droid installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
@@ -259,6 +269,8 @@ export class DroidAdapter implements AgentAdapter {
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
+      // A Droid installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error.
       args: ['exec', '-o', 'text', ...(model ? ['--model', model] : [])],

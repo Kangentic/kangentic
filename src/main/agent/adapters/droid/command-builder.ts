@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -73,6 +75,12 @@ export interface DroidCommandOptions {
   mcpServerUrl?: string;
   /** Delivered via `buildEnv`; the config file holds only the var NAME. */
   mcpServerToken?: string;
+  /**
+   * A Droid installed in a WSL distro (`CommandOptions.cliTarget`): named by
+   * the path the distro sees, its working directory too, and on NAT
+   * networking given Kangentic's server as the WSL hook transport's bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /** Env var Droid expands inside the mcp.json header value at connect time. */
@@ -89,10 +97,49 @@ export function droidMcpWiringEnabled(
   );
 }
 
+/**
+ * Kangentic's entry in `.factory/mcp.json`. The URL for a Droid on this
+ * machine or in a distro on mirrored networking. A distro on NAT networking
+ * cannot reach this machine's loopback, so it gets the WSL hook transport's
+ * stdio bridge, prepared in the session's own directory, with the token
+ * passed to the bridge in its `env` as the same `${KANGENTIC_MCP_TOKEN}`
+ * reference (Factory's MCP docs: Droid expands `${VAR}` in a server's `env`
+ * and `headers` at load time). Like the URL, the bridge's script path is the
+ * last session's to write it; a sibling's Droid connected at its own start.
+ * Null when the bridge cannot be prepared: the session then runs without
+ * Kangentic's tools, as one whose server failed to start would.
+ */
+function droidKangenticMcpEntry(
+  options: DroidCommandOptions & { mcpServerUrl: string; mcpServerToken: string },
+): Record<string, unknown> | null {
+  const tokenReference = `\${${KANGENTIC_MCP_TOKEN_ENV}}`;
+  const place = options.cliTarget ?? null;
+  if (place) {
+    if (!options.eventsOutputPath) return null;
+    try {
+      const server = kangenticMcpServer({
+        url: options.mcpServerUrl,
+        token: options.mcpServerToken,
+        place,
+        directory: path.dirname(options.eventsOutputPath),
+      });
+      if (server.kind === 'stdio') {
+        return { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: tokenReference } };
+      }
+    } catch (error) {
+      console.warn('[droid] Could not prepare the WSL MCP bridge; the session runs without Kangentic tools:', error);
+      return null;
+    }
+  }
+  return { type: 'http', url: options.mcpServerUrl, headers: { 'X-Kangentic-Token': tokenReference } };
+}
+
 export class DroidCommandBuilder {
   buildDroidCommand(options: DroidCommandOptions): string {
     const { shell } = options;
-    const parts: string[] = [quoteArg(options.droidPath, shell)];
+    // A Droid in a WSL distro is started by the path the distro sees.
+    const place = options.cliTarget ?? null;
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.droidPath, shell)];
 
     // Seed .git/info/exclude BEFORE the write so the mcp.json pre-existence
     // check reflects the user's file, not ours: the config otherwise sits
@@ -101,7 +148,7 @@ export class DroidCommandBuilder {
     this.seedGitExcludes(options);
     this.writeMcpConfig(options);
 
-    parts.push('--cwd', quoteArg(toForwardSlash(options.cwd), shell));
+    parts.push('--cwd', quoteArg(cliPathForTarget(options.cwd, place), shell));
 
     if (options.resume && options.sessionId) {
       // `--resume <uuid>` accepts the agent's own session UUID. The
@@ -152,6 +199,8 @@ export class DroidCommandBuilder {
    */
   writeMcpConfig(options: DroidCommandOptions): void {
     if (!droidMcpWiringEnabled(options)) return;
+    const entry = droidKangenticMcpEntry(options);
+    if (!entry) return;
 
     const factoryDir = path.join(options.cwd, '.factory');
     const configPath = path.join(factoryDir, 'mcp.json');
@@ -168,11 +217,7 @@ export class DroidCommandBuilder {
       ...existing,
       mcpServers: {
         ...(existing.mcpServers ?? {}),
-        kangentic: {
-          type: 'http',
-          url: options.mcpServerUrl,
-          headers: { 'X-Kangentic-Token': `\${${KANGENTIC_MCP_TOKEN_ENV}}` },
-        },
+        kangentic: entry,
       },
     };
 
