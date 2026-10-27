@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   alwaysOnLine,
   codeLine,
+  notYetIndexed,
   sourceRequirements,
   summariesLine,
   timeLeft,
@@ -85,6 +86,15 @@ describe('what the summaries and code lines wait for', () => {
     // No gap in the setup, but nothing chosen: only code waits.
     expect(sourceRequirements({ ...READY, agentSetup: null, agentChosen: false }))
       .toEqual({ summaries: undefined, code: 'Needs an agent' });
+  });
+});
+
+describe('a source with nothing in it', () => {
+  // `notYetIndexed()` replaced a shared `NOT_YET_INDEXED` constant when the text became a
+  // message: the line is built when it renders, in the session language. The Settings card
+  // (`alwaysOnLine`) and the Knowledge Graph's Index panel (`indexSourceLines`) both call it.
+  it('is the muted words "Not yet indexed", never a checked 0', () => {
+    expect(notYetIndexed()).toEqual({ value: 'Not yet indexed', tone: 'muted' });
   });
 });
 

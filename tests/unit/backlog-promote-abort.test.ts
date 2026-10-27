@@ -184,6 +184,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 // Import under test AFTER all mocks are registered.
 import { registerBacklogHandlers } from '../../src/main/ipc/handlers/backlog';
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
+import { isBoardSpawnHeld } from '../../src/main/ipc/board-spawn-holds';
 import { IPC } from '../../src/shared/ipc-channels';
 import { WORKFLOW_REFUSALS } from '../../src/shared/workflow-refusals';
 import { getExistingProjectDb, getProjectDb } from '../../src/main/db/database';
@@ -507,6 +508,235 @@ describe('BACKLOG_PROMOTE AbortError cleanup', () => {
     const checkoutOptions = mockEnsureTaskBranchCheckout.mock.calls[0][3] as { onProgress?: unknown; projectId?: unknown };
     expect(typeof checkoutOptions.onProgress).toBe('function');
     expect(checkoutOptions.projectId).toBe(context.currentProjectId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BACKLOG_PROMOTE holds every promoted task against the startup sweep.
+//
+// A promotion puts all its tasks in the spawn column at once, then spawns them
+// one at a time in the background: worktree, branch checkout, agent. A startup
+// sweep (autoSpawnTasks) that landed while a task waited its turn found it
+// sessionless in an auto_spawn column and started a promptless agent in the
+// project root. So every promoted task is held (board-spawn-holds.ts) from the
+// moment the handler returns, and the loop releases each task's hold as it
+// finishes with that task. A throw ends the loop early, and the outer finally
+// releases the tasks it never reached.
+//
+// The loop is fire and forget, so each test records whether the tasks were held
+// FROM INSIDE the mocked worktree and spawn steps, then waits for the holds to
+// drop. Every test uses task ids of its own: the hold map is module state, and a
+// red run must not leave a hold behind for the next test to read.
+// ---------------------------------------------------------------------------
+
+describe('BACKLOG_PROMOTE holds every promoted task against the startup sweep', () => {
+  const HOLD_LANE_ID = 'lane-hold';
+
+  interface HoldObservation {
+    step: 'worktree' | 'spawn';
+    taskId: string;
+    /** Whether each task of the promotion was held at that moment. */
+    held: Record<string, boolean>;
+  }
+
+  let context: ReturnType<typeof createMockContext>;
+  let promotedIds: string[] = [];
+  let storedRows = new Map<string, Record<string, unknown>>();
+  let observations: HoldObservation[] = [];
+
+  const heldNow = (): Record<string, boolean> =>
+    Object.fromEntries(promotedIds.map((taskId) => [taskId, isBoardSpawnHeld(taskId)]));
+
+  const observe = (step: HoldObservation['step'], taskId: string): void => {
+    observations.push({ step, taskId, held: heldNow() });
+  };
+
+  const taskIdOf = (argument: unknown): string => (argument as { id: string }).id;
+
+  const seen = (step: HoldObservation['step'], taskId: string): HoldObservation | undefined =>
+    observations.find((observation) => observation.step === step && observation.taskId === taskId);
+
+  /** Promote the tasks into the target column. Returns once the handler has, with the loop still running. */
+  async function promote(taskIds: string[]): Promise<void> {
+    promotedIds = taskIds;
+    storedRows = new Map(taskIds.map((taskId) => [
+      taskId,
+      { id: taskId, title: `Promoted ${taskId}`, swimlane_id: HOLD_LANE_ID, session_id: null },
+    ]));
+    backlogRepoMock.getById.mockImplementation((backlogTaskId: string) => ({
+      id: backlogTaskId, title: `Backlog ${backlogTaskId}`, description: '', labels: [], priority: 0,
+    }));
+    for (const taskId of taskIds) taskRepoMock.create.mockReturnValueOnce(storedRows.get(taskId));
+    taskRepoMock.getById.mockImplementation((taskId: string) => storedRows.get(taskId));
+
+    const handler = capturedHandlers.get(IPC.BACKLOG_PROMOTE);
+    if (!handler) throw new Error('BACKLOG_PROMOTE handler not registered');
+    await handler(null, {
+      backlogTaskIds: taskIds.map((taskId) => `backlog-${taskId}`),
+      targetSwimlaneId: HOLD_LANE_ID,
+    });
+  }
+
+  /** The background loop is over once none of the promoted tasks is held. */
+  const untilReleased = (): Promise<void> => vi.waitFor(() => {
+    expect(heldNow()).toEqual(Object.fromEntries(promotedIds.map((taskId) => [taskId, false])));
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+    observations = [];
+    // The failure paths log to console.error by design; keep the run quiet.
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    mockEnsureTaskWorktree.mockReset();
+    mockEnsureTaskWorktree.mockImplementation(async (...callArguments: unknown[]) => {
+      observe('worktree', taskIdOf(callArguments[1]));
+    });
+    mockEnsureTaskBranchCheckout.mockReset();
+    mockEnsureTaskBranchCheckout.mockImplementation(async () => {});
+    mockSpawnAgent.mockReset();
+    mockSpawnAgent.mockImplementation(async (...callArguments: unknown[]) => {
+      observe('spawn', taskIdOf((callArguments[0] as { task: unknown }).task));
+    });
+    swimlaneRepoMock.getById.mockReturnValue({ id: HOLD_LANE_ID, auto_spawn: true, role: null });
+
+    context = createMockContext();
+    registerBacklogHandlers(context as never);
+  });
+
+  afterEach(() => {
+    vi.mocked(console.error).mockRestore();
+    // The describes around this one set their own return values; leave them a clean slate.
+    taskRepoMock.create.mockReset();
+    taskRepoMock.getById.mockReset();
+    backlogRepoMock.getById.mockReset();
+  });
+
+  it('holds a promoted task through its worktree and its spawn, and releases it once the spawn is done', async () => {
+    await promote(['hold-ok-1']);
+    await untilReleased();
+
+    expect(observations).toEqual([
+      { step: 'worktree', taskId: 'hold-ok-1', held: { 'hold-ok-1': true } },
+      { step: 'spawn', taskId: 'hold-ok-1', held: { 'hold-ok-1': true } },
+    ]);
+  });
+
+  it('releases the hold when the worktree step fails, and spawns nothing', async () => {
+    mockEnsureTaskWorktree.mockImplementation(async (...callArguments: unknown[]) => {
+      observe('worktree', taskIdOf(callArguments[1]));
+      throw new Error("fatal: 'feature-x' is already used by worktree at '/repo'");
+    });
+
+    await promote(['hold-worktree-fails-1']);
+    await untilReleased();
+
+    expect(observations).toEqual([
+      { step: 'worktree', taskId: 'hold-worktree-fails-1', held: { 'hold-worktree-fails-1': true } },
+    ]);
+    // The failure path ran: the user was told, and no agent started.
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('releases the hold when the spawn rejects', async () => {
+    const spawnError = new Error('The agent could not be started.');
+    mockSpawnAgent.mockImplementation(async (...callArguments: unknown[]) => {
+      observe('spawn', taskIdOf((callArguments[0] as { task: unknown }).task));
+      throw spawnError;
+    });
+
+    await promote(['hold-spawn-fails-1']);
+    await untilReleased();
+
+    expect(observations).toEqual([
+      { step: 'worktree', taskId: 'hold-spawn-fails-1', held: { 'hold-spawn-fails-1': true } },
+      { step: 'spawn', taskId: 'hold-spawn-fails-1', held: { 'hold-spawn-fails-1': true } },
+    ]);
+    expect(console.error).toHaveBeenCalledWith('[BACKLOG_PROMOTE] Background agent spawn failed:', spawnError);
+  });
+
+  it('holds every promoted task up front, and releases each one as the loop finishes it, before the next one starts', async () => {
+    await promote(['hold-pair-1', 'hold-pair-2']);
+    await untilReleased();
+
+    expect(observations).toEqual([
+      // While the first is worked, the second waits its turn and is held too.
+      { step: 'worktree', taskId: 'hold-pair-1', held: { 'hold-pair-1': true, 'hold-pair-2': true } },
+      { step: 'spawn', taskId: 'hold-pair-1', held: { 'hold-pair-1': true, 'hold-pair-2': true } },
+      // The first is let go before the second starts, not when the whole loop ends.
+      { step: 'worktree', taskId: 'hold-pair-2', held: { 'hold-pair-1': false, 'hold-pair-2': true } },
+      { step: 'spawn', taskId: 'hold-pair-2', held: { 'hold-pair-1': false, 'hold-pair-2': true } },
+    ]);
+  });
+
+  it('releases the tasks the loop never reached when a spawn throws', async () => {
+    const spawnError = new Error('The agent could not be started.');
+    mockSpawnAgent.mockImplementationOnce(async (...callArguments: unknown[]) => {
+      observe('spawn', taskIdOf((callArguments[0] as { task: unknown }).task));
+      throw spawnError;
+    });
+
+    await promote(['hold-throw-1', 'hold-throw-2', 'hold-throw-3']);
+    await untilReleased();
+
+    // Only the first task was reached, and all three were held while it ran.
+    expect(observations).toEqual([
+      { step: 'worktree', taskId: 'hold-throw-1', held: { 'hold-throw-1': true, 'hold-throw-2': true, 'hold-throw-3': true } },
+      { step: 'spawn', taskId: 'hold-throw-1', held: { 'hold-throw-1': true, 'hold-throw-2': true, 'hold-throw-3': true } },
+    ]);
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith('[BACKLOG_PROMOTE] Background agent spawn failed:', spawnError);
+  });
+
+  // A move or a demote that came while the loop was busy with an earlier task
+  // found no promotion of this one to abort, and owns the task now. The loop
+  // re-reads the row under the task's lock and leaves it alone.
+  const CONCURRENT_CHANGES: Array<{
+    label: string;
+    idSuffix: string;
+    apply: (rows: Map<string, Record<string, unknown>>, taskId: string) => void;
+  }> = [
+    {
+      label: 'moved to another column',
+      idSuffix: 'moved',
+      apply: (rows, taskId) => { rows.set(taskId, { ...rows.get(taskId), swimlane_id: 'lane-elsewhere' }); },
+    },
+    {
+      label: 'given a session',
+      idSuffix: 'session',
+      apply: (rows, taskId) => { rows.set(taskId, { ...rows.get(taskId), session_id: 'session-from-a-move' }); },
+    },
+    {
+      label: 'deleted',
+      idSuffix: 'deleted',
+      apply: (rows, taskId) => { rows.delete(taskId); },
+    },
+  ];
+
+  it.each(CONCURRENT_CHANGES)('skips a promoted task that was $label before the loop reached it, and still releases its hold', async ({ idSuffix, apply }) => {
+    const first = `hold-skip-${idSuffix}-1`;
+    const skipped = `hold-skip-${idSuffix}-2`;
+    const last = `hold-skip-${idSuffix}-3`;
+    mockEnsureTaskWorktree.mockImplementation(async (...callArguments: unknown[]) => {
+      const taskId = taskIdOf(callArguments[1]);
+      observe('worktree', taskId);
+      // While the first task is being worked, the change lands on the second.
+      if (taskId === first) apply(storedRows, skipped);
+    });
+
+    await promote([first, skipped, last]);
+    await untilReleased();
+
+    // The skipped task gets no worktree, no branch checkout and no agent...
+    expect(observations.map((observation) => `${observation.step}:${observation.taskId}`)).toEqual([
+      `worktree:${first}`, `spawn:${first}`, `worktree:${last}`, `spawn:${last}`,
+    ]);
+    expect(mockEnsureTaskBranchCheckout).toHaveBeenCalledTimes(2);
+    // ...it was held while it waited, and let go before the last task started.
+    expect(seen('worktree', first)?.held[skipped]).toBe(true);
+    expect(seen('worktree', last)?.held[skipped]).toBe(false);
   });
 });
 
