@@ -1,4 +1,5 @@
 import { PanelBottom, SquareStack } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardChoiceRow } from '../settings-card';
@@ -20,21 +21,22 @@ const CONTEXT_BAR_STATS: ContextBarKey[] = [
 ];
 
 export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   return (
     <div className="space-y-4">
       <SettingsCard
         icon={<SquareStack size={16} />}
-        label="Cards"
-        description="How much each task card shows on the board."
+        label={t`Cards`}
+        description={t`How much each task card shows on the board.`}
         searchIds={['cardDensity', 'cardPreview', 'showTaskNumbers']}
       >
         <CardChoiceRow
           {...settingProps('cardDensity')}
           options={[
-            { value: 'compact', label: 'Compact' },
-            { value: 'default', label: 'Default' },
-            { value: 'comfortable', label: 'Comfortable' },
+            { value: 'compact', label: t({ message: 'Compact', context: 'card density' }) },
+            { value: 'default', label: t({ message: 'Default', context: 'card density' }) },
+            { value: 'comfortable', label: t({ message: 'Comfortable', context: 'card density' }) },
           ]}
           value={globalConfig.cardDensity}
           onChange={(value) => updateGlobal({ cardDensity: value })}
@@ -45,9 +47,9 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
         <CardChoiceRow<AppConfig['cardPreview']>
           {...settingProps('cardPreview')}
           options={[
-            { value: 'agent-latest-message', label: 'Latest', tip: "The agent's newest message" },
-            { value: 'agent-messages', label: 'Recent', tip: "The agent's recent messages, one line each" },
-            { value: 'description', label: 'Description', tip: "The task's description" },
+            { value: 'agent-latest-message', label: t({ message: 'Latest', context: 'card preview' }), tip: t`The agent's newest message` },
+            { value: 'agent-messages', label: t({ message: 'Recent', context: 'card preview' }), tip: t`The agent's recent messages, one line each` },
+            { value: 'description', label: t({ message: 'Description', context: 'card preview' }), tip: t`The task's description` },
           ]}
           value={globalConfig.cardPreview}
           onChange={(value) => updateGlobal({ cardPreview: value })}
@@ -62,8 +64,8 @@ export function TaskTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       <SettingsCard
         icon={<PanelBottom size={16} />}
-        label="Context bar"
-        description="Which stats show in the bar under a task's terminal."
+        label={t`Context bar`}
+        description={t`Which stats show in the bar under a task's terminal.`}
         searchIds={CONTEXT_BAR_STATS.map((key) => `contextBar.${key}`)}
       >
         {CONTEXT_BAR_STATS.map((key) => (

@@ -10,6 +10,7 @@ import {
   isTypeOfferedOnTrigger,
   stableAutomationTypes,
 } from '../../../../shared/automation-manifest';
+import { translateText } from '../../../i18n/translate';
 import type { AutomationField } from '../../../../shared/automation-manifest';
 import { TEXT_MATCH_PLACEHOLDER, TEXT_MATCH_UNAVAILABLE_REASON } from '../../../../shared/final-line-match';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
@@ -91,11 +92,19 @@ const TEXT_KIND_OPTION: SegmentedControlOption<ConditionKind> = {
   testId: 'edit-automation-condition-kind-text',
 };
 const CONDITION_KIND_OPTIONS: SegmentedControlOption<ConditionKind>[] = [AGENT_KIND_OPTION, TEXT_KIND_OPTION];
-/** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
-const CONDITION_KIND_OPTIONS_NO_TEXT: SegmentedControlOption<ConditionKind>[] = [
-  AGENT_KIND_OPTION,
-  { ...TEXT_KIND_OPTION, disabled: true, disabledReason: TEXT_MATCH_UNAVAILABLE_REASON },
-];
+let conditionKindOptionsNoText: SegmentedControlOption<ConditionKind>[] | null = null;
+/**
+ * Off a turn end there is no final message, so Text match is shown and
+ * disabled, with the reason as its tip. Built on first render, since the reason
+ * is translated (see `baseTriggerOptions`).
+ */
+function noTextConditionKindOptions(): SegmentedControlOption<ConditionKind>[] {
+  conditionKindOptionsNoText ??= [
+    AGENT_KIND_OPTION,
+    { ...TEXT_KIND_OPTION, disabled: true, disabledReason: translateText(TEXT_MATCH_UNAVAILABLE_REASON) },
+  ];
+  return conditionKindOptionsNoText;
+}
 
 /** The Text match hint, under its field. */
 const TEXT_MATCH_HINT = "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard.";
@@ -122,11 +131,22 @@ const TYPE_INFO = 'What runs. Each type brings its own fields.';
  * any text field, so a fresh array per render would tear down and rebuild the
  * control's ResizeObserver (and force a synchronous layout read) per character.
  */
-const TRIGGER_OPTIONS: SegmentedControlOption<AutomationTrigger>[] = AUTOMATION_TRIGGERS.map((trigger) => ({
-  value: trigger,
-  label: AUTOMATION_TRIGGER_LABELS[trigger],
-  testId: `edit-automation-trigger-${trigger}`,
-}));
+let triggerOptions: SegmentedControlOption<AutomationTrigger>[] | null = null;
+/**
+ * Built on first render rather than at module load: the labels are translated,
+ * and the session's catalog is not loaded when this module is. The language
+ * never changes within a session, so one array serves the rest of it. In dev a
+ * catalog hot update (`vite-lingui-catalog-hmr.mjs`) does not reach this array
+ * or the option caches below; their labels change on the next reload.
+ */
+function baseTriggerOptions(): SegmentedControlOption<AutomationTrigger>[] {
+  triggerOptions ??= AUTOMATION_TRIGGERS.map((trigger) => ({
+    value: trigger,
+    label: translateText(AUTOMATION_TRIGGER_LABELS[trigger]),
+    testId: `edit-automation-trigger-${trigger}`,
+  }));
+  return triggerOptions;
+}
 
 /**
  * The triggers this type can take in this column, each disabled one carrying
@@ -142,11 +162,11 @@ function triggerOptionsFor(
   reportsTurnEnd: boolean | undefined,
 ): SegmentedControlOption<AutomationTrigger>[] {
   const reasons = triggerReasons(type, column, reportsTurnEnd);
-  if (reasons.every((reason) => reason === null)) return TRIGGER_OPTIONS;
+  if (reasons.every((reason) => reason === null)) return baseTriggerOptions();
   const cacheKey = reasons.map((reason) => reason ?? '').join('\n');
   const cached = blockedTriggerOptions.get(cacheKey);
   if (cached) return cached;
-  const built = TRIGGER_OPTIONS.map((option, index) => {
+  const built = baseTriggerOptions().map((option, index) => {
     const reason = reasons[index];
     return reason === null ? option : { ...option, disabled: true, disabledReason: reason };
   });
@@ -159,9 +179,10 @@ function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: 
   const facts = { autoSpawn: column.auto_spawn, role: column.role, reportsTurnEnd };
   return AUTOMATION_TRIGGERS.map((trigger) => {
     const group = canTriggerRun(facts, trigger);
-    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : group.reason;
+    if (!group.ok) return trigger === 'enter' ? `Nothing runs when a task enters ${column.name}.` : translateText(group.reason);
     if (!isTypeOfferedOnTrigger(type, trigger)) {
-      return AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.';
+      const typeReason = AUTOMATION_MANIFEST[type].triggerUnavailableReason;
+      return typeReason ? translateText(typeReason) : 'Not offered on this trigger.';
     }
     return null;
   });
@@ -192,7 +213,7 @@ function segmentedOptionsFor(field: AutomationField, unavailableReason: string |
   if (cached) return cached;
   const built = (field.options ?? []).map((option): SegmentedControlOption<string> => ({
     value: option.value,
-    label: option.label,
+    label: translateText(option.label),
     testId: option.testId,
     ...(option.icon ? { icon: <AutomationIcon name={option.icon} size={14} /> } : {}),
     ...(unavailableReason !== null ? { disabled: true, disabledReason: unavailableReason } : {}),
@@ -429,7 +450,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               fullWidth
               ariaLabel="Condition kind"
               testId="edit-automation-condition-kind"
-              options={textMatchAvailable ? CONDITION_KIND_OPTIONS : CONDITION_KIND_OPTIONS_NO_TEXT}
+              options={textMatchAvailable ? CONDITION_KIND_OPTIONS : noTextConditionKindOptions()}
               value={conditionKind}
               onChange={changeConditionKind}
             />
@@ -687,10 +708,11 @@ function RuleCard({
 
 /** A field's label row: the label, an info tip, and the Optional tag. */
 function FieldLabel({ field }: { field: AutomationField }) {
+  const label = translateText(field.label);
   return (
     <span className="flex items-center gap-1.5">
-      <span className={SETTING_LABEL_CLASS}>{field.label}</span>
-      {field.info && <InfoTip label={field.label} text={field.info} />}
+      <span className={SETTING_LABEL_CLASS}>{label}</span>
+      {field.info && <InfoTip label={label} text={translateText(field.info)} />}
       {field.optional && <OptionalTag />}
     </span>
   );
@@ -711,7 +733,10 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
   // A field the manifest declares does nothing on this trigger (Delivery at a
   // turn end, where the turn is already over) stays in place, disabled, with
   // the reason, and its value is not touched.
-  const unavailableReason = automationFieldUnavailableReason(field, trigger);
+  const unavailable = automationFieldUnavailableReason(field, trigger);
+  const unavailableReason = unavailable === null ? null : translateText(unavailable);
+  const label = translateText(field.label);
+  const placeholder = field.placeholder === undefined ? undefined : translateText(field.placeholder);
   const inputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   // A highlighted textarea owns its own caret, so the picker button routes
   // through the field rather than through `inputRef`. Only the plain `text`
@@ -763,7 +788,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           <SegmentedControl
             quiet
             className="flex-shrink-0"
-            ariaLabel={field.label}
+            ariaLabel={label}
             testId={testId}
             // Cached, for the same ResizeObserver reason as the trigger options above.
             options={segmentedOptionsFor(field, unavailableReason)}
@@ -790,8 +815,8 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           // row tall and grows with its text, as Condition does. A script or a
           // JSON body keeps the fixed rows its type asks for.
           {...(field.rows === undefined ? { grow: { maxRows: PROSE_MAX_ROWS } } : { rows: field.rows })}
-          placeholder={field.placeholder}
-          ariaLabel={field.label}
+          placeholder={placeholder}
+          ariaLabel={label}
           insertRef={templateInsertRef}
         />
       )}
@@ -802,7 +827,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           data-testid={testId}
           value={text}
           rows={field.rows ?? 3}
-          placeholder={field.placeholder}
+          placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
           className="w-full resize-y rounded border border-edge-input bg-surface-control px-3 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:border-accent focus:outline-none"
         />
@@ -813,7 +838,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           ref={(node) => { inputRef.current = node; }}
           data-testid={testId}
           value={text}
-          placeholder={field.placeholder}
+          placeholder={placeholder}
           onChange={(event) => onChange(event.target.value)}
           className={FIELD_CONTROL_CLASS}
         />
@@ -834,7 +859,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
               className={FIELD_CONTROL_CLASS}
             />
           </div>
-          {field.unit && <span className={SETTING_DESCRIPTION_CLASS}>{field.unit}</span>}
+          {field.unit && <span className={SETTING_DESCRIPTION_CLASS}>{translateText(field.unit)}</span>}
         </div>
       )}
 
@@ -845,7 +870,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
           onChange={(event) => onChange(event.target.value)}
         >
           {(field.options ?? []).map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
+            <option key={option.value} value={option.value}>{translateText(option.label)}</option>
           ))}
         </Select>
       )}
@@ -858,7 +883,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
         // dialog never silently re-points the row.
         <ColumnPicker
           testId={testId}
-          ariaLabel={field.label}
+          ariaLabel={label}
           value={text}
           columns={columns}
           leadingOption={NEXT_COLUMN_OPTION}
@@ -884,7 +909,7 @@ function ManifestField({ field, value, onChange, templatePicker: TemplatePicker,
         </div>
       )}
 
-      {field.hint && <span className="text-[11px] text-fg-faint">{field.hint}</span>}
+      {field.hint && <span className="text-[11px] text-fg-faint">{translateText(field.hint)}</span>}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, EXIT_GROUP_BUDGET_MS } from '../../shared/automation-manifest';
+import { englishText } from '../../shared/i18n/english';
 import { matchFinalLine, type FinalLineMatch } from '../../shared/final-line-match';
 import type { AutomationRunStatus, ColumnAutomation, Swimlane } from '../../shared/types';
 import type { AutomationRunRepository, RunConditionAnswer } from '../db/repositories/automation-run-repository';
@@ -290,8 +291,10 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
 
     const runnable = canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger);
     if (!runnable.ok) {
-      runs.recordSkipped(started, runnable.reason);
-      record('skipped', runnable.reason);
+      // Stored for kangentic_get_automation_runs, which an agent reads: English.
+      const reason = englishText(runnable.reason);
+      runs.recordSkipped(started, reason);
+      record('skipped', reason);
       continue;
     }
 

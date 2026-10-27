@@ -1,4 +1,5 @@
 import { Bug } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, SettingTag } from '../settings-card';
@@ -19,6 +20,7 @@ import { DevToolsSections } from '../../../../devtools/renderer/DevToolsSections
  * this surface is for skim + flip-toggle, not learn-everything-about-each-flag.
  */
 export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const developerConfig = globalConfig.developer ?? {};
   const overlayEnabled = developerConfig.activityDebugOverlay === true;
@@ -41,8 +43,8 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
     <div className="space-y-4" data-testid="developer-tab">
       <SettingsCard
         icon={<Bug size={16} />}
-        label="Diagnostics"
-        description="Debug overlays and logs for diagnosing sessions."
+        label={t`Diagnostics`}
+        description={t`Debug overlays and logs for diagnosing sessions.`}
         searchIds={['developer.activityDebugOverlay', 'developer.persistConsoleLogs', 'developer.crashReports', 'developer.recordIpcTraffic']}
       >
         <CardToggleRow

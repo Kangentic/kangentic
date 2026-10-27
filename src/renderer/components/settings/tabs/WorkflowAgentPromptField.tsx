@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Maximize2, RotateCcw, Workflow as WorkflowIcon } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import { TemplateVariablePicker } from '../../TemplateVariablePicker';
 import { Pill } from '../../Pill';
@@ -31,6 +32,7 @@ export function WorkflowAgentPromptField({ value, onChange, onBlur, onReset, fil
   fill?: boolean;
   testId: string;
 }) {
+  const { t } = useLingui();
   const insertRef = useRef<TemplateTextFieldInsert | null>(null);
   return (
     <div className={fill ? 'flex min-h-0 flex-1 flex-col gap-2' : 'flex flex-col gap-2'}>
@@ -42,7 +44,7 @@ export function WorkflowAgentPromptField({ value, onChange, onBlur, onReset, fil
         testId={testId}
         rows={PROMPT_ROWS}
         fill={fill}
-        ariaLabel="Workflow agent prompt"
+        ariaLabel={t`Workflow agent prompt`}
         insertRef={insertRef}
       />
       <div className="flex items-center justify-between gap-3">
@@ -57,7 +59,7 @@ export function WorkflowAgentPromptField({ value, onChange, onBlur, onReset, fil
           className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
           data-testid={`${testId}-reset`}
         >
-          <RotateCcw size={14} /> Reset to default
+          <RotateCcw size={14} /> <Trans>Reset to default</Trans>
         </Pill>
       </div>
     </div>
@@ -116,8 +118,9 @@ export function WorkflowAgentPromptSetting({ stored, onSave }: { stored: string;
 
 /** The card header's Expand: the same prompt, larger. */
 export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => void }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label="Expand the prompt">
+    <Tooltip label={t`Expand the prompt`}>
       <button
         type="button"
         onClick={onClick}
@@ -125,7 +128,7 @@ export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => vo
         className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
       >
         <Maximize2 size={13} aria-hidden="true" />
-        Expand
+        <Trans>Expand</Trans>
       </button>
     </Tooltip>
   );
@@ -142,6 +145,7 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
   onSave: (next: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useLingui();
   const [draft, setDraft] = useState(initial);
   const [isMaximized, setMaximized] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -173,7 +177,7 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
         onClose={onClose}
         onCloseRequest={handleCloseAttempt}
         onHeaderDoubleClick={toggleMaximized}
-        title="Workflow agent prompt"
+        title={t`Workflow agent prompt`}
         icon={<WorkflowIcon size={16} className="text-fg-muted" />}
         headerRight={<MaximizeToggleButton isMaximized={isMaximized} onToggle={toggleMaximized} />}
         className={dialogClassName}
@@ -187,7 +191,7 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
           <DialogFooterActions
             onCancel={onClose}
             onConfirm={() => { onSave(draft); onClose(); }}
-            confirmLabel="Save"
+            confirmLabel={t`Save`}
             cancelTestId="workflow-agent-prompt-dialog-cancel"
             confirmTestId="workflow-agent-prompt-dialog-save"
           />
@@ -203,11 +207,11 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
       </BaseDialog>
       {confirmDiscard && (
         <ConfirmDialog
-          title="Discard unsaved changes?"
+          title={t`Discard unsaved changes?`}
           variant="warning"
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
-          message="Closing now will discard your edits to the workflow agent prompt."
+          confirmLabel={t`Discard`}
+          cancelLabel={t`Keep editing`}
+          message={t`Closing now will discard your edits to the workflow agent prompt.`}
           onConfirm={() => { setConfirmDiscard(false); onClose(); }}
           onCancel={() => setConfirmDiscard(false)}
         />

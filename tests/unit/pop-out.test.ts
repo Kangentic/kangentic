@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { popOutInstanceKey, parsePopOutInstanceKey, parseProjectPopOutInstanceKey, isPopOutKind, isProjectPopOutKind, resolveSurfaceTitle, formatTaskAnchor, POP_OUT_SURFACES, POPOUT_KINDS } from '../../src/shared/pop-out';
+import { englishText } from '../../src/shared/i18n/english';
 import { IPC } from '../../src/shared/ipc-channels';
 
 describe('POPOUT_KINDS / POP_OUT_SURFACES parity', () => {
@@ -206,7 +207,7 @@ describe('project-scoped surfaces', () => {
   });
 
   it('titles the window by the project name its params carry', () => {
-    expect(resolveSurfaceTitle(POP_OUT_SURFACES['command-terminal'], { projectId: 'p1', projectName: 'Kangentic' }))
+    expect(englishText(resolveSurfaceTitle(POP_OUT_SURFACES['command-terminal'], { projectId: 'p1', projectName: 'Kangentic' })))
       .toBe('Command Terminal - Kangentic');
   });
 
@@ -297,7 +298,7 @@ describe('the per-file "changes-file" surface', () => {
   });
 
   it('resolveSurfaceTitle falls back to the static title for kinds without a resolver', () => {
-    expect(resolveSurfaceTitle(POP_OUT_SURFACES.changes, { taskId: 't1', projectId: 'p1' })).toBe('Changes');
+    expect(englishText(resolveSurfaceTitle(POP_OUT_SURFACES.changes, { taskId: 't1', projectId: 'p1' }))).toBe('Changes');
   });
 });
 

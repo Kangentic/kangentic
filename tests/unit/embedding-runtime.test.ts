@@ -7,6 +7,7 @@ import {
   embeddingRuntimeGapName,
   isEmbeddingRuntimeSupported,
 } from '../../src/shared/embedding-runtime';
+import { englishText } from '../../src/shared/i18n/english';
 
 // The Knowledge Graph's local model runs on onnxruntime-node, which @huggingface/transformers
 // requires at module scope. A target with no onnxruntime binding cannot fork the embed worker at
@@ -69,7 +70,7 @@ describe('embedding runtime support', () => {
   });
 
   it('names the machines a gap covers in words a user knows', () => {
-    expect(embeddingRuntimeGapName('darwin', 'x64')).toBe('Intel Macs');
-    expect(embeddingRuntimeGapName('freebsd', 'x64')).toBe('freebsd x64');
+    expect(englishText(embeddingRuntimeGapName('darwin', 'x64'))).toBe('Intel Macs');
+    expect(englishText(embeddingRuntimeGapName('freebsd', 'x64'))).toBe('freebsd x64');
   });
 });

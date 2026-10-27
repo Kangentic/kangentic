@@ -1,4 +1,5 @@
 import { GitBranch, GitFork, GitPullRequest } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
@@ -14,14 +15,15 @@ import { describeIpcError, asSentence } from '../../../lib/ipc-error';
  * requests work either way, so their cards have no switch and always show.
  */
 export function GitTab({ config }: { config: AppConfig }) {
+  const { t } = useLingui();
   const updateProject = useScopedUpdate('project');
   const worktreesEnabled = config.git.worktreesEnabled;
   return (
     <div className="space-y-4">
       <SettingsCard
         icon={<GitBranch size={16} />}
-        label="Branches"
-        description="Where new work starts, and how current it stays."
+        label={t`Branches`}
+        description={t`Where new work starts, and how current it stays.`}
         searchIds={['git.defaultBaseBranch', 'git.autoFetch']}
       >
         <CardRow {...settingProps('git.defaultBaseBranch')}>
@@ -36,7 +38,7 @@ export function GitTab({ config }: { config: AppConfig }) {
               // conflict markers, say), and that refusal has to reach the user.
               window.electronAPI.boardConfig.setDefaultBaseBranch(branch).catch((error: unknown) => {
                 useToastStore.getState().addToast({
-                  title: "Couldn't save base branch",
+                  title: t`Couldn't save base branch`,
                   message: asSentence(describeIpcError(error)),
                   variant: 'error',
                 });
@@ -79,8 +81,9 @@ export function GitTab({ config }: { config: AppConfig }) {
                   const files = nextCopyFiles.split(',').map((file) => file.trim()).filter(Boolean);
                   updateProject({ git: { copyFiles: files } });
                 }}
+                // i18n-ok: example file names
                 placeholder=".env, .env.local"
-                ariaLabel="Files to copy into a worktree"
+                ariaLabel={t`Files to copy into a worktree`}
                 className="placeholder-fg-faint"
               />
             </CardRow>
@@ -88,8 +91,9 @@ export function GitTab({ config }: { config: AppConfig }) {
               <SettingTextInput
                 value={config.git.initScript || ''}
                 onCommit={(nextInitScript) => updateProject({ git: { initScript: nextInitScript || null } })}
+                // i18n-ok: an example shell command
                 placeholder="npm install"
-                ariaLabel="Worktree init script"
+                ariaLabel={t`Worktree init script`}
                 className="placeholder-fg-faint"
               />
             </CardRow>
@@ -99,8 +103,8 @@ export function GitTab({ config }: { config: AppConfig }) {
 
       <SettingsCard
         icon={<GitPullRequest size={16} />}
-        label="Pull requests"
-        description="How linked PRs are kept up to date."
+        label={t`Pull requests`}
+        description={t`How linked PRs are kept up to date.`}
         searchIds={['git.prAutoRefresh', 'git.prBypassCountsAsReady']}
       >
         <CardToggleRow
@@ -115,6 +119,7 @@ export function GitTab({ config }: { config: AppConfig }) {
           {...settingProps('git.prBypassCountsAsReady')}
           checked={config.git.prBypassCountsAsReady}
           onChange={(value) => updateProject({ git: { prBypassCountsAsReady: value } })}
+          // i18n-ok: product name
           labelTrailing={<SettingTag>GitHub</SettingTag>}
         />
       </SettingsCard>

@@ -17,6 +17,8 @@ import {
   type AutomationColumnFacts,
   type AutomationRunnability,
 } from '../../../../shared/automation-manifest';
+import { englishText } from '../../../../shared/i18n/english';
+import { i18n } from '@lingui/core';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { conditionKindsAsStored } from '../../../../shared/final-line-match';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
@@ -112,7 +114,7 @@ function sortDrafts(drafts: AutomationDraft[]): AutomationDraft[] {
 }
 
 export function describeDraft(draft: AutomationDraft): string {
-  return describeAutomation(draft.type, draft.config);
+  return describeAutomation(draft.type, draft.config, i18n);
 }
 
 export function rowsFor(drafts: AutomationDraft[], trigger: AutomationTrigger): AutomationDraft[] {
@@ -134,7 +136,9 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     id: newDraftId(),
     // Named for the type rather than left blank: a blank name blocks Save, and
     // the dialog opens with this selected, so the common case is to type over it.
-    name: `New ${AUTOMATION_MANIFEST[type].label.toLowerCase()}`,
+    // English, like a seeded column name: it is persisted to the database and to
+    // the committed kangentic.json.
+    name: `New ${englishText(AUTOMATION_MANIFEST[type].label).toLowerCase()}`,
     type,
     trigger,
     enabled: true,

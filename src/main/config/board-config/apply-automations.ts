@@ -15,6 +15,7 @@ import {
   isRetiredActionType,
   isTypeOfferedOnTrigger,
 } from '../../../shared/automation-manifest';
+import { englishText } from '../../../shared/i18n/english';
 import { textMatchCanMatch } from '../../../shared/final-line-match';
 import { uniqueName } from '../../automations/column-message';
 import { isJsonObject, isMalformedList } from './config-helpers';
@@ -212,7 +213,7 @@ function readRow(
   // onEnter, written by hand) would run inside the move that triggered it.
   if (!isTypeOfferedOnTrigger(type, trigger)) {
     warnings.push(
-      `Automation "${name}" on "${columnName}" is a ${AUTOMATION_MANIFEST[type].label} row, which runs only in `
+      `Automation "${name}" on "${columnName}" is a ${englishText(AUTOMATION_MANIFEST[type].label)} row, which runs only in `
       + `${offeredFileKeys(type)}, not ${AUTOMATION_TRIGGER_FILE_KEYS[trigger]}. Skipped.`,
     );
     return null;

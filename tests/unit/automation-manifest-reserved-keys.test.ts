@@ -7,6 +7,7 @@ import {
   isTypeOfferedOnTrigger,
 } from '../../src/shared/automation-manifest';
 import type { AutomationType } from '../../src/shared/types';
+import { englishText } from '../../src/shared/i18n/english';
 
 /**
  * Guard for the flat `kangentic.json` automation row.
@@ -89,7 +90,8 @@ describe('automation field keys', () => {
     for (const [type, entry] of Object.entries(AUTOMATION_MANIFEST)) {
       for (const field of entry.fields) {
         if (field.unavailableOn === undefined) continue;
-        const { trigger, reason } = field.unavailableOn;
+        const { trigger } = field.unavailableOn;
+        const reason = englishText(field.unavailableOn.reason);
         expect(field.kind, `${type}.${field.key} declares unavailability it cannot render`).toBe('segmented');
         expect(AUTOMATION_TRIGGERS as readonly string[], `${type}.${field.key} names no trigger`).toContain(trigger);
         expect(
@@ -106,7 +108,8 @@ describe('automation field keys', () => {
   it("declares Send message's Delivery unavailable at a turn end, where the turn is already over", () => {
     const delivery = AUTOMATION_MANIFEST.send_message.fields.find((field) => field.key === 'mode');
     if (!delivery) throw new Error('send_message has no Delivery field');
-    expect(automationFieldUnavailableReason(delivery, 'turn_end')).toBe('At a turn end the turn is over, so it sends at once.');
+    const reason = automationFieldUnavailableReason(delivery, 'turn_end');
+    expect(reason && englishText(reason)).toBe('At a turn end the turn is over, so it sends at once.');
     expect(automationFieldUnavailableReason(delivery, 'enter')).toBeNull();
     expect(automationFieldUnavailableReason(delivery, 'exit')).toBeNull();
   });

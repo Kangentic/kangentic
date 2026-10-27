@@ -1,6 +1,7 @@
 import type React from 'react';
 import { Children, Fragment, useId } from 'react';
 import { Check, ChevronDown, ExternalLink, Info, TriangleAlert } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useAnySettingVisible, useSettingVisible } from './settings-search';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../SettingText';
 import { CountBadge } from '../CountBadge';
@@ -247,11 +248,12 @@ export function SettingsCard({
  * says what it is about; the text is its description, read without hovering.
  */
 export function InfoTip({ label, text }: { label: string; text: string }) {
+  const { t } = useLingui();
   return (
     <Tooltip label={text}>
       <button
         type="button"
-        aria-label={`About ${label}`}
+        aria-label={t`About ${label}`}
         className="flex flex-shrink-0 rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
       >
         <Info size={13} aria-hidden="true" />
@@ -463,7 +465,7 @@ export function CardLinkRow({ label, links, onOpen, testId }: CardLinkRowProps) 
       <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-[13px] text-fg-secondary">
         {links.map((link, index) => (
           <Fragment key={link.href}>
-            {index > 0 ? <span className="text-fg-muted">and</span> : null}
+            {index > 0 ? <span className="text-fg-muted"><Trans context="between two links">and</Trans></span> : null}
             <Tooltip label={link.href}>
               <button
                 type="button"
@@ -562,6 +564,7 @@ export function CardSourceList({ lines, testId, readOnly = false }: {
 }
 
 function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent = null, progressLabel, requirement, toggle, testId, readOnly }: CardSourceLineProps & { readOnly: boolean }) {
+  const { t } = useLingui();
   const unavailable = requirement !== undefined;
   const dimmed = unavailable ? 'opacity-50' : '';
   const valueTone = tone === 'muted' ? 'text-fg-muted' : 'text-fg-secondary';
@@ -603,8 +606,8 @@ function CardSourceLine({ label, info, value, tone = 'neutral', problem, percent
             onChange={() => undefined}
             disabled
             readOnly
-            ariaLabel={`${label}, always on`}
-            disabledReason="Always on while the index is on"
+            ariaLabel={t`${label}, always on`}
+            disabledReason={t`Always on while the index is on`}
             testId={testId ? `${testId}-locked` : undefined}
           />
         )}

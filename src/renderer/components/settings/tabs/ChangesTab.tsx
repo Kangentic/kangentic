@@ -1,24 +1,26 @@
 import { FileDiff, ListTree } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   return (
     <div className="space-y-4">
       <SettingsCard
         icon={<FileDiff size={16} />}
-        label="Diff view"
-        description="How the Changes panel shows a file's diff."
+        label={t`Diff view`}
+        description={t`How the Changes panel shows a file's diff.`}
         searchIds={['diffViewMode', 'diffDefaultScope', 'diffIgnoreWhitespace', 'diffCollapseUnchanged', 'diffWrapLines', 'diffUseInlineWhenNarrow']}
       >
         <CardChoiceRow
           {...settingProps('diffViewMode')}
           options={[
-            { value: 'split', label: 'Side by side' },
-            { value: 'inline', label: 'Inline' },
+            { value: 'split', label: t`Side by side` },
+            { value: 'inline', label: t({ message: 'Inline', context: 'diff view mode' }) },
           ]}
           value={globalConfig.diffViewMode}
           onChange={(value) => updateGlobal({ diffViewMode: value })}
@@ -27,9 +29,9 @@ export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
         <CardChoiceRow
           {...settingProps('diffDefaultScope')}
           options={[
-            { value: 'working', label: 'Working' },
-            { value: 'staged', label: 'Staged' },
-            { value: 'branch', label: 'Branch' },
+            { value: 'working', label: t({ message: 'Working', context: 'diff scope' }) },
+            { value: 'staged', label: t({ message: 'Staged', context: 'diff scope' }) },
+            { value: 'branch', label: t({ message: 'Branch', context: 'diff scope' }) },
           ]}
           value={globalConfig.diffDefaultScope}
           onChange={(value) => updateGlobal({ diffDefaultScope: value })}
@@ -59,17 +61,17 @@ export function ChangesTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       <SettingsCard
         icon={<ListTree size={16} />}
-        label="File list"
-        description="How the changed files are sorted and grouped."
+        label={t`File list`}
+        description={t`How the changed files are sorted and grouped.`}
         searchIds={['diffFileSort', 'diffFlatList']}
       >
         <CardChoiceRow
           {...settingProps('diffFileSort')}
           options={[
-            { value: 'name', label: 'Name' },
-            { value: 'status', label: 'Status' },
-            { value: 'size', label: 'Size' },
-            { value: 'ext', label: 'Extension' },
+            { value: 'name', label: t({ message: 'Name', context: 'sort files by' }) },
+            { value: 'status', label: t({ message: 'Status', context: 'sort files by' }) },
+            { value: 'size', label: t({ message: 'Size', context: 'sort files by' }) },
+            { value: 'ext', label: t({ message: 'Extension', context: 'sort files by' }) },
           ]}
           value={globalConfig.diffFileSort}
           onChange={(value) => updateGlobal({ diffFileSort: value })}

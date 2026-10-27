@@ -1,6 +1,7 @@
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { englishI18n } from '../../../../shared/i18n/english';
 import type { AutomationAdapter } from '../../shared/automation-adapter';
 
 /**
@@ -22,7 +23,8 @@ export const moveToColumnAdapter: AutomationAdapter = {
   manifest: AUTOMATION_MANIFEST.move_to_column,
 
   describe(config: AutomationConfig): string {
-    return describeAutomation('move_to_column', config);
+    // The run log's line, which an agent reads: English.
+    return describeAutomation('move_to_column', config, englishI18n);
   },
 
   async execute(config, context) {

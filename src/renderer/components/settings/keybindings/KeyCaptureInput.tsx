@@ -1,4 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { comboFromEvent, heldMouseTokens, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
 import { normalizeCombo } from '../../../../shared/keybindings';
 import { setRebindCaptureActive } from '../../../utils/rebind-state';
@@ -9,17 +12,18 @@ import { KeyCombo } from './KeyCombo';
  * be assigned (they trigger an OS action instead). Keyed by canonical combo,
  * platform-filtered. Most OS-reserved combos never reach us at all; those are
  * caught by the live availability probe and the delayed "no key detected" hint.
+ * Each message is a descriptor, translated where it shows.
  */
-const OS_RESERVED_COMBOS: Record<string, string> = IS_MAC
+const OS_RESERVED_COMBOS: Record<string, MessageDescriptor> = IS_MAC
   ? {
-      'Mod+Q': 'Cmd+Q quits the app and is reserved by macOS.',
-      'Mod+W': 'Cmd+W is reserved by macOS for closing windows.',
+      'Mod+Q': msg`Cmd+Q quits the app and is reserved by macOS.`,
+      'Mod+W': msg`Cmd+W is reserved by macOS for closing windows.`,
     }
   : {
-      'Alt+F4': 'Alt+F4 closes the window and is reserved by your OS.',
+      'Alt+F4': msg`Alt+F4 closes the window and is reserved by your OS.`,
     };
 
-function reservedComboMessage(combo: string): string | null {
+function reservedComboMessage(combo: string): MessageDescriptor | null {
   return OS_RESERVED_COMBOS[normalizeCombo(combo)] ?? null;
 }
 
@@ -43,6 +47,7 @@ interface KeyCaptureInputProps {
  * not fire while capturing.
  */
 export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
+  const { t, i18n } = useLingui();
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -129,7 +134,7 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
     setNoKeyHint(false);
     const reserved = reservedComboMessage(captured);
     if (reserved) {
-      setError(reserved);
+      setError(i18n._(reserved));
       return;
     }
 
@@ -147,7 +152,8 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
     setChecking(false);
 
     if (status === 'taken') {
-      setError(`${formatCombo(captured)} is already in use by your OS or another app. Pick another.`);
+      const comboName = formatCombo(captured);
+      setError(t`${comboName} is already in use by your OS or another app. Pick another.`);
       return; // stay in capture mode so the user can try again
     }
     // The user may have clicked away or pressed Escape while the probe was in
@@ -167,8 +173,8 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
     const hint = error
       ? error
       : noKeyHint
-        ? 'No key detected. It may be reserved by your OS or another app.'
-        : 'Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.';
+        ? t`No key detected. It may be reserved by your OS or another app.`
+        : t`Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.`;
     return (
       <div className="flex flex-col items-end gap-1 max-w-[260px]">
         <button
@@ -176,10 +182,10 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
           type="button"
           onKeyDown={handleKeyDown}
           data-testid="key-capture-box"
-          aria-label="Press the new hotkey or mouse button. Escape to cancel."
+          aria-label={t`Press the new hotkey or mouse button. Escape to cancel.`}
           className="px-2.5 py-1 rounded border border-accent bg-surface text-xs text-fg-secondary ring-1 ring-accent focus:outline-none whitespace-nowrap"
         >
-          {checking ? 'Checking...' : 'Press a hotkey'}
+          {checking ? <Trans>Checking...</Trans> : <Trans>Press a hotkey</Trans>}
         </button>
         <span className={`text-[11px] text-right ${error ? 'text-red-400' : 'text-fg-faint'}`} aria-live="polite">
           {hint}
@@ -201,7 +207,7 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
         data-testid="key-capture-input"
         className="w-16 py-1 rounded text-xs text-center text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border border-edge-input transition-colors"
       >
-        Rebind
+        <Trans>Rebind</Trans>
       </button>
     </div>
   );

@@ -46,6 +46,8 @@ import { Tooltip } from '../Tooltip';
 import { shownTheme, useConfigStore } from '../../stores/config-store';
 import { humanizeModelId } from '../../../shared/model-id';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
+import type { MessageDescriptor } from '@lingui/core';
+import { translateText } from '../../i18n/translate';
 import type {
   KnowledgeGraphCluster,
   KnowledgeGraphGranularity,
@@ -1751,7 +1753,7 @@ const HOVER_CARD_MAX_HEIGHT = 190;
  * the card and the nodes agree.
  */
 const OUTCOME_PRESENTATION: Readonly<
-  Record<KnowledgeGraphTaskOutcome | 'none', { label: string; dot: string } | null>
+  Record<KnowledgeGraphTaskOutcome | 'none', { label: MessageDescriptor; dot: string } | null>
 > = {
   done: { label: TASK_OUTCOME_LABELS.done, dot: 'bg-active' },
   active: { label: TASK_OUTCOME_LABELS.active, dot: 'bg-amber-400' },
@@ -1943,7 +1945,7 @@ function RegionHoverCard({
         <HoverFact label="Conversations" value={summary.count.toLocaleString()} />
         {/* Shipped versus total, because "12 conversations" says nothing about
             whether the area went anywhere. */}
-        <HoverFact label={TASK_OUTCOME_LABELS.done} value={`${summary.done} of ${summary.count}`} />
+        <HoverFact label={translateText(TASK_OUTCOME_LABELS.done)} value={`${summary.done} of ${summary.count}`} />
         {summary.durationMs > 0 ? (
           <HoverFact label="Time spent" value={formatDuration(summary.durationMs)} />
         ) : null}
@@ -2019,7 +2021,7 @@ function HoverCard({
         {outcome ? (
           <div className="flex items-center gap-1.5 text-[11px]">
             <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${outcome.dot}`} aria-hidden />
-            <span className="text-fg-muted">{outcome.label}</span>
+            <span className="text-fg-muted">{translateText(outcome.label)}</span>
           </div>
         ) : null}
         {cluster ? (

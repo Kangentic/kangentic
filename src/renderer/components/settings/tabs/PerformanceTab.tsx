@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { CirclePause, Gauge, RotateCw, TriangleAlert } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardTile } from '../settings-card';
@@ -26,6 +27,7 @@ import { useConfigStore } from '../../../stores/config-store';
  * verbal one.
  */
 export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const turnedOffByApp =
     !globalConfig.graphicsAccelerationEnabled && globalConfig.graphicsAccelerationOffBy === 'app';
@@ -49,8 +51,8 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
       // The toast says what to do; the reason goes to the log.
       console.error('Graphics acceleration restart failed:', error);
       useToastStore.getState().addToast({
-        title: "Couldn't restart",
-        message: 'Restart Kangentic to apply the change.',
+        title: t`Couldn't restart`,
+        message: t`Restart Kangentic to apply the change.`,
         variant: 'error',
       });
     } finally {
@@ -63,8 +65,8 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
     <div className="space-y-4">
       <SettingsCard
         icon={<Gauge size={16} />}
-        label="Rendering"
-        description="Hardware rendering and motion across the whole app."
+        label={t`Rendering`}
+        description={t`Hardware rendering and motion across the whole app.`}
         searchIds={['graphicsAccelerationEnabled', 'animationsEnabled']}
       >
         {/* A toggle, not a two-option dropdown. The value is genuinely binary,
@@ -93,7 +95,7 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
         {turnedOffByApp && (
           <CardTile className="flex items-start gap-2.5" testId="graphics-acceleration-notice">
             <TriangleAlert size={16} className="text-warning mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-fg-muted">Kangentic turned this off after repeated failures.</p>
+            <p className="text-sm text-fg-muted"><Trans>Kangentic turned this off after repeated failures.</Trans></p>
           </CardTile>
         )}
 
@@ -112,8 +114,8 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
           is on. */}
       <SettingsCard
         icon={<CirclePause size={16} />}
-        label="Pausing agents"
-        description="When Kangentic pauses agents that are waiting on you."
+        label={t`Pausing agents`}
+        description={t`When Kangentic pauses agents that are waiting on you.`}
         searchIds={['agent.pauseIdleAgentsOnLowMemory', 'agent.idleTimeoutEnabled', 'agent.idleTimeoutMinutes']}
         testId="settings-card-pausing-agents"
       >
@@ -149,10 +151,10 @@ export function PerformanceTab({ globalConfig }: { globalConfig: AppConfig }) {
           // A restart, not a warning, so not the default warning triangle.
           icon={<RotateCw size={16} className="text-accent-fg" />}
           title={pendingGraphicsAcceleration
-            ? 'Restart with graphics acceleration?'
-            : 'Restart without graphics acceleration?'}
-          message="Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
-          confirmLabel="Restart now"
+            ? t`Restart with graphics acceleration?`
+            : t`Restart without graphics acceleration?`}
+          message={t`Kangentic restarts to apply this. Running agents are suspended and resume after the restart.`}
+          confirmLabel={t`Restart now`}
           onConfirm={() => { void confirmGraphicsRestart(pendingGraphicsAcceleration); }}
           onCancel={() => setPendingGraphicsAcceleration(null)}
         />

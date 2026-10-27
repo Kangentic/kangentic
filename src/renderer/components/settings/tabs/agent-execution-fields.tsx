@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, CircleAlert, Loader2, Signal } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AgentDetectionInfo, AgentExecutionServer, AgentProjectExecution, AppConfig, RemoteServerStatus } from '../../../../shared/types';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { CardRow, CardTile, CardChoiceRow } from '../settings-card';
@@ -26,6 +27,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
   config: AppConfig;
   globalConfig: AppConfig;
 }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
   const [probing, setProbing] = useState(false);
@@ -37,6 +39,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
   const usage = config.agent.execution[agent.name] ?? DEFAULT_USAGE;
   const isRemote = usage.mode === 'remote';
   const basicAuth = server.auth.kind === 'basic' ? server.auth : { kind: 'basic' as const, username: '', password: '' };
+  const displayName = agent.displayName;
 
   const updateServer = (patch: Partial<AgentExecutionServer>) => {
     updateGlobal({ agent: { executionServers: { ...globalConfig.agent.executionServers, [agent.name]: { ...server, ...patch } } } });
@@ -57,10 +60,10 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
     <>
       <CardChoiceRow
         {...settingProps('agent.executionMode')}
-        label={`${agent.displayName} execution`}
+        label={t`${displayName} execution`}
         options={[
-          { value: 'local', label: 'Local', testId: `execution-mode-${agent.name}-local` },
-          { value: 'remote', label: 'Remote', testId: `execution-mode-${agent.name}-remote` },
+          { value: 'local', label: t({ message: 'Local', context: 'execution mode' }), testId: `execution-mode-${agent.name}-local` },
+          { value: 'remote', label: t({ message: 'Remote', context: 'execution mode' }), testId: `execution-mode-${agent.name}-remote` },
         ]}
         value={usage.mode}
         onChange={(mode) => updateUsage({ mode })}
@@ -81,12 +84,14 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                   // just the glyph, or the two drift apart in exactly the themes
                   // where a fixed hue stops reading as a verdict at all.
                   <span className="text-xs flex items-center gap-1 text-active">
-                    <Check size={13} />{probeResult.version ? `v${probeResult.version}` : 'Reachable'}
+                    <Check size={13} />
+                    {/* i18n-ok: a version number */}
+                    {probeResult.version ? `v${probeResult.version}` : t`Reachable`}
                   </span>
                 ) : (
                   <Tooltip label={probeResult.reason}>
                     <span className="text-xs flex items-center gap-1 text-attention">
-                      <CircleAlert size={13} />Unreachable
+                      <CircleAlert size={13} /><Trans>Unreachable</Trans>
                     </span>
                   </Tooltip>
                 )
@@ -120,7 +125,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                     file for why Server was dropped and why Signal was picked
                     over the other candidates. */}
                 {probing ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
-                Test connection
+                <Trans>Test connection</Trans>
               </button>
             </div>
           </CardRow>
@@ -137,7 +142,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                   type="text"
                   value={basicAuth.username}
                   onChange={(event) => updateServer({ auth: { ...basicAuth, kind: 'basic', username: event.target.value } })}
-                  placeholder="Username"
+                  placeholder={t`Username`}
                   className={`${INPUT_CLASS} flex-1`}
                   data-testid={`execution-server-username-${agent.name}`}
                 />
@@ -145,7 +150,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
                   type="password"
                   value={basicAuth.password}
                   onChange={(event) => updateServer({ auth: { ...basicAuth, kind: 'basic', password: event.target.value } })}
-                  placeholder="Password"
+                  placeholder={t`Password`}
                   className={`${INPUT_CLASS} flex-1`}
                   data-testid={`execution-server-password-${agent.name}`}
                 />
@@ -155,7 +160,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
 
           <CardRow
             {...settingProps('agent.executionWorkingDirectory')}
-            label="Server working directory"
+            label={t`Server working directory`}
             labelTrailing={<OptionalTag />}
           >
             {/* Per-keystroke, matching its siblings above rather than being the one
@@ -164,6 +169,7 @@ export function AgentExecutionFields({ agent, config, globalConfig }: {
               type="text"
               value={usage.workingDirectory ?? ''}
               onChange={(event) => updateUsage({ workingDirectory: event.target.value || null })}
+              // i18n-ok: an example path
               placeholder="/home/dev/project"
               className={INPUT_CLASS}
               data-testid={`execution-working-directory-${agent.name}`}

@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { relayHealthUrl, validateRelayUrl } from '../../../shared/relay';
+import { translateText } from '../../i18n/main-i18n';
 import type {
   MobileBridgeStatus,
   MobileCapabilityVerb,
@@ -73,7 +74,7 @@ export function registerMobileBridgeHandlers(context: IpcContext): void {
   // Never throws: every failure mode resolves to { reachable: false, reason }.
   ipcMain.handle(IPC.MOBILE_TEST_RELAY, async (_event, relayUrl: string): Promise<RemoteServerStatus> => {
     const validation = validateRelayUrl(relayUrl);
-    if (!validation.ok) return { reachable: false, reason: validation.reason };
+    if (!validation.ok) return { reachable: false, reason: translateText(validation.reason) };
     try {
       const startedAt = performance.now();
       const response = await fetch(relayHealthUrl(validation.normalized), {

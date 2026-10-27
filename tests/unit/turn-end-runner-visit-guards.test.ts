@@ -52,7 +52,11 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
-import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
+import { AUTOMATIONS_DISABLED_REASON as AUTOMATIONS_DISABLED_REASON_DESCRIPTOR } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
+
+/** The English the engine stores and an agent reads; the constant is a descriptor. */
+const AUTOMATIONS_DISABLED_REASON = englishText(AUTOMATIONS_DISABLED_REASON_DESCRIPTOR);
 import { supersedeTurnEndWork } from '../../src/main/automations/turn-end/turn-end-passes';
 import { matchFinalLine, TEXT_MATCH_NO_REPLY_REASON } from '../../src/shared/final-line-match';
 import { readFinalReply } from '../../src/main/agent/message-trail-read';

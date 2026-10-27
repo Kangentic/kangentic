@@ -33,11 +33,14 @@ import {
   resumeBlockReason,
   resumeBlockReasonForTask,
   resumeBlockReasonOfMessage,
+  resumeBlockRefusal,
   resumeBlockToastBody,
   sessionToggleOffer,
   taskSessionStatesOf,
   type SessionLifecyclePhase,
 } from '../../src/shared/session-resume-eligibility';
+import { englishText } from '../../src/shared/i18n/english';
+import { translateText } from '../../src/renderer/i18n/translate';
 import type { Task } from '../../src/shared/types';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -104,8 +107,41 @@ describe('resumeBlockReason', () => {
       expect(message).not.toContain(String.fromCharCode(0x2014));
       expect(message).not.toContain('--');
       expect(message).toMatch(/\bMove it\b|\bRestore it\b/);
-      expect(resumeBlockToastBody(reason)).toMatch(/^[A-Z][^.!?]*\.$/);
+      expect(englishText(resumeBlockToastBody(reason))).toMatch(/^[A-Z][^.!?]*\.$/);
     }
+  });
+
+  // The sentences are typed out from the pre-change module (`git show
+  // HEAD:src/shared/session-resume-eligibility.ts`), which returned these literals from a
+  // `switch`. Reading one map through two accessors cannot fail on its own, so each
+  // accessor is held to the literal.
+  const REFUSAL_SENTENCES = {
+    todo: 'This task is in To Do. Move it to another column to start its agent.',
+    done: 'This task is complete. Move it out of Done to continue working on it.',
+    archived: 'This task is archived. Restore it to the board to continue working on it.',
+  } as const;
+  const TOAST_BODIES = {
+    todo: 'The task is in To Do.',
+    done: 'The task is in Done.',
+    archived: 'The task is archived.',
+  } as const;
+
+  it.each(['todo', 'done', 'archived'] as const)('%s: main throws the pre-change sentence', (reason) => {
+    expect(resumeBlockMessage(reason)).toBe(REFUSAL_SENTENCES[reason]);
+  });
+
+  it.each(['todo', 'done', 'archived'] as const)('%s: the card menu\'s message is that same sentence in English', (reason) => {
+    expect(englishText(resumeBlockRefusal(reason))).toBe(resumeBlockMessage(reason));
+    expect(englishText(resumeBlockRefusal(reason))).toBe(REFUSAL_SENTENCES[reason]);
+    // An English session shows it unchanged.
+    expect(translateText(resumeBlockRefusal(reason))).toBe(REFUSAL_SENTENCES[reason]);
+  });
+
+  it.each(['todo', 'done', 'archived'] as const)('%s: the toast body is its own short sentence', (reason) => {
+    expect(englishText(resumeBlockToastBody(reason))).toBe(TOAST_BODIES[reason]);
+    expect(translateText(resumeBlockToastBody(reason))).toBe(TOAST_BODIES[reason]);
+    // Not the full sentence: the toast sits under a title and beside the card.
+    expect(resumeBlockToastBody(reason).id).not.toBe(resumeBlockRefusal(reason).id);
   });
 
   it('reads main\'s thrown refusal back to its reason, and nothing else', () => {

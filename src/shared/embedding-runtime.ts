@@ -18,7 +18,9 @@
  * or drops a target fails there.
  */
 
+import { msg } from '@lingui/core/runtime-macro';
 import EMBEDDING_RUNTIME_GAPS from './embedding-runtime-gaps.json';
+import type { LocalizedText } from './i18n/text';
 
 /** `<platform>-<arch>` pairs, in Node's `process.platform` / `process.arch` names. */
 export const EMBEDDING_RUNTIME_GAP_TARGETS: readonly string[] = EMBEDDING_RUNTIME_GAPS;
@@ -32,8 +34,9 @@ export function isEmbeddingRuntimeSupported(platform: string, arch: string): boo
 }
 
 /** The machines a gap target names, for the sentence that says the model does
- *  not run there ("The local model does not run on Intel Macs."). */
-export function embeddingRuntimeGapName(platform: string, arch: string): string {
-  if (platform === 'darwin' && arch === 'x64') return 'Intel Macs';
+ *  not run there ("The local model does not run on Intel Macs."). A known gap
+ *  is a message to resolve where it shows; any other is its platform and arch. */
+export function embeddingRuntimeGapName(platform: string, arch: string): LocalizedText {
+  if (platform === 'darwin' && arch === 'x64') return msg`Intel Macs`;
   return `${platform} ${arch}`;
 }

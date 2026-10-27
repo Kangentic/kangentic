@@ -3,12 +3,13 @@ import { useToastStore } from '../stores/toast-store';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { sessionLifecyclePhase } from './task-progress';
 import {
-  resumeBlockMessage,
+  resumeBlockRefusal,
   resumeBlockReasonOfMessage,
   resumeBlockToastBody,
   sessionToggleOffer,
 } from '../../shared/session-resume-eligibility';
 import type { Session, SessionDisplayState, Task } from '../../shared/types';
+import { translateText } from '../i18n/translate';
 
 /**
  * The card menu's Pause / Resume session row, shared by its three hosts (the
@@ -42,7 +43,7 @@ export function sessionToggleRowFor(
   return {
     direction: 'resume',
     sessionState: 'suspended',
-    refusal: offer.blockReason ? resumeBlockMessage(offer.blockReason) : null,
+    refusal: offer.blockReason ? translateText(resumeBlockRefusal(offer.blockReason)) : null,
   };
 }
 
@@ -55,7 +56,7 @@ export function sessionToggleRowFor(
 export function sessionFailureBody(error: unknown): string {
   const reason = describeIpcError(error, '');
   const refusal = resumeBlockReasonOfMessage(reason);
-  return refusal ? resumeBlockToastBody(refusal) : asSentence(reason);
+  return refusal ? translateText(resumeBlockToastBody(refusal)) : asSentence(reason);
 }
 
 /** The toast for a pause or resume that failed. */

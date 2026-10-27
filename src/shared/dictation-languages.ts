@@ -11,27 +11,32 @@
  * from this list. Add an entry here to offer a new language (and confirm the
  * model supports it).
  */
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import type { LocalizedText } from './i18n/text';
+
 export interface DictationLanguage {
   code: string;
-  label: string;
+  /** Resolved where it shows (`translateText`). */
+  label: MessageDescriptor;
 }
 
 export const DICTATION_LANGUAGES: readonly DictationLanguage[] = [
-  { code: 'en', label: 'English' },
-  { code: 'pt', label: 'Portuguese' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'it', label: 'Italian' },
-  { code: 'fr', label: 'French' },
-  { code: 'de', label: 'German' },
-  { code: 'nl', label: 'Dutch' },
-  { code: 'ru', label: 'Russian' },
-  { code: 'pl', label: 'Polish' },
-  { code: 'uk', label: 'Ukrainian' },
-  { code: 'tr', label: 'Turkish' },
-  { code: 'zh', label: 'Chinese' },
-  { code: 'ja', label: 'Japanese' },
-  { code: 'ko', label: 'Korean' },
-  { code: 'ar', label: 'Arabic' },
+  { code: 'en', label: msg({ message: 'English', context: 'spoken language' }) },
+  { code: 'pt', label: msg({ message: 'Portuguese', context: 'spoken language' }) },
+  { code: 'es', label: msg({ message: 'Spanish', context: 'spoken language' }) },
+  { code: 'it', label: msg({ message: 'Italian', context: 'spoken language' }) },
+  { code: 'fr', label: msg({ message: 'French', context: 'spoken language' }) },
+  { code: 'de', label: msg({ message: 'German', context: 'spoken language' }) },
+  { code: 'nl', label: msg({ message: 'Dutch', context: 'spoken language' }) },
+  { code: 'ru', label: msg({ message: 'Russian', context: 'spoken language' }) },
+  { code: 'pl', label: msg({ message: 'Polish', context: 'spoken language' }) },
+  { code: 'uk', label: msg({ message: 'Ukrainian', context: 'spoken language' }) },
+  { code: 'tr', label: msg({ message: 'Turkish', context: 'spoken language' }) },
+  { code: 'zh', label: msg({ message: 'Chinese', context: 'spoken language' }) },
+  { code: 'ja', label: msg({ message: 'Japanese', context: 'spoken language' }) },
+  { code: 'ko', label: msg({ message: 'Korean', context: 'spoken language' }) },
+  { code: 'ar', label: msg({ message: 'Arabic', context: 'spoken language' }) },
 ];
 
 /** Every language the multilingual models expose (the curated set above).
@@ -51,7 +56,7 @@ export const PARAKEET_V3_LANGUAGE_CODES: readonly string[] = ['en', 'pt', 'es', 
 export const COHERE_TRANSCRIBE_LANGUAGE_CODES: readonly string[] = ['en', 'pt', 'es', 'it', 'fr', 'de', 'nl', 'pl', 'zh', 'ja', 'ko', 'ar'];
 
 /** Display label for a code, falling back to the raw code. */
-export function languageLabel(code: string): string {
+export function languageLabel(code: string): LocalizedText {
   return DICTATION_LANGUAGES.find((language) => language.code === code)?.label ?? code;
 }
 

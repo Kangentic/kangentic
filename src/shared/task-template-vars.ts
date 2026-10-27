@@ -16,8 +16,8 @@
  * is ICU syntax, so it is quoted: `'{{task_xml}}'` renders `{{task_xml}}`.
  * Keyword names and chips stay English: they are template syntax.
  */
+import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import type { LocalizedText } from './i18n/text';
 
 /**
  * The prompt template a fresh spawn uses when no `spawn_agent` action supplies
@@ -110,14 +110,14 @@ export interface TaskTemplateVarInfo {
   name: TaskTemplateVarName;
   chip: string;
   /** Resolve it where it renders (`translateText`). */
-  description: LocalizedText;
+  description: MessageDescriptor;
   contexts: readonly TaskTemplateContextName[];
   /**
    * Shown by the picker under a value that is USUALLY empty, so nobody reaches
    * for one expecting a value and gets a silent blank. Present only where empty
-   * is the normal state, not merely a possible one.
+   * is the normal state, not merely a possible one. Resolve it where it renders.
    */
-  availability?: string;
+  availability?: MessageDescriptor;
 }
 
 export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
@@ -130,144 +130,144 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'workflow_xml',
     chip: '{{workflow_xml}}',
-    description: 'A workflow task\'s <workflow> block: its route, its neighbours, and how its turns are judged.',
+    description: msg`A workflow task's <workflow> block: its route, its neighbours, and how its turns are judged.`,
     contexts: EVERYWHERE,
-    availability: 'Empty for a task outside a workflow.',
+    availability: msg`Empty for a task outside a workflow.`,
   },
   {
     name: 'title',
     chip: '{{title}}',
-    description: 'Task title (PTY-sanitized).',
+    description: msg`Task title (PTY-sanitized).`,
     contexts: EVERYWHERE,
   },
   {
     name: 'description',
     chip: '{{description}}',
-    description: 'Task description with a ": " prefix when non-empty (PTY-sanitized).',
+    description: msg`Task description with a ": " prefix when non-empty (PTY-sanitized).`,
     contexts: EVERYWHERE,
   },
   {
     name: 'taskId',
     chip: '{{taskId}}',
-    description: 'Task UUID.',
+    description: msg`Task UUID.`,
     contexts: EVERYWHERE,
   },
   {
     name: 'taskNumber',
     chip: '{{taskNumber}}',
-    description: 'The task\'s #N, the number people say out loud.',
+    description: msg`The task's #N, the number people say out loud.`,
     contexts: EVERYWHERE,
   },
   {
     name: 'projectPath',
     chip: '{{projectPath}}',
-    description: 'Main project checkout path. Always the base repo, even when the task has a worktree.',
+    description: msg`Main project checkout path. Always the base repo, even when the task has a worktree.`,
     contexts: PROJECT_LEVEL,
   },
   {
     name: 'projectName',
     chip: '{{projectName}}',
-    description: 'The project\'s name as it reads in the sidebar.',
+    description: msg`The project's name as it reads in the sidebar.`,
     contexts: PROJECT_LEVEL,
   },
   {
     name: 'worktreePath',
     chip: '{{worktreePath}}',
-    description: 'Worktree directory path (empty if the task has none).',
+    description: msg`Worktree directory path (empty if the task has none).`,
     contexts: EVERYWHERE,
-    availability: 'Empty until the task has a worktree.',
+    availability: msg`Empty until the task has a worktree.`,
   },
   {
     name: 'branchName',
     chip: '{{branchName}}',
-    description: 'Git branch name (empty if the task has none).',
+    description: msg`Git branch name (empty if the task has none).`,
     contexts: EVERYWHERE,
-    availability: 'Empty until the task has a branch.',
+    availability: msg`Empty until the task has a branch.`,
   },
   {
     name: 'baseBranch',
     chip: '{{baseBranch}}',
-    description: "Effective base branch: the task's override, else the project's configured default.",
+    description: msg`Effective base branch: the task's override, else the project's configured default.`,
     contexts: PROJECT_LEVEL,
   },
   {
     name: 'prUrl',
     chip: '{{prUrl}}',
-    description: 'Pull request URL (empty if none).',
+    description: msg`Pull request URL (empty if none).`,
     contexts: EVERYWHERE,
-    availability: 'Empty until a PR is linked.',
+    availability: msg`Empty until a PR is linked.`,
   },
   {
     name: 'prNumber',
     chip: '{{prNumber}}',
-    description: 'Pull request number as a string (empty if none).',
+    description: msg`Pull request number as a string (empty if none).`,
     contexts: EVERYWHERE,
-    availability: 'Empty until a PR is linked.',
+    availability: msg`Empty until a PR is linked.`,
   },
   {
     name: 'prState',
     chip: '{{prState}}',
-    description: 'Pull request state: open, merged, closed or draft.',
+    description: msg`Pull request state: open, merged, closed or draft.`,
     contexts: EVERYWHERE,
-    availability: 'Empty until a PR is linked.',
+    availability: msg`Empty until a PR is linked.`,
   },
   {
     name: 'issueKey',
     chip: '{{issueKey}}',
-    description: 'The linked tracker issue\'s key, such as a Jira key or a GitHub issue number.',
+    description: msg`The linked tracker issue's key, such as a Jira key or a GitHub issue number.`,
     contexts: EVERYWHERE,
-    availability: 'Empty until the task is linked to a tracker issue.',
+    availability: msg`Empty until the task is linked to a tracker issue.`,
   },
   {
     name: 'issueUrl',
     chip: '{{issueUrl}}',
-    description: 'The linked tracker issue\'s URL.',
+    description: msg`The linked tracker issue's URL.`,
     contexts: EVERYWHERE,
-    availability: 'Empty until the task is linked to a tracker issue.',
+    availability: msg`Empty until the task is linked to a tracker issue.`,
   },
   {
     name: 'labels',
     chip: '{{labels}}',
-    description: 'The task\'s labels, comma-separated.',
+    description: msg`The task's labels, comma-separated.`,
     contexts: EVERYWHERE,
   },
   {
     name: 'attachments',
     chip: '{{attachments}}',
-    description: 'Attached file paths, one per line (empty if none).',
+    description: msg`Attached file paths, one per line (empty if none).`,
     contexts: EVERYWHERE,
   },
   {
     name: 'port',
     chip: '{{port}}',
-    description: 'Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it.',
+    description: msg`Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it.`,
     contexts: EVERYWHERE,
-    availability: 'Empty until an agent reserves a port.',
+    availability: msg`Empty until an agent reserves a port.`,
   },
   // The move. These are why `contexts` exists: a spawn prompt is not a move, so
   // offering them there would be offering a permanent empty string.
   {
     name: 'column',
     chip: '{{column}}',
-    description: 'The column this automation belongs to.',
+    description: msg`The column this automation belongs to.`,
     contexts: MOVE_ONLY,
   },
   {
     name: 'fromColumn',
     chip: '{{fromColumn}}',
-    description: 'The column the task moved out of.',
+    description: msg`The column the task moved out of.`,
     contexts: MOVE_ONLY,
   },
   {
     name: 'toColumn',
     chip: '{{toColumn}}',
-    description: 'The column the task moved into.',
+    description: msg`The column the task moved into.`,
     contexts: MOVE_ONLY,
   },
   {
     name: 'trigger',
     chip: '{{trigger}}',
-    description: 'When this automation runs: enter, turn_end or exit.',
+    description: msg`When this automation runs: enter, turn_end or exit.`,
     contexts: MOVE_ONLY,
   },
   // The agent's final message of the turn that just ended, so a review's
@@ -277,24 +277,24 @@ export const TASK_TEMPLATE_VARS: readonly TaskTemplateVarInfo[] = [
   {
     name: 'agentReply',
     chip: '{{agentReply}}',
-    description: "The agent's reply at the end of its last turn in this column.",
+    description: msg`The agent's reply at the end of its last turn in this column.`,
     contexts: MOVE_ONLY,
-    availability: 'Empty on task enter, and for an agent whose transcript Kangentic cannot read.',
+    availability: msg`Empty on task enter, and for an agent whose transcript Kangentic cannot read.`,
   },
   // A workflow agent's first message. Written before any task exists, so these
   // describe the board and the brief, and are offered nowhere else.
   {
     name: 'columns',
     chip: '{{columns}}',
-    description: 'One line per column between To Do and Done: what it runs, and how recent tasks went through it.',
+    description: msg`One line per column between To Do and Done: what it runs, and how recent tasks went through it.`,
     contexts: WORKFLOW_AGENT_ONLY,
   },
   {
     name: 'brief_xml',
     chip: '{{brief_xml}}',
-    description: 'What the workflow was made from, in a <brief> block with the source task\'s number.',
+    description: msg`What the workflow was made from, in a <brief> block with the source task's number.`,
     contexts: WORKFLOW_AGENT_ONLY,
-    availability: 'Empty for a workflow made from nothing.',
+    availability: msg`Empty for a workflow made from nothing.`,
   },
 ];
 

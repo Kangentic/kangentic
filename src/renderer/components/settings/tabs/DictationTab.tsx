@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AudioLines, Mic, Pencil } from 'lucide-react';
+import type { I18n, MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useDictationStore } from '../../../stores/dictation-store';
 import type {
   AppConfig,
+  DictationAccuracyLabel,
   DictationConfig,
   DictationInfo,
   DictationModelOption,
@@ -29,22 +33,41 @@ import {
   type DictationPreset,
 } from '../../../../shared/dictation-presets';
 import { licenseLinks } from '../../../../shared/model-licenses';
+import { translateText } from '../../../i18n/translate';
 
 const PUSH_TO_TALK_ACTION = 'dictation.pushToTalk';
 
 /** What each slot does: the Custom dropdowns and the model lines share them. */
-const LIVE_MODEL_DESCRIPTION = 'Preview while you speak: streaming is instant, chunked is accurate.';
-const REFINEMENT_MODEL_DESCRIPTION = 'Refines the live draft into the accurate result on release. None keeps the live text as-is.';
+const LIVE_MODEL_DESCRIPTION = msg`Preview while you speak: streaming is instant, chunked is accurate.`;
+const REFINEMENT_MODEL_DESCRIPTION = msg`Refines the live draft into the accurate result on release. None keeps the live text as-is.`;
+
+/** The text of an empty slot, in the dropdowns and the model lines alike. */
+const NO_MODEL_TEXT = msg({ message: 'None', context: 'no dictation model' });
+
+/** The Refinement slot's cloud choice, in the dropdown and the model line alike. */
+const CLOUD_ENDPOINT_TEXT = msg`Cloud endpoint`;
 
 /** Most accurate first, for each slot's dropdown. */
 function byAccuracy(models: DictationModelOption[]): DictationModelOption[] {
   return [...models].sort((first, second) => second.accuracyRank - first.accuracyRank);
 }
 
+/** Main's accuracy labels, in the session language. */
+const ACCURACY_TEXT: Record<DictationAccuracyLabel, MessageDescriptor> = {
+  'Best accuracy': msg`Best accuracy`,
+  'High accuracy': msg`High accuracy`,
+  'Good accuracy': msg`Good accuracy`,
+  'Fair accuracy': msg`Fair accuracy`,
+  'Basic accuracy': msg`Basic accuracy`,
+};
+
 /** A model's dropdown option: its name, how accurate it is, and its download.
  *  Short on purpose, so the native menu never widens past the field. */
-function optionText(model: DictationModelOption): string {
-  return `${model.displayName} - ${model.accuracyLabel} (${model.sizeMb} MB)`;
+function optionText(model: DictationModelOption, i18n: I18n): string {
+  const displayName = model.displayName;
+  const accuracyLabel = i18n._(ACCURACY_TEXT[model.accuracyLabel]);
+  const sizeMb = model.sizeMb;
+  return i18n._(msg`${displayName} - ${accuracyLabel} (${sizeMb} MB)`);
 }
 
 const percentOf = (downloaded: number | undefined, total: number | undefined): number =>
@@ -67,29 +90,39 @@ function modelOption(info: DictationInfo, modelId: string | null): DictationMode
  * download (prewarm on enable), so a model not on disk yet is queued, never a
  * separate waiting state.
  */
-function modelLine({ label, description, modelId, info, progress, testId }: {
+function modelLine({ label, progressLabel, description, modelId, info, progress, testId, i18n }: {
   label: string;
+  /** The track's name while this slot downloads, a whole message per slot. */
+  progressLabel: string;
   description: string;
   modelId: string | null;
   info: DictationInfo;
   progress: DictationModelProgress | null;
   testId: string;
+  i18n: I18n;
 }): CardSourceLineProps {
   const base = { label, info: description, testId };
-  if (modelId === CLOUD_REFINEMENT) return { ...base, value: 'Cloud endpoint' };
+  if (modelId === CLOUD_REFINEMENT) return { ...base, value: i18n._(CLOUD_ENDPOINT_TEXT) };
   const model = modelOption(info, modelId);
-  if (!model) return { ...base, value: 'None', tone: 'muted' };
-  const sized = `${model.displayName}, ${model.sizeMb} MB`;
+  if (!model) return { ...base, value: i18n._(NO_MODEL_TEXT), tone: 'muted' };
+  const displayName = model.displayName;
+  const sizeMb = model.sizeMb;
+  const sized = i18n._(msg`${displayName}, ${sizeMb} MB`);
   if (info.installedModels.includes(model.id)) return { ...base, value: sized, tone: 'ready' };
   // Why it failed (no space, no network) is what the user can act on: it rides
   // in the line's info tip, since a line holds one short value. The error names
   // the model that failed, so a model still waiting its turn stays queued.
   if (progress?.status === 'error' && progress.modelId === model.id) {
-    return { ...base, info: progress.error ?? description, value: model.displayName, tone: 'caution', problem: 'Download failed' };
+    return { ...base, info: progress.error ?? description, value: displayName, tone: 'caution', problem: i18n._(msg`Download failed`) };
   }
   if (progress?.status === 'downloading' && progress.modelId === model.id) {
     const percent = percentOf(progress.modelDownloadedBytes, progress.modelTotalBytes);
-    return { ...base, value: `${model.displayName}, ${percent}%`, percent, progressLabel: `${label} downloaded` };
+    return {
+      ...base,
+      value: i18n._(msg`${displayName}, ${percent}%`),
+      percent,
+      progressLabel,
+    };
   }
   return { ...base, value: sized, tone: 'muted' };
 }
@@ -108,6 +141,7 @@ export function DictationTab({
   globalConfig: AppConfig;
   onOpenHotkeys?: () => void;
 }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const dictation = globalConfig.dictation ?? {};
   const enabled = dictation.enabled ?? false;
@@ -122,7 +156,8 @@ export function DictationTab({
     PUSH_TO_TALK_ACTION,
     pushToTalkOverride ? { [PUSH_TO_TALK_ACTION]: pushToTalkOverride } : undefined,
   );
-  const pushToTalkLabel = pushToTalkCombo ? formatCombo(pushToTalkCombo) : 'an unbound key';
+  const pushToTalkLabel = pushToTalkCombo ? formatCombo(pushToTalkCombo) : t`an unbound key`;
+  const releaseBufferMs = dictation.releaseBufferMs ?? 250;
 
   const infoConfig: DictationConfig = useMemo(
     () => ({
@@ -244,24 +279,33 @@ export function DictationTab({
     downloadingModelRef.current = downloadingModel;
   }, [modelProgress, refreshInfo]);
 
+  const liveModelLabel = t`Live model`;
+  const refinementModelLabel = t`Refinement model`;
+  const liveModelDescription = i18n._(LIVE_MODEL_DESCRIPTION);
+  const refinementModelDescription = i18n._(REFINEMENT_MODEL_DESCRIPTION);
+
   // The two slots main resolved for this config: what runs, whatever the mode.
   const modelLines: CardSourceLineProps[] = info
     ? [
         modelLine({
-          label: 'Live model',
-          description: LIVE_MODEL_DESCRIPTION,
+          label: liveModelLabel,
+          progressLabel: t`Live model downloaded`,
+          description: liveModelDescription,
           modelId: info.selectedLiveModelId,
           info,
           progress: modelProgress,
           testId: 'dictation-live-model-line',
+          i18n,
         }),
         modelLine({
-          label: 'Refinement model',
-          description: REFINEMENT_MODEL_DESCRIPTION,
+          label: refinementModelLabel,
+          progressLabel: t`Refinement model downloaded`,
+          description: refinementModelDescription,
           modelId: isCloud ? CLOUD_REFINEMENT : info.selectedFinalModelId,
           info,
           progress: modelProgress,
           testId: 'dictation-refinement-model-line',
+          i18n,
         }),
       ]
     : [];
@@ -273,8 +317,9 @@ export function DictationTab({
     : [];
   const licenses = licenseLinks(runningModels.map((model) => model.license));
 
-  const pushToTalkDescription = 'Hold to record; release to insert the transcription. Rebind it in Hotkeys.';
-  const modeDescription = 'A preset picks the live and refinement models for you. Custom lets you pick them.';
+  const pushToTalkDescription = t`Hold to record; release to insert the transcription. Rebind it in Hotkeys.`;
+  const modeDescription = t`A preset picks the live and refinement models for you. Custom lets you pick them.`;
+  const workerError = info?.workerError;
 
   return (
     <div className="space-y-4">
@@ -303,10 +348,10 @@ export function DictationTab({
                 current combo and takes you there. */}
             <CardTile className="flex items-center gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                <span className={SETTING_LABEL_CLASS}>Push-to-talk</span>
-                <InfoTip label="Push-to-talk" text={pushToTalkDescription} />
+                <span className={SETTING_LABEL_CLASS}><Trans>Push-to-talk</Trans></span>
+                <InfoTip label={t`Push-to-talk`} text={pushToTalkDescription} />
               </div>
-              <Tooltip label="Rebind in the Hotkeys settings">
+              <Tooltip label={t`Rebind in the Hotkeys settings`}>
                 <button
                   type="button"
                   onClick={onOpenHotkeys}
@@ -315,7 +360,7 @@ export function DictationTab({
                 >
                   <span className="font-medium">{pushToTalkLabel}</span>
                   <span className="inline-flex items-center gap-1 text-fg-faint">
-                    <Pencil size={12} /> Rebind
+                    <Pencil size={12} /> <Trans>Rebind</Trans>
                   </span>
                 </button>
               </Tooltip>
@@ -327,14 +372,14 @@ export function DictationTab({
                   min={0}
                   max={500}
                   step={50}
-                  value={dictation.releaseBufferMs ?? 250}
+                  value={releaseBufferMs}
                   onChange={(event) => updateGlobal({ dictation: { releaseBufferMs: Number(event.target.value) } })}
-                  aria-label="Release buffer"
+                  aria-label={t`Release buffer`}
                   data-testid="dictation-release-buffer"
                   className="h-1.5 w-40 cursor-pointer accent-[var(--kng-accent)]"
                 />
                 <span className="w-12 shrink-0 text-right text-xs tabular-nums text-fg-secondary">
-                  {(dictation.releaseBufferMs ?? 250) === 0 ? 'Off' : `${dictation.releaseBufferMs ?? 250} ms`}
+                  {releaseBufferMs === 0 ? t({ message: 'Off', context: 'release buffer' }) : t`${releaseBufferMs} ms`}
                 </span>
               </div>
             </CardRow>
@@ -350,13 +395,15 @@ export function DictationTab({
       {enabled ? (
         <SettingsCard
           icon={<AudioLines size={16} />}
-          label="Transcription"
-          description="Runs on this machine unless you choose a cloud refinement."
+          label={t`Transcription`}
+          description={t`Runs on this machine unless you choose a cloud refinement.`}
           searchIds={['dictation.language', 'dictation.remote']}
         >
           {info?.workerUnavailable ? (
             <CardTile className="text-xs text-red-400" testId="dictation-worker-unavailable">
-              Dictation stopped after repeated crashes{info.workerError ? ` (${info.workerError})` : ''}. Restart Kangentic to try again.
+              {workerError
+                ? <Trans>Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again.</Trans>
+                : <Trans>Dictation stopped after repeated crashes. Restart Kangentic to try again.</Trans>}
             </CardTile>
           ) : null}
           {info ? (
@@ -372,21 +419,21 @@ export function DictationTab({
                 >
                   {languageOptions.map((language) => (
                     <option key={language.code} value={language.code}>
-                      {language.label}
+                      {translateText(language.label)}
                     </option>
                   ))}
                 </Select>
               </CardRow>
               <CardChoiceRow<DictationMode>
-                label="Mode"
+                label={t`Mode`}
                 description={modeDescription}
                 options={[
                   ...DICTATION_PRESETS.map((preset: DictationPreset) => ({
                     value: preset,
-                    label: DICTATION_PRESET_LABELS[preset],
+                    label: translateText(DICTATION_PRESET_LABELS[preset]),
                     testId: `dictation-preset-${preset}`,
                   })),
-                  { value: 'custom', label: 'Custom', testId: 'dictation-preset-custom' },
+                  { value: 'custom', label: t({ message: 'Custom', context: 'dictation mode' }), testId: 'dictation-preset-custom' },
                 ]}
                 value={mode}
                 onChange={(next) => applyMode(next)}
@@ -394,7 +441,7 @@ export function DictationTab({
               />
               {modelsLocked ? null : (
                 <>
-                  <CardRow label="Live model" description={LIVE_MODEL_DESCRIPTION}>
+                  <CardRow label={liveModelLabel} description={liveModelDescription}>
                     <Select
                       value={liveValue}
                       onChange={(event) => updateGlobal({ dictation: { liveModelId: event.target.value } })}
@@ -402,13 +449,13 @@ export function DictationTab({
                     >
                       {liveModelsForLanguage.map((model) => (
                         <option key={model.id} value={model.id}>
-                          {optionText(model)}
+                          {optionText(model, i18n)}
                         </option>
                       ))}
-                      <option value={NO_MODEL}>None</option>
+                      <option value={NO_MODEL}>{i18n._(NO_MODEL_TEXT)}</option>
                     </Select>
                   </CardRow>
-                  <CardRow label="Refinement model" description={REFINEMENT_MODEL_DESCRIPTION}>
+                  <CardRow label={refinementModelLabel} description={refinementModelDescription}>
                     <Select
                       value={finalValue}
                       onChange={(event) => {
@@ -422,37 +469,38 @@ export function DictationTab({
                     >
                       {finalModelsForLanguage.map((model) => (
                         <option key={model.id} value={model.id}>
-                          {optionText(model)}
+                          {optionText(model, i18n)}
                         </option>
                       ))}
-                      <option value={NO_MODEL}>None</option>
-                      <option value={CLOUD_REFINEMENT}>Cloud endpoint</option>
+                      <option value={NO_MODEL}>{i18n._(NO_MODEL_TEXT)}</option>
+                      <option value={CLOUD_REFINEMENT}>{i18n._(CLOUD_ENDPOINT_TEXT)}</option>
                     </Select>
                     {/* The cloud refinement needs its endpoint. Only the final clip
                         is sent; the live preview always runs on this machine. */}
                     {isCloud ? (
                       <div className="mt-1 space-y-2 border-l-2 border-edge pl-3" data-testid="dictation-cloud-fields">
                         <p className="text-xs text-fg-muted">
-                          Only the final clip is sent. The live preview stays on this machine.
+                          <Trans>Only the final clip is sent. The live preview stays on this machine.</Trans>
                         </p>
                         <SettingTextInput
+                          // i18n-ok: an example endpoint URL
                           placeholder="https://api.example.com/v1/audio/transcriptions"
                           value={dictation.remote?.url ?? ''}
                           onCommit={(nextUrl) => updateGlobal({ dictation: { remote: { url: nextUrl } } })}
-                          ariaLabel="Cloud transcription endpoint"
+                          ariaLabel={t`Cloud transcription endpoint`}
                         />
                         <SettingTextInput
                           type="password"
-                          placeholder="API key (optional)"
+                          placeholder={t`API key (optional)`}
                           value={dictation.remote?.apiKey ?? ''}
                           onCommit={(nextApiKey) => updateGlobal({ dictation: { remote: { apiKey: nextApiKey } } })}
-                          ariaLabel="Cloud transcription API key"
+                          ariaLabel={t`Cloud transcription API key`}
                         />
                         <SettingTextInput
-                          placeholder="Model (optional, e.g. whisper-1)"
+                          placeholder={t`Model (optional, e.g. whisper-1)`}
                           value={dictation.remote?.model ?? ''}
                           onCommit={(nextModel) => updateGlobal({ dictation: { remote: { model: nextModel } } })}
-                          ariaLabel="Cloud transcription model"
+                          ariaLabel={t`Cloud transcription model`}
                         />
                       </div>
                     ) : null}
@@ -465,7 +513,7 @@ export function DictationTab({
               {!info.workerUnavailable ? <CardSourceList lines={modelLines} readOnly testId="dictation-model-lines" /> : null}
               {licenses.length > 0 ? (
                 <CardLinkRow
-                  label="License"
+                  label={t`License`}
                   links={licenses}
                   onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
                   testId="dictation-license"

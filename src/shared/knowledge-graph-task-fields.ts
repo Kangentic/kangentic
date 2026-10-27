@@ -26,6 +26,9 @@
  * is a machine; ours is a CLI agent writing prose, and a malformed envelope
  * would cost the whole spec where a compact line degrades token by token.
  */
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import type { LocalizedText } from './i18n/text';
 
 /**
  * Where a task's work ended up: done (in a Done lane, or archived, which only
@@ -53,9 +56,9 @@ export type KnowledgeGraphTaskOutcome = 'done' | 'active';
  * token). A task last touched three weeks ago is not active in that sense, but
  * it is open, which is what this field means.
  */
-export const TASK_OUTCOME_LABELS: Record<KnowledgeGraphTaskOutcome, string> = {
-  done: 'Done',
-  active: 'Open',
+export const TASK_OUTCOME_LABELS: Record<KnowledgeGraphTaskOutcome, MessageDescriptor> = {
+  done: msg({ message: 'Done', context: 'task status' }),
+  active: msg({ message: 'Open', context: 'task status' }),
 };
 
 /**
@@ -121,8 +124,6 @@ export type KnowledgeGraphTaskFieldKey =
 export interface KnowledgeGraphTaskField {
   /** The prompt column header AND the wire name. One word, both directions. */
   key: KnowledgeGraphTaskFieldKey;
-  /** The column header in the rail. */
-  label: string;
   /**
    * Cube's split, and it decides two things.
    *
@@ -150,8 +151,9 @@ export interface KnowledgeGraphTaskField {
    *  fact was never recorded, so a blank reads as absent rather than as zero. */
   cell(facts: KnowledgeGraphTaskFacts): string;
   /** The rail value. Null when never recorded, so the cell is left empty rather
-   *  than printing a zero the task has not earned. */
-  display(facts: KnowledgeGraphTaskFacts): string | null;
+   *  than printing a zero the task has not earned. A status is a descriptor:
+   *  resolve it where it shows, with `englishText` for an agent. */
+  display(facts: KnowledgeGraphTaskFacts): LocalizedText | null;
   /** Sort key. Null sorts LAST in either direction: an unmeasured task is not a
    *  cheap one, and floating it to the top of a cost ranking would be a lie. */
   sortValue(facts: KnowledgeGraphTaskFacts): number | null;
@@ -202,6 +204,22 @@ export function formatTaskCost(costUsd: number | null): string | null {
   return `$${costUsd.toFixed(2)}`;
 }
 
+/**
+ * The rail's PR value, "PR 417 merged". The four states the PR connectors
+ * normalize to (`PRState`) read in the session language; anything else the
+ * column holds prints as stored. The number is a string so no locale groups it.
+ */
+function pullRequestDisplay(prNumber: number, prState: string | null): MessageDescriptor {
+  const number = String(prNumber);
+  if (!prState) return { ...msg({ message: 'PR {number}' }), values: { number } };
+  return {
+    ...msg({
+      message: '{state, select, open {PR {number} open} draft {PR {number} draft} merged {PR {number} merged} closed {PR {number} closed} other {PR {number} {state}}}',
+    }),
+    values: { number, state: prState },
+  };
+}
+
 /** ISO date for the prompt: unambiguous, and needs no locale. */
 function isoDate(epochMs: number | null): string {
   if (epochMs == null) return '';
@@ -227,7 +245,6 @@ function shortDate(epochMs: number | null): string | null {
 export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField> = [
   {
     key: 'ticket',
-    label: 'Ticket',
     kind: 'dimension',
     // Not selectable: it is the row's badge, and a column would repeat it.
     selectable: false,
@@ -238,7 +255,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'cost_usd',
-    label: 'Cost',
     kind: 'measure',
     selectable: true,
     describe: 'total USD the task spent across every one of its sessions.',
@@ -248,7 +264,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'duration',
-    label: 'Duration',
     kind: 'measure',
     selectable: true,
     describe: 'total wall time the task ran, summed across its sessions.',
@@ -258,7 +273,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'tokens',
-    label: 'Tokens',
     kind: 'measure',
     selectable: true,
     describe: 'input plus output tokens across the task, as a compact count.',
@@ -268,7 +282,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'sessions',
-    label: 'Conversations',
     kind: 'measure',
     selectable: true,
     describe: 'how many separate agent conversations the task ran.',
@@ -278,7 +291,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'files',
-    label: 'Files',
     kind: 'measure',
     selectable: true,
     describe: 'how many files the task\'s branch changed against its base, from git. '
@@ -289,7 +301,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'lines_added',
-    label: 'Lines added',
     kind: 'measure',
     selectable: true,
     describe: 'lines of code the task\'s branch added against its base, from git.',
@@ -299,7 +310,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'lines_removed',
-    label: 'Lines removed',
     kind: 'measure',
     selectable: true,
     describe: 'lines of code the task\'s branch removed against its base, from git.',
@@ -309,7 +319,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'last_active',
-    label: 'Last active',
     kind: 'time',
     selectable: true,
     describe: 'the date of the task\'s most recent activity, as YYYY-MM-DD. '
@@ -320,7 +329,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'outcome',
-    label: 'Status',
     kind: 'dimension',
     selectable: true,
     describe: 'where the work ended up: done means it reached a Done column, '
@@ -331,7 +339,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'pr',
-    label: 'Pull request',
     kind: 'dimension',
     selectable: true,
     // Written "PR 417", never "#417": `#N` names a TASK everywhere in the chat,
@@ -339,12 +346,11 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
     describe: 'the pull request linked to the task and its state, like "PR 417 merged". '
       + 'Write a pull request as PR 417, never #417, since #N always names a task.',
     cell: (facts) => (facts.prNumber == null ? '' : `PR ${facts.prNumber}${facts.prState ? ` ${facts.prState}` : ''}`),
-    display: (facts) => (facts.prNumber == null ? null : `PR ${facts.prNumber}${facts.prState ? ` ${facts.prState}` : ''}`),
+    display: (facts) => (facts.prNumber == null ? null : pullRequestDisplay(facts.prNumber, facts.prState)),
     sortValue: () => null,
   },
   {
     key: 'region',
-    label: 'Region',
     kind: 'dimension',
     selectable: true,
     describe: 'the labelled area of the Knowledge Graph map the task sits in, which is '
@@ -355,7 +361,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'agent',
-    label: 'Agent',
     kind: 'dimension',
     selectable: true,
     describe: 'the coding agent that ran the task\'s most recent session.',
@@ -365,7 +370,6 @@ export const KNOWLEDGE_GRAPH_TASK_FIELDS: ReadonlyArray<KnowledgeGraphTaskField>
   },
   {
     key: 'model',
-    label: 'Model',
     kind: 'dimension',
     selectable: true,
     describe: 'the model that task\'s most recent session actually ran at.',

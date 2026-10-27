@@ -7,6 +7,293 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: cs\n"
 
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgid "{blurb}. Opens the docs page."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "{comboName} is already in use by your OS or another app. Pick another."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "{conflictComboCount, plural, one {Conflict detected} other {Conflicts detected}}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{count, plural, one {# file} other {# files}}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{count} of {finished}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{count} of {finished}, {skipped} skipped"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "{displayName} - {accuracyLabel} ({sizeMb} MB)"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgid "{displayName} execution"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "{displayName} not found - click to re-detect"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "{displayName} path"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "{displayName}, {approxSizeMb} MB"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "{displayName}, {approxSizeMb} MB, {activeBackend}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "{displayName}, {percent}%"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "{displayName}, {sizeMb} MB"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{hours, plural, one {# hr left} other {# hr left}}"
+msgstr ""
+
+#: src/renderer/components/settings/settings-card.tsx
+msgid "{label}, always on"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{minutes, plural, one {# min left} other {# min left}}"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "{minutes, plural, one {Checks each open PR about every # minute; off, it checks only when you open the project.} other {Checks each open PR about every # minutes; off, it checks only when you open the project.}}"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "{minutes, plural, one {Fetches every # minute so behind counts stay current; creating a worktree always fetches first.} other {Fetches every # minutes so behind counts stay current; creating a worktree always fetches first.}}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{minutes, plural, one {retrying in # min} other {retrying in # min}}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "{percent}%, {displayName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{percent}%, {timeLeft}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "{releaseBufferMs} ms"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "{toWrite, plural, one {# task} other {# tasks}}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "A call failed"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "A relay you run"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A sentence or two per Done task, so questions find it."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "A sentence or two per Done task, written in the background from its title, description, files and commits."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A small model answers as well and faster, but invents more details in task summaries."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "A small, fast model is usually enough to read one reply and answer yes or no."
+msgstr ""
+
+#: src/renderer/components/settings/settings-card.tsx
+msgid "About {label}"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Activity engine debug overlay"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Add shortcut"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgctxt "settings group"
+msgid "Advanced"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Agent active"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Agent active time"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Agent Browser"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Agent CLI"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Agent CLI version"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Agent crash"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+#: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+msgid "Agent default"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Agent idle"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Agent session starts, exit codes, and duration"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "close on outside click"
+msgid "All"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Allow eval"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Allow interaction"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Allow navigation"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Allow unsafe operations"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgid "Already default"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Alt+F4 closes the window and is reserved by your OS."
+msgstr ""
+
+#: src/renderer/components/settings/settings-card.tsx
+msgid "Always on while the index is on"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Amount of detail shown on task cards"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "an unbound key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Analytics"
+msgstr ""
+
+#: src/renderer/components/settings/settings-card.tsx
+msgctxt "between two links"
+msgid "and"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Animations"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Anonymous analytics and data collection policy"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Anonymous analytics only. No personal data collected."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "API key (optional)"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "App launches, platform, and architecture"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgid "Appearance"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Appears in both the header bar and kebab menu"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Appears in the task detail header bar only"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Appears in the task detail kebab menu only"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr ""
@@ -16,8 +303,972 @@ msgid "Applies to all projects"
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Ask us anything about what Kangentic collects."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Authentication"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgctxt "acceleration"
+msgid "Auto"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-apply board config changes"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-cleanup"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Auto-detect"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-fetch remote"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-focus idle sessions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-refresh PRs"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-resume agents on restart"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Auto-submit"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Automation agent"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Background"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgctxt "cursor style"
+msgid "Bar"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Basic accuracy"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Behavior"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Best accuracy"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgctxt "cursor style"
+msgid "Block"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Board"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "Board layout"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification channel"
+msgid "Both"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "shortcut display"
+msgid "Both"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "diff scope"
+msgid "Branch"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Branches"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Browser"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Browser automation"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Browser data"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Browser data cleared"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Browser pane"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Cancel"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Card density"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Card preview"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "Cards"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Change background"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Change cursor"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Change foreground"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Changes"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Checking..."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+msgid "Choose a model"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+msgid "Choose an agent"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Claude 5h / weekly quota bars"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Clear browser data"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Clear browser data?"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Clear data"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Clearing..."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "CLI path"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Click, type and drag. Off is read-only."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Clicking outside never closes a task window"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Close on outside click"
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgid "Close settings"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Closes a task window only when it is the only one open"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Closes every open task window"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Closes the focused task window"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Closing now will discard your edits to the workflow agent prompt."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Cloud endpoint"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Cloud transcription API key"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Cloud transcription endpoint"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Cloud transcription model"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Cmd+Q quits the app and is reserved by macOS."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Cmd+W is reserved by macOS for closing windows."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Collapse unchanged regions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Colors"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Column width"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "Column width and which panels show around the board."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card density"
+msgid "Comfortable"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "noun"
+msgid "Command"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Commits"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Commits indexed"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card density"
+msgid "Compact"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "Config sync"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgctxt "hotkey state"
+msgid "Conflict"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Connect a phone over an end-to-end encrypted relay."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Connected"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Connecting…"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "Context bar"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Context window"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Conversations"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Conversations embedded"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Cookies and storage the embedded browser keeps."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Copied"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Copied!"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgctxt "verb"
+msgid "Copy"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Copy \"{loginCommand}\" to clipboard"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Copy files"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Copy pairing link"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Copy, paste and interrupt inside a terminal."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Cost"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Could not start pairing."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Couldn't clear browser data"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Couldn't restart"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save base branch"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Couldn't save shortcuts"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Count merge bypass as ready"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Crash and error reports go to Sentry so bugs can be diagnosed and fixed. Stack traces are recorded with machine-specific paths removed from app code; no task content, code, or personal data is attached."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Crash reports"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "CSS font-family for the terminal"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Cumulative tool invocations"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Cursor"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Cursor style"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgctxt "dictation mode"
+msgid "Custom"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgctxt "hotkey state"
+msgid "Custom"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgctxt "relay"
+msgid "Custom"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Custom commands accessible from the task detail dialog"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Custom commands in the task window's header and menu."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Custom relay address"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Customize the terminal background, foreground, and cursor color"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgctxt "theme base"
+msgid "Dark"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgid "Dark, when the system is dark"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DeveloperTab.tsx
+msgid "Debug overlays and logs for diagnosing sessions."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Debug tools in development builds."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card density"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Default base branch"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Default browser pane URL"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Default diff scope"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Default URL"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card preview"
+msgid "Description"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification channel"
+msgid "Desktop"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Detected"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Detected shell name"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Dev inspection bridge"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Dev triggers"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Developer"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DeveloperTab.tsx
+msgid "Diagnostics"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Dictation"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Dictation stopped after repeated crashes. Restart Kangentic to try again."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgid "Diff view"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Discard"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Discard unsaved changes?"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Disconnected"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "noun"
+msgid "Display"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "Display language"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgid "Documentation"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Download failed"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Downloading"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Editors"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Elapsed time"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Embed a Browser pane in task windows that agents can open."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Enter path manually"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Environment variables that turn telemetry off."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Events"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Every hotkey is at its default"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Execution"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Expand"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Expand the prompt"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "sort files by"
+msgid "Extension"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Fair accuracy"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgid "File list"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "File paths, project names, or code"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "File sort"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Files & Terminal"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Files copied into each new worktree, such as .env."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Files to copy into a worktree"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Finds your work by meaning and answers questions."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Flat file list"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "close on outside click"
+msgid "Focused"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Fold away large unchanged spans so a big file shows only the changed hunks with a little context."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Follow system appearance"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Font family"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Font size"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Foreground"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Forwards encrypted traffic and never holds your keys."
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "General"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Git"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Git changes"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Give agents tools to work with your board."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Gives tasks the option to run in their own git worktree."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Good accuracy"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Graphics acceleration"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Hardware rendering and motion across the whole app."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hardware rendering for the app window and terminals."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "shortcut display"
+msgid "Header"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hide whitespace-only changes in the diff to filter reformatting noise."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "High accuracy"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hold push-to-talk to speak into a terminal or text field."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Hotkeys"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Hotkeys that work anywhere in the app."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hover a tile to try it on the whole app, click to keep it."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgid "How changes to the shared board config are applied."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "How it works"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How linked PRs are kept up to date."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How long an agent waits on you before the idle timer pauses it."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How long toasts remain visible"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "How long toasts stay up and how many stack at once."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "How many agents run at once and what happens when idle."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "How much each task card shows on the board."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "How task windows close and where they reopen."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How the agent handles tool approvals"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgid "How the changed files are sorted and grouped."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgid "How the Changes panel shows a file's diff."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "How the relay works"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgid "How the server works and what each tool takes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "How to install and pair"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Icon"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Ignore whitespace"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "In the task window header and its menu"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "In the task window header only"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "In the task window menu only"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgid "In use by another app"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Index"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Indexing and the local model that finds by meaning live in the <0>Knowledge Graph</0> tab, and run on your device with no API key. When you ask a question, the agent you choose there receives it with the board's task list, the conversation passages and code found for it, and the chat so far. To write a task summary, it receives that task's title, description, commits, changed files and closing messages."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "diff view mode"
+msgid "Inline"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Inline when narrow"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Input / output totals"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Inspection bridge"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Installing the app, pairing a phone, and push notifications."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Judges conditions and workflow steps, and names tasks."
+msgstr ""
+
+#: src/renderer/components/settings/AppSettingsPanel.tsx
+msgid "Kangentic could not write its settings file."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Kangentic Mobile"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Kangentic turned this off after repeated failures."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Kangentic-operated relay"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Keep capturing briefly after release so the last word is not clipped."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Keep editing"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for a task's Browser pane."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for an open task window."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Keys for the Changes panel and its diff."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "noun"
+msgid "Label"
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -25,10 +1276,1314 @@ msgstr ""
 msgid "Language"
 msgstr ""
 
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card preview"
+msgid "Latest"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Launch options"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Layout"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Leave blank if the server does not require credentials"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Let agents drive the Browser pane."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "License"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgctxt "theme base"
+msgid "Light"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgid "Light, when the system is light"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Limit how many agents can run at the same time"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Link node_modules"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Live model"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Live model downloaded"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgctxt "execution mode"
+msgid "Local"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgctxt "relay"
+msgid "Local"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Local model"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Max concurrent sessions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Max visible toasts"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Maximum simultaneous toasts on screen"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "MCP server"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "MCP Server"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "shortcut display"
+msgid "Menu"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Minutes idle"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Mobile bridge"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Mobile Devices"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Mode"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Model (optional, e.g. whisper-1)"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Model acceleration"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Model used for new sessions when no column or task override is set"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GeneralTab.tsx
+msgid "Move..."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Moving between task windows and arranging them."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "sort files by"
+msgid "Name"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Narrow"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Needs a model"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Needs a supported agent"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Needs an agent"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Needs indexing"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Needs the Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "No camera? Copy the link and paste it into the app."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "No devices paired yet."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "No Done tasks yet"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "No key detected. It may be reserved by your OS or another app."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "No response"
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgid "No settings found for “{query}”"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "No shortcuts configured. Add one below or choose a preset."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgctxt "no dictation model"
+msgid "None"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not found"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Not signed in"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Not yet indexed"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Nothing committed yet"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Notifications"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "close on outside click"
+msgid "Off"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification channel"
+msgid "Off"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgctxt "release buffer"
+msgid "Off"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Offline"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Only localhost"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Only localhost and private hosts, never public sites."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Only the final clip is sent. The live preview stays on this machine."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Only yours, in kangentic.local.json"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgid "Open docs"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Open other URLs. Off keeps agents on the page you loaded."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Open the surfaces a dev session cannot reach on its own."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Opting out"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Optional startup features this agent CLI can turn off"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgctxt "settings group"
+msgid "Other"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Pair a device"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Paired {pairedDate}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Paired: {confirmedDeviceName}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Pairing QR code"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgid "Password"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Paths to agent CLI binaries (auto-detected if empty)"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Pausing agents"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Performance"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Permissions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Persistent console logs"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "shortcut scope"
+msgid "Personal"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Personal shortcut in kangentic.local.json"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Phones"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Phones paired to this desktop, identified by key fingerprint."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgid "Pick a theme, or follow the system with a light and dark pair."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Plan complete"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Plans each workflow. Nothing starts until one is chosen."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Post-worktree script"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Presets"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Press a hotkey"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Press Enter after inserting, or leave the text for you to review and send."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+msgid "Press the new hotkey or mouse button. Escape to cancel."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Preview while you speak: streaming is instant, chunked is accurate."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Privacy"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Progress bar"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GeneralTab.tsx
+msgid "Project"
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgctxt "settings tab group"
+msgid "Project"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Project defaults"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Project location"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Pull requests"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Push-to-talk"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Push-to-talk and the other dictation keys."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Questions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Rate limits"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Re-detect agent"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Reachable"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Reachable, {relayLatencyMs} ms"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Reads every source again, in every project."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Reasoning effort used for new sessions when no column or task override is set"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Rebind"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Rebind any hotkey. Conflicts and taken combos are flagged."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Rebind in the Hotkeys settings"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Rebind keyboard hotkeys"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Rebuild"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Rebuild didn't start"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Rebuild everything?"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Rebuild the index"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Rebuilding..."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgctxt "card preview"
+msgid "Recent"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Reconnecting…"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Record IPC traffic"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Refinement model"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Refinement model downloaded"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Refines the live draft into the accurate result on release. None keeps the live text as-is."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Relay"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Relay address"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Relay address, the Kangentic-operated relay"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Relay v{relayVersion}"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Release buffer"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Reload the browser pane to apply."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Remember window size and position between launches"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgctxt "execution mode"
+msgid "Remote"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Remove"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Remove a task's worktree when the task completes."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Rename"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Rendering"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Reset all"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Reset all hotkeys?"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Reset to default"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Restart Kangentic to apply the change."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Restart now"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Restart with graphics acceleration?"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "Restart without graphics acceleration?"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Restore every hotkey to its default"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Restore window position"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Revoke"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Revoke device"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Run any JavaScript in the page, with its cookies."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Run this agent locally, or attach to a server you run elsewhere"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Runs on this machine unless you choose a cloud refinement."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Save"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Save name"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "Saved URLs (per-task overrides and the project default) are kept."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Scan a QR code with the Kangentic mobile app to pair a new phone."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Scan this code with the Kangentic app on your phone."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Scope"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Search model downloaded"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Search quality"
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgid "Search settings..."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Secure storage is unavailable on this system, so a device identity cannot be created."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "Select display language"
 msgstr ""
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Server URL"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgid "Server working directory"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Session API cost"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgid "Sessions"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
+msgstr ""
+
+#: src/renderer/components/settings/AppSettingsPanel.tsx
+msgid "Setting not saved"
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgid "Settings"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Shared with team via kangentic.json"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Shared with the team in kangentic.json"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shell"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shell name"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgid "Shortcuts"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show changed files as a flat list of full paths instead of a nested directory tree."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show each task's #N number on its card"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show the status bar at the bottom of the window"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Show the terminal panel below the board"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgid "Side by side"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "since {sinceTime}"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+msgctxt "close on outside click"
+msgid "Single"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "sort files by"
+msgid "Size"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Source code"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Source code embedded"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Spawn stalled"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "diff scope"
+msgid "Staged"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stall profiler"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "sort files by"
+msgid "Status"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Status bar"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stop leftover processes"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Summaries rewritten"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "Summaries written"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgctxt "settings tab group"
+msgid "System"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Task"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Task and project creation counts"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "Task detail"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Task summaries"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Task titles, descriptions, or any user-generated content"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Tasks"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Tasks embedded"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+msgctxt "shortcut scope"
+msgid "Team"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Terminal"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal cursor appearance"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgid "Terminal may intercept"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal panel"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal shell used for agent sessions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Terminal text size in pixels"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Test connection"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "The agent, model and permissions new sessions start with."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "The agent's newest message"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "The agent's recent messages, one line each"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The branch new worktrees start from."
+msgstr ""
+
+#: src/renderer/components/settings/AppSettingsPanel.tsx
+msgid "The change was not written."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/index-sources.ts
+msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The first message it gets for a new workflow."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "The Kangentic relay"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "The Knowledge Graph and the index it reads. Applies to all projects"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The language you speak. The models adapt to your choice."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "The local model is unavailable - showing keyword matches."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "The local model is unavailable - showing keyword matches. ({workerError})"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The local model that finds by meaning and draws the map; changing it re-indexes in the background."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The model it plans with. Required when the agent takes one."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The project's code and docs, so answers can explain it."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The self-hosted relay to dial when Relay is set to Custom."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "The shell, font, cursor and colors every terminal uses."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "The task's description"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/settings-tabs.ts
+#: src/renderer/components/settings/tabs/ThemeTab.tsx
+msgid "Theme"
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+msgid "This hotkey is fixed and cannot be rebound"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgid "This restores every hotkey to its default. Your custom bindings will be removed."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BrowserTab.tsx
+msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Ticket numbers"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Ticking session duration"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgctxt "notification channel"
+msgid "Toast"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Toast auto-dismiss"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Toasts"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Token counts"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Tool calls"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/DictationTab.tsx
+msgid "Transcription"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Transition and motion effects."
+msgstr ""
+
+#: src/renderer/components/settings/shared.tsx
+msgid "Try a different search term"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgctxt "cursor style"
+msgid "Underline"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgid "Unreachable"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Unset runs at the agent's own level."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Unset runs at the agent's recommended level."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Usage analytics are powered by Aptabase, a privacy-first platform. No cookies. IP addresses are used for geographic lookup only, then discarded. A single anonymous, non-reversible install id counts unique installs; it contains no personal data. GDPR-compliant by design."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Usage bar and percentage"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TerminalTab.tsx
+msgid "Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Use one theme when the system is light and another when it is dark."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Used / total tokens"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+msgid "Username"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Usernames, emails, or any personally identifiable information"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Vector search is unavailable - showing keyword matches. ({vecError})"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+msgid "Vector search is unavailable on this platform - showing keyword matches."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Version"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Voice dictation"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Waiting for your phone…"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "What each card shows under its title: the agent's latest message, its recent messages, or the task description."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "What Quick Find and the Knowledge Graph search."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "What runs on this device, and what goes to the agent you choose."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "What we collect"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "What we don't collect"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When a plan finishes and the task auto-moves"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When a running workflow cannot move a task on by itself"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When a task spawn waits too long on the git queue while preparing"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When an agent finishes its turn or needs permission"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When every task in a workflow reaches Done"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When idle"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PerformanceTab.tsx
+msgid "When Kangentic pauses agents that are waiting on you."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When memory runs low"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/NotificationsTab.tsx
+msgid "Where each kind of alert shows up."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Where new work starts, and how current it stays."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Where the agent's command-line tool runs, and how it starts."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Where the local model runs. Auto uses the GPU when there is one."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GeneralTab.tsx
+msgid "Where this project lives on disk."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Which agent answers your questions and writes the task summaries."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Which agent CLI to use for new sessions"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Which features get used, as daily counts (never their content)"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/TaskTab.tsx
+msgid "Which stats show in the bar under a task's terminal."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BoardTab.tsx
+msgctxt "column width"
+msgid "Wide"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Width of board columns"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Windows"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#: src/renderer/components/settings/tabs/HotkeysTab.tsx
+msgctxt "task windows"
+msgid "Windows"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Workflow agent"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+msgid "Workflow agent prompt"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Workflow complete"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Workflow stalled"
+msgstr ""
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "Workflows"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/ChangesTab.tsx
+msgctxt "diff scope"
+msgid "Working"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Worktree init script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Worktrees"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Wrap long lines"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/PrivacyTab.tsx
+msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
+msgstr ""
+
+#: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
+msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+msgid "Your phone shows this code too. Confirm there to finish pairing."
 msgstr ""

@@ -46,6 +46,7 @@ import {
   type AutomationDraft,
 } from '../../src/renderer/components/dialogs/board-manager/automation-drafts';
 import type { ColumnAutomation, Swimlane } from '../../src/shared/types';
+import { englishText } from '../../src/shared/i18n/english';
 
 const AGENT_COLUMN = { auto_spawn: true, role: null } as Pick<Swimlane, 'auto_spawn' | 'role'>;
 const NO_AGENT_COLUMN = { auto_spawn: false, role: null } as Pick<Swimlane, 'auto_spawn' | 'role'>;
@@ -268,7 +269,7 @@ describe('what runs here', () => {
     expect(offered.map((entry) => entry.type)).toEqual(['send_message', 'run_script', 'webhook', 'notify']);
     const message = offered.find((entry) => entry.type === 'send_message')!;
     expect(message.runnable.ok).toBe(false);
-    expect(message.runnable.ok === false && message.runnable.reason).toBe('Start an agent here is off.');
+    expect(message.runnable.ok === false && englishText(message.runnable.reason)).toBe('Start an agent here is off.');
   });
 });
 

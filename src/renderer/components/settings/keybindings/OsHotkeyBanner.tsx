@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { TriangleAlert } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { CardTile } from '../settings-card';
 
 /**
@@ -20,8 +21,10 @@ export function OsHotkeyBanner({ action, status }: { action?: ReactNode; status?
       <TriangleAlert size={16} className="text-yellow-400 flex-shrink-0" />
       <div className="min-w-0 flex-1 space-y-1.5">
         <p className="text-sm text-fg-muted">
-          Your OS and other apps can claim a hotkey first. If one does nothing here, try another
-          combination.
+          <Trans>
+            Your OS and other apps can claim a hotkey first. If one does nothing here, try another
+            combination.
+          </Trans>
         </p>
         {status}
       </div>

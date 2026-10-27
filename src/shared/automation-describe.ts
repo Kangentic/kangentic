@@ -1,4 +1,7 @@
+import type { I18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { AUTOMATION_MANIFEST, automationFieldUnavailableReason } from './automation-manifest';
+import { resolveText } from './i18n/text';
 import type { AutomationConfig, AutomationTrigger, AutomationType } from './types';
 
 /**
@@ -10,6 +13,48 @@ import type { AutomationConfig, AutomationTrigger, AutomationType } from './type
  * the value whole.
  */
 export const AUTOMATION_VALUE_MAX = 300;
+
+/**
+ * Every sentence, label and phrase below is its own message. They were built
+ * by lower-casing a sentence's first letter and trimming its full stop, which
+ * no translation can follow. Each function takes the `I18n` to speak with,
+ * because the same sentence has two audiences: the Board Manager draws it in
+ * the session's language, and the run log and the MCP list (an agent reads
+ * both) write it in English through `englishI18n`.
+ */
+const SENTENCES = {
+  sendsMessage: msg({ message: 'Sends "{message}"' }),
+  noMessage: msg`No message yet.`,
+  runsScript: msg({ message: 'Runs {script}' }),
+  noScript: msg`No script yet.`,
+  webhookTo: msg({ message: '{method} to {host}' }),
+  noUrl: msg`No URL yet.`,
+  notifies: msg({ message: 'Notifies "{title}"' }),
+  showsNotification: msg`Shows a desktop notification.`,
+  movesTo: msg({ message: 'Moves the task to {column}' }),
+  movesToNext: msg`Moves the task to the next column`,
+  startsWithPrompt: msg({ message: 'Starts the agent with "{prompt}"' }),
+  startsAgent: msg`Starts the agent.`,
+};
+
+const GUARDS = {
+  onlyIf: msg({ message: 'Only if {condition}.' }),
+  onlyIfLabel: msg({ message: 'Condition: only if {condition}.' }),
+  onlyIfPhrase: msg({ message: 'only if {condition}' }),
+  textMatch: msg({ message: 'Only if the last line reads "{line}".' }),
+  textMatchLabel: msg({ message: 'Condition: only if the last line reads "{line}".' }),
+  textMatchPhrase: msg({ message: 'only if the last line reads "{line}"' }),
+  frequency: msg({ message: '{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}' }),
+  frequencyLabel: msg({ message: '{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}' }),
+  frequencyPhrase: msg({ message: '{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}' }),
+};
+
+const ACTION_MARKS = {
+  deliveryLabel: msg`Delivery: waits for the current turn to end.`,
+  deliveryPhrase: msg`waits for the current turn to end`,
+  messageLabel: msg({ message: 'Message: {message}' }),
+  messagePhrase: msg`with a message`,
+};
 
 /** A row's second line, its tooltip, and whether the value it quotes is code. */
 export interface AutomationSentence {
@@ -42,53 +87,70 @@ export interface AutomationSentence {
  * unsubstituted `{{variables}}`. A half-built draft renders through it: the
  * picker adds an automation before it has a name or a value.
  */
-export function describeAutomation(type: AutomationType, config: AutomationConfig): string {
-  return describeAutomationSentence(type, config).text;
+export function describeAutomation(type: AutomationType, config: AutomationConfig, i18n: I18n): string {
+  return describeAutomationSentence(type, config, i18n).text;
 }
 
 /** `describeAutomation`'s sentence, plus its tooltip and whether it quotes code, for the column panel. */
-export function describeAutomationSentence(type: AutomationType, config: AutomationConfig): AutomationSentence {
+export function describeAutomationSentence(type: AutomationType, config: AutomationConfig, i18n: I18n): AutomationSentence {
   switch (type) {
     case 'send_message': {
       // `command` is the legacy `send_command` key a migrated row may carry.
       const message = (config.message ?? config.command ?? '').trim();
       return message
-        ? prose(`Sends "${wholeFirstLine(message)}"`, `Sends "${wholeValue(message)}"`)
-        : prose('No message yet.');
+        ? prose(
+          resolveText(i18n, SENTENCES.sendsMessage, { message: wholeFirstLine(message) }),
+          resolveText(i18n, SENTENCES.sendsMessage, { message: wholeValue(message) }),
+        )
+        : prose(resolveText(i18n, SENTENCES.noMessage));
     }
 
     case 'run_script': {
       const script = (config.script ?? '').trim();
       // Only a script is code. The empty state is prose, so it keeps the prose font.
       return script
-        ? { text: `Runs ${wholeFirstLine(script)}`, tooltip: `Runs ${wholeValue(script)}`, code: true }
-        : prose('No script yet.');
+        ? {
+          text: resolveText(i18n, SENTENCES.runsScript, { script: wholeFirstLine(script) }),
+          tooltip: resolveText(i18n, SENTENCES.runsScript, { script: wholeValue(script) }),
+          code: true,
+        }
+        : prose(resolveText(i18n, SENTENCES.noScript));
     }
 
     case 'webhook': {
       // Host only, in the tooltip too: a signed URL is a secret.
       const url = (config.url ?? '').trim();
-      return prose(url ? `${config.method ?? 'POST'} to ${hostOf(url)}` : 'No URL yet.');
+      return prose(url
+        ? resolveText(i18n, SENTENCES.webhookTo, { method: config.method ?? 'POST', host: hostOf(url) })
+        : resolveText(i18n, SENTENCES.noUrl));
     }
 
     case 'notify': {
       const title = (config.title ?? '').trim();
       return title
-        ? prose(`Notifies "${wholeFirstLine(title)}"`, `Notifies "${wholeValue(title)}"`)
-        : prose('Shows a desktop notification.');
+        ? prose(
+          resolveText(i18n, SENTENCES.notifies, { title: wholeFirstLine(title) }),
+          resolveText(i18n, SENTENCES.notifies, { title: wholeValue(title) }),
+        )
+        : prose(resolveText(i18n, SENTENCES.showsNotification));
     }
 
     case 'move_to_column': {
       // The Message is optional, so it is a mark, not part of the sentence.
       const column = typeof config.targetColumn === 'string' ? config.targetColumn.trim() : '';
-      return prose(`Moves the task to ${column ? wholeFirstLine(column) : 'the next column'}`);
+      return prose(column
+        ? resolveText(i18n, SENTENCES.movesTo, { column: wholeFirstLine(column) })
+        : resolveText(i18n, SENTENCES.movesToNext));
     }
 
     case 'spawn_agent': {
       const prompt = (config.promptTemplate ?? '').trim();
       return prompt
-        ? prose(`Starts the agent with "${wholeFirstLine(prompt)}"`, `Starts the agent with "${wholeValue(prompt)}"`)
-        : prose('Starts the agent.');
+        ? prose(
+          resolveText(i18n, SENTENCES.startsWithPrompt, { prompt: wholeFirstLine(prompt) }),
+          resolveText(i18n, SENTENCES.startsWithPrompt, { prompt: wholeValue(prompt) }),
+        )
+        : prose(resolveText(i18n, SENTENCES.startsAgent));
     }
   }
 }
@@ -141,24 +203,36 @@ export function describeAutomationMarks(row: {
   condition: string | null;
   final_line: string | null;
   max_runs: number | null;
-}): AutomationRowMark[] {
+}, i18n: I18n): AutomationRowMark[] {
   const marks: AutomationRowMark[] = [];
   // One Condition kind per row. A Text match is matched only at a turn end, so
   // a draft that still holds one on another trigger earns no mark: it would
   // promise a check that never runs.
-  const textMatch = row.trigger === 'turn_end' ? describeAutomationTextMatch(row.final_line) : null;
-  const condition = onlyIf(row.condition, 'keep-lines');
-  const conditionPhrase = onlyIf(row.condition, 'one-line');
-  if (textMatch !== null) {
-    marks.push({ kind: 'text-match', label: labelled('Condition', textMatch), phrase: asPhrase(textMatch) });
-  } else if (condition !== null && conditionPhrase !== null) {
-    marks.push({ kind: 'condition', label: labelled('Condition', condition), phrase: asPhrase(conditionPhrase) });
+  const line = row.trigger === 'turn_end' ? textMatchLine(row.final_line) : null;
+  const condition = conditionText(row.condition, 'keep-lines');
+  const conditionOneLine = conditionText(row.condition, 'one-line');
+  if (line !== null) {
+    marks.push({
+      kind: 'text-match',
+      label: resolveText(i18n, GUARDS.textMatchLabel, { line }),
+      phrase: resolveText(i18n, GUARDS.textMatchPhrase, { line }),
+    });
+  } else if (condition !== null && conditionOneLine !== null) {
+    marks.push({
+      kind: 'condition',
+      label: resolveText(i18n, GUARDS.onlyIfLabel, { condition }),
+      phrase: resolveText(i18n, GUARDS.onlyIfPhrase, { condition: conditionOneLine }),
+    });
   }
-  const frequency = describeAutomationFrequency(row.max_runs);
-  if (frequency !== null && row.max_runs !== null) {
-    marks.push({ kind: 'frequency', label: labelled('Frequency', frequency), phrase: asPhrase(frequency), count: row.max_runs });
+  if (row.max_runs !== null) {
+    marks.push({
+      kind: 'frequency',
+      label: resolveText(i18n, GUARDS.frequencyLabel, { maxRuns: row.max_runs }),
+      phrase: resolveText(i18n, GUARDS.frequencyPhrase, { maxRuns: row.max_runs }),
+      count: row.max_runs,
+    });
   }
-  marks.push(...actionMarks(row.type, row.trigger, row.config));
+  marks.push(...actionMarks(row.type, row.trigger, row.config, i18n));
   return marks;
 }
 
@@ -171,15 +245,15 @@ export function describeAutomationMarks(row: {
  * finish the sentence's verb ("Moves the task to Executing, with a message")
  * and the guards then say when it runs.
  */
-export function describeAutomationMarksInWords(row: Parameters<typeof describeAutomationMarks>[0]): string | null {
-  const marks = describeAutomationMarks(row);
+export function describeAutomationMarksInWords(row: Parameters<typeof describeAutomationMarks>[0], i18n: I18n): string | null {
+  const marks = describeAutomationMarks(row, i18n);
   const isGuard = (mark: AutomationRowMark): boolean => mark.kind === 'condition' || mark.kind === 'text-match' || mark.kind === 'frequency';
   const ordered = [...marks.filter((mark) => !isGuard(mark)), ...marks.filter(isGuard)];
   return ordered.length > 0 ? ordered.map((mark) => mark.phrase).join('; ') : null;
 }
 
 /** The marks an action's own options earn. */
-function actionMarks(type: AutomationType, trigger: AutomationTrigger, config: AutomationConfig): AutomationRowMark[] {
+function actionMarks(type: AutomationType, trigger: AutomationTrigger, config: AutomationConfig, i18n: I18n): AutomationRowMark[] {
   switch (type) {
     case 'send_message': {
       // Run immediately is the default, so only waiting is marked, and only
@@ -189,13 +263,23 @@ function actionMarks(type: AutomationType, trigger: AutomationTrigger, config: A
       const delivery = AUTOMATION_MANIFEST.send_message.fields.find((field) => field.key === 'mode');
       const applies = delivery !== undefined && automationFieldUnavailableReason(delivery, trigger) === null;
       return applies && config.mode === 'deferred'
-        ? [{ kind: 'delivery', label: 'Delivery: waits for the current turn to end.', phrase: 'waits for the current turn to end' }]
+        ? [{
+          kind: 'delivery',
+          label: resolveText(i18n, ACTION_MARKS.deliveryLabel),
+          phrase: resolveText(i18n, ACTION_MARKS.deliveryPhrase),
+        }]
         : [];
     }
 
     case 'move_to_column': {
       const message = typeof config.message === 'string' ? config.message.trim() : '';
-      return message ? [{ kind: 'message', label: `Message: ${wholeValue(message)}`, phrase: 'with a message' }] : [];
+      return message
+        ? [{
+          kind: 'message',
+          label: resolveText(i18n, ACTION_MARKS.messageLabel, { message: wholeValue(message) }),
+          phrase: resolveText(i18n, ACTION_MARKS.messagePhrase),
+        }]
+        : [];
     }
 
     // A webhook's body and headers and a notification's body only shape what is
@@ -206,16 +290,6 @@ function actionMarks(type: AutomationType, trigger: AutomationTrigger, config: A
     case 'spawn_agent':
       return [];
   }
-}
-
-/** "Condition: only if ..." from "Only if ...". */
-function labelled(cardName: string, sentence: string): string {
-  return `${cardName}: ${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`;
-}
-
-/** "only if the review is clean" from "Only if the review is clean.": words that continue a sentence. */
-function asPhrase(sentence: string): string {
-  return `${sentence.charAt(0).toLowerCase()}${sentence.slice(1)}`.replace(/[.!?]+$/, '');
 }
 
 /**
@@ -241,24 +315,33 @@ export function wholeFirstLine(text: string): string {
  * "Only if the review is clean." Never cut short. The Condition mark's tooltip
  * keeps the condition's own line breaks instead (`describeAutomationMarks`).
  */
-export function describeAutomationCondition(condition: string | null): string | null {
-  return onlyIf(condition, 'one-line');
+export function describeAutomationCondition(condition: string | null, i18n: I18n): string | null {
+  const text = conditionText(condition, 'one-line');
+  return text === null ? null : resolveText(i18n, GUARDS.onlyIf, { condition: text });
 }
 
 /**
- * "Only if <condition>." with the condition whole: its line breaks kept for a
- * tooltip, or folded into one line for a sentence or a listing.
+ * The user's condition as it continues "Only if": its line breaks kept for a
+ * tooltip, or folded into one line for a sentence or a listing, with its own
+ * closing punctuation dropped, or null when it has none. The text is the
+ * user's, so it keeps the English rule it always had: a first letter that
+ * starts a word is lower-cased, one that starts an acronym or a name ("CI is
+ * green") stays.
  */
-function onlyIf(condition: string | null, lines: 'keep-lines' | 'one-line'): string | null {
+function conditionText(condition: string | null, lines: 'keep-lines' | 'one-line'): string | null {
   const plain = (condition ?? '').replace(/\r\n?/g, '\n');
   const sentence = lines === 'one-line'
     ? plain.replace(/\s+/g, ' ').trim()
     : plain.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter((line) => line !== '').join('\n');
   if (!sentence) return null;
-  // Lower-case the first letter so it reads as one sentence, unless it starts
-  // an acronym or a name ("CI is green" stays as written).
   const continued = /^[A-Z][a-z]/.test(sentence) ? sentence[0].toLowerCase() + sentence.slice(1) : sentence;
-  return `Only if ${continued.replace(/[.!?]+$/, '')}.`;
+  return continued.replace(/[.!?]+$/, '');
+}
+
+/** A Text match's pattern on one line, quoted whole and as written, or null when it has none. */
+function textMatchLine(finalLine: string | null): string | null {
+  const line = (finalLine ?? '').replace(/\s+/g, ' ').trim();
+  return line || null;
 }
 
 /**
@@ -266,9 +349,9 @@ function onlyIf(condition: string | null, lines: 'keep-lines' | 'one-line'): str
  * last line reads "Verdict: Ready"." The pattern is quoted whole and as
  * written, its wildcards included, since the exact text is the whole point.
  */
-export function describeAutomationTextMatch(finalLine: string | null): string | null {
-  const line = (finalLine ?? '').replace(/\s+/g, ' ').trim();
-  return line ? `Only if the last line reads "${line}".` : null;
+export function describeAutomationTextMatch(finalLine: string | null, i18n: I18n): string | null {
+  const line = textMatchLine(finalLine);
+  return line === null ? null : resolveText(i18n, GUARDS.textMatch, { line });
 }
 
 /**
@@ -278,9 +361,8 @@ export function describeAutomationTextMatch(finalLine: string | null): string | 
  * over, and the board's own moves do not, except a move out of Done, which
  * starts it over whoever makes it (`AutomationRunRepository.countRuns`).
  */
-export function describeAutomationFrequency(maxRuns: number | null): string | null {
-  if (maxRuns === null) return null;
-  return maxRuns === 1 ? 'At most once until you move the task.' : `At most ${maxRuns} times until you move the task.`;
+export function describeAutomationFrequency(maxRuns: number | null, i18n: I18n): string | null {
+  return maxRuns === null ? null : resolveText(i18n, GUARDS.frequency, { maxRuns });
 }
 
 /**
@@ -295,10 +377,10 @@ export function describeAutomationGuards(guards: {
   condition: string | null;
   final_line: string | null;
   max_runs: number | null;
-}): string | null {
-  const textMatch = guards.trigger === 'turn_end' ? describeAutomationTextMatch(guards.final_line) : null;
-  const condition = textMatch ?? describeAutomationCondition(guards.condition);
-  const parts = [condition, describeAutomationFrequency(guards.max_runs)]
+}, i18n: I18n): string | null {
+  const textMatch = guards.trigger === 'turn_end' ? describeAutomationTextMatch(guards.final_line, i18n) : null;
+  const condition = textMatch ?? describeAutomationCondition(guards.condition, i18n);
+  const parts = [condition, describeAutomationFrequency(guards.max_runs, i18n)]
     .filter((part): part is string => part !== null);
   return parts.length > 0 ? parts.join(' ') : null;
 }

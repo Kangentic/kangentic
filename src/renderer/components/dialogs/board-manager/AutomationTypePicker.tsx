@@ -20,6 +20,7 @@ import { OverlayPopover } from '../../OverlayPopover';
 import { Tooltip } from '../../Tooltip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
+import { translateText } from '../../../i18n/translate';
 import type { AutomationType } from '../../../../shared/types';
 import { AutomationIcon } from './automation-icons';
 
@@ -94,7 +95,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
         className="flex w-full cursor-pointer items-center gap-2 rounded border border-edge-input bg-surface-control px-3 py-1.5 text-left text-sm text-fg-tertiary focus:border-accent focus:outline-none"
       >
         <AutomationIcon name={selected.icon} size={14} className="shrink-0 text-fg-muted" />
-        <span className="min-w-0 flex-1 truncate">{selected.label}</span>
+        <span className="min-w-0 flex-1 truncate">{translateText(selected.label)}</span>
         <ChevronDown size={14} className="shrink-0 text-fg-muted" />
       </button>
 
@@ -137,7 +138,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
                   }`}
                 >
                   <AutomationIcon name={entry.icon} size={14} className="shrink-0 text-fg-muted" />
-                  <span className="min-w-0 flex-1 truncate text-fg">{entry.label}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg">{translateText(entry.label)}</span>
                   {isSelected && <Check size={14} className="shrink-0 text-accent" />}
                 </button>
               </Tooltip>

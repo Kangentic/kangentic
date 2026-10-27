@@ -11,19 +11,46 @@
  *   line's name says what runs);
  * - off: what switching it on would cover, muted;
  * - waiting on something missing: a tag in place of the value.
+ *
+ * The builders run while a line renders, so they translate as they build
+ * (`translateText`); nothing here is translated at module load.
  */
 
+import { msg } from '@lingui/core/runtime-macro';
 import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG } from '../../../lib/knowledge-graph-support';
+import { translateText } from '../../../i18n/translate';
 import type { CardSourceLineProps } from '../settings-card';
 import type { AnswerSetupGap, SummaryChoice, KnowledgeGraphCodeStatus, KnowledgeGraphSummaryStatus, KnowledgeGraphSourceStatus } from '../../../../shared/types';
 
 /** A line's text and look, without its switch. */
 export type SourceLineState = Pick<CardSourceLineProps, 'value' | 'tone' | 'problem' | 'percent' | 'progressLabel' | 'requirement'>;
 
-/** The Task summaries line's info, here and in the Knowledge Graph's Index panel. */
-export const SUMMARIES_INFO = 'A sentence or two per Done task, written in the background from its title, description, files and commits.';
-/** The Source code line's info. */
-export const CODE_INFO = 'The default branch\'s source and docs, kept current; tests, data files and files over 256 KB are skipped.';
+/** The Task summaries line's info, here and in the Knowledge Graph's Index panel. Resolve it where it shows. */
+export const SUMMARIES_INFO = msg`A sentence or two per Done task, written in the background from its title, description, files and commits.`;
+/** The Source code line's info. Resolve it where it shows. */
+export const CODE_INFO = msg`The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped.`;
+
+const TEXT = {
+  needsKnowledgeGraph: msg`Needs the Knowledge Graph`,
+  needsSupportedAgent: msg`Needs a supported agent`,
+  needsAgent: msg`Needs an agent`,
+  needsModel: msg`Needs a model`,
+  minutesLeft: msg({ message: '{minutes, plural, one {# min left} other {# min left}}' }),
+  hoursLeft: msg({ message: '{hours, plural, one {# hr left} other {# hr left}}' }),
+  percentAndTimeLeft: msg({ message: '{percent}%, {timeLeft}' }),
+  notYetIndexed: msg`Not yet indexed`,
+  tasksToWrite: msg({ message: '{toWrite, plural, one {# task} other {# tasks}}' }),
+  noDoneTasks: msg`No Done tasks yet`,
+  callFailed: msg`A call failed`,
+  retryingIn: msg({ message: '{minutes, plural, one {retrying in # min} other {retrying in # min}}' }),
+  summariesRewritten: msg`Summaries rewritten`,
+  summariesWritten: msg`Summaries written`,
+  writtenOfFinishedSkipped: msg({ message: '{count} of {finished}, {skipped} skipped' }),
+  writtenOfFinished: msg({ message: '{count} of {finished}' }),
+  files: msg({ message: '{count, plural, one {# file} other {# files}}' }),
+  sourceCodeEmbedded: msg`Source code embedded`,
+  nothingCommitted: msg`Nothing committed yet`,
+};
 
 export interface SourceRequirementInput {
   /** Whether the Knowledge Graph's local model can run in this build at all
@@ -50,47 +77,51 @@ export function sourceRequirements(input: SourceRequirementInput): { summaries: 
   const { knowledgeGraphSupported, semanticEnabled, answerCapableAgents, agentSetup, agentChosen } = input;
   if (!knowledgeGraphSupported) return { summaries: KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, code: KNOWLEDGE_GRAPH_UNAVAILABLE_TAG };
   const summaries = !semanticEnabled
-    ? 'Needs the Knowledge Graph'
+    ? translateText(TEXT.needsKnowledgeGraph)
     : answerCapableAgents === 0
-      ? 'Needs a supported agent'
+      ? translateText(TEXT.needsSupportedAgent)
       : agentSetup === 'agent'
-        ? 'Needs an agent'
+        ? translateText(TEXT.needsAgent)
         : agentSetup === 'model'
-          ? 'Needs a model'
+          ? translateText(TEXT.needsModel)
           : undefined;
   const code = !semanticEnabled
-    ? 'Needs the Knowledge Graph'
+    ? translateText(TEXT.needsKnowledgeGraph)
     : answerCapableAgents === 0
-      ? 'Needs a supported agent'
+      ? translateText(TEXT.needsSupportedAgent)
       : !agentChosen
-        ? 'Needs an agent'
+        ? translateText(TEXT.needsAgent)
         : undefined;
   return { summaries, code };
 }
 
 /** "3 min left", the way a running line says it. */
 export function timeLeft(minutes: number): string {
-  if (minutes < 1.5) return '1 min left';
-  if (minutes < 90) return `${Math.round(minutes)} min left`;
-  return `${Math.round(minutes / 30) / 2} hr left`;
+  if (minutes < 1.5) return translateText(TEXT.minutesLeft, { minutes: 1 });
+  if (minutes < 90) return translateText(TEXT.minutesLeft, { minutes: Math.round(minutes) });
+  return translateText(TEXT.hoursLeft, { hours: Math.round(minutes / 30) / 2 });
 }
 
 function runningLine(percent: number, minutesLeft: number | null, progressLabel: string): SourceLineState {
   return {
-    value: minutesLeft === null ? `${percent}%` : `${percent}%, ${timeLeft(minutesLeft)}`,
+    value: minutesLeft === null
+      ? `${percent}%`
+      : translateText(TEXT.percentAndTimeLeft, { percent, timeLeft: timeLeft(minutesLeft) }),
     percent,
     progressLabel,
   };
 }
 
 /** A source with nothing in it says so, never a checked 0. */
-export const NOT_YET_INDEXED: SourceLineState = { value: 'Not yet indexed', tone: 'muted' };
+export function notYetIndexed(): SourceLineState {
+  return { value: translateText(TEXT.notYetIndexed), tone: 'muted' };
+}
 
 /** Conversations, tasks and commits: always on, so only caught up or running. */
 export function alwaysOnLine(source: KnowledgeGraphSourceStatus | undefined, progressLabel: string): SourceLineState {
   if (!source) return {};
   if (source.percent !== null) return runningLine(source.percent, source.minutesLeft, progressLabel);
-  if (source.count === 0) return NOT_YET_INDEXED;
+  if (source.count === 0) return notYetIndexed();
   return { value: source.count.toLocaleString(), tone: 'ready' };
 }
 
@@ -115,7 +146,7 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
     // Switching off keeps what was written, and it goes on helping search.
     if (summaries.finishedTasks > 0 && toWrite === 0) return { value: count, tone: 'ready' };
     return {
-      value: toWrite > 0 ? `${toWrite.toLocaleString()} ${toWrite === 1 ? 'task' : 'tasks'}` : 'No Done tasks yet',
+      value: toWrite > 0 ? translateText(TEXT.tasksToWrite, { toWrite }) : translateText(TEXT.noDoneTasks),
       tone: 'muted',
     };
   }
@@ -127,13 +158,13 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
     const total = summaries.writtenWith.reduce((sum, entry) => sum + entry.count, 0);
     const done = Math.max(0, total - summaries.awaitingRewrite);
     // Rounded down, so it never reads 100% while one still waits.
-    return runningLine(total > 0 ? Math.floor((done / total) * 100) : 0, summaries.minutesLeft, 'Summaries rewritten');
+    return runningLine(total > 0 ? Math.floor((done / total) * 100) : 0, summaries.minutesLeft, translateText(TEXT.summariesRewritten));
   }
   if (summaries.state === 'retrying') {
     const minutes = Math.max(1, Math.round((summaries.retryInMs ?? 0) / 60_000));
-    return { tone: 'caution', problem: 'A call failed', value: `retrying in ${minutes} min` };
+    return { tone: 'caution', problem: translateText(TEXT.callFailed), value: translateText(TEXT.retryingIn, { minutes }) };
   }
-  if (summaries.finishedTasks === 0) return { value: 'No Done tasks yet' };
+  if (summaries.finishedTasks === 0) return { value: translateText(TEXT.noDoneTasks) };
   if (toWrite === 0) {
     // Written with another agent or model, a rewrite waiting included: no check
     // until Rebuild's rewrites land.
@@ -142,20 +173,20 @@ export function summariesLine(on: boolean, summaries: KnowledgeGraphSummaryStatu
     return matches ? { value: count, tone: 'ready' } : { value: count };
   }
   if (writing) {
-    return runningLine(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, 'Summaries written');
+    return runningLine(Math.floor((summaries.written / summaries.finishedTasks) * 100), summaries.minutesLeft, translateText(TEXT.summariesWritten));
   }
   // Behind, and nothing writing: what is written of what could be, and the
   // tasks the agent passed over this launch (asked again next launch).
   const finished = summaries.finishedTasks.toLocaleString();
   return {
     value: summaries.skipped > 0
-      ? `${count} of ${finished}, ${summaries.skipped.toLocaleString()} skipped`
-      : `${count} of ${finished}`,
+      ? translateText(TEXT.writtenOfFinishedSkipped, { count, finished, skipped: summaries.skipped.toLocaleString() })
+      : translateText(TEXT.writtenOfFinished, { count, finished }),
   };
 }
 
 function filesOf(count: number): string {
-  return `${count.toLocaleString()} ${count === 1 ? 'file' : 'files'}`;
+  return translateText(TEXT.files, { count });
 }
 
 /** The source code line. `requirement` is what it still waits for. */
@@ -167,13 +198,13 @@ export function codeLine(code: KnowledgeGraphCodeStatus | undefined, requirement
       return { value: filesOf(code.files), tone: 'muted' };
     case 'reading':
       // Switched on and the branch not read yet: running, at nothing so far.
-      return runningLine(0, null, 'Source code embedded');
+      return runningLine(0, null, translateText(TEXT.sourceCodeEmbedded));
     case 'indexing':
       // Rounded down, so the line never reads 100% while a passage still waits.
-      return runningLine(code.passages > 0 ? Math.floor((code.embedded / code.passages) * 100) : 0, code.minutesLeft, 'Source code embedded');
+      return runningLine(code.passages > 0 ? Math.floor((code.embedded / code.passages) * 100) : 0, code.minutesLeft, translateText(TEXT.sourceCodeEmbedded));
     case 'ready':
       return { value: filesOf(code.files), tone: 'ready' };
     case 'nothing-committed':
-      return { value: 'Nothing committed yet', tone: 'muted' };
+      return { value: translateText(TEXT.nothingCommitted), tone: 'muted' };
   }
 }

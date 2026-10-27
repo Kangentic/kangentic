@@ -98,6 +98,45 @@ function attributeNamed(element: ts.JsxOpeningLikeElement, name: string, sourceF
   );
 }
 
+/** The text of a template literal, with each placeholder written `{name}` as a translator sees it. */
+function templateText(template: ts.TemplateLiteral, sourceFile: ts.SourceFile): string {
+  if (ts.isNoSubstitutionTemplateLiteral(template)) return template.text;
+  return template.head.text + template.templateSpans
+    .map((span) => `{${span.expression.getText(sourceFile).replace(/[{}\s]/g, '')}}${span.literal.text}`)
+    .join('');
+}
+
+/**
+ * The English a description or label expression shows, through the Lingui
+ * forms a converted tab uses: a string literal, `` t`...` `` or `` msg`...` ``,
+ * `t({ message })` or `msg({ message })`, and `i18n._(...)` or
+ * `translateText(...)` around one of those. Undefined for anything else, which
+ * the budget then cannot measure. Without this, converting a tab to Lingui
+ * would quietly take its descriptions out of the budget check.
+ */
+function macroText(expression: ts.Expression, sourceFile: ts.SourceFile): string | undefined {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
+  if (ts.isParenthesizedExpression(expression)) return macroText(expression.expression, sourceFile);
+  if (ts.isTaggedTemplateExpression(expression)) {
+    const tag = expression.tag.getText(sourceFile);
+    return tag === 't' || tag === 'msg' ? templateText(expression.template, sourceFile) : undefined;
+  }
+  if (ts.isCallExpression(expression)) {
+    const callee = expression.expression.getText(sourceFile);
+    const [argument] = expression.arguments;
+    if (!argument) return undefined;
+    if (callee === 't' || callee === 'msg') {
+      if (!ts.isObjectLiteralExpression(argument)) return macroText(argument, sourceFile);
+      const message = argument.properties.find(
+        (property): property is ts.PropertyAssignment => ts.isPropertyAssignment(property) && property.name.getText(sourceFile) === 'message',
+      );
+      return message ? macroText(message.initializer, sourceFile) : undefined;
+    }
+    if (callee === 'i18n._' || callee === 'translateText') return macroText(argument, sourceFile);
+  }
+  return undefined;
+}
+
 /** Every string literal inside an expression: `a ? undefined : 'text'` yields 'text'. */
 function stringLiterals(node: ts.Node): string[] {
   const found: string[] = [];
@@ -265,7 +304,8 @@ function scanUnit(unit: SourceUnit, tileComponents: Set<string>, isTabFile: bool
       if (ts.isStringLiteral(attribute.initializer)) return attribute.initializer.text;
       if (ts.isJsxExpression(attribute.initializer) && attribute.initializer.expression) {
         const expression = attribute.initializer.expression;
-        if (ts.isStringLiteral(expression)) return expression.text;
+        const text = macroText(expression, sourceFile);
+        if (text !== undefined) return text;
         if (ts.isPropertyAccessExpression(expression) && ts.isIdentifier(expression.expression)) {
           const boundId = settingPropsBindings.get(expression.expression.text);
           if (boundId) return registryDescriptions.get(boundId);
@@ -281,7 +321,15 @@ function scanUnit(unit: SourceUnit, tileComponents: Set<string>, isTabFile: bool
     const id = spreadSettingId(element);
     if (id) return id;
     const labelAttribute = attributeNamed(element, 'label', sourceFile);
-    return labelAttribute?.initializer ? labelAttribute.initializer.getText(sourceFile) : element.tagName.getText(sourceFile);
+    const initializer = labelAttribute?.initializer;
+    if (!initializer) return element.tagName.getText(sourceFile);
+    // A translated label reads as the literal it replaced, `"Board layout"`, so
+    // a card is named the same before and after its tab is converted.
+    if (ts.isJsxExpression(initializer) && initializer.expression) {
+      const text = macroText(initializer.expression, sourceFile);
+      if (text !== undefined) return JSON.stringify(text);
+    }
+    return initializer.getText(sourceFile);
   };
 
   const visit = (node: ts.Node): void => {
@@ -465,6 +513,34 @@ describe('settings card design', () => {
     `);
     expect(violations.map((violation) => violation.found)).toEqual(['<div>', 'statusLine', '<p>']);
     expect(descriptions[0].text.length).toBeGreaterThan(DESCRIPTION_BUDGET[descriptions[0].context]);
+  });
+
+  // A converted tab passes its text through Lingui. Red-green: drop `macroText`
+  // from `descriptionOf` and nothing is measured here, so the over-budget
+  // descriptions pass; drop it from `labelOf` and the card names lose their quotes.
+  it('measures a description written through Lingui, and names its card by the English', () => {
+    // Over both budgets: 60 beside a switch, 66 with none.
+    const long = 'x'.repeat(67);
+    const { descriptions, cards } = scanSnippet('translated.tsx', `
+      export function Translated() {
+        const { t, i18n } = useLingui();
+        return (
+          <>
+            <SettingsCard icon={null} label={t\`Board layout\`} description={t\`${long}\`} checked={true} onChange={() => {}}>
+              <CardTile>ok</CardTile>
+            </SettingsCard>
+            <SettingsCard icon={null} label={t({ message: 'Sessions', context: 'card' })} description={i18n._(msg({ message: '${long}' }))}>
+              <CardTile>ok</CardTile>
+            </SettingsCard>
+          </>
+        );
+      }
+    `);
+    expect(cards).toEqual(['"Board layout"', '"Sessions"']);
+    expect(descriptions.map((entry) => entry.text)).toEqual([long, long]);
+    for (const entry of descriptions) {
+      expect(entry.text.length).toBeGreaterThan(DESCRIPTION_BUDGET[entry.context]);
+    }
   });
 
   it('accepts a component that renders only tiles, and rejects one that does not', () => {

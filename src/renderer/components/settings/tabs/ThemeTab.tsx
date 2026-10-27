@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Palette } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig, ThemeChoice, ThemeMode } from '../../../../shared/types';
 import { NAMED_THEMES, THEME_BASES, resolveTheme } from '../../../../shared/types';
 import { useConfigStore } from '../../../stores/config-store';
@@ -22,6 +25,7 @@ function committedValueFor(choice: ThemeChoice, theme: ThemeMode): ThemeMode {
 }
 
 export function ThemeTab({ config }: { config: AppConfig }) {
+  const { t } = useLingui();
   const updateProject = useScopedUpdate('project');
   const systemPrefersDark = useConfigStore((state) => state.systemPrefersDark);
   const following = config.themeFollowsSystem;
@@ -41,8 +45,8 @@ export function ThemeTab({ config }: { config: AppConfig }) {
     <div className="space-y-4">
       <SettingsCard
         icon={<Palette size={16} />}
-        label="Appearance"
-        description="Pick a theme, or follow the system with a light and dark pair."
+        label={t`Appearance`}
+        description={t`Pick a theme, or follow the system with a light and dark pair.`}
         searchIds={['themeFollowsSystem', 'theme']}
       >
         <CardToggleRow
@@ -74,14 +78,15 @@ const HOVER_PREVIEW_DELAY_MS = 120;
 
 interface ThemeGroup {
   base: ThemeBase;
-  label: string;
+  /** Translated where the grid renders, never here at module load. */
+  label: MessageDescriptor;
   themes: typeof NAMED_THEMES;
 }
 
 /** The two visual groups, in the order they stack; each shows NAMED_THEMES filtered to its base. */
 const BASE_GROUPS: ThemeGroup[] = (['dark', 'light'] as const).map((base) => ({
   base,
-  label: base === 'dark' ? 'Dark' : 'Light',
+  label: base === 'dark' ? msg({ message: 'Dark', context: 'theme base' }) : msg({ message: 'Light', context: 'theme base' }),
   themes: NAMED_THEMES.filter((theme) => THEME_BASES[theme.id] === base),
 }));
 
@@ -91,9 +96,9 @@ const BASE_GROUPS: ThemeGroup[] = (['dark', 'light'] as const).map((base) => ({
  * own description already says what the pair is for and the dimmed tiles show which two
  * are chosen.
  */
-const FOLLOWING_GROUP_NAMES: Record<ThemeBase, string> = {
-  dark: 'Dark, when the system is dark',
-  light: 'Light, when the system is light',
+const FOLLOWING_GROUP_NAMES: Record<ThemeBase, MessageDescriptor> = {
+  dark: msg`Dark, when the system is dark`,
+  light: msg`Light, when the system is light`,
 };
 
 /** A single unmodified letter: the native select's type-ahead, kept here. */
@@ -149,6 +154,7 @@ function isTypeAheadKey(event: React.KeyboardEvent): boolean {
  * that tile (a choice for the OTHER OS side stays a hover while the pointer stays).
  */
 function ThemeSwatchGrid({ choice, onCommit }: { choice: ThemeChoice; onCommit: (theme: ThemeMode) => void }) {
+  const { t, i18n } = useLingui();
   const following = choice.themeFollowsSystem;
   const setThemePreview = useConfigStore((state) => state.setThemePreview);
   const hoverTimerRef = useRef<number | null>(null);
@@ -228,11 +234,11 @@ function ThemeSwatchGrid({ choice, onCommit }: { choice: ThemeChoice; onCommit: 
 
   const groups: { ariaLabel: string; sections: ThemeGroup[]; selected: ThemeMode }[] = following
     ? BASE_GROUPS.map((group) => ({
-      ariaLabel: FOLLOWING_GROUP_NAMES[group.base],
+      ariaLabel: i18n._(FOLLOWING_GROUP_NAMES[group.base]),
       sections: [group],
       selected: choice[group.base === 'dark' ? 'themeDark' : 'themeLight'],
     }))
-    : [{ ariaLabel: 'Theme', sections: BASE_GROUPS, selected: choice.theme }];
+    : [{ ariaLabel: t`Theme`, sections: BASE_GROUPS, selected: choice.theme }];
 
   return (
     <div
@@ -270,6 +276,7 @@ interface RadioGridProps {
 
 /** One radiogroup: one tab stop, one selection, arrows and type-ahead within it. */
 function RadioGrid({ ariaLabel, sections, selected, muteUnselected, onSelect, onHover }: RadioGridProps) {
+  const { i18n } = useLingui();
   const ordered = sections.flatMap((section) => section.themes);
   const tileRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const activeIndex = Math.max(0, ordered.findIndex((theme) => theme.id === selected));
@@ -320,7 +327,7 @@ function RadioGrid({ ariaLabel, sections, selected, muteUnselected, onSelect, on
         return (
           <React.Fragment key={section.base}>
             {/* The settings sidebar's tier-header style, so the group labels read as the panel's own. */}
-            <div className="text-xs font-semibold uppercase tracking-wider text-fg-faint pt-1 first:pt-0">{section.label}</div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-fg-faint pt-1 first:pt-0">{i18n._(section.label)}</div>
             {/* The column count is `COLUMNS`, which the Up/Down row math reads too, so the
                 two cannot drift apart; `grid-cols-3` would be a second copy of it. */}
             <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${COLUMNS}, minmax(0, 1fr))` }}>

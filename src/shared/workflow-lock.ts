@@ -1,5 +1,7 @@
+import type { MessageDescriptor } from '@lingui/core';
 import type { SwimlaneRole, WorkflowState } from './types';
-import { WORKFLOW_REFUSALS } from './workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES } from './workflow-refusals';
+import { englishText } from './i18n/english';
 import { isMoveByAPerson } from './task-move-origin';
 
 /**
@@ -47,23 +49,33 @@ export interface WorkflowMoveCheck {
   humanGateTargetId: string | null;
 }
 
+/**
+ * The refusal in English: what main throws, an agent reads, and the board
+ * matches a failed move against (`workflow-refusals.ts`).
+ */
 export function workflowMoveRefusal(check: WorkflowMoveCheck): string | null {
+  const refusal = workflowMoveRefusalMessage(check);
+  return refusal === null ? null : englishText(refusal);
+}
+
+/** The same refusal as a message, for the board to show in the session language. */
+export function workflowMoveRefusalMessage(check: WorkflowMoveCheck): MessageDescriptor | null {
   if (check.fromSwimlaneId === check.toSwimlaneId) return null;
   if (check.workflowState === 'draft' || check.workflowState === 'done') return null;
   const label = `#${check.displayId}`;
   const byHand = isMoveByAPerson(check.origin);
   if (check.toRole === 'todo') {
     return byHand && check.workflowState === 'running'
-      ? WORKFLOW_REFUSALS.locked(label, check.workflowTitle)
-      : WORKFLOW_REFUSALS.toDoNeedsRemove(label, check.workflowTitle);
+      ? WORKFLOW_REFUSAL_MESSAGES.locked(label, check.workflowTitle)
+      : WORKFLOW_REFUSAL_MESSAGES.toDoNeedsRemove(label, check.workflowTitle);
   }
   if (check.origin === 'workflow' || check.origin === 'automation' || check.origin === 'auto-move') return null;
   if (check.origin === 'agent' && check.moverIsTaskAgent) return null;
 
   if (check.workflowState === 'paused') {
     if (byHand) return null;
-    return WORKFLOW_REFUSALS.pausedForAgents(label, check.workflowTitle);
+    return WORKFLOW_REFUSAL_MESSAGES.pausedForAgents(label, check.workflowTitle);
   }
   if (byHand && check.humanGateTargetId !== null && check.humanGateTargetId === check.toSwimlaneId) return null;
-  return WORKFLOW_REFUSALS.locked(label, check.workflowTitle);
+  return WORKFLOW_REFUSAL_MESSAGES.locked(label, check.workflowTitle);
 }

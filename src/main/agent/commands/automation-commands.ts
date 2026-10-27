@@ -34,6 +34,7 @@ import {
   stableAutomationTypes,
 } from '../../../shared/automation-manifest';
 import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
+import { englishI18n, englishText } from '../../../shared/i18n/english';
 import { TEXT_MATCH_UNAVAILABLE_REASON, textMatchCanMatch } from '../../../shared/final-line-match';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { resolveTask } from './task-resolver';
@@ -82,7 +83,7 @@ export const handleListAutomations: CommandHandler = (
         .filter((row) => row.trigger === trigger)
         .sort((left, right) => left.position - right.position);
       if (group.length === 0) continue;
-      lines.push(`  ${AUTOMATION_TRIGGER_LABELS[trigger]}:`);
+      lines.push(`  ${englishText(AUTOMATION_TRIGGER_LABELS[trigger])}:`);
       for (const row of group) {
         // `canColumnRun` is the same predicate the runner uses, so a row this
         // says is blocked is a row that will be recorded skipped. Reporting it
@@ -91,15 +92,15 @@ export const handleListAutomations: CommandHandler = (
         const runnable = canColumnRun(row.type, { autoSpawn: column.auto_spawn, role: column.role }, row.trigger);
         const flags = [
           row.enabled ? null : 'switched off',
-          runnable.ok ? null : `cannot run: ${runnable.reason}`,
+          runnable.ok ? null : `cannot run: ${englishText(runnable.reason)}`,
         ].filter((flag): flag is string => flag !== null);
         // The sentence names only the verb and its one required value, as the
         // row's second line does. Everything the panel shows as a mark (the
         // send timing, Move to column's message, the Condition, the Frequency)
         // follows in words, since an agent reads this text and not `data`.
-        const marks = describeAutomationMarksInWords(row);
+        const marks = describeAutomationMarksInWords(row, englishI18n);
         lines.push(
-          `    ${row.position + 1}. ${row.name} (${row.type}) ${describeAutomation(row.type, row.config)}`
+          `    ${row.position + 1}. ${row.name} (${row.type}) ${describeAutomation(row.type, row.config, englishI18n)}`
           + (marks !== null ? ` (${marks})` : '')
           + (flags.length > 0 ? ` [${flags.join('; ')}]` : ''),
         );
@@ -214,7 +215,7 @@ export const handleSetAutomations: CommandHandler = (
       return {
         success: false,
         error: `${where}: a ${type} row runs only on ${offered.join(' or ')}, not ${trigger}. `
-          + `${AUTOMATION_MANIFEST[type as AutomationType].triggerUnavailableReason ?? ''} Nothing was saved.`.trim(),
+          + `${englishText(AUTOMATION_MANIFEST[type as AutomationType].triggerUnavailableReason ?? '')} Nothing was saved.`.trim(),
       };
     }
 
@@ -239,7 +240,7 @@ export const handleSetAutomations: CommandHandler = (
     if (finalLine !== null && trigger !== 'turn_end') {
       return {
         success: false,
-        error: `${where}: finalLine works only with on: "turn_end", not ${trigger}. ${TEXT_MATCH_UNAVAILABLE_REASON} Nothing was saved.`,
+        error: `${where}: finalLine works only with on: "turn_end", not ${trigger}. ${englishText(TEXT_MATCH_UNAVAILABLE_REASON)} Nothing was saved.`,
       };
     }
     if (finalLine !== null && !textMatchCanMatch(finalLine)) {
@@ -260,7 +261,7 @@ export const handleSetAutomations: CommandHandler = (
       // A warning, not a refusal: the row is legal and stored, and turning the
       // column's setting back on makes it run. Refusing would make an agent
       // unable to build a column's list before switching its agent on.
-      warnings.push(`"${name}" will not run as things stand. ${runnable.reason}`);
+      warnings.push(`"${name}" will not run as things stand. ${englishText(runnable.reason)}`);
     }
 
     // An id survives only when this column already owns it and no earlier row
@@ -296,7 +297,7 @@ export const handleSetAutomations: CommandHandler = (
   context.onSwimlaneUpdated(swimlane);
 
   const counts = AUTOMATION_TRIGGERS
-    .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${AUTOMATION_TRIGGER_LABELS[trigger].toLowerCase()}`)
+    .map((trigger) => `${saved.filter((row) => row.trigger === trigger).length} ${englishText(AUTOMATION_TRIGGER_LABELS[trigger]).toLowerCase()}`)
     .join(', ');
   return {
     success: true,

@@ -16,7 +16,7 @@ import {
   alwaysOnLine,
   CODE_INFO,
   codeLine,
-  NOT_YET_INDEXED,
+  notYetIndexed,
   SUMMARIES_INFO,
   summariesLine,
   type SourceLineState,
@@ -31,6 +31,7 @@ import type {
 import { NO_SOURCE, sourceStatusOf, summaryStatusOf } from '../../../shared/index-summary';
 import { settingProps } from '../settings/settings-registry';
 import { formatBytes } from '../../lib/format-bytes';
+import { translateText } from '../../i18n/translate';
 
 export interface IndexSourceLinesInput {
   index: KnowledgeGraphIndexSummary;
@@ -74,7 +75,7 @@ function alwaysOnSource(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGrap
  */
 function codeSource(index: KnowledgeGraphIndexSummary, codeOn: boolean, requirement: string | undefined): SourceLineState {
   if (requirement) return { requirement };
-  if (isEmpty(index, 'code')) return codeOn ? NOT_YET_INDEXED : { value: 'Off', tone: 'muted' };
+  if (isEmpty(index, 'code')) return codeOn ? notYetIndexed() : { value: 'Off', tone: 'muted' };
   return codeLine(codeStatus(index), undefined);
 }
 
@@ -87,13 +88,13 @@ export function indexSourceLines(input: IndexSourceLinesInput): CardSourceLinePr
     { label: 'Commits', ...alwaysOnSource(index, 'commit', semanticAvailable, 'Commits indexed'), testId: 'knowledge-graph-index-source-commits' },
     {
       label: settingProps('knowledgeGraph.taskSummaries').label,
-      info: SUMMARIES_INFO,
+      info: translateText(SUMMARIES_INFO),
       ...summariesLine(summariesOn, summaryStatusOf(index.summaries, null), requirements.summaries),
       testId: 'knowledge-graph-index-source-summaries',
     },
     {
       label: settingProps('knowledgeGraph.sourceCode').label,
-      info: CODE_INFO,
+      info: translateText(CODE_INFO),
       ...codeSource(index, codeOn, requirements.code),
       testId: 'knowledge-graph-index-source-code',
     },

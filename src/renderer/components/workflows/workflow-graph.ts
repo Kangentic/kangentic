@@ -1,5 +1,6 @@
 import type { WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
-import { WORKFLOW_REFUSALS, workflowTaskLabel } from '../../../shared/workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES, workflowTaskLabel } from '../../../shared/workflow-refusals';
+import { translateText } from '../../i18n/translate';
 import { UNNAMED_BLOCKER_LABEL, waitingLabel } from '../../../shared/workflow-waiting';
 import type { WorkflowWaiting } from './WorkflowCanvasCard';
 
@@ -64,7 +65,8 @@ export function waitingOf(detail: WorkflowDetail, task: WorkflowViewTask): Workf
   if (task.place !== 'todo' || detail.workflow.state === 'draft') return null;
   const pending = pendingBlockers(detail, task.key).map(taskLabel);
   for (let index = 0; index < task.unnamedBlockerCount; index += 1) pending.push(UNNAMED_BLOCKER_LABEL);
-  return waitingLabel(pending, detail.workflow.state === 'paused');
+  const waiting = waitingLabel(pending, detail.workflow.state === 'paused');
+  return { label: translateText(waiting.label), paused: waiting.paused };
 }
 
 /** A task can be made to wait while it has not started: planned, or in To Do. */
@@ -97,13 +99,13 @@ export function linkRefusal(detail: WorkflowDetail, blockerKey: string, blockedK
   const blocker = findTask(detail, blockerKey);
   const blocked = findTask(detail, blockedKey);
   if (!blocker || !blocked) return 'That task is no longer in this workflow.';
-  if (blockerKey === blockedKey) return WORKFLOW_REFUSALS.selfLink;
-  if (!canWait(blocked)) return WORKFLOW_REFUSALS.cannotWait(taskLabel(blocked));
-  if (!canBlock(blocker)) return WORKFLOW_REFUSALS.blockerDone(taskLabel(blocker));
+  if (blockerKey === blockedKey) return translateText(WORKFLOW_REFUSAL_MESSAGES.selfLink);
+  if (!canWait(blocked)) return translateText(WORKFLOW_REFUSAL_MESSAGES.cannotWait(taskLabel(blocked)));
+  if (!canBlock(blocker)) return translateText(WORKFLOW_REFUSAL_MESSAGES.blockerDone(taskLabel(blocker)));
   if (detail.links.some((link) => link.blockerKey === blockerKey && link.blockedKey === blockedKey)) {
-    return WORKFLOW_REFUSALS.alreadyWaits(taskLabel(blocked), taskLabel(blocker));
+    return translateText(WORKFLOW_REFUSAL_MESSAGES.alreadyWaits(taskLabel(blocked), taskLabel(blocker)));
   }
-  if (wouldLoop(detail, blockerKey, blockedKey)) return WORKFLOW_REFUSALS.loop;
+  if (wouldLoop(detail, blockerKey, blockedKey)) return translateText(WORKFLOW_REFUSAL_MESSAGES.loop);
   return null;
 }
 
@@ -117,8 +119,8 @@ export function unlinkRefusal(detail: WorkflowDetail, blockerKey: string, blocke
   const blocker = findTask(detail, blockerKey);
   const blocked = findTask(detail, blockedKey);
   if (!blocker || !blocked) return 'That task is no longer in this workflow.';
-  if (blocker.place === 'done') return WORKFLOW_REFUSALS.unlinkChangesNothing(taskLabel(blocker), 'is done');
-  if (!canWait(blocked)) return WORKFLOW_REFUSALS.unlinkChangesNothing(taskLabel(blocked), 'has started');
+  if (blocker.place === 'done') return translateText(WORKFLOW_REFUSAL_MESSAGES.unlinkChangesNothing(taskLabel(blocker), 'is done'));
+  if (!canWait(blocked)) return translateText(WORKFLOW_REFUSAL_MESSAGES.unlinkChangesNothing(taskLabel(blocked), 'has started'));
   return null;
 }
 
@@ -128,13 +130,13 @@ export function unlinkRefusal(detail: WorkflowDetail, blockerKey: string, blocke
  * blocker is disabled rather than opening an empty list.
  */
 export function addBlockerRefusal(detail: WorkflowDetail, task: WorkflowViewTask): string | null {
-  if (!canWait(task)) return WORKFLOW_REFUSALS.cannotWait(taskLabel(task));
-  return blockerCandidates(detail, task.key).length === 0 ? WORKFLOW_REFUSALS.noBlockerCandidates : null;
+  if (!canWait(task)) return translateText(WORKFLOW_REFUSAL_MESSAGES.cannotWait(taskLabel(task)));
+  return blockerCandidates(detail, task.key).length === 0 ? translateText(WORKFLOW_REFUSAL_MESSAGES.noBlockerCandidates) : null;
 }
 
 /** Why the task cannot be taken out of its workflow, or null while it can. */
 export function removeRefusal(task: WorkflowViewTask): string | null {
-  return task.place === 'done' ? WORKFLOW_REFUSALS.doneStays(taskLabel(task)) : null;
+  return task.place === 'done' ? translateText(WORKFLOW_REFUSAL_MESSAGES.doneStays(taskLabel(task))) : null;
 }
 
 /**
@@ -152,10 +154,10 @@ export function reachedStepCount(task: WorkflowViewTask): number {
 
 /** Why this step's switch is locked, or null when it can change. */
 export function stepRefusal(task: WorkflowViewTask, stepIndex: number): string | null {
-  if (task.place === 'done') return WORKFLOW_REFUSALS.doneStays(taskLabel(task));
+  if (task.place === 'done') return translateText(WORKFLOW_REFUSAL_MESSAGES.doneStays(taskLabel(task)));
   if (stepIndex >= reachedStepCount(task)) return null;
   const current = task.steps.find((step) => step.state === 'current');
-  return WORKFLOW_REFUSALS.stepReached(taskLabel(task), current?.name ?? 'its column');
+  return translateText(WORKFLOW_REFUSAL_MESSAGES.stepReached(taskLabel(task), current?.name ?? 'its column'));
 }
 
 /**
@@ -166,7 +168,7 @@ export function toggledRoute(steps: WorkflowRouteStep[], swimlaneId: string): { 
   const columns = steps
     .filter((step) => (step.swimlaneId === swimlaneId ? step.state === 'skipped' : step.state !== 'skipped'))
     .map((step) => step.swimlaneId);
-  return columns.length > 0 ? { columns } : { refusal: WORKFLOW_REFUSALS.routeEmpty };
+  return columns.length > 0 ? { columns } : { refusal: translateText(WORKFLOW_REFUSAL_MESSAGES.routeEmpty) };
 }
 
 /** The tasks `key` could wait for right now: what Add blocker lists. */

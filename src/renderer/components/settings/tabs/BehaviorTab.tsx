@@ -1,17 +1,19 @@
 import { AppWindow, Bot } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig, WindowLightDismiss } from '../../../../shared/types';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   return (
     <div className="space-y-4">
       <SettingsCard
         icon={<Bot size={16} />}
-        label="Sessions"
-        description="How many agents run at once and what happens when idle."
+        label={t`Sessions`}
+        description={t`How many agents run at once and what happens when idle.`}
         searchIds={['agent.maxConcurrentSessions', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart', 'stopLeftoverProcesses']}
       >
         <CardRow {...settingProps('agent.maxConcurrentSessions')}>
@@ -42,8 +44,8 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       <SettingsCard
         icon={<AppWindow size={16} />}
-        label="Windows"
-        description="How task windows close and where they reopen."
+        label={t({ message: 'Windows', context: 'task windows' })}
+        description={t`How task windows close and where they reopen.`}
         searchIds={['windowLightDismiss', 'restoreWindowPosition']}
       >
         {/* One word each, so the four fit beside the label; each option's
@@ -51,10 +53,10 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         <CardChoiceRow<WindowLightDismiss>
           {...settingProps('windowLightDismiss')}
           options={[
-            { value: 'off', label: 'Off', tip: 'Clicking outside never closes a task window' },
-            { value: 'single', label: 'Single', tip: 'Closes a task window only when it is the only one open' },
-            { value: 'focused', label: 'Focused', tip: 'Closes the focused task window' },
-            { value: 'all', label: 'All', tip: 'Closes every open task window' },
+            { value: 'off', label: t({ message: 'Off', context: 'close on outside click' }), tip: t`Clicking outside never closes a task window` },
+            { value: 'single', label: t({ message: 'Single', context: 'close on outside click' }), tip: t`Closes a task window only when it is the only one open` },
+            { value: 'focused', label: t({ message: 'Focused', context: 'close on outside click' }), tip: t`Closes the focused task window` },
+            { value: 'all', label: t({ message: 'All', context: 'close on outside click' }), tip: t`Closes every open task window` },
           ]}
           value={globalConfig.windowLightDismiss}
           onChange={(value) => updateGlobal({ windowLightDismiss: value })}

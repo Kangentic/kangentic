@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { AUTOMATION_MANIFEST, DEFAULT_SCRIPT_TIMEOUT_MINUTES } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { englishI18n } from '../../../../shared/i18n/english';
 import { resolveScriptInvocation } from '../../../pty/spawn/script-invocation';
 import { resolveShellLaunch } from '../../../pty/spawn/shell-launch';
 import { childProcessEnv } from '../../../shared/child-env';
@@ -39,7 +40,8 @@ export const runScriptAdapter: AutomationAdapter = {
   // Delegated so the row sentence has ONE definition: the renderer draws it
   // on every row in the Column Manager and cannot import this file.
   describe(config: AutomationConfig): string {
-    return describeAutomation('run_script', config);
+    // The run log's line, which an agent reads: English.
+    return describeAutomation('run_script', config, englishI18n);
   },
 
   async execute(config, context) {

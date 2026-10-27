@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Check, CircleAlert, Loader2, Plug, Signal } from 'lucide-react';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig, McpConnectionCheck } from '../../../../shared/types';
 import {
   MCP_TOOL_CATEGORIES,
@@ -15,8 +17,7 @@ import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { Tooltip } from '../../Tooltip';
 
 /** What turning the server on does, behind the card's info icon. */
-const HOW_IT_WORKS = 'Each agent session gets a local MCP server and discovers these tools on its own. '
-  + 'Tasks an agent creates appear on the board with a toast.';
+const HOW_IT_WORKS = msg`Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast.`;
 
 /** The groups every visit opens with closed: the ones the manifest marks `startsClosed`. */
 const GROUPS_CLOSED_ON_ARRIVAL: ReadonlySet<McpToolCategoryId> = new Set(
@@ -78,11 +79,11 @@ function McpConnectionRow() {
           {result ? (
             result.connected ? (
               <span className="flex items-center gap-1 text-xs text-active" data-testid="mcp-connection-status">
-                <Check size={13} aria-hidden="true" />Connected
+                <Check size={13} aria-hidden="true" /><Trans context="connection state">Connected</Trans>
               </span>
             ) : (
               <span className="flex items-center gap-1 text-xs text-attention" data-testid="mcp-connection-status">
-                <CircleAlert size={13} aria-hidden="true" />Failed
+                <CircleAlert size={13} aria-hidden="true" /><Trans context="connection state">Failed</Trans>
               </span>
             )
           ) : null}
@@ -95,7 +96,7 @@ function McpConnectionRow() {
           >
             {/* Signal, as every Test connection button in Settings draws it. */}
             {checking ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Signal size={13} aria-hidden="true" />}
-            Test connection
+            <Trans>Test connection</Trans>
           </button>
         </div>
       </div>
@@ -116,6 +117,7 @@ function McpConnectionRow() {
  * with no edit to this file (mcp-tool-list-parity.md).
  */
 export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const enabled = globalConfig.mcpServer?.enabled ?? true;
   // For this visit only: the tab remounts on every open, which restores these defaults.
@@ -133,7 +135,7 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
       icon={<Plug size={16} />}
       {...settingProps('mcpServer.enabled')}
       searchIds={['mcpServer.connection']}
-      info={HOW_IT_WORKS}
+      info={i18n._(HOW_IT_WORKS)}
       checked={enabled}
       onChange={(value) => updateGlobal({ mcpServer: { enabled: value } })}
     >
@@ -153,20 +155,25 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
                 testId={`mcp-tool-group-${category.id}`}
               >
                 <ul className="grid grid-cols-3 gap-1">
-                  {tools.map((tool) => (
-                    <li key={tool.name} className="min-w-0">
-                      <Tooltip label={tool.label} detail={`${tool.blurb}. Opens the docs page.`}>
-                        <button
-                          type="button"
-                          data-testid="mcp-tool-cell"
-                          onClick={() => void window.electronAPI.shell.openExternal(mcpToolDocsUrl(tool.name))}
-                          className="block w-full cursor-pointer truncate rounded bg-edge-input/35 px-1.5 py-1 text-left text-xs text-fg-secondary transition-colors hover:bg-edge-input/70 hover:text-fg"
-                        >
-                          {tool.label}
-                        </button>
-                      </Tooltip>
-                    </li>
-                  ))}
+                  {tools.map((tool) => {
+                    // The manifest's blurb stays English. Only the sentence
+                    // around it is translated.
+                    const blurb = tool.blurb;
+                    return (
+                      <li key={tool.name} className="min-w-0">
+                        <Tooltip label={tool.label} detail={t`${blurb}. Opens the docs page.`}>
+                          <button
+                            type="button"
+                            data-testid="mcp-tool-cell"
+                            onClick={() => void window.electronAPI.shell.openExternal(mcpToolDocsUrl(tool.name))}
+                            className="block w-full cursor-pointer truncate rounded bg-edge-input/35 px-1.5 py-1 text-left text-xs text-fg-secondary transition-colors hover:bg-edge-input/70 hover:text-fg"
+                          >
+                            {tool.label}
+                          </button>
+                        </Tooltip>
+                      </li>
+                    );
+                  })}
                 </ul>
               </CardGroupTile>
             );

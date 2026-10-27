@@ -1,6 +1,7 @@
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { englishI18n } from '../../../../shared/i18n/english';
 import type { AutomationAdapter } from '../../shared/automation-adapter';
 import { AutomationPermanentError } from '../../shared/automation-errors';
 
@@ -26,7 +27,8 @@ export const legacySpawnAgentAdapter: AutomationAdapter = {
   // Delegated so the row sentence has ONE definition: the renderer draws it
   // on every row in Board setup and cannot import this file.
   describe(config: AutomationConfig): string {
-    return describeAutomation('spawn_agent', config);
+    // The run log's line, which an agent reads: English.
+    return describeAutomation('spawn_agent', config, englishI18n);
   },
 
   async execute(config, context) {

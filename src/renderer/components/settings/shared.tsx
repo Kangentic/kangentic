@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ChevronDown, Search, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { TIER_LABELS } from './settings-tabs';
@@ -63,6 +64,7 @@ interface SettingsPanelShellProps {
 }
 
 export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, activeTab, onTabChange, searchQuery, onSearchChange, tabMatchCounts, isSearching }: SettingsPanelShellProps) {
+  const { t } = useLingui();
   const { requestClose, backdropClassName, contentClassName, onAnimationEnd } = useOverlayPhase(
     onClose,
     { variant: 'panel' },
@@ -124,12 +126,12 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
         <div className="flex-shrink-0 border-b border-edge">
           <div className="flex items-center justify-between px-6 py-4">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-fg">Settings</h2>
+              <h2 className="text-base font-semibold text-fg"><Trans>Settings</Trans></h2>
               {projectSwitcher}
             </div>
             <button
               onClick={requestClose}
-              aria-label="Close settings"
+              aria-label={t`Close settings`}
               className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors"
             >
               <X size={16} />
@@ -147,7 +149,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                 type="text"
                 value={searchQuery || ''}
                 onChange={(event) => onSearchChange(event.target.value)}
-                placeholder="Search settings..."
+                placeholder={t`Search settings...`}
                 data-testid="settings-search"
                 className="w-full bg-surface-control border border-edge-input rounded pl-9 pr-9 py-1.5 text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
               />
@@ -181,7 +183,7 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                 return (
                   <React.Fragment key={tab.id}>
                     {index === 0 && hasProjectTabs && (
-                      <div className={`${sectionHeaderClass} pt-1 pb-1`}>Project</div>
+                      <div className={`${sectionHeaderClass} pt-1 pb-1`}><Trans context="settings tab group">Project</Trans></div>
                     )}
                     {isFirstSystemTab && (
                       <>
@@ -190,11 +192,11 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                             open), so it gets a stronger visual break than the
                             tier headers below. */}
                         <div className="border-t border-edge mt-2" />
-                        <div className={`${sectionHeaderClass} pt-2 pb-1`}>System</div>
+                        <div className={`${sectionHeaderClass} pt-2 pb-1`}><Trans context="settings tab group">System</Trans></div>
                       </>
                     )}
                     {isNewTier && (
-                      <div className={`${sectionHeaderClass} pt-3 pb-1`}>{TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>]}</div>
+                      <div className={`${sectionHeaderClass} pt-3 pb-1`}>{translateText(TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>])}</div>
                     )}
                     <Tooltip label={translateText(tab.tooltip ?? '')}>
                       <button
@@ -263,8 +265,8 @@ export function NoSearchResults({ query }: { query: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <Search size={32} className="text-fg-disabled mb-3" />
-      <p className="text-sm text-fg-muted">No settings found for &ldquo;{query}&rdquo;</p>
-      <p className="text-xs text-fg-faint mt-1">Try a different search term</p>
+      <p className="text-sm text-fg-muted"><Trans>No settings found for &ldquo;{query}&rdquo;</Trans></p>
+      <p className="text-xs text-fg-faint mt-1"><Trans>Try a different search term</Trans></p>
     </div>
   );
 }

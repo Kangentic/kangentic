@@ -1,6 +1,7 @@
 import { Bot } from 'lucide-react';
 import type { BackgroundCallTotals, BackgroundModelCount, BackgroundUsage } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs';
+import { translateText } from '../../i18n/translate';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
@@ -107,7 +108,7 @@ export function BackgroundCard({ background, metric }: { background: BackgroundU
           {background.byJob.map((job, index) => (
             <BackgroundCell
               key={job.job}
-              label={BACKGROUND_CALL_JOB_LABELS[job.job]}
+              label={translateText(BACKGROUND_CALL_JOB_LABELS[job.job])}
               totals={job}
               models={job.models}
               metric={metric}

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
 import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
-import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
+import { translateText } from '../../i18n/translate';
 import { agentCannotApprovePlans, normalizeTaskPlanApproval, taskPlanApprovalTip } from '../../../shared/plan-approval';
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
@@ -193,7 +194,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
       )}
       {steps.map((step, index) => {
         const on = step.state !== 'skipped';
-        const refusal = held ? WORKFLOW_REFUSALS.agentWorking : stepRefusal(task, index);
+        const refusal = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : stepRefusal(task, index);
         const color = step.color ?? 'var(--color-fg-faint)';
         const kind = !on ? null : step.state === 'done' ? 'done' : step.state === 'current' ? 'current' : 'ahead';
         const interactive = refusal === null;
@@ -471,9 +472,9 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
   // Memoized: SegmentedControl keys its measuring effect on the options array.
   const options = useMemo((): SegmentedControlOption<PlanApproval>[] => {
     if (!view) return [];
-    const litTip = taskPlanApprovalTip(view);
-    const heldReason = held ? WORKFLOW_REFUSALS.agentWorking : undefined;
-    const automaticOff = !view.canApprove && view.agentName ? agentCannotApprovePlans(view.agentName) : undefined;
+    const litTip = translateText(taskPlanApprovalTip(view));
+    const heldReason = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : undefined;
+    const automaticOff = !view.canApprove && view.agentName ? translateText(agentCannotApprovePlans(view.agentName)) : undefined;
     return [
       {
         value: 'automatic',
@@ -588,8 +589,8 @@ function TaskPanel({
   const blocking = detail.links.filter((link) => link.blockerKey === task.key).map((link) => findTask(detail, link.blockedKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
   const held = planHeld;
   // Memoized: with no other guard in the way it walks every task's links.
-  const addRefusal = useMemo(() => (held ? WORKFLOW_REFUSALS.agentWorking : addBlockerRefusal(detail, task)), [held, detail, task]);
-  const removeReason = held ? WORKFLOW_REFUSALS.agentWorking : removeRefusal(task);
+  const addRefusal = useMemo(() => (held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : addBlockerRefusal(detail, task)), [held, detail, task]);
+  const removeReason = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : removeRefusal(task);
   const onAnotherBoard = task.projectId !== detail.homeProjectId;
   const openLabel = variant === 'taskDetail' ? 'Open workflow' : onAnotherBoard ? `Open on ${detail.projectNames[task.projectId] ?? 'its board'}` : 'Open task';
   // A finished workflow has left the picker, so there is nothing to open; the
@@ -653,7 +654,7 @@ function TaskPanel({
                 key={linked.key}
                 linked={linked}
                 projectName={projectNameOf(linked)}
-                removeRefusal={held ? WORKFLOW_REFUSALS.agentWorking : unlinkRefusal(detail, linked.key, task.key)}
+                removeRefusal={held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : unlinkRefusal(detail, linked.key, task.key)}
                 onSelect={() => onSelectTask(linked.key)}
                 onRemove={() => onSetLink(linked.key, task.key, false)}
               />
@@ -673,7 +674,7 @@ function TaskPanel({
                   key={linked.key}
                   linked={linked}
                   projectName={projectNameOf(linked)}
-                  removeRefusal={held ? WORKFLOW_REFUSALS.agentWorking : unlinkRefusal(detail, task.key, linked.key)}
+                  removeRefusal={held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : unlinkRefusal(detail, task.key, linked.key)}
                   onSelect={() => onSelectTask(linked.key)}
                   onRemove={() => onSetLink(task.key, linked.key, false)}
                 />

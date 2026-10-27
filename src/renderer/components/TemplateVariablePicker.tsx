@@ -110,7 +110,7 @@ export function TemplateVariablePicker({ onInsert, context, testId = 'template-v
               {/* Shown only where empty is the NORMAL state, not merely a
                   possible one, so it stays a warning rather than noise. */}
               {templateVar.availability && (
-                <span className="text-[11px] text-fg-muted">{templateVar.availability}</span>
+                <span className="text-[11px] text-fg-muted">{translateText(templateVar.availability)}</span>
               )}
             </button>
           ))}

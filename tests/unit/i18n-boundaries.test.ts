@@ -139,7 +139,7 @@ describe("main's esbuild bundle", () => {
   });
 
   it('bundles a shared list of descriptors with the build options and resolves them in English', async () => {
-    sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
+    sandbox ||= fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
     const entry = path.join(sandbox, 'entry.ts');
     const importPath = (relative: string) => JSON.stringify(toPosix(path.join(REPO_ROOT, relative)));
     fs.writeFileSync(entry, [
@@ -170,6 +170,51 @@ describe("main's esbuild bundle", () => {
       label: 'Toggle settings',
       english: 'Toggle settings',
       description: 'Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is {{task_xml}}{{workflow_xml}}{{attachments}}.',
+    });
+  });
+
+  it('resolves the values, plurals and selects main reads from the shared lists', async () => {
+    // Main writes these for agents and the run log, so a message that stops
+    // resolving in the shipped bundle would reach them as an id or an object.
+    sandbox ||= fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
+    const entry = path.join(sandbox, 'entry-values.ts');
+    const importPath = (relative: string) => JSON.stringify(toPosix(path.join(REPO_ROOT, relative)));
+    fs.writeFileSync(entry, [
+      `import { WORKFLOW_REFUSALS } from ${importPath('src/shared/workflow-refusals')};`,
+      `import { describeAutomationFrequency } from ${importPath('src/shared/automation-describe')};`,
+      `import { KNOWLEDGE_GRAPH_TASK_FIELDS } from ${importPath('src/shared/knowledge-graph-task-fields')};`,
+      `import { waitingLabel } from ${importPath('src/shared/workflow-waiting')};`,
+      `import { translateText } from ${importPath('src/main/i18n/main-i18n')};`,
+      `import { englishI18n, englishText } from ${importPath('src/shared/i18n/english')};`,
+      "const pullRequest = KNOWLEDGE_GRAPH_TASK_FIELDS.find((field) => field.key === 'pr');",
+      'console.log(JSON.stringify({',
+      "  refusal: WORKFLOW_REFUSALS.locked('#12', 'Release'),",
+      '  once: describeAutomationFrequency(1, englishI18n),',
+      '  several: describeAutomationFrequency(3, englishI18n),',
+      "  pullRequest: englishText(pullRequest.display({ prNumber: 417, prState: 'merged' })),",
+      "  waiting: translateText(waitingLabel(['#1', '#2'], false).label),",
+      '}));',
+    ].join('\n'));
+    const outfile = path.join(sandbox, 'out-values.js');
+    await esbuild.build({
+      entryPoints: [entry],
+      outfile,
+      bundle: true,
+      platform: 'node',
+      target: 'node24',
+      format: 'cjs',
+      conditions: ['require'],
+      minify: true,
+      logLevel: 'silent',
+    });
+    const run = spawnSync(process.execPath, [outfile], { encoding: 'utf8' });
+    expect(run.status, run.stderr).toBe(0);
+    expect(JSON.parse(run.stdout)).toEqual({
+      refusal: '#12 is locked while Release runs.',
+      once: 'At most once until you move the task.',
+      several: 'At most 3 times until you move the task.',
+      pullRequest: 'PR 417 merged',
+      waiting: 'Blocked by 2 tasks...',
     });
   });
 

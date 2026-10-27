@@ -28,7 +28,11 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { openTestDatabase } from './helpers/test-database';
-import { AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL } from '../../src/shared/automation-manifest';
+import { AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL as AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
+
+/** The English the engine stores and an agent reads; the constant is a descriptor. */
+const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = englishText(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR);
 import type { Task, TaskWorkflowMembership } from '../../src/shared/types';
 
 // Transitively imported by task-commands.ts; the PR linker is not under test.

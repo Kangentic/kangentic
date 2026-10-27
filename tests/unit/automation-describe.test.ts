@@ -10,13 +10,22 @@
 import { describe, it, expect } from 'vitest';
 import {
   AUTOMATION_VALUE_MAX,
-  describeAutomation,
-  describeAutomationMarks,
-  describeAutomationMarksInWords,
-  describeAutomationSentence,
+  describeAutomation as describeAutomationIn,
+  describeAutomationMarks as describeAutomationMarksIn,
+  describeAutomationMarksInWords as describeAutomationMarksInWordsIn,
+  describeAutomationSentence as describeAutomationSentenceIn,
   wholeFirstLine,
 } from '../../src/shared/automation-describe';
+import { englishI18n } from '../../src/shared/i18n/english';
 import type { AutomationConfig, AutomationTrigger, AutomationType } from '../../src/shared/types';
+
+// The words pinned below are the English an English session draws and the run
+// log writes, so every call speaks through the English instance.
+type MarksRow = Parameters<typeof describeAutomationMarksIn>[0];
+const describeAutomation = (type: AutomationType, config: AutomationConfig) => describeAutomationIn(type, config, englishI18n);
+const describeAutomationSentence = (type: AutomationType, config: AutomationConfig) => describeAutomationSentenceIn(type, config, englishI18n);
+const describeAutomationMarks = (row: MarksRow) => describeAutomationMarksIn(row, englishI18n);
+const describeAutomationMarksInWords = (row: MarksRow) => describeAutomationMarksInWordsIn(row, englishI18n);
 
 function marksOf(
   type: AutomationType,

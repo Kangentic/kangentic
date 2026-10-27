@@ -3,6 +3,7 @@ import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../D
 import { Tooltip } from '../Tooltip';
 import type { BackgroundDayUsage } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS, BACKGROUND_CALL_JOBS } from '../../../shared/background-call-jobs';
+import { translateText } from '../../i18n/translate';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
 import { backgroundCallsTitle, backgroundModelLine, formatAverageCallTime } from './background-display';
@@ -51,7 +52,7 @@ const COLUMNS: DataTableColumn<BackgroundDayUsage, HistoryColumnKey>[] = [
     label: 'Job',
     width: 'w-[150px]',
     sortValue: (row) => JOB_ORDER.get(row.job) ?? 0,
-    render: (row) => <span className="text-fg-secondary">{BACKGROUND_CALL_JOB_LABELS[row.job]}</span>,
+    render: (row) => <span className="text-fg-secondary">{translateText(BACKGROUND_CALL_JOB_LABELS[row.job])}</span>,
   },
   {
     key: 'model',

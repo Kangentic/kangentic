@@ -45,7 +45,11 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../src/main/db/repositories/task-move-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
-import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
+import { AUTOMATIONS_DISABLED_REASON as AUTOMATIONS_DISABLED_REASON_DESCRIPTOR } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
+
+/** The English the engine stores and an agent reads; the constant is a descriptor. */
+const AUTOMATIONS_DISABLED_REASON = englishText(AUTOMATIONS_DISABLED_REASON_DESCRIPTOR);
 import { matchFinalLine } from '../../src/shared/final-line-match';
 import { openTestDatabase } from './helpers/test-database';
 

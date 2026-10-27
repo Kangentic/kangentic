@@ -44,6 +44,7 @@ import {
 import type { AutomationTrigger, AutomationType } from '../../../shared/types';
 import { agentCannotApprovePlans } from '../../../shared/plan-approval';
 import { canTriggerRun } from '../../../shared/automation-manifest';
+import { translateText } from '../../i18n/translate';
 import { automationAgentReady } from '../../../shared/answer-agent';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
@@ -169,7 +170,7 @@ function planApprovalOptionsFor({ agentCanApprove, agentDisplayName, underProfil
   }
   if (agentCanApprove) return PLAN_APPROVAL_OPTIONS;
   return PLAN_APPROVAL_OPTIONS.map((option) => (option.value === 'automatic'
-    ? { ...option, disabled: true, disabledReason: agentCannotApprovePlans(agentDisplayName) }
+    ? { ...option, disabled: true, disabledReason: translateText(agentCannotApprovePlans(agentDisplayName)) }
     : option));
 }
 
@@ -1172,7 +1173,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         onTurnEnd: isTerminal
           ? { label: '0', changed: false, applicable: false, reason: `Nothing runs at a turn end in ${terminalName}.` }
           : !turnEndGroup.ok
-            ? { label: '0', changed: false, applicable: false, reason: turnEndGroup.reason }
+            ? { label: '0', changed: false, applicable: false, reason: translateText(turnEndGroup.reason) }
             : { label: String(counts.turn_end), changed: counts.turn_end > 0, applicable: true, reason: nameRows('turn_end') },
         onExit: { label: String(counts.exit), changed: counts.exit > 0, applicable: true, reason: nameRows('exit') },
       }];

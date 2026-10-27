@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Copy, Loader2, Pencil, QrCode, Shield, Signal, Smartphone, Trash2, WifiOff, X } from 'lucide-react';
+import type { I18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { formatKeyFingerprint } from '@kangentic/protocol/roster/fingerprint';
 import type { AppConfig, MobileDeviceConnectionState, MobilePairedDevice, RemoteServerStatus } from '../../../../shared/types';
 import { DOCS_URLS } from '../../../../shared/docs-links';
 import { resolveRelayMode, resolveRelayUrl, validateRelayUrl } from '../../../../shared/relay';
+import { translateText } from '../../../i18n/translate';
 import { formatDate, formatDateTime, formatShortDateTime } from '../../../lib/datetime';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardTile } from '../settings-card';
@@ -41,16 +45,6 @@ const RELAY_DOCS_URL = DOCS_URLS.relay;
  *  the search differently: a master card listing a subset hides the very card
  *  the query matched while the bridge is off. */
 const RELAY_SEARCH_IDS = ['mobileBridge.relayMode', 'mobileBridge.relayUrl'];
-
-/**
- * The relay choices, short because the card is titled Relay. Local is a dev
- * build's loopback relay and never ships.
- */
-const RELAY_MODE_OPTIONS: SegmentedControlOption<'hosted' | 'local' | 'custom'>[] = [
-  ...(__KANGENTIC_DEV__ ? [{ value: 'local' as const, label: 'Local', testId: 'mobile-relay-mode-local' }] : []),
-  { value: 'hosted', label: 'Kangentic', tip: 'The Kangentic relay', testId: 'mobile-relay-mode-hosted' },
-  { value: 'custom', label: 'Custom', tip: 'A relay you run', testId: 'mobile-relay-mode-custom' },
-];
 
 /** The relay address field's classes, authored in full rather than layered onto
  *  the shared INPUT_CLASS. Two of its states need to override a property
@@ -92,25 +86,39 @@ const MOBILE_SEARCH_IDS = ['mobileBridge.pairing', 'mobileBridge.devices', 'mobi
  * (open the phone). Offline is also the one steady state here, so it gets a
  * static muted treatment rather than a spinner promising imminent resolution.
  */
-function connectionStateDisplay(state: MobileDeviceConnectionState): { label: string; className: string; icon: ReactNode } | null {
+function connectionStateDisplay(state: MobileDeviceConnectionState, i18n: I18n): { label: string; className: string; icon: ReactNode } | null {
   switch (state) {
     case 'connected':
-      return { label: 'Connected', className: 'text-green-400', icon: <Check size={12} /> };
+      return { label: i18n._(msg`Connected`), className: 'text-green-400', icon: <Check size={12} /> };
     case 'connecting':
-      return { label: 'Connecting…', className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Connecting…`), className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
     case 'reconnecting':
-      return { label: 'Reconnecting…', className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
+      return { label: i18n._(msg`Reconnecting…`), className: 'text-amber-400', icon: <Loader2 size={12} className="animate-spin" /> };
     case 'offline':
-      return { label: 'Offline', className: 'text-fg-faint', icon: <WifiOff size={12} /> };
+      return { label: i18n._(msg`Offline`), className: 'text-fg-faint', icon: <WifiOff size={12} /> };
     case 'closed':
-      return { label: 'Disconnected', className: 'text-danger', icon: <CircleAlert size={12} /> };
+      return { label: i18n._(msg`Disconnected`), className: 'text-danger', icon: <CircleAlert size={12} /> };
     case 'idle':
       return null;
   }
 }
 
 export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
+
+  /**
+   * The relay choices, short because the card is titled Relay. Local is a dev
+   * build's loopback relay and never ships. Memoized on `t`, since the
+   * segmented control keys its effects on the options' identity.
+   */
+  const relayModeOptions = useMemo<SegmentedControlOption<'hosted' | 'local' | 'custom'>[]>(() => [
+    ...(__KANGENTIC_DEV__
+      ? [{ value: 'local' as const, label: t({ message: 'Local', context: 'relay' }), testId: 'mobile-relay-mode-local' }]
+      : []),
+    { value: 'hosted', label: 'Kangentic', tip: t`The Kangentic relay`, testId: 'mobile-relay-mode-hosted' },
+    { value: 'custom', label: t({ message: 'Custom', context: 'relay' }), tip: t`A relay you run`, testId: 'mobile-relay-mode-custom' },
+  ], [t]);
   const enabled = globalConfig.mobileBridge?.enabled ?? false;
   // resolveRelayMode, not inferRelayMode: the relay choice below only offers
   // 'local' in a dev build, but the persisted value can still BE 'local' in
@@ -241,7 +249,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       const result = await startPairing();
       setQrUri(result.qrUri);
     } catch (error) {
-      setPairingEnded(error instanceof Error ? error.message : 'Could not start pairing.');
+      setPairingEnded(error instanceof Error ? error.message : t`Could not start pairing.`);
     }
   };
 
@@ -291,7 +299,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
     }
     const validation = validateRelayUrl(trimmed);
     if (!validation.ok) {
-      setRelayDraftError(validation.reason);
+      setRelayDraftError(translateText(validation.reason));
       return;
     }
     setRelayDraftError(null);
@@ -344,6 +352,15 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   const isCustomRelay = relayMode === 'custom';
   const showHostedRelayShield = relayMode === 'hosted';
 
+  // Plain names for the values the messages below carry, so a translator
+  // reads `{relayVersion}` rather than `{0}`.
+  const reachableRelay = relayTestResult?.reachable ? relayTestResult : null;
+  const relayVersion = reachableRelay?.version;
+  const relayLatencyMs = reachableRelay?.latencyMs;
+  const confirmedDeviceName = pairingConfirmed?.displayName ?? '';
+  const revokeTargetName = revokeTarget?.displayName ?? '';
+  const revokeTargetFingerprint = revokeTarget ? formatKeyFingerprint(revokeTarget.deviceId) : '';
+
   return (
     <div className="space-y-4">
       {/* Three cards: the bridge's switch, then where it connects (Relay) and
@@ -364,8 +381,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       >
         {enabled ? null : (
           <CardTile className="flex flex-wrap items-center gap-2" testId="mobile-bridge-docs">
-            <ExternalLinkButton label="How the relay works" url={RELAY_DOCS_URL} testId="mobile-relay-docs-link" />
-            <ExternalLinkButton label="How to install and pair" url={MOBILE_DOCS_URL} testId="mobile-get-app-docs-link" />
+            <ExternalLinkButton label={t`How the relay works`} url={RELAY_DOCS_URL} testId="mobile-relay-docs-link" />
+            <ExternalLinkButton label={t`How to install and pair`} url={MOBILE_DOCS_URL} testId="mobile-get-app-docs-link" />
           </CardTile>
         )}
       </SettingsCard>
@@ -383,7 +400,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
           <CardTile className="flex flex-col gap-3">
             <div className="grid grid-cols-[1fr_auto] items-center gap-2">
               <SegmentedControl
-                options={RELAY_MODE_OPTIONS}
+                options={relayModeOptions}
                 value={relayMode}
                 onChange={(nextMode) => {
                   // A stale reachability result from the previous mode must not
@@ -400,7 +417,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   setRelayDraftError(null);
                   updateGlobal({ mobileBridge: { relayMode: nextMode } });
                 }}
-                ariaLabel="Relay"
+                ariaLabel={t`Relay`}
                 testId="mobile-relay-mode"
                 quiet
                 // Fills its grid column, so it lines up with the address field below.
@@ -434,7 +451,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     agent-execution-fields.tsx has the same button for the agent
                     execution-server probe and must keep the same glyph. */}
                 {testingRelay ? <Loader2 size={13} className="animate-spin" /> : <Signal size={13} />}
-                Test connection
+                <Trans>Test connection</Trans>
               </button>
 
               {/* Row 2, column 1: THE ADDRESS. ONE control for every mode - the
@@ -482,7 +499,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     renders in hosted mode, where the field is read-only and there
                     is no typing position to click into. */}
                 {showHostedRelayShield && (
-                  <Tooltip label="Kangentic-operated relay">
+                  <Tooltip label={t`Kangentic-operated relay`}>
                     <span
                       aria-hidden="true"
                       className="absolute left-3 top-1/2 -translate-y-1/2 text-accent-fg"
@@ -496,9 +513,10 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                   type="text"
                   className={`${RELAY_ADDRESS_INPUT_BASE} ${showHostedRelayShield ? 'pl-9' : 'pl-3'} ${isCustomRelay ? 'text-fg' : 'text-fg-faint cursor-default'}`}
                   value={isCustomRelay ? relayDraft : resolvedRelayUrl}
+                  // i18n-ok: an example relay URL
                   placeholder="wss://relay.example.com"
                   readOnly={!isCustomRelay}
-                  aria-label={showHostedRelayShield ? 'Relay address, the Kangentic-operated relay' : 'Relay address'}
+                  aria-label={showHostedRelayShield ? t`Relay address, the Kangentic-operated relay` : t`Relay address`}
                   data-testid="mobile-relay-url-input"
                   onChange={(event) => {
                     setRelayDraft(event.target.value);
@@ -565,7 +583,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                     // state meaning, and active / attention are safe on a
                     // TRANSIENT verdict because they are theme-invariant and
                     // mean exactly "good" and "needs you".
-                    <Tooltip label={relayTestResult.version ? `Relay v${relayTestResult.version}` : ''}>
+                    <Tooltip label={relayVersion ? t`Relay v${relayVersion}` : ''}>
                       <span
                         className={RELAY_VERDICT_CLASS}
                         data-testid="mobile-relay-test-result"
@@ -574,7 +592,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         {/* A bare Check, not CheckCircle: an enclosed glyph loses
                             its interior at this size the way ShieldCheck did. */}
                         <Check size={13} className="text-active shrink-0" />
-                        {relayTestResult.latencyMs == null ? 'Reachable' : `Reachable, ${relayTestResult.latencyMs} ms`}
+                        {relayLatencyMs == null ? t`Reachable` : t`Reachable, ${relayLatencyMs} ms`}
                       </span>
                     </Tooltip>
                   ) : (
@@ -585,7 +603,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                         data-reachable="false"
                       >
                         <CircleAlert size={13} className="text-attention shrink-0" />
-                        No response
+                        <Trans>No response</Trans>
                       </span>
                     </Tooltip>
                   )
@@ -609,7 +627,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
               )}
             </div>
             <ExternalLinkButton
-              label="How the relay works"
+              label={t`How the relay works`}
               url={RELAY_DOCS_URL}
               testId="mobile-relay-docs-link"
             />
@@ -625,8 +643,8 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
       {enabled ? (
         <SettingsCard
           icon={<Smartphone size={16} />}
-          label="Phones"
-          description="Phones paired to this desktop, identified by key fingerprint."
+          label={t`Phones`}
+          description={t`Phones paired to this desktop, identified by key fingerprint.`}
           searchIds={MOBILE_SEARCH_IDS}
           testId="mobile-phones-card"
         >
@@ -634,17 +652,20 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
         <CardTile className="flex flex-col gap-2.5" testId="mobile-phones-tile">
         {status && !status.secureStorageAvailable && (
           <p className="text-xs text-danger">
-            Secure storage is unavailable on this system, so a device identity cannot be created.
+            <Trans>Secure storage is unavailable on this system, so a device identity cannot be created.</Trans>
           </p>
         )}
 
         {devices.length === 0 ? (
-          <p className="text-sm text-fg-faint">No devices paired yet.</p>
+          <p className="text-sm text-fg-faint"><Trans>No devices paired yet.</Trans></p>
         ) : (
           <ul className="space-y-2">
             {devices.map((device) => {
-              const connection = connectionStateDisplay(device.connectionState);
+              const connection = connectionStateDisplay(device.connectionState, i18n);
               const fingerprint = formatKeyFingerprint(device.deviceId);
+              const connectionStateSince = device.connectionStateSince;
+              const sinceTime = connectionStateSince ? formatShortDateTime(connectionStateSince) : '';
+              const pairedDate = formatDate(device.pairedAt);
               return (
                 <li
                   key={device.deviceId}
@@ -676,21 +697,21 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             if (event.key === 'Escape') setRenamingDeviceId(null);
                           }}
                         />
-                        <Tooltip label="Save name">
+                        <Tooltip label={t`Save name`}>
                           <button
                             type="button"
                             className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                            aria-label="Save name"
+                            aria-label={t`Save name`}
                             onClick={() => void commitRename(device.deviceId)}
                           >
                             <Check size={14} />
                           </button>
                         </Tooltip>
-                        <Tooltip label="Cancel">
+                        <Tooltip label={t`Cancel`}>
                           <button
                             type="button"
                             className="shrink-0 rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                            aria-label="Cancel"
+                            aria-label={t`Cancel`}
                             onClick={() => setRenamingDeviceId(null)}
                           >
                             <X size={14} />
@@ -706,22 +727,22 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                           </Pill>
                         </div>
                         <div className="shrink-0 flex items-center gap-1">
-                          <Tooltip label="Rename">
+                          <Tooltip label={t`Rename`}>
                             <button
                               type="button"
                               className="rounded p-1.5 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
-                              aria-label="Rename"
+                              aria-label={t`Rename`}
                               data-testid="mobile-device-rename"
                               onClick={() => startRename(device)}
                             >
                               <Pencil size={14} />
                             </button>
                           </Tooltip>
-                          <Tooltip label="Revoke">
+                          <Tooltip label={t`Revoke`}>
                             <button
                               type="button"
                               className="rounded p-1.5 text-fg-faint hover:text-danger hover:bg-danger/10 transition-colors"
-                              aria-label="Revoke"
+                              aria-label={t`Revoke`}
                               data-testid="mobile-device-revoke"
                               onClick={() => setRevokeTarget({ deviceId: device.deviceId, displayName: device.displayName })}
                             >
@@ -744,17 +765,17 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                             Absolute rather than relative: the list re-renders
                             only on a state push, so "5 minutes ago" would
                             go stale in place. */}
-                        {device.connectionStateSince && (
-                          <Tooltip label={formatDateTime(device.connectionStateSince)}>
+                        {connectionStateSince && (
+                          <Tooltip label={formatDateTime(connectionStateSince)}>
                             <span data-testid="mobile-device-connection-since">
-                              since {formatShortDateTime(device.connectionStateSince)}
+                              <Trans>since {sinceTime}</Trans>
                             </span>
                           </Tooltip>
                         )}
                         <span aria-hidden="true">|</span>
                       </>
                     )}
-                    <span>Paired {formatDate(device.pairedAt)}</span>
+                    <span><Trans>Paired {pairedDate}</Trans></span>
                   </div>
                 </li>
               );
@@ -771,34 +792,34 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
               data-testid="mobile-pair-start"
             >
               <QrCode size={16} />
-              Pair a device
+              <Trans>Pair a device</Trans>
             </button>
             {pairingEndedReason && <p className="text-xs text-danger">{pairingEndedReason}</p>}
           </div>
         ) : pairingConfirmed ? (
           <div className="rounded-md border border-edge bg-surface-hover/40 p-4 flex items-center gap-2 text-sm text-fg">
             <Check size={16} className="text-green-400" />
-            Paired: {pairingConfirmed.displayName}
+            <Trans>Paired: {confirmedDeviceName}</Trans>
           </div>
         ) : pairingSas ? (
           <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-waiting">
-            <p className="text-sm text-fg-secondary">Waiting for your phone…</p>
+            <p className="text-sm text-fg-secondary"><Trans>Waiting for your phone…</Trans></p>
             <span className="text-lg font-mono tracking-widest text-fg" data-testid="mobile-pair-sas-digits">
               {pairingSas.digits}
             </span>
-            <p className="text-xs text-fg-faint">Your phone shows this code too. Confirm there to finish pairing.</p>
+            <p className="text-xs text-fg-faint"><Trans>Your phone shows this code too. Confirm there to finish pairing.</Trans></p>
             <button
               type="button"
               className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
               onClick={() => void handleCancelPairing()}
             >
-              Cancel
+              <Trans>Cancel</Trans>
             </button>
           </div>
         ) : (
           <div className="space-y-3 rounded-md border border-edge bg-surface-hover/40 p-4" data-testid="mobile-pair-qr">
-            <p className="text-sm text-fg-secondary">Scan this code with the Kangentic app on your phone.</p>
-            {qrUri && <QrImage value={qrUri} alt="Pairing QR code" />}
+            <p className="text-sm text-fg-secondary"><Trans>Scan this code with the Kangentic app on your phone.</Trans></p>
+            {qrUri && <QrImage value={qrUri} alt={t`Pairing QR code`} />}
             <div className="flex gap-2">
               <button
                 type="button"
@@ -806,17 +827,17 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
                 onClick={() => void handleCopyLink()}
               >
                 {linkCopied ? <Check size={14} /> : <Copy size={14} />}
-                {linkCopied ? 'Copied' : 'Copy pairing link'}
+                {linkCopied ? t`Copied` : t`Copy pairing link`}
               </button>
               <button
                 type="button"
                 className="rounded-md border border-edge px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors"
                 onClick={() => void handleCancelPairing()}
               >
-                Cancel
+                <Trans>Cancel</Trans>
               </button>
             </div>
-            <p className="text-xs text-fg-faint">No camera? Copy the link and paste it into the app.</p>
+            <p className="text-xs text-fg-faint"><Trans>No camera? Copy the link and paste it into the app.</Trans></p>
           </div>
         )}
         </CardTile>
@@ -827,10 +848,10 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
               device is installed. */}
           <CardTile className="space-y-2" testId="mobile-get-app">
             <p className="text-xs text-fg-muted">
-              Installing the app, pairing a phone, and push notifications.
+              <Trans>Installing the app, pairing a phone, and push notifications.</Trans>
             </p>
             <ExternalLinkButton
-              label="How to install and pair"
+              label={t`How to install and pair`}
               url={MOBILE_DOCS_URL}
               testId="mobile-get-app-docs-link"
             />
@@ -840,9 +861,9 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
 
       {revokeTarget && (
         <ConfirmDialog
-          title="Revoke device"
-          message={`Revoke "${revokeTarget.displayName}" (${formatKeyFingerprint(revokeTarget.deviceId)})? It loses access immediately and must be paired again to reconnect.`}
-          confirmLabel="Revoke"
+          title={t`Revoke device`}
+          message={t`Revoke "${revokeTargetName}" (${revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect.`}
+          confirmLabel={t`Revoke`}
           variant="danger"
           onConfirm={() => {
             const target = revokeTarget;

@@ -1,3 +1,5 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { PlanApproval, TaskPlanApproval } from './types';
 
 /**
@@ -91,18 +93,35 @@ function stillWaits(view: TaskPlanApproval): string {
   return view.value === 'automatic' && view.waitingAgentName ? `, but ${view.waitingAgentName}'s plans still wait for you` : '';
 }
 
-/** The reason Automatic is off for an agent Kangentic cannot approve plans for, on every surface that offers it. */
-export function agentCannotApprovePlans(agentName: string): string {
-  return `${cannotApprove(agentName)}, so they wait for you.`;
+/**
+ * The renderer's sentences, each a whole message: the parts the agent-facing
+ * sentence below is built from (`label`, `cannotApprove`, `decidingColumn`)
+ * cannot be translated one by one. Automatic and Manual are an ICU select on
+ * the stored value.
+ */
+const TIPS = {
+  cannotApprovePlans: msg({ message: "Kangentic can't approve {agentName}'s plans, so they wait for you." }),
+  manualBecauseCannot: msg({ message: "Manual, because Kangentic can't approve {agentName}'s plans." }),
+  setForTask: msg({ message: "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})." }),
+  setForTaskStillWaits: msg({ message: "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}}), but {waitingAgentName}'s plans still wait for you." }),
+  fromColumn: msg({ message: "{value, select, automatic {Automatic} other {Manual}}, from {boardName}'s {columnName} column." }),
+};
+
+/** The reason Automatic is off for an agent Kangentic cannot approve plans for, on every surface that offers it. Resolve it where it shows. */
+export function agentCannotApprovePlans(agentName: string): MessageDescriptor {
+  return { ...TIPS.cannotApprovePlans, values: { agentName } };
 }
 
-/** The inspector's tip on the lit option: what happens and where it comes from, in one sentence. */
-export function taskPlanApprovalTip(view: TaskPlanApproval): string {
-  if (!view.canApprove && view.agentName) return `Manual, because ${cannotApprove(view.agentName)}.`;
+/** The inspector's tip on the lit option: what happens and where it comes from, in one sentence. Resolve it where it shows. */
+export function taskPlanApprovalTip(view: TaskPlanApproval): MessageDescriptor {
+  if (!view.canApprove && view.agentName) return { ...TIPS.manualBecauseCannot, values: { agentName: view.agentName } };
+  const values = { value: view.value, columnValue: view.columnValue, boardName: view.column.boardName, columnName: view.column.name };
   if (view.set !== null) {
-    return `${label(view.value)}, set for this task (${decidingColumn(view)} is ${label(view.columnValue)})${stillWaits(view)}.`;
+    return view.value === 'automatic' && view.waitingAgentName
+      ? { ...TIPS.setForTaskStillWaits, values: { ...values, waitingAgentName: view.waitingAgentName } }
+      : { ...TIPS.setForTask, values };
   }
-  return `${label(view.value)}, from ${decidingColumn(view)}.`;
+  return { ...TIPS.fromColumn, values };
 }
 
 /**

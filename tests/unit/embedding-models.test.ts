@@ -6,6 +6,7 @@ import {
   embeddingModelFiles,
 } from '../../src/shared/embedding-models';
 import { MODEL_LICENSES } from '../../src/shared/model-licenses';
+import { englishText } from '../../src/shared/i18n/english';
 
 /**
  * Locks the embedding-model registry that drives the Search quality control and
@@ -32,13 +33,13 @@ describe('embedding-models registry', () => {
       expect(['best', 'light']).toContain(model.tier);
       // The control's label; the model name is carried separately for the
       // status row, not baked into the label.
-      expect(['Best', 'Light']).toContain(model.tierLabel);
-      expect(model.tierLabel).not.toContain(model.displayName);
+      expect(['Best', 'Light']).toContain(englishText(model.tierLabel));
+      expect(englishText(model.tierLabel)).not.toContain(model.displayName);
     }
   });
 
   it('is ordered best-first', () => {
-    expect(EMBEDDING_MODELS.map((model) => model.tierLabel)).toEqual(['Best', 'Light']);
+    expect(EMBEDDING_MODELS.map((model) => englishText(model.tierLabel))).toEqual(['Best', 'Light']);
   });
 
   it('ids and model tags are unique', () => {
