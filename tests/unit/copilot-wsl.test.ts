@@ -94,6 +94,8 @@ describe('a Copilot session in a WSL distro', () => {
       command: 'sh',
       args: [cliPathForTarget(wslHookPaths(sessionDirectory).script, target), 'mcp', MCP_URL],
       env: { KANGENTIC_MCP_TOKEN: TOKEN },
+      // Required for a local server by GitHub's CLI command reference.
+      tools: ['*'],
     });
     expect(command).toContain(`@${cliPathForTarget(path.join(sessionDirectory, 'copilot-mcp.json'), target)}`);
   });
