@@ -128,8 +128,10 @@ async function scanCodexSessionHistory(target: CliTarget | null): Promise<string
  */
 export async function discoverCodexCapabilities(cliPath: string): Promise<AgentCapabilities> {
   // A Codex installed in a WSL distro: its --help runs there, and its session
-  // history is in the distro's CODEX_HOME.
-  const target = await resolveCliTarget(cliPath, true).catch(() => null);
+  // history is in the distro's CODEX_HOME. A distro whose facts cannot be read
+  // cannot be asked either, and is never asked as this machine.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  if (target === undefined) return { supportsModelOverride: false, effortLevels: [] };
   let supportsModelOverride = false;
   try {
     supportsModelOverride = await detectModelFlagSupport(cliPath, target);

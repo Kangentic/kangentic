@@ -24,7 +24,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
-import { cliPathForTarget, hostPathForTarget, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { cliPathForTarget, hostPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -875,8 +875,13 @@ export class ClaudeAdapter implements AgentAdapter {
   openAnswerSession(input: AnswerSessionInput): AnswerSession {
     const effort = input.effort ?? null;
     // A Claude installed in a WSL distro runs there. Opened synchronously, so
-    // from the distro facts its detection already read.
+    // from the distro facts its detection already read. A distro path whose
+    // facts are not read yet never runs here: the throw makes the pool answer
+    // with a fresh run, which reads them.
     const cliTarget = peekCliTarget(input.cliPath, true);
+    if (!cliTarget && parseWslCliPath(input.cliPath)) {
+      throw new Error(`The WSL distro facts for ${input.cliPath} are not read yet`);
+    }
     const { args, mcpServer } = answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort, place: cliTarget });
     // The bridge's relay, on a distro on NAT networking, lives as long as the
     // session's process.
