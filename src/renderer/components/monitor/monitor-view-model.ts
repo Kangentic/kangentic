@@ -41,7 +41,7 @@ export const BUCKET_ORDER: readonly MonitorStateBucket[] = [
  * Descriptors, resolved where they are drawn (`bucketLabel`), so each read takes
  * the session's catalog.
  */
-export const BUCKET_LABELS: Record<MonitorStateBucket, MessageDescriptor> = {
+const BUCKET_LABELS: Record<MonitorStateBucket, MessageDescriptor> = {
   'needs-you': msg({ message: 'Idle', context: 'Agent status' }),
   working: msg({ message: 'Active', context: 'Agent status' }),
   idle: msg({ message: 'Paused', context: 'Agent status' }),
@@ -311,10 +311,9 @@ export function groupRows(
   const groups = new Map<string, MonitorGroup>();
   for (const row of rows) {
     const key = groupBy === 'state' ? bucketOf(row) : row.projectId;
-    const label = groupBy === 'state' ? bucketLabel(bucketOf(row)) : row.projectName;
     const existing = groups.get(key);
     if (existing) existing.rows.push(row);
-    else groups.set(key, { key, label, rows: [row] });
+    else groups.set(key, { key, label: groupBy === 'state' ? bucketLabel(bucketOf(row)) : row.projectName, rows: [row] });
   }
 
   const ordered = [...groups.values()];

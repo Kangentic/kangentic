@@ -13,7 +13,3 @@ export const PERIOD_OPTIONS: ReadonlyArray<{ value: UsageTimePeriod; label: Mess
   { value: 'month', label: msg`This Month` },
   { value: 'all', label: msg`All Time` },
 ];
-
-export const PERIOD_LABELS: Record<UsageTimePeriod, MessageDescriptor> = Object.fromEntries(
-  PERIOD_OPTIONS.map(({ value, label }) => [value, label]),
-) as Record<UsageTimePeriod, MessageDescriptor>;

@@ -655,7 +655,7 @@ test.describe('Collapsed rail Command Terminal dot', () => {
   test('the rail aria-label speaks "needs you" for an idle terminal (red-green for FIX B)', async () => {
     // FIX B: the rail button's aria-label used to be the tone-blind
     // "<name>, Command Terminals running". It now speaks the tone via
-    // RAIL_TERMINAL_LABEL. This fails if the label regresses to the
+    // railTerminalLabel. This fails if the label regresses to the
     // tone-blind string. The tip stays the bare project name either way.
     const { browser, page } = await launchWithState(preConfig({
       terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' }],

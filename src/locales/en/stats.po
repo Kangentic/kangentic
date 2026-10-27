@@ -64,16 +64,16 @@ msgid "{freshInputText} in / {outputText} out"
 msgstr "{freshInputText} in / {outputText} out"
 
 #: src/renderer/components/stats/KpiTiles.tsx
-msgid "{leadingNames} and {lastName}"
-msgstr "{leadingNames} and {lastName}"
-
-#: src/renderer/components/stats/KpiTiles.tsx
 msgid "{liveSessionCount} active now"
 msgstr "{liveSessionCount} active now"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 msgid "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
 msgstr "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{skippedCount, plural, one {Skipped # project with an unreadable database: {skippedNames}} other {Skipped # projects with unreadable databases: {skippedNames}}}"
+msgstr "{skippedCount, plural, one {Skipped # project with an unreadable database: {skippedNames}} other {Skipped # projects with unreadable databases: {skippedNames}}}"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
 msgid "{sliceLabel}: {cost}, {tokenCount} tokens"
@@ -561,10 +561,6 @@ msgstr "Sessions"
 #: src/renderer/components/stats/PerProjectTable.tsx
 msgid "Share of fresh input plus output across all projects in the range"
 msgstr "Share of fresh input plus output across all projects in the range"
-
-#: src/renderer/components/stats/StatsDashboardBody.tsx
-msgid "Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}"
-msgstr "Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 msgid "Subagents"

@@ -201,12 +201,14 @@ export function BoardDialogs() {
                     <li>
                       {/* One message per branch fact, each a plural, so "exists"
                           agrees with the count and the branch name sits inside
-                          the sentence. */}
+                          the sentence. Each branch is an element, not a fragment:
+                          the macro reads a fragment as one opaque value, and the
+                          catalog would carry `{0}` instead of the sentence. */}
                       {displayBranch ? (
                         <Plural
                           value={unpushedCommitCount}
-                          one={<>{commitCountText} commit exists only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>}
-                          other={<>{commitCountText} commits exist only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>}
+                          one={<span>{commitCountText} commit exists only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</span>}
+                          other={<span>{commitCountText} commits exist only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</span>}
                         />
                       ) : (
                         <Plural

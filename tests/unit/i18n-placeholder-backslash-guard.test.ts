@@ -23,6 +23,8 @@ function freshInstance(messages: Record<string, string> = {}) {
 
 describe('placeholder backslash guard', () => {
   it('an unguarded instance rewrites escape sequences inside a placed value (the bug)', () => {
+    // Pins Lingui's own behavior, the reason the guard exists. If a Lingui upgrade
+    // stops decoding escapes in placed values, this case fails: the guard can then go.
     const instance = freshInstance();
     const projectPath = WINDOWS_PATH;
     expect(instance._(msg`Moved to ${{ projectPath }}`)).toBe('Moved to C:\\buildd\\app');

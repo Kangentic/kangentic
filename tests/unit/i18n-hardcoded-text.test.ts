@@ -30,8 +30,10 @@ import { I18N_UNCONVERTED_TOAST_FILES } from './helpers/i18n-unconverted-toast-f
 // handed to `addToast(...)` or `updateToast(id, ...)`, often in a `.ts` file. A literal `title`,
 // `message` or `action.label` is hard-coded. Files still waiting for extraction are listed in
 // helpers/i18n-unconverted-toast-files.ts, which only shrinks too; `// i18n-ok: <reason>` on the
-// field's line or in the comment block above it marks text that stays. A toast raised through an
-// alias (`const toast = store.addToast; toast({...})`) is out of its reach.
+// field's line or in the comment block above it marks text that stays. Three shapes are out of its
+// reach: a toast raised through an alias (`const toast = store.addToast; toast({...})`), a toast
+// object built in a variable first (`const toast = { title: 'Saved' }; addToast(toast)`), and a
+// shorthand field bound to a literal const (`addToast({ title, message })`).
 //
 // The scans parse the TSX AST, as native-title.test.ts does.
 

@@ -1,7 +1,7 @@
 import { startTransition, useCallback, useEffect } from 'react';
 import { Info } from 'lucide-react';
 import { select } from '@lingui/core/macro';
-import { Trans, useLingui } from '@lingui/react/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
@@ -482,7 +482,11 @@ export function StatsDashboardBody() {
 
         {skippedCount > 0 && (
           <div className="text-[11px] text-fg-faint" data-testid="stats-skipped-projects">
-            <Trans>Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}</Trans>
+            <Plural
+              value={skippedCount}
+              one={`Skipped # project with an unreadable database: ${skippedNames}`}
+              other={`Skipped # projects with unreadable databases: ${skippedNames}`}
+            />
           </div>
         )}
 

@@ -7,31 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
-#. placeholder {0}: hits.length
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "{0, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr "{0, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-
-#. placeholder {0}: selectedIds.length
-#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-msgid "{0, plural, one {# project} other {# projects}}"
-msgstr "{0, plural, one {# project} other {# projects}}"
-
-#. placeholder {0}: scopeProjectIds.length
-#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-msgid "{0, plural, one {Ask across # project} other {Ask across # projects}}"
-msgstr "{0, plural, one {Ask across # project} other {Ask across # projects}}"
-
-#. placeholder {0}: turn.handedCount
-#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "{0, plural, one {Read # related task} other {Read # related tasks}}"
-msgstr "{0, plural, one {Read # related task} other {Read # related tasks}}"
-
-#. placeholder {0}: turn.handedCount
-#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "{0, plural, one {Reading # related task} other {Reading # related tasks}}"
-msgstr "{0, plural, one {Reading # related task} other {Reading # related tasks}}"
-
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
 msgid "{agentName} didn't answer. {reason}"
 msgstr "{agentName} didn't answer. {reason}"
@@ -68,6 +43,18 @@ msgstr "{doneCount} of {totalCount}"
 msgid "{earliestDate} to {latestDate}"
 msgstr "{earliestDate} to {latestDate}"
 
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
+msgstr "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
+msgstr "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
+
+#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
+msgstr "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
+
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{hours}h"
 msgstr "{hours}h"
@@ -79,6 +66,14 @@ msgstr "{hours}h {minutes}m"
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "{minutes}m"
 msgstr "{minutes}m"
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
+msgstr "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{selectedCount, plural, one {# project} other {# projects}}"
+msgstr "{selectedCount, plural, one {# project} other {# projects}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
 msgid "{selectedCount} of {indexedCount}"
@@ -689,8 +684,8 @@ msgid "Tasks embedded"
 msgstr "Tasks embedded"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-msgid "the agent didn't answer. {reason}"
-msgstr "the agent didn't answer. {reason}"
+msgid "The agent didn't answer. {reason}"
+msgstr "The agent didn't answer. {reason}"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 msgid "The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable."
