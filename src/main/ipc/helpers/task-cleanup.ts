@@ -226,7 +226,11 @@ function projectPathOfWorktree(worktreePath: string): string | null {
  * to, from the project's own CLI path, the setting its spawns read. Only while
  * the distro runs: reading its share would start it, and a removal never
  * starts one to tidy a file. Null on any other platform, for an adapter
- * without WSL support, and for a CLI on this machine.
+ * without WSL support, and for a CLI on this machine. A project whose CLI path
+ * changed while a task's worktree existed leaves that worktree's entry in the
+ * old distro: the sessions' own `cli_target` would name it, but the removal
+ * listener knows only the path, and one dead trust entry did not earn a
+ * cwd-keyed session query here.
  */
 async function wslPlaceOfWorktree(
   adapter: { name: string; supportsWslCli?: boolean },

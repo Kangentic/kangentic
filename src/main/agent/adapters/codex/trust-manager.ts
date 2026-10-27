@@ -142,7 +142,9 @@ function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): 
 
 function ensureWorktreeTrustSync(workingDirectory: string, place: CliPlace | null): void {
   // A Codex installed in a WSL distro reads the distro's config.toml, keyed by
-  // the directory as the distro sees it (case-sensitive, under /mnt).
+  // the directory exactly as the distro sees it (`/mnt/c/...`, in the case
+  // Windows reports). Kangentic's own lookup of its entries ignores case
+  // (`normalizeForCompare`), as it does on this machine.
   const tomlPath = configTomlPath(place);
   const windowsPath = path.resolve(workingDirectory);
   const windowsProjectRoot = projectRootForWorktree(windowsPath);

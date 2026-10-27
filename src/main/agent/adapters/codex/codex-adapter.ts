@@ -101,11 +101,14 @@ export class CodexAdapter implements AgentAdapter {
     // (which awaits it in ensureTrust) rarely waits. A Codex in a WSL distro
     // is read there, for the hooks it runs, keyed by its version.
     if (info.found && info.path) {
-      const target = info.cliTarget ? await resolveCliTarget(info.path, true).catch(() => null) : null;
-      if (target && info.version) {
-        this.hookTrust.start(info.path, { target, version: info.version });
-      } else {
+      if (!info.cliTarget) {
         this.hookTrust.start(info.path);
+      } else {
+        // A distro whose facts cannot be read now is left unread, never read
+        // as this machine's: its sessions then run without hooks until a later
+        // detection reads it, as after a read that outlives its bound.
+        const target = await resolveCliTarget(info.path, true).catch(() => null);
+        if (target && info.version) this.hookTrust.start(info.path, { target, version: info.version });
       }
     }
     return info;
