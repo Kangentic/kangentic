@@ -604,7 +604,7 @@ describe('TASK_MOVE AbortError cleanup', () => {
     await phase2Entered;
 
     // A second move for the same task aborts the first's controller via the
-    // taskMoveControllers.get(taskId).abort() call at the top of handleTaskMove
+    // abortInFlightMove(taskId) call at the top of handleTaskMove
     // (runs before any lock is acquired). The second move's own Phase 1 then
     // reads getById and sees session_id='sess-partial' (injected by the
     // sequenced mock above), routing it into Priority 3c (same agent, no
