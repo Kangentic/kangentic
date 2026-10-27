@@ -20,9 +20,12 @@ import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared
 import { encodeHookSpec, quoteBridgePath } from '../../shared/hook-utils';
 import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import {
+  WSL_MCP_TOKEN_ENV,
   prepareWslHookTransport,
   wslHookEventCommand,
   wslHookReplyCommand,
+  wslMcpServerLaunch,
+  wslReachesLoopback,
   wslStatusLineCommand,
 } from '../../shared/wsl-hook-transport';
 import type { CommandOptions } from '../../agent-adapter';
@@ -573,15 +576,21 @@ export class CommandBuilder {
     // on every Kangentic launch, so a stale mcp.json from a previous
     // run can't be reused.
     if (options.mcpServerEnabled !== false && options.mcpServerUrl && options.mcpServerToken) {
-      const mcpConfig = {
-        mcpServers: {
-          kangentic: {
-            type: 'http' as const,
-            url: options.mcpServerUrl,
-            headers: { 'X-Kangentic-Token': options.mcpServerToken },
-          },
-        },
-      };
+      // A Claude in a WSL distro on the default NAT network cannot reach this
+      // machine's loopback, so it runs the transport's stdio bridge, which
+      // hands each message to Kangentic with the token from its environment.
+      const kangenticServer = wslHooks && place && !wslReachesLoopback(place)
+        ? {
+          type: 'stdio' as const,
+          ...wslMcpServerLaunch(wslHooks, place, options.mcpServerUrl),
+          env: { [WSL_MCP_TOKEN_ENV]: options.mcpServerToken },
+        }
+        : {
+          type: 'http' as const,
+          url: options.mcpServerUrl,
+          headers: { 'X-Kangentic-Token': options.mcpServerToken },
+        };
+      const mcpConfig = { mcpServers: { kangentic: kangenticServer } };
       const mcpConfigPath = path.join(sessionDir, 'mcp.json');
       // sync-write-ok: this must throw, not degrade - a swallowed failure here
       // would spawn Claude with no MCP config, silently missing every

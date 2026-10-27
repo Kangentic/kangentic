@@ -19,6 +19,14 @@ import { quoteBridgePath } from './hook-utils';
  *   shell hint). It prints nothing if no answer comes in time, so the CLI asks
  *   the user, as the bridges do when they cannot decide.
  * - `status`: the status line's JSON replaces `status.json` by a rename.
+ * - `mcp`: a stdio MCP server for Kangentic's tools. Each JSON-RPC line goes
+ *   into `requests/` with the session's MCP token, Kangentic relays it to its
+ *   loopback MCP server over HTTP (`relayMcpMessage`), and the script prints
+ *   the answer. A distro on WSL's default NAT network cannot reach Windows'
+ *   loopback, and a listener on the WSL adapter would need a firewall rule:
+ *   Windows treats that adapter as a Public network, blocks inbound there by
+ *   default, and asks the user (an administrator, on Public) the first time an
+ *   app listens on it.
  *
  * Never an append to a shared file: measured over the Windows drive from WSL,
  * sixteen parallel hooks appending to one file kept 158 of 640 records whole,
@@ -50,6 +58,17 @@ export const WSL_HOOK_RECORD_VERSION = 'K1';
 
 /** What a `reply` request asks for. Kangentic answers each with the matching bridge's logic. */
 export type WslHookReplyKind = 'plan-approval' | 'background-shell-hint';
+
+/** The head of an `mcp` request, whose argument line is `<token> <url>` and whose body is one JSON-RPC message. */
+export const WSL_MCP_REQUEST_HEAD = 'mcp';
+
+/**
+ * The variable the `mcp` server reads the session's MCP token from. Every
+ * adapter that gives its CLI the token by environment uses this name, and the
+ * CLI hands it to the stdio server (Claude through the server's `env`, Codex
+ * through `env_vars`), so the token never travels in argv.
+ */
+export const WSL_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
 
 /** How long the script waits for an answer, in 10 ms tries, before it prints nothing. */
 const REPLY_WAIT_TRIES = 1000;
@@ -106,6 +125,32 @@ export const WSL_HOOK_SCRIPT = [
   '  status)',
   '    target=$1',
   '    cat > "$target.$$.tmp" && mv -f "$target.$$.tmp" "$target"',
+  '    ;;',
+  `  ${WSL_MCP_REQUEST_HEAD})`,
+  '    # A stdio MCP server: a JSON-RPC message per line in, the answer out. A',
+  '    # tool call can run for minutes, so the wait slows after 2 s and again',
+  '    # after 12 s, and ends once the CLI that started this server is gone.',
+  '    # The line goes in by a here-document, not a pipe: a pipe would run',
+  '    # publish in a subshell and lose the $name it sets.',
+  '    url=$1',
+  '    while IFS= read -r line || [ -n "$line" ]; do',
+  '      [ -n "$line" ] || continue',
+  `      publish requests req ${WSL_MCP_REQUEST_HEAD} "\${${WSL_MCP_TOKEN_ENV}:-} $url" <<KANGENTIC_MCP_LINE || continue`,
+  '$line',
+  'KANGENTIC_MCP_LINE',
+  '      response="$dir/responses/$name.res"',
+  '      tries=0',
+  '      pause=0.01',
+  '      while [ ! -f "$response" ]; do',
+  '        tries=$((tries + 1))',
+  '        [ "$tries" -eq 200 ] && pause=0.05',
+  '        [ "$tries" -eq 400 ] && pause=0.25',
+  '        if [ "$tries" -gt 400 ] && [ -d /proc/self ] && [ ! -d "/proc/$PPID" ]; then exit 0; fi',
+  '        sleep "$pause"',
+  '      done',
+  '      cat "$response"',
+  '      rm -f "$response"',
+  '    done',
   '    ;;',
   'esac',
   'exit 0',
@@ -213,6 +258,25 @@ export function wslHookEventCommand(paths: WslHookPaths, place: CliPlace, eventT
  */
 export function wslHookReplyCommand(paths: WslHookPaths, place: CliPlace, kind: WslHookReplyKind, encodedSpec: string): string {
   return [scriptHead(paths, place), 'reply', kind, encodedSpec].join(' ');
+}
+
+/**
+ * Whether a distro reaches Windows' loopback, so its CLI dials Kangentic's MCP
+ * URL itself: WSL's mirrored networking, where `127.0.0.1` in the distro is the
+ * host's. On the default NAT network it is the distro's own, and the CLI gets
+ * the stdio bridge (`wslMcpServerLaunch`) instead.
+ */
+export function wslReachesLoopback(place: CliPlace): boolean {
+  return place.facts.networkingMode === 'mirrored';
+}
+
+/**
+ * The stdio MCP server a distro CLI starts for Kangentic's tools: `sh <script>
+ * mcp <url>`, the script in the distro's view. The token is not here: the CLI
+ * passes it in the server's environment as `WSL_MCP_TOKEN_ENV`.
+ */
+export function wslMcpServerLaunch(paths: WslHookPaths, place: CliPlace, mcpServerUrl: string): { command: string; args: string[] } {
+  return { command: 'sh', args: [cliPathForTarget(paths.script, place), WSL_MCP_REQUEST_HEAD, mcpServerUrl] };
 }
 
 /** The status line command: the CLI's status JSON replaces `statusOutputPath` by a rename. */

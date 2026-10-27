@@ -83,6 +83,59 @@ describe('a Codex installed in a WSL distro: the command', () => {
   });
 });
 
+describe('a Codex installed in a WSL distro: Kangentic\'s MCP server', () => {
+  // On NAT networking the distro cannot reach this machine's loopback, so Codex
+  // starts the transport's stdio bridge, forwarding the token by name through
+  // `env_vars`: the token stays out of argv. Measured end to end against
+  // codex-cli 0.164.0 in Ubuntu: `mcpServerStatus/list` started the bridge,
+  // initialized and listed the tools. Red-green: emitting the url form for a
+  // NAT distro fails the first case; dropping the quote check passes a path
+  // Codex cannot be given safely.
+  function buildWithMcp(sessionId: string, cwd: string = workspace): string {
+    return new CodexCommandBuilder().buildCodexCommand({
+      codexPath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.nvm\\versions\\node\\v24.22.1\\bin\\codex',
+      taskId: 'task-1',
+      cwd,
+      permissionMode: 'acceptEdits',
+      shell: SHELL,
+      eventsOutputPath: path.join(cwd, '.kangentic', 'sessions', sessionId, 'events.jsonl'),
+      mcpServerEnabled: true,
+      mcpServerUrl: 'http://127.0.0.1:4000/mcp/project-1/session-1',
+      mcpServerToken: 'secret-token',
+      cliTarget: target,
+    });
+  }
+
+  it('starts the stdio bridge on NAT networking, with the token forwarded by name', () => {
+    const command = buildWithMcp('codex-mcp-nat');
+    const script = cliPathForTarget(wslHookPaths(path.join(workspace, '.kangentic', 'sessions', 'codex-mcp-nat')).script, target);
+
+    expect(command).toContain(quoteArg("mcp_servers.kangentic.command='sh'", SHELL));
+    expect(command).toContain(quoteArg(`mcp_servers.kangentic.args=['${script}','mcp','http://127.0.0.1:4000/mcp/project-1/session-1']`, SHELL));
+    expect(command).toContain(quoteArg("mcp_servers.kangentic.env_vars=['KANGENTIC_MCP_TOKEN']", SHELL));
+    expect(command).not.toContain('mcp_servers.kangentic.url');
+    expect(command).not.toContain('secret-token');
+    expect(new CodexCommandBuilder().buildCodexEnv({ codexPath: 'codex', taskId: 't', cwd: workspace, permissionMode: 'default', mcpServerEnabled: true, mcpServerUrl: 'x', mcpServerToken: 'secret-token' }))
+      .toEqual({ KANGENTIC_MCP_TOKEN: 'secret-token' });
+  });
+
+  it('dials the URL itself on mirrored networking', () => {
+    target = { ...target, facts: { ...target.facts, networkingMode: 'mirrored' } };
+    const command = buildWithMcp('codex-mcp-mirrored');
+
+    expect(command).toContain(quoteArg('mcp_servers.kangentic.url=http://127.0.0.1:4000/mcp/project-1/session-1', SHELL));
+    expect(command).not.toContain('mcp_servers.kangentic.command');
+  });
+
+  it('passes no bridge whose path Codex cannot be given safely', () => {
+    const awkward = path.join(workspace, "it's here");
+    fs.mkdirSync(awkward, { recursive: true });
+    const command = buildWithMcp('codex-mcp-quote', awkward);
+
+    expect(command).not.toContain('mcp_servers.kangentic');
+  });
+});
+
 describe('a Codex installed in a WSL distro: hook trust', () => {
   it('asks the distro\'s own binary, with its scratch home and folder in the distro\'s view', async () => {
     const definitions = codexHookDefinitions('wsl');
