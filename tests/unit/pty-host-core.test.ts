@@ -23,7 +23,14 @@ import {
   SPAWN_REQUEST_TIMEOUT_MS,
 } from '../../src/main/pty/host/root-pid-gate';
 import type { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
-import { BACKPRESSURE_HIGH_WATER, BACKPRESSURE_LOW_WATER, PENDING_HIGH_WATER, PENDING_LOW_WATER } from '../../src/main/pty/buffer/backpressure-controller';
+import {
+  BACKPRESSURE_HIGH_WATER,
+  BACKPRESSURE_LOW_WATER,
+  PENDING_HIGH_WATER,
+  PENDING_LOW_WATER,
+  STALE_PAUSE_CHECK_MS,
+  STALE_PAUSE_MS,
+} from '../../src/main/pty/buffer/backpressure-controller';
 import { setSyncSpanLabelSink } from '../../src/main/diagnostics/event-loop-lag';
 import { setMainExecutable } from '../../src/main/pty/host/host-exec';
 import { InProcessPtyHostTransport, PtyHostClient, RemotePty, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
@@ -285,6 +292,196 @@ describe('PtyHostCore', () => {
 
       expect(core.getDiagnostics().pipeline[0]).toMatchObject({ pendingBytes: 0, paused: false });
       expect(fake.pty.resume).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a pause no ack answers (a page whose terminals are gone keeps its port and its focus, task #912)', () => {
+    const READ = 'x'.repeat(64 * 1024);
+    const MAX_READS = Math.ceil(BACKPRESSURE_HIGH_WATER / READ.length) * 2;
+
+    /** Feed unacked PTY reads, a flush each, until the PTY has been paused `pauses` times. */
+    async function feedUntilPaused(fake: FakePty, pauses: number): Promise<void> {
+      for (let read = 0; read < MAX_READS && vi.mocked(fake.pty.pause).mock.calls.length < pauses; read++) {
+        fake.feed(READ);
+        await flush();
+      }
+    }
+
+    /** A session the test renderer shows and never acks, paused at the in-flight high water. */
+    async function pausedForNobody() {
+      const made = makeCore();
+      made.core.spawn(spawnParams());
+      made.core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+      await feedUntilPaused(made.fake, 1);
+      expect(made.fake.pty.pause).toHaveBeenCalledTimes(1);
+      expect(made.core.getDiagnostics().pipeline[0]).toMatchObject({ paused: true });
+      return made;
+    }
+
+    /**
+     * Watch the stale-pause check's timer. The core owns other timers too (the
+     * flush, the root-pid poll), so `vi.getTimerCount()` would count them; this
+     * follows only the intervals started at the check's own period. Install it
+     * before the session pauses and `restore()` it in a `finally`, inside the
+     * test, so the fake `setInterval` is back on the global before the outer
+     * `afterEach` turns the fake timers off.
+     */
+    function watchStalePauseCheck() {
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+      const started = (): unknown[] => setIntervalSpy.mock.results
+        .filter((_result, index) => setIntervalSpy.mock.calls[index][1] === STALE_PAUSE_CHECK_MS)
+        .map((result) => result.value as unknown);
+      return {
+        /** Every check interval started, running or since cleared. */
+        startedCount: (): number => started().length,
+        /** The check intervals started and not yet cleared. */
+        runningCount: (): number => {
+          const cleared = clearIntervalSpy.mock.calls.map((call) => call[0] as unknown);
+          return started().filter((handle) => !cleared.includes(handle)).length;
+        },
+        restore: (): void => {
+          setIntervalSpy.mockRestore();
+          clearIntervalSpy.mockRestore();
+        },
+      };
+    }
+
+    it('starts no stale-pause check while nothing is paused, however much a watched session emits', async () => {
+      const watch = watchStalePauseCheck();
+      try {
+        const { core, fake } = makeCore();
+        core.spawn(spawnParams());
+        core.handleCommand({ type: 'setRendererFocus', rendererId: TEST_RENDERER, sessionIds: ['session-1'] });
+
+        // Unacked output on a session a renderer shows, a quarter of the high
+        // water in all: the pause arms the check, the emit alone does not.
+        for (let read = 0; read < 4; read++) {
+          fake.feed(READ);
+          await flush();
+        }
+
+        const pipeline = core.getDiagnostics().pipeline[0];
+        // The output did reach the emit path, so a check armed per emit would show.
+        expect(pipeline.inFlightBytes).toBeGreaterThan(0);
+        expect(pipeline.paused).toBe(false);
+        expect(watch.startedCount()).toBe(0);
+      } finally {
+        watch.restore();
+      }
+    });
+
+    it('starts exactly one stale-pause check once a session pauses, and no second as it keeps emitting', async () => {
+      const watch = watchStalePauseCheck();
+      try {
+        const { core, fake } = await pausedForNobody();
+        expect(watch.startedCount()).toBe(1);
+        expect(watch.runningCount()).toBe(1);
+
+        const inFlightBefore = core.getDiagnostics().pipeline[0].inFlightBytes;
+        fake.feed(READ);
+        await flush();
+
+        // More paused output reached the emit path and found the check already armed.
+        expect(core.getDiagnostics().pipeline[0].inFlightBytes).toBeGreaterThan(inFlightBefore);
+        expect(watch.startedCount()).toBe(1);
+        expect(watch.runningCount()).toBe(1);
+      } finally {
+        watch.restore();
+      }
+    });
+
+    it('stops the stale-pause check once its release leaves nothing paused', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const watch = watchStalePauseCheck();
+      try {
+        const { core, fake } = await pausedForNobody();
+        expect(watch.runningCount()).toBe(1);
+
+        // Past the stale bound plus a check period or two, as the release test below waits.
+        await vi.advanceTimersByTimeAsync(STALE_PAUSE_MS + STALE_PAUSE_CHECK_MS * 2);
+
+        expect(fake.pty.resume).toHaveBeenCalledTimes(1);
+        expect(core.getDiagnostics().pipeline[0]).toMatchObject({ paused: false });
+        // Nothing is paused, so the host runs no timer: cleared, and not replaced.
+        expect(watch.runningCount()).toBe(0);
+        expect(watch.startedCount()).toBe(1);
+      } finally {
+        watch.restore();
+        warn.mockRestore();
+      }
+    });
+
+    it('stops the stale-pause check on shutdown and starts none after it, though the session is still paused', async () => {
+      const watch = watchStalePauseCheck();
+      try {
+        const { core, fake } = await pausedForNobody();
+        expect(watch.runningCount()).toBe(1);
+
+        core.handleCommand({ type: 'shutdown' });
+        expect(watch.runningCount()).toBe(0);
+
+        // Shutdown kills nothing, so the PTY is still paused and still emitting
+        // into the flush: the emit path would re-arm the check without the guard.
+        const inFlightBefore = core.getDiagnostics().pipeline[0].inFlightBytes;
+        fake.feed(READ);
+        await flush();
+
+        const pipeline = core.getDiagnostics().pipeline[0];
+        expect(pipeline.paused).toBe(true);
+        expect(pipeline.inFlightBytes).toBeGreaterThan(inFlightBefore);
+        expect(watch.startedCount()).toBe(1);
+        expect(watch.runningCount()).toBe(0);
+      } finally {
+        watch.restore();
+      }
+    });
+
+    it('resumes the PTY once nothing has acked it for the stale bound, then pauses only at the raised high water until an ack', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const { core, fake, port } = await pausedForNobody();
+
+        // Paused, the PTY reads nothing, so no flush comes along: the host's timer has to notice.
+        await vi.advanceTimersByTimeAsync(STALE_PAUSE_MS - STALE_PAUSE_CHECK_MS);
+        expect(fake.pty.resume).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(STALE_PAUSE_CHECK_MS * 2);
+        expect(fake.pty.resume).toHaveBeenCalledTimes(1);
+        expect(core.getDiagnostics().pipeline[0]).toMatchObject({ paused: false, inFlightBytes: 0 });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('no ack for'));
+
+        // Released: twice the high water more, still unacked, stays under the raised cap.
+        for (let read = 0; read < MAX_READS; read++) {
+          fake.feed(READ);
+          await flush();
+        }
+        expect(fake.pty.pause).toHaveBeenCalledTimes(1);
+
+        // An ack shows a renderer consuming again, and the normal high water is back.
+        port.send({ type: 'ack', sessionId: 'session-1', bytes: READ.length });
+        await feedUntilPaused(fake, 2);
+        expect(fake.pty.pause).toHaveBeenCalledTimes(2);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('never releases a pause its renderer keeps acking, however long it lasts', async () => {
+      const { fake, port } = await pausedForNobody();
+      // Three times the bound in all, an ack every 5 s, each far short of the low water.
+      for (let step = 0; step < 6; step++) {
+        await vi.advanceTimersByTimeAsync(STALE_PAUSE_MS / 2);
+        port.send({ type: 'ack', sessionId: 'session-1', bytes: 1 });
+      }
+      expect(fake.pty.resume).not.toHaveBeenCalled();
+    });
+
+    it('stops looking on shutdown', async () => {
+      const { core, fake } = await pausedForNobody();
+      core.handleCommand({ type: 'shutdown' });
+      await vi.advanceTimersByTimeAsync(STALE_PAUSE_MS * 2);
+      // The timer went with the shutdown, so the session stays as main left it.
+      expect(fake.pty.resume).not.toHaveBeenCalled();
     });
   });
 

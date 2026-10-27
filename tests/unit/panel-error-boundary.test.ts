@@ -35,6 +35,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
 import { PanelErrorBoundary } from '../../src/renderer/components/PanelErrorBoundary';
 import { ErrorBoundary } from '../../src/renderer/components/ErrorBoundary';
+import { isTerminalFocused, syncFocusedTerminals } from '../../src/renderer/utils/focused-terminals';
 
 interface BoundaryState {
   hasError: boolean;
@@ -75,10 +76,10 @@ function findByTestId(node: unknown, testId: string): ElementLike | null {
 }
 
 /** See file header: stubs setState with a shallow-merge so handleRetry's real body is observable. */
-function withWorkingSetState(
-  instance: PanelErrorBoundary,
-): PanelErrorBoundary & { state: BoundaryState } {
-  const stateful = instance as unknown as PanelErrorBoundary & {
+function withWorkingSetState<Boundary extends PanelErrorBoundary | ErrorBoundary>(
+  instance: Boundary,
+): Boundary & { state: BoundaryState } {
+  const stateful = instance as unknown as Boundary & {
     state: BoundaryState;
     setState: (
       update: Partial<BoundaryState> | ((previous: BoundaryState) => Partial<BoundaryState>),
@@ -258,5 +259,64 @@ describe('componentDidCatch analytics wiring', () => {
     expect(context).not.toHaveProperty('componentStack');
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe('ErrorBoundary (the whole-window boundary)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    syncFocusedTerminals(new Set());
+  });
+
+  it('releases the window\'s terminal focus when it catches, in main and in the renderer registry', () => {
+    // Every terminal under it is gone while the page lives on. Left in place,
+    // the focus set kept the pty host posting output nobody acked, and the
+    // agent sat paused at the backpressure high water (task #912).
+    const setFocused = vi.fn(async () => undefined);
+    vi.stubGlobal('window', {
+      electronAPI: { sessions: { setFocused }, analytics: { trackRendererError: vi.fn() } },
+    });
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    syncFocusedTerminals(new Set(['session-1']));
+    expect(isTerminalFocused('session-1')).toBe(true);
+
+    const instance = new ErrorBoundary({ children: React.createElement('span', null, 'app') });
+    instance.componentDidCatch(new Error("Cannot read properties of null (reading 'getSnapshot')"), {
+      componentStack: '\n    at AppLayout (x)',
+    });
+
+    expect(setFocused).toHaveBeenCalledTimes(1);
+    expect(setFocused).toHaveBeenCalledWith([]);
+    expect(isTerminalFocused('session-1')).toBe(false);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('offers Reload, which starts a fresh module graph, beside Try again', () => {
+    const children = React.createElement('span', null, 'app');
+    const instance = withWorkingSetState(new ErrorBoundary({ children }));
+    instance.state = { ...instance.state, ...ErrorBoundary.getDerivedStateFromError(new Error('boom')) };
+
+    const output = instance.render();
+    const reload = findByTestId(output, 'root-error-reload');
+    const retry = findByTestId(output, 'root-error-retry');
+    expect(collectText(reload)).toContain('Reload');
+    expect(reload?.props.onClick).toBe(instance.handleReload);
+    expect(collectText(retry)).toContain('Try again');
+    expect(retry?.props.onClick).toBe(instance.handleRetry);
+    // handleReload is not invoked here: it needs a stubbed window.location (next test).
+
+    instance.handleRetry();
+    expect(instance.render()).toBe(children);
+  });
+
+  it('Reload reloads the page once, which starts a fresh module graph', () => {
+    const reload = vi.fn();
+    vi.stubGlobal('window', { location: { reload } });
+
+    const instance = new ErrorBoundary({ children: React.createElement('span', null, 'app') });
+    instance.handleReload();
+
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 });

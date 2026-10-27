@@ -79,6 +79,8 @@ function usePublishCommandTerminalFocus(projectId: string): void {
     // The catch-up edge first, then the publish, as the main window's coordinator orders them.
     syncFocusedTerminals(new Set(focusedIds));
     void window.electronAPI.sessions.setFocused(focusedIds);
+    // No cleanup: the window's `ErrorBoundary` releases the focus when its
+    // tree is gone (see useFocusedSessionsSync for why not an unmount effect).
   }, [focusedKey]);
 }
 

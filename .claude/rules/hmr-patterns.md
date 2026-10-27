@@ -63,6 +63,8 @@ front rather than reaching for ad-hoc fixes later.
    reset-on-HMR is intentional.
 5. Imperatively setting a class, attribute, or global handle React will not tear down? Pattern
    D: add the clear to the `vite:afterUpdate` handler.
+6. New or edited custom hook? Nothing to apply. The hook-signature plugin below gives it a Fast
+   Refresh signature, so do not hand-roll `$RefreshSig$` calls or a remount key for it.
 
 **Anti-patterns:** do not combine A and C on the same state; do not add an undocumented ad-hoc HMR
 workaround (surface the gap and extend this catalog deliberately); do not gate Pattern A behind
@@ -75,6 +77,24 @@ whose methods the edit may have renamed or removed. None of A to E reaches it. W
 instance can leave state held (a hold that only the instance's answer ends), bound the hold
 instead of trusting the answer: `useTerminal`'s `FRAME_HOLD_WATCHDOG_MS` ends a frame hold that
 a throw from the repaint wait (`terminal-repaint-wait.ts`) left open.
+
+**A custom hook's hook list reaches its callers only through `scripts/vite-refresh-hook-signatures.mjs`.**
+Fast Refresh remounts a component when its signature changes, and a caller's signature includes
+each custom hook's own. With Vite 8 and plugin-react 6, a hook outside a component module had
+none. Vite runs the refresh transform only on a `.tsx` file or one that imports the JSX runtime.
+The refresh wrapper also defines `$RefreshSig$` only in a module that registers a component, so
+everywhere else the call hits the preamble's no-op. A hook that gained a React hook therefore left
+its caller's state in place, and every later hook read the wrong slot. In task #912, one selector
+added to `useDictation` threw "Cannot read properties of null (reading 'getSnapshot')" in
+AppLayout, the root boundary took the window down, and an agent stalled behind it. The plugin
+marks each `.ts` hook module and defines `$RefreshSig$` where the wrapper did not. Every renderer
+dev server registers it: `vite.config.mts`, `scripts/worktree-vite-config.js` and the probe. A
+hook-list change now remounts the caller. So does renaming a hook's result variable, because a
+signature is keyed on each call and its binding, as for a component's own hooks. For a hook
+AppLayout calls, that is a whole-window remount and every Browser pane guest goes with it. A
+comment-only edit still refreshes in place. Replay a commit's edit with
+`node scripts/hmr-guest-probe.mjs --file <hook> --edit-from <commit>~1`, and add
+`--no-hook-signatures` to see it land without the plugin.
 
 ## Enforcement (self-maintaining)
 
@@ -92,6 +112,13 @@ a throw from the repaint wait (`terminal-repaint-wait.ts`) left open.
   cannot create a runtime edge. Runs in CI via `npm run test:unit`.
 - **Review:** the `hmr-parity` agent audits all five patterns; `hmr-integrity` is the narrow
   Pattern B store-registration check.
+
+- **Test (hook signatures):** `tests/unit/vite-refresh-hook-signatures.test.ts` runs a `.ts` hook
+  module, a hook-only `.tsx` module and a component module through a real dev server with and
+  without the plugin. Without it, the first gets no signature and the second gets only the no-op.
+  With it, each defines exactly one `$RefreshSig$`. The test also fails on a renderer `.ts` module
+  that exports a hook the plugin does not mark, and on a renderer dev config that does not
+  register the plugin. Runs in CI via `npm run test:unit`.
 
 - **Test (hook-shaped locals):** `tests/unit/hook-shaped-locals.test.ts` fails on any INDENTED
   `const`/`let` whose name starts with `use` + an uppercase letter, under `src/renderer/**`.

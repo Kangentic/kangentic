@@ -24,6 +24,17 @@
  * for an on-screen flood, the same climb that crashed the host with "Invalid
  * string length" off screen. `recordPending` pauses on that backlog too, and a
  * paused session resumes only once BOTH counts are low.
+ *
+ * A pause that no ack answers is released (`releaseStalePauses`). A renderer
+ * whose React tree was gone but whose page lived on (the root error boundary
+ * after a dev hot update, task #912) kept its port and its focus set, so the
+ * host posted to an xterm that no longer existed, nothing acked, and the agent
+ * sat paused for ten minutes. A paused session with no ack for `STALE_PAUSE_MS`
+ * is resumed with its in-flight reset and its high water raised to
+ * `RELEASED_HIGH_WATER` until the next ack. A dead renderer then slows the
+ * agent only at the raised cap, once per stale window. A renderer that is alive
+ * but stalled past the window gets at most that much more before the host
+ * pauses again, not everything the agent writes while it is stalled.
  */
 
 export interface PauseResumeTarget {
@@ -49,23 +60,78 @@ export const BACKPRESSURE_LOW_WATER = 256 * 1024;
 export const PENDING_HIGH_WATER = 4 * 1024 * 1024;
 /** Resume once the pending buffer is down to about one flush slice. */
 export const PENDING_LOW_WATER = 256 * 1024;
+/**
+ * A paused session whose renderer has acked nothing for this long is released
+ * (see `RELEASED_HIGH_WATER`). A live renderer can go a while without acking, so this sits above
+ * every hold it bounds: a scrollback replay holds its output for at most
+ * `SCROLLBACK_WATCHDOG_MS` (5 s), a frame hold for `FRAME_HOLD_WATCHDOG_MS`
+ * (2 s), and a terminal mount was measured at up to about 6 s under a 25x CPU
+ * throttle (`terminal-arrival-focus.md`). Each ack restarts the clock.
+ */
+export const STALE_PAUSE_MS = 10_000;
+/** How often the host looks for a stale pause while any session is paused. */
+export const STALE_PAUSE_CHECK_MS = 1_000;
+/**
+ * The in-flight high water after a stale release, until the next ack. A dead
+ * renderer costs the agent one stale window per this many characters. A
+ * renderer that is alive but stalled past the window is sent at most this much
+ * before the host pauses again. Without a cap, a release posted at the flush's
+ * ~11 MB/s for as long as the stall lasted.
+ */
+export const RELEASED_HIGH_WATER = 8 * BACKPRESSURE_HIGH_WATER;
 
 interface BackpressureState {
   inFlight: number;
   pending: number;
   paused: boolean;
+  /** The last pause or ack: the clock a stale pause is measured from. */
+  lastProgressAtMs: number;
+  /** Released by `releaseStalePauses`: pauses at `releasedHighWater` until the next ack. */
+  released: boolean;
+}
+
+/** Every field defaults to the constant of the same name above, and `now` to `Date.now`. */
+export interface BackpressureOptions {
+  highWater?: number;
+  lowWater?: number;
+  pendingHighWater?: number;
+  pendingLowWater?: number;
+  now?: () => number;
+  stalePauseMs?: number;
+  releasedHighWater?: number;
+}
+
+/** A pause `releaseStalePauses` let go of. */
+export interface StalePauseRelease {
+  sessionId: string;
+  /** Characters in flight when it was released, none of them acked. */
+  inFlight: number;
+  /** How long since the pause or the last ack. */
+  idleMs: number;
 }
 
 export class BackpressureController {
   private state = new Map<string, BackpressureState>();
+  private readonly highWater: number;
+  private readonly lowWater: number;
+  private readonly pendingHighWater: number;
+  private readonly pendingLowWater: number;
+  private readonly now: () => number;
+  private readonly stalePauseMs: number;
+  private readonly releasedHighWater: number;
 
   constructor(
     private readonly getTarget: (sessionId: string) => PauseResumeTarget | null,
-    private readonly highWater: number = BACKPRESSURE_HIGH_WATER,
-    private readonly lowWater: number = BACKPRESSURE_LOW_WATER,
-    private readonly pendingHighWater: number = PENDING_HIGH_WATER,
-    private readonly pendingLowWater: number = PENDING_LOW_WATER,
-  ) {}
+    options: BackpressureOptions = {},
+  ) {
+    this.highWater = options.highWater ?? BACKPRESSURE_HIGH_WATER;
+    this.lowWater = options.lowWater ?? BACKPRESSURE_LOW_WATER;
+    this.pendingHighWater = options.pendingHighWater ?? PENDING_HIGH_WATER;
+    this.pendingLowWater = options.pendingLowWater ?? PENDING_LOW_WATER;
+    this.now = options.now ?? Date.now;
+    this.stalePauseMs = options.stalePauseMs ?? STALE_PAUSE_MS;
+    this.releasedHighWater = options.releasedHighWater ?? RELEASED_HIGH_WATER;
+  }
 
   /** Record bytes emitted to the renderer; pause the PTY if it falls behind. */
   recordEmitted(sessionId: string, bytes: number): void {
@@ -79,8 +145,44 @@ export class BackpressureController {
   acknowledge(sessionId: string, bytes: number): void {
     const entry = this.state.get(sessionId);
     if (!entry) return;
+    entry.lastProgressAtMs = this.now();
+    // A renderer is consuming again, so the normal high water is back. What
+    // was in flight at a release was zeroed then, and its acks still coming
+    // make the count run low by at most that much, briefly.
+    entry.released = false;
     entry.inFlight = Math.max(0, entry.inFlight - bytes);
     this.resumeIfCaughtUp(sessionId, entry);
+  }
+
+  /**
+   * Resume every session paused on in-flight bytes that nothing has acked for
+   * `stalePauseMs`, reset its in-flight, and raise its high water to
+   * `releasedHighWater` until the next ack. A session that reaches the raised
+   * cap with still no ack is released again one stale window later. A pause
+   * the host's own pending buffer still holds stays until `recordPending` sees
+   * it drained, because that one protects the host itself.
+   */
+  releaseStalePauses(): StalePauseRelease[] {
+    const nowMs = this.now();
+    const released: StalePauseRelease[] = [];
+    for (const [sessionId, entry] of this.state) {
+      if (!entry.paused || entry.inFlight <= this.lowWater) continue;
+      const idleMs = nowMs - entry.lastProgressAtMs;
+      if (idleMs < this.stalePauseMs) continue;
+      released.push({ sessionId, inFlight: entry.inFlight, idleMs });
+      entry.inFlight = 0;
+      entry.released = true;
+      this.resumeIfCaughtUp(sessionId, entry);
+    }
+    return released;
+  }
+
+  /** Whether any session is paused, which is when a stale pause is possible. */
+  hasPausedSession(): boolean {
+    for (const entry of this.state.values()) {
+      if (entry.paused) return true;
+    }
+    return false;
   }
 
   /** The host's pending (not yet flushed) buffer is now `chars` long; pause
@@ -124,7 +226,7 @@ export class BackpressureController {
   private entryFor(sessionId: string): BackpressureState {
     let entry = this.state.get(sessionId);
     if (!entry) {
-      entry = { inFlight: 0, pending: 0, paused: false };
+      entry = { inFlight: 0, pending: 0, paused: false, lastProgressAtMs: this.now(), released: false };
       this.state.set(sessionId, entry);
     }
     return entry;
@@ -132,8 +234,11 @@ export class BackpressureController {
 
   private pauseIfBehind(sessionId: string, entry: BackpressureState): void {
     if (entry.paused) return;
-    if (entry.inFlight < this.highWater && entry.pending < this.pendingHighWater) return;
-    if (this.tryPause(sessionId)) entry.paused = true;
+    const highWater = entry.released ? this.releasedHighWater : this.highWater;
+    if (entry.inFlight < highWater && entry.pending < this.pendingHighWater) return;
+    if (!this.tryPause(sessionId)) return;
+    entry.paused = true;
+    entry.lastProgressAtMs = this.now();
   }
 
   private resumeIfCaughtUp(sessionId: string, entry: BackpressureState): void {

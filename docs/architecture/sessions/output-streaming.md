@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Output streaming
-description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, the frame hold, the manager-resize gate, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
+description: "How PTY output reaches xterm and a phone (each renderer's own port to the pty host for keystrokes and echo, 16 ms flush, prompt flush after input in the alt screen, a pending buffer bounded by a whole drain or a pause, a pause no ack answers released after 10 s, the root error boundary's focus release, 512 KB ring, tap), the echo's numbers under load, why alt-screen sessions replay the parsed grid, the grid-width mechanisms (deterministic fit, the frame hold, the manager-resize gate, resting grid, echo re-assert, repaint settle, held live output, repaint nudge, mouse pacing), and where a fullscreen agent's wheel-to-paint time goes."
 tags: [terminal, output, scrollback, replay, geometry]
 sources:
   - resource: src/main/pty/buffer/pty-buffer-manager.ts
@@ -17,6 +17,7 @@ sources:
   - resource: src/renderer/addons/fit-addon.ts
   - resource: src/renderer/hooks/useTerminal.ts
   - resource: src/renderer/utils/focused-terminals.ts
+  - resource: src/renderer/components/ErrorBoundary.tsx
   - resource: src/renderer/utils/repaint-nudge.ts
   - resource: src/renderer/utils/terminal-layout-transition.ts
   - resource: src/renderer/utils/terminal-repaint-wait.ts
@@ -249,6 +250,38 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   host, against 11.3 MB/s at 81% while its pending buffer grew.
   A phone-streamed session is sliced too, so a phone watching a flood now pauses the agent where
   the host used to crash.
+- **A pause no ack answers is released after 10 s.** A paused PTY reads nothing, so no flush
+  comes along to notice that its renderer stopped acking. Task #912 is the case: a dev hot
+  update threw under the root error boundary, and the page lived on with its port and its focus
+  set but no xterm. The host kept posting output, nothing acked, and the agent and the phone's
+  mirror sat paused for 10 minutes until a reload. The host now runs a 1 s check while any
+  session is paused (`STALE_PAUSE_CHECK_MS`, an unref'd timer armed only then and cleared on
+  shutdown). `BackpressureController.releaseStalePauses` resumes a session paused on in-flight
+  bytes once it has gone `STALE_PAUSE_MS` (10 s) with no ack since the pause or the last ack. That
+  bound sits above every hold a live renderer makes without acking: the scrollback watchdog
+  (5 s), the frame hold (2 s), and mounts measured at up to 6 s under CPU throttle. The release
+  resets the session's in-flight and raises its high water to `RELEASED_HIGH_WATER` (8 M
+  characters, 8 times the normal one) until the next ack shows a renderer consuming again. A
+  dead renderer then costs the agent one 10 s wait per 8 M characters. A renderer that is alive
+  but stalled past 10 s gets at most that much more before the host pauses again. Without the
+  cap, the host posted at the flush's ~11 MB/s for as long as the stall lasted. The first ack
+  restores the normal high water and keeps counting what was sent while released, so a thawed
+  renderer works through that backlog before more output comes. A pause the pending buffer
+  holds stays, because that one protects the host.
+  Each release prints a `[pty-host]` warning, which reaches main's log, so a packaged build
+  records it too. Measured in a preview (2026-10-26), with a stand-in agent writing 640 KB/s
+  into a Command Terminal and the renderer held in a 16 s busy loop: paused at 1,055,377
+  characters in flight, released 10,104 ms later while the renderer was still frozen, and the
+  warning landed in the project log.
+- **The root error boundary releases its window's focus.** `ErrorBoundary.componentDidCatch`
+  publishes an empty focused set and empties the renderer's registry (`syncFocusedTerminals`), so
+  main stops routing output to a page whose terminals are gone. Try again remounts the tree, and
+  its publisher sends the set again as on a cold boot. The publishers themselves have no cleanup,
+  on purpose: Fast Refresh re-runs every effect, so an unmount cleanup would drop and restore
+  every focused session on each dev save. A `PanelErrorBoundary` is narrower and releases
+  nothing: one that catches inside a Command Terminal window unmounts that terminal while its
+  session stays in the window's focused set, and the 10 s release above is what keeps that
+  agent running.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
 - **Alt-screen sessions - and non-alt sessions whose byte ring spans an effective geometry
   change - replay the parsed grid, not the byte tail.** A raw byte replay is not a

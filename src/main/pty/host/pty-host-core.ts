@@ -24,7 +24,7 @@ import { PromptDraftLedger, type WriteOrigin } from '../prompt-draft-ledger';
 import { writeCarriesUserContent } from '../../../shared/terminal-input-content';
 import { PtyBufferManager } from '../buffer/pty-buffer-manager';
 import { TranscriptWriter, type TranscriptSink } from '../buffer/transcript-writer';
-import { BackpressureController } from '../buffer/backpressure-controller';
+import { BackpressureController, STALE_PAUSE_CHECK_MS } from '../buffer/backpressure-controller';
 import { ResizeManager } from '../lifecycle/resize-manager';
 import { FirstOutputTracker } from '../lifecycle/first-output-tracker';
 import { AgentOutputTracker } from '../lifecycle/agent-output-tracker';
@@ -313,6 +313,8 @@ export class PtyHostCore {
   private readonly bufferManager: PtyBufferManager;
   private readonly transcriptWriter: TranscriptWriter;
   private readonly backpressure: BackpressureController;
+  /** Looks for a pause no ack answers, armed only while a session is paused. */
+  private stalePauseTimer: ReturnType<typeof setInterval> | null = null;
   private readonly spawnPty: typeof nodePty.spawn;
   private readonly now: () => number;
   /** Set by `shutdown`: a quit's exits are main's kills, and a cleanup in flight stops waiting. */
@@ -351,6 +353,7 @@ export class PtyHostCore {
           const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
           this.backpressure.recordEmitted(sessionId, data.length);
           if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
+          this.armStalePauseCheck(sessionId);
         }
       },
       onDrain: (sessionId, data, endOffset) => {
@@ -372,6 +375,7 @@ export class PtyHostCore {
         const wasPaused = __KANGENTIC_DEV__ && this.backpressure.isPaused(sessionId);
         this.backpressure.recordPending(sessionId, chars);
         if (__KANGENTIC_DEV__ && !wasPaused && this.backpressure.isPaused(sessionId)) noteRoundTripStage(sessionId, 'pause', '');
+        this.armStalePauseCheck(sessionId);
       },
     });
     this.transcriptWriter = new TranscriptWriter(
@@ -381,11 +385,43 @@ export class PtyHostCore {
       },
       (projectId) => this.deps.transcriptSinkFor(projectId),
     );
-    this.backpressure = new BackpressureController((sessionId) => {
-      const ptyId = this.sessions.get(sessionId)?.livePtyId;
-      const entry = ptyId === null || ptyId === undefined ? undefined : this.ptys.get(ptyId);
-      return entry && !entry.exited ? entry.pty : null;
-    });
+    this.backpressure = new BackpressureController(
+      (sessionId) => {
+        const ptyId = this.sessions.get(sessionId)?.livePtyId;
+        const entry = ptyId === null || ptyId === undefined ? undefined : this.ptys.get(ptyId);
+        return entry && !entry.exited ? entry.pty : null;
+      },
+      { now: () => this.now() },
+    );
+  }
+
+  /**
+   * Start looking for a stale pause once `sessionId` is paused. A paused PTY
+   * reads nothing, so no flush comes along to notice that nothing acks it: a
+   * timer has to. Armed only while a session is paused, so an idle host runs
+   * none, and unref'd so it never holds the process open.
+   */
+  private armStalePauseCheck(sessionId: string): void {
+    if (this.stalePauseTimer || this.shuttingDown || !this.backpressure.isPaused(sessionId)) return;
+    this.stalePauseTimer = setInterval(() => this.checkStalePauses(), STALE_PAUSE_CHECK_MS);
+    this.stalePauseTimer.unref?.();
+  }
+
+  /** Resume what no renderer has acked for `STALE_PAUSE_MS` (see `releaseStalePauses`). */
+  private checkStalePauses(): void {
+    for (const release of this.backpressure.releaseStalePauses()) {
+      // Warned as well as traced: the trace ring is dev-only, and a packaged
+      // build is where a crashed page would otherwise stall an agent unseen.
+      console.warn(`[pty-host] session ${release.sessionId.slice(0, 8)} paused with ${release.inFlight} chars unacknowledged and no ack for ${release.idleMs} ms; resuming it with a raised high water until a renderer acknowledges again`);
+      traceTerminal(release.sessionId, 'backpressure-stale-release', { inFlight: release.inFlight, idleMs: release.idleMs });
+    }
+    if (!this.backpressure.hasPausedSession()) this.stopStalePauseCheck();
+  }
+
+  private stopStalePauseCheck(): void {
+    if (!this.stalePauseTimer) return;
+    clearInterval(this.stalePauseTimer);
+    this.stalePauseTimer = null;
   }
 
   // --- Requests -------------------------------------------------------------
@@ -971,6 +1007,7 @@ export class PtyHostCore {
         // after its exit-sequence grace (pty-teardown-grace), so killing here
         // would cut that grace short. Nothing writes the transcripts after this.
         this.shuttingDown = true;
+        this.stopStalePauseCheck();
         this.transcriptWriter.finalizeAll();
         this.disposeProcessTable();
         // Raw PTYs are probes nobody waits on; end them now so the exit wait
