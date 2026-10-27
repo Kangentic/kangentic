@@ -1,7 +1,4 @@
-import fs from 'node:fs';
-import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
-import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-
+import { AgentDetector } from '../../shared/agent-detector';
 
 /**
  * Extract the Warp version from `oz dump-debug-info` output.
@@ -18,32 +15,18 @@ export function parseWarpVersion(output: string): string | null {
 }
 
 /**
- * Run `<binary> dump-debug-info` and extract the version.
- * Uses exec() on Windows (for .cmd shim support) and execFile() elsewhere.
- *
- * candidatePath flows from `which('oz')` or a user-configured override. On
- * Windows the `.cmd` shim case requires shell invocation, which means the
- * path is concatenated into a shell command string. Reject paths containing
- * shell metacharacters before invoking the shell so a crafted override path
- * cannot break out of the quoting.
+ * Oz CLI detector: the shared pipeline with Oz's own version command, so it
+ * caches per CLI path (two projects can name two installs), skips a dead npm
+ * shim, and probes an `oz` installed in a WSL distro inside that distro.
  */
-export async function execWarpVersion(candidatePath: string, timeout = 5000): Promise<string | null> {
-  try {
-    if (!fs.existsSync(candidatePath)) return null;
-    if (process.platform === 'win32') {
-      // Windows does not allow " in filenames, but other shell metacharacters
-      // (`&`, `|`, `^`, `%`, `<`, `>`, newline) are theoretically valid. Reject
-      // them rather than attempting to escape, since this path is a binary
-      // location and should never contain them in practice.
-      if (/["&|^%<>\n\r`$]/.test(candidatePath)) return null;
-      // windowsHide: true prevents the cmd.exe shell from briefly flashing
-      // a console window during the probe (visible in E2E test runs).
-      const { stdout, stderr } = await execAsync(`${quoteCmdExecutable(candidatePath)} dump-debug-info`, { timeout, windowsHide: true });
-      return parseWarpVersion(stdout || stderr || '');
-    }
-    const { stdout, stderr } = await execFileAsync(candidatePath, ['dump-debug-info'], { timeout });
-    return parseWarpVersion(stdout || stderr || '');
-  } catch {
-    return null;
+export class WarpDetector extends AgentDetector {
+  constructor() {
+    super({
+      binaryName: 'oz',
+      versionArgs: ['dump-debug-info'],
+      parseVersion: parseWarpVersion,
+      // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+      supportsWslCli: true,
+    });
   }
 }

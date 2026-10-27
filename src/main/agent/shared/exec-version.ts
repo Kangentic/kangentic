@@ -3,7 +3,8 @@ import { quoteCmdExecutable } from '../../../shared/shell-quote';
 
 
 /**
- * Run `candidatePath --version` and return { stdout, stderr }.
+ * Run `candidatePath --version` (or the CLI's own version command, `args`)
+ * and return { stdout, stderr }.
  *
  * On Windows, npm global installs create .cmd shims that require a shell
  * to interpret. We use exec() with a single command string (not execFile
@@ -17,10 +18,12 @@ import { quoteCmdExecutable } from '../../../shared/shell-quote';
 export async function execVersion(
   candidatePath: string,
   timeout = 5000,
+  args: readonly string[] = ['--version'],
 ): Promise<{ stdout: string; stderr: string }> {
   if (process.platform === 'win32') {
-    // Safe: candidatePath comes from which() or hardcoded fallback paths, never user input
-    return execAsync(`${quoteCmdExecutable(candidatePath)} --version`, { timeout, windowsHide: true });
+    // Safe: candidatePath comes from which() or hardcoded fallback paths, never
+    // user input; `args` are a detector's fixed words, never user input either.
+    return execAsync(`${quoteCmdExecutable(candidatePath)} ${args.join(' ')}`, { timeout, windowsHide: true });
   }
-  return execFileAsync(candidatePath, ['--version'], { timeout });
+  return execFileAsync(candidatePath, [...args], { timeout });
 }

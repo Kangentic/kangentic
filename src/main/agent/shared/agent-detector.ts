@@ -86,6 +86,13 @@ export interface AgentDetectorConfig {
   parseVersion(raw: string): string | null;
 
   /**
+   * The words that make the CLI print its version, for a CLI with no
+   * `--version` (Oz prints it from `dump-debug-info`). Fixed words, never user
+   * input: on Windows they join a shell command line. Default `--version`.
+   */
+  versionArgs?: readonly string[];
+
+  /**
    * True when the adapter runs a CLI installed inside a WSL distro (its
    * `supportsWslCli`). A configured `\\wsl.localhost\...` path is then probed
    * inside the distro; without it the path is reported unsupported.
@@ -371,7 +378,7 @@ export class AgentDetector {
       return { found: false, path: overridePath, version: null, cliTarget, detectionError };
     }
 
-    const invocation = cliInvocationForTarget(target, ['--version']);
+    const invocation = cliInvocationForTarget(target, this.config.versionArgs ?? ['--version']);
     try {
       const output = await this.runWsl(invocation.file, invocation.args, {
         env: childProcessEnv({ WSL_UTF8: '1' }),
@@ -399,9 +406,10 @@ export class AgentDetector {
       if (!fs.existsSync(candidatePath)) {
         return { ok: false, reason: 'missing', detail: 'the file does not exist on disk' };
       }
+      const versionArgs = this.config.versionArgs;
       let output: { stdout: string; stderr: string };
       try {
-        output = await execVersion(candidatePath);
+        output = versionArgs ? await execVersion(candidatePath, undefined, versionArgs) : await execVersion(candidatePath);
       } catch (error) {
         // A timeout says the binary is slow, not that it is the wrong one, and
         // every agent is probed at once at boot: a CLI answering in 1.3 s alone
@@ -411,7 +419,9 @@ export class AgentDetector {
           return { ok: false, reason: 'probe-failed', detail: describeProbeError(error) };
         }
         try {
-          output = await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS);
+          output = versionArgs
+            ? await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS, versionArgs)
+            : await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS);
         } catch (retryError) {
           return { ok: false, reason: 'probe-failed', detail: describeProbeError(retryError) };
         }
