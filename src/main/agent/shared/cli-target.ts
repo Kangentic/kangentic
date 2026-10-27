@@ -2,6 +2,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseWslUncPath, toForwardSlash, toWslPath } from '../../../shared/paths';
 import type { StoredCliTarget } from '../../../shared/types';
+import { childProcessEnv } from '../../shared/child-env';
+import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
+import { execFileAsync } from '../../utility-process/off-main-exec';
 import { resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
 
 /**
@@ -162,23 +165,66 @@ export function wslExecutablePath(): string {
   return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe');
 }
 
+/** How a CLI in a distro is started outside a terminal: the program, its arguments, and the environment to give it. */
+export interface CliInvocation {
+  file: string;
+  args: string[];
+  /**
+   * The caller's variables, each listed in `WSLENV` (`/u`), which is the only
+   * way a Windows variable reaches a distro. Empty when the caller passed none.
+   * Merge it into the child's environment (`childProcessEnv`).
+   */
+  env: Record<string, string>;
+}
+
 /**
  * How to start the CLI outside a terminal (a version probe, `--help`, a
  * headless run): `wsl.exe -d <distro> -e env PATH=<interactive PATH> <cli>`.
  * Starting it directly, not through a shell, keeps rc output off a run whose
  * stdout is parsed, and the captured PATH still resolves a version-managed
- * node. `env` entries ride the same way, since Kangentic's environment does
- * not cross into the distro. Path-valued arguments must already be in the
- * distro's form (`cliPathForTarget`).
+ * node. The caller's variables cross through `WSLENV` rather than the command
+ * line, so a token never shows in the distro's process list, and their values
+ * must already be in the distro's form. So must every path-valued argument
+ * (`cliPathForTarget`).
  */
 export function cliInvocationForTarget(
   target: CliTarget,
   cliArgs: readonly string[],
   env: Record<string, string> = {},
-): { file: string; args: string[] } {
-  const envAssignments = Object.entries(env).map(([key, value]) => `${key}=${value}`);
+): CliInvocation {
+  const names = Object.keys(env);
   return {
     file: wslExecutablePath(),
-    args: ['-d', target.distro, '-e', 'env', `PATH=${target.facts.interactivePath}`, ...envAssignments, target.linuxCliPath, ...cliArgs],
+    args: ['-d', target.distro, '-e', 'env', `PATH=${target.facts.interactivePath}`, target.linuxCliPath, ...cliArgs],
+    env: names.length > 0 ? listInWslEnv(env, names, process.env.WSLENV) : {},
   };
+}
+
+export interface ExecCliForTargetOptions {
+  /** The Windows directory to start in; the distro sees it as its `/mnt` path. */
+  cwd?: string;
+  timeout: number;
+  maxBuffer?: number;
+  env?: Record<string, string>;
+}
+
+/**
+ * Run the CLI in its distro to completion and capture its output (`--help`, a
+ * model list, an auth probe). Rejects as `execFile` does, with `stdout` and
+ * `stderr` on the error; `describeWslFailure` turns one into the line to show.
+ */
+export function execCliForTarget(
+  target: CliTarget,
+  cliArgs: readonly string[],
+  options: ExecCliForTargetOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  const invocation = cliInvocationForTarget(target, cliArgs, options.env);
+  return execFileAsync(invocation.file, invocation.args, {
+    // `WSL_UTF8` makes wsl.exe write its own messages (a missing distro) as UTF-8.
+    env: childProcessEnv({ WSL_UTF8: '1', ...invocation.env }),
+    timeout: options.timeout,
+    windowsHide: true,
+    ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.maxBuffer ? { maxBuffer: options.maxBuffer } : {}),
+  });
 }

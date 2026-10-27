@@ -90,6 +90,25 @@ afterEach(() => {
 });
 
 describe('openStdinJsonSession', () => {
+  // Red-green: dropping `options.cliTarget` from the spawn call fails this.
+  it('starts its CLI where the adapter says it runs: the target reaches the spawn, null without one', () => {
+    const spawnProcess = vi.fn(() => new FakeChild() as unknown as ChildProcessWithoutNullStreams);
+    const target = {
+      kind: 'wsl' as const,
+      distro: 'Ubuntu',
+      linuxCliPath: '/home/dev/.local/bin/claude',
+      facts: {
+        distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as const,
+      },
+    };
+    open({ spawnProcess, cliTarget: target }).session.dispose();
+    open({ spawnProcess }).session.dispose();
+
+    expect(spawnProcess.mock.calls[0]).toEqual(['/bin/claude', ['--print'], '/scratch', undefined, target]);
+    expect(spawnProcess.mock.calls[1]).toEqual(['/bin/claude', ['--print'], '/scratch', undefined, null]);
+  });
+
   it('writes one line per turn and resolves at the result line, streaming as it goes', async () => {
     const { child, session } = open();
     await session.ready;

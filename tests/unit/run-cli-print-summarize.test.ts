@@ -30,6 +30,19 @@ vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
 }));
 
+// A CLI in a WSL distro reads its prompt file at the path the distro sees. The
+// conversion is marked here so that case runs on any OS: the real one maps a
+// drive path, and CI's temp folder is on no drive. This machine's runs (no
+// target) take the real function.
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    cliPathForTarget: (windowsPath: string, place: Parameters<typeof original.cliPathForTarget>[1]) =>
+      (place ? `/distro-view/${windowsPath.replace(/\\/g, '/')}` : original.cliPathForTarget(windowsPath, null)),
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Helper: build a fake child process
 // ---------------------------------------------------------------------------
@@ -1068,6 +1081,48 @@ describe('runCliPrintSummarize - a prompt delivered through a file', () => {
       expect(await resultPromise).toBe('the answer');
       // Gone once the call ends: it carries the user's history.
       expect(fs.existsSync(promptPath)).toBe(false);
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Red-green: handing over `promptFilePath` unconverted fails the last
+  // argument; not passing the target to spawnCli fails the command.
+  it('runs a CLI in a WSL distro through wsl.exe and names the prompt file at the distro\'s path', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-prompt-file-wsl-test-'));
+    try {
+      const child = makeFakeChild();
+      mockSpawn.mockReturnValue(child);
+
+      const resultPromise = runCliPrintAnswer({
+        cliPath: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\agent',
+        args: ['--flag'],
+        prompt: 'a very long prompt',
+        cwd: directory,
+        promptVia: 'file',
+        promptFileFlag: '--prompt-file',
+        cliTarget: {
+          kind: 'wsl',
+          distro: 'Ubuntu',
+          linuxCliPath: '/home/dev/.local/bin/agent',
+          facts: {
+            distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+            uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat',
+          },
+        },
+      });
+
+      const [command, spawnArgs] = mockSpawn.mock.calls[0] as [string, string[]];
+      const promptPath = path.join(directory, 'kangentic-prompt.md');
+      expect(command.toLowerCase().endsWith('wsl.exe')).toBe(true);
+      expect(spawnArgs.slice(-4)).toEqual([
+        '/home/dev/.local/bin/agent', '--flag', '--prompt-file', `/distro-view/${promptPath.replace(/\\/g, '/')}`,
+      ]);
+      expect(fs.readFileSync(promptPath, 'utf-8')).toBe('a very long prompt');
+
+      child.stdout.emit('data', Buffer.from('the answer'));
+      child.emit('close', 0);
+      expect(await resultPromise).toBe('the answer');
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
     }

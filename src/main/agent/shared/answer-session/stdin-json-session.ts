@@ -16,6 +16,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import type { AnswerSession } from '../../agent-adapter';
 import { spawnCli, stderrExcerpt, stopCli } from '../cli-print';
+import type { CliTarget } from '../cli-target';
 import {
   ANSWER_STREAM_OUTPUT_BUDGET,
   ANSWER_TIMEOUT_MS,
@@ -58,8 +59,20 @@ export interface StdinJsonSessionOptions {
   extractAnswer: (turnStdout: string) => string;
   turnTimeoutMs?: number;
   turnOutputBudget?: number;
+  /**
+   * Where the CLI runs when it is not this machine (a WSL distro), as
+   * `RunCliPrintOptions.cliTarget`. Paths in `args` and values in `env` are the
+   * adapter's to convert.
+   */
+  cliTarget?: CliTarget | null;
   /** Test seam for the spawn. */
-  spawnProcess?: (cliPath: string, args: string[], cwd: string, env?: Record<string, string>) => CliChildProcess;
+  spawnProcess?: (
+    cliPath: string,
+    args: string[],
+    cwd: string,
+    env?: Record<string, string>,
+    cliTarget?: CliTarget | null,
+  ) => CliChildProcess;
 }
 
 interface ActiveTurn {
@@ -80,7 +93,7 @@ export function openStdinJsonSession(options: StdinJsonSessionOptions): AnswerSe
   const spawnProcess = options.spawnProcess ?? spawnCli;
   const turnTimeoutMs = options.turnTimeoutMs ?? ANSWER_TIMEOUT_MS;
   const turnOutputBudget = options.turnOutputBudget ?? ANSWER_STREAM_OUTPUT_BUDGET;
-  const child = spawnProcess(options.cliPath, options.args, options.cwd, options.env);
+  const child = spawnProcess(options.cliPath, options.args, options.cwd, options.env, options.cliTarget ?? null);
 
   let alive = true;
   let disposed = false;

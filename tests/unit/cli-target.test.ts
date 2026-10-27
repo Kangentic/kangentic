@@ -3,14 +3,21 @@
  * A null target must give exactly what the code gave before a target existed;
  * a WSL target gives the distro's view. Pure, so it runs on Linux CI.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import os from 'node:os';
+
+const execFileAsyncMock = vi.hoisted(() => vi.fn(async () => ({ stdout: 'usage', stderr: '' })));
+vi.mock('../../src/main/utility-process/off-main-exec', () => ({
+  execFileAsync: execFileAsyncMock,
+}));
+
 import {
   cliEnvValue,
   cliHomeDir,
   cliInvocationForTarget,
   cliPathForTarget,
   cliPlatformForTarget,
+  execCliForTarget,
   hostPathForTarget,
   parseStoredCliTarget,
   parseWslCliPath,
@@ -128,14 +135,55 @@ describe('path helpers', () => {
 });
 
 describe('cliInvocationForTarget', () => {
-  it('starts the CLI directly in the distro on the interactive PATH, with env riding as arguments', () => {
-    const invocation = cliInvocationForTarget(TARGET, ['--version'], { NO_COLOR: '1' });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('starts the CLI directly in the distro on the interactive PATH', () => {
+    const invocation = cliInvocationForTarget(TARGET, ['--version']);
     expect(invocation.file.toLowerCase().endsWith('wsl.exe')).toBe(true);
     expect(invocation.args).toEqual([
       '-d', 'Ubuntu', '-e', 'env',
       'PATH=/home/dev/.nvm/versions/node/v24.22.1/bin:/usr/bin',
-      'NO_COLOR=1',
       '/home/dev/.local/bin/claude', '--version',
     ]);
+    expect(invocation.env).toEqual({});
+  });
+
+  // A token on the command line shows in the distro's process list; WSLENV
+  // carries it into the distro without that.
+  it('carries the caller\'s variables through WSLENV, never on the command line', () => {
+    vi.stubEnv('WSLENV', 'USERPROFILE/p');
+    const invocation = cliInvocationForTarget(TARGET, ['--version'], { KANGENTIC_MCP_TOKEN: 'secret-token', NO_COLOR: '1' });
+
+    expect(invocation.args.join(' ')).not.toContain('secret-token');
+    expect(invocation.args).not.toContain('NO_COLOR=1');
+    expect(invocation.env).toEqual({
+      KANGENTIC_MCP_TOKEN: 'secret-token',
+      NO_COLOR: '1',
+      WSLENV: 'USERPROFILE/p:KANGENTIC_MCP_TOKEN/u:NO_COLOR/u',
+    });
+  });
+});
+
+describe('execCliForTarget', () => {
+  it('runs the CLI in its distro through wsl.exe, with the variables in WSLENV and wsl.exe\'s own messages in UTF-8', async () => {
+    execFileAsyncMock.mockClear();
+    vi.stubEnv('WSLENV', '');
+    try {
+      await expect(execCliForTarget(TARGET, ['--help'], { timeout: 5_000, cwd: 'C:\\proj', env: { NO_COLOR: '1' } }))
+        .resolves.toEqual({ stdout: 'usage', stderr: '' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const [file, args, options] = execFileAsyncMock.mock.calls[0] as unknown as [string, string[], { env: Record<string, string>; cwd?: string; timeout: number }];
+    expect(file.toLowerCase().endsWith('wsl.exe')).toBe(true);
+    expect(args.slice(-2)).toEqual(['/home/dev/.local/bin/claude', '--help']);
+    expect(options.cwd).toBe('C:\\proj');
+    expect(options.timeout).toBe(5_000);
+    expect(options.env.WSL_UTF8).toBe('1');
+    expect(options.env.NO_COLOR).toBe('1');
+    expect(options.env.WSLENV).toBe('NO_COLOR/u');
   });
 });
