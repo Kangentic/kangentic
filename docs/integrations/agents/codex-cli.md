@@ -76,7 +76,7 @@ The pre-approval never overrules the user. An explicit `trust_level` already rec
 
 Path comparison is shared with the relocation migration (`config-toml.ts`), because Codex stores these keys in several interchangeable spellings (single vs double quotes, forward vs back slashes, and an optional `\\?\` long-path prefix) and a missed match would append a duplicate table, which makes `config.toml` unparsable for Codex itself.
 
-The entry is also **removed** when Kangentic deletes the worktree, via the adapter contract's `onWorktreeRemoved` hook (`removeWorktreeTrust`). Without that, a per-directory key that can never be inherited accumulates one dead table per task forever: one developer machine had reached 473 entries before this landed. Only a table whose sole key is `trust_level` is dropped, so anything the user or a future Codex added to it survives. `$CODEX_HOME` is honored on both the write and the removal, so Kangentic always targets the file Codex will actually read.
+The entry is also **removed** when Kangentic deletes the worktree, via the adapter contract's `onWorktreeRemoved` hook (`removeWorktreeTrust`). Without that, a per-directory key that can never be inherited accumulates one dead table per task forever: one developer machine had reached 473 entries before this landed. Only a table whose sole key is `trust_level` is dropped, so anything the user or a future Codex added to it survives. `$CODEX_HOME` is honored on both the write and the removal, so Kangentic always targets the file Codex will actually read. For a project whose Codex runs from a WSL distro, the removal also drops the table in the distro's `config.toml`, keyed by the `/mnt` path, while the distro runs.
 
 ## Launch Options
 

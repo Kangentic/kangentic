@@ -13,6 +13,7 @@ import os from 'node:os';
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
 import type { AgentInfo, SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
+import { cliPathForTarget, type CliPlace } from '../../src/main/agent/shared/cli-target';
 import type { PermissionMode } from '../../src/shared/types';
 import {
   agentDisplayName,
@@ -820,6 +821,27 @@ describe('Codex Adapter', () => {
       await expect(adapter.onWorktreeRemoved!(worktree)).resolves.toBeUndefined();
 
       expect(fs.readFileSync(configPath, 'utf-8')).not.toContain(`[projects.'${path.resolve(worktree)}']`);
+    });
+
+    it('drops the table a distro Codex\'s trust step wrote in the distro\'s config.toml, given that place', async () => {
+      const distroHome = path.join(trustHome, 'distro-home');
+      const place: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: distroHome, uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' },
+      };
+      const worktree = path.join(trustHome, 'project', '.kangentic', 'worktrees', '2');
+      await adapter.ensureTrust(worktree, place);
+      const distroConfig = path.join(distroHome, '.codex', 'config.toml');
+      const distroKey = `[projects.'${cliPathForTarget(path.resolve(worktree), place)}']`;
+      expect(fs.readFileSync(distroConfig, 'utf-8')).toContain(distroKey);
+
+      // The call for this machine leaves the distro's file alone.
+      await adapter.onWorktreeRemoved!(worktree);
+      expect(fs.readFileSync(distroConfig, 'utf-8')).toContain(distroKey);
+
+      await adapter.onWorktreeRemoved!(worktree, place);
+      expect(fs.readFileSync(distroConfig, 'utf-8')).not.toContain(distroKey);
     });
   });
 

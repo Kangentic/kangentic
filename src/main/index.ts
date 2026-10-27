@@ -1737,8 +1737,12 @@ app.whenReady().then(async () => {
   // path, one entry per task worktree). Registered as a listener rather than
   // imported inside the git module so that low-level module never reaches
   // into the agent registry. Wired here, before any project opens, so no
-  // removal path can run un-notified.
-  setWorktreeRemovedListener(notifyAdaptersWorktreeRemoved);
+  // removal path can run un-notified. The project's CLI paths say which
+  // adapters run from a WSL distro, whose own config holds their entry.
+  setWorktreeRemovedListener((worktreePath) => notifyAdaptersWorktreeRemoved(
+    worktreePath,
+    (projectPath) => getOptionalIpcContext()?.configManager.getEffectiveConfig(projectPath).agent.cliPaths ?? null,
+  ));
 
   // Symmetric BEFORE hook: release every fs.watch handle we hold under a
   // worktree ahead of deleting it. On Windows a directory watch whose target is

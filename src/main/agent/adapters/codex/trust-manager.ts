@@ -73,14 +73,19 @@ function projectRootForWorktree(resolvedPath: string): string | null {
  * Only a table whose sole key is `trust_level` is removed: anything else in
  * there was put there by the user or a future Codex, and is left alone even
  * though the directory is gone.
+ *
+ * For a Codex in a WSL distro (`place`), the table is the one
+ * `ensureWorktreeTrust` wrote in the distro's config.toml, keyed by the
+ * directory as the distro saw it.
  */
-export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
-  return withCodexConfigLock(() => removeWorktreeTrustSync(worktreePath));
+export async function removeWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withCodexConfigLock(() => removeWorktreeTrustSync(worktreePath, place));
 }
 
-function removeWorktreeTrustSync(worktreePath: string): void {
-  const tomlPath = configTomlPath();
-  const target = normalizeForCompare(path.resolve(worktreePath));
+function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  const tomlPath = configTomlPath(place);
+  const windowsPath = path.resolve(worktreePath);
+  const target = normalizeForCompare(place ? cliPathForTarget(windowsPath, place) : windowsPath);
 
   let content: string;
   try {

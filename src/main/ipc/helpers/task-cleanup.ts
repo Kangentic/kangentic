@@ -6,7 +6,8 @@ import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '..
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { parseStoredCliTarget } from '../../agent/shared/cli-target';
+import { parseStoredCliTarget, parseWslCliPath, type CliPlace } from '../../agent/shared/cli-target';
+import { isWslDistroRunning, resolveWslDistroFacts } from '../../agent/shared/wsl-distro';
 import type { IpcContext } from '../ipc-context';
 import { leftoverProcessReports, publishLeftoverProcesses } from './leftover-process-reports';
 import { getProjectRepos } from './project-repos';
@@ -209,6 +210,36 @@ export function scheduleDoneWorktreeRemovalRetry(
   timer.unref?.();
 }
 
+/** A project's effective `agent.cliPaths`, or null when it cannot be read. */
+export type ProjectCliPaths = (projectPath: string) => Readonly<Record<string, string | null | undefined>> | null;
+
+/** The project a Kangentic worktree belongs to: it lives at `<project>/.kangentic/worktrees/<slug>`. */
+function projectPathOfWorktree(worktreePath: string): string | null {
+  const worktreesFolder = path.dirname(path.resolve(worktreePath));
+  const kangenticFolder = path.dirname(worktreesFolder);
+  if (path.basename(worktreesFolder) !== 'worktrees' || path.basename(kangenticFolder) !== '.kangentic') return null;
+  return path.dirname(kangenticFolder);
+}
+
+/**
+ * The WSL distro an adapter's CLI runs in for the project a worktree belongs
+ * to, from the project's own CLI path, the setting its spawns read. Only while
+ * the distro runs: reading its share would start it, and a removal never
+ * starts one to tidy a file. Null on any other platform, for an adapter
+ * without WSL support, and for a CLI on this machine.
+ */
+async function wslPlaceOfWorktree(
+  adapter: { name: string; supportsWslCli?: boolean },
+  worktreePath: string,
+  cliPathsOf: ProjectCliPaths,
+): Promise<CliPlace | null> {
+  if (process.platform !== 'win32' || adapter.supportsWslCli !== true) return null;
+  const projectPath = projectPathOfWorktree(worktreePath);
+  const parsed = projectPath ? parseWslCliPath(cliPathsOf(projectPath)?.[adapter.name]) : null;
+  if (!parsed || !(await isWslDistroRunning(parsed.distro))) return null;
+  return { kind: 'wsl', distro: parsed.distro, facts: await resolveWslDistroFacts(parsed.distro) };
+}
+
 /**
  * Let every adapter drop the per-directory state it recorded for a worktree
  * Kangentic has just deleted (Codex's directory trust in
@@ -216,15 +247,24 @@ export function scheduleDoneWorktreeRemovalRetry(
  * so no agent is named here - see .claude/rules/agent-adapters-boundary.md,
  * and `onProjectRelocated` in project-relocate.ts for the same shape.
  *
+ * An adapter whose CLI the project runs from a WSL distro is called a second
+ * time with that place, so the entry its trust step wrote in the distro's own
+ * config goes too (`wslPlaceOfWorktree`).
+ *
  * Best-effort: the worktree is already gone, and a failure only leaves a
  * stale entry behind. It must never fail the cleanup.
  */
-export async function notifyAdaptersWorktreeRemoved(worktreePath: string): Promise<void> {
+export async function notifyAdaptersWorktreeRemoved(
+  worktreePath: string,
+  cliPathsOf: ProjectCliPaths = () => null,
+): Promise<void> {
   for (const adapterName of agentRegistry.list()) {
     const adapter = agentRegistry.get(adapterName);
     if (!adapter?.onWorktreeRemoved) continue;
     try {
       await adapter.onWorktreeRemoved(worktreePath);
+      const place = await wslPlaceOfWorktree(adapter, worktreePath, cliPathsOf);
+      if (place) await adapter.onWorktreeRemoved(worktreePath, place);
     } catch (error) {
       console.warn(`[WORKTREE] ${adapterName} onWorktreeRemoved failed (non-fatal):`, error);
     }
