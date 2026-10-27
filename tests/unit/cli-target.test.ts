@@ -210,6 +210,14 @@ describe('cliInvocationForTarget', () => {
     expect(invocation.env).toEqual({});
   });
 
+  it('keeps the distro\'s own PATH for a target read back from a session row, which captured none', () => {
+    const fromRow = targetOfPlace(placeFromStored(parseStoredCliTarget(serializeCliTarget(TARGET))));
+    expect(fromRow).not.toBeNull();
+    expect(cliInvocationForTarget(fromRow!, ['export', 'ses_1']).args).toEqual([
+      '-d', 'Ubuntu', '-e', 'env', '/home/dev/.local/bin/claude', 'export', 'ses_1',
+    ]);
+  });
+
   // A token on the command line shows in the distro's process list; WSLENV
   // carries it into the distro without that.
   it('carries the caller\'s variables through WSLENV, never on the command line', () => {
