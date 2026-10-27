@@ -42,6 +42,7 @@ export const WSL_ENV_KEYS = [
   'GROK_HOME',
   'COPILOT_HOME',
   'KIMI_CODE_HOME',
+  'QWEN_HOME',
   'XDG_CONFIG_HOME',
   'XDG_DATA_HOME',
   'XDG_STATE_HOME',

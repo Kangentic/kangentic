@@ -5,6 +5,7 @@ import {
   type UserTurnRecord,
 } from '../../shared/submitted-text-verifier';
 import { qwenChatsDir } from './session-history-parser';
+import type { CliPlace } from '../../shared/cli-target';
 
 /**
  * Qwen's `command-injection` verifier. CONFIRM-ONLY.
@@ -43,8 +44,8 @@ import { qwenChatsDir } from './session-history-parser';
  * the caller treats as "keep polling", and skipping the extra `existsSync`
  * saves a syscall on every 25ms poll.
  */
-export function resolveQwenSessionPath(agentSessionId: string, cwd: string): string {
-  return path.join(qwenChatsDir(cwd), `${agentSessionId}.jsonl`);
+export function resolveQwenSessionPath(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
+  return path.join(qwenChatsDir(cwd, place), `${agentSessionId}.jsonl`);
 }
 
 /**
@@ -105,7 +106,7 @@ export function extractQwenUserTurn(line: string): UserTurnRecord | null {
 
 export function createQwenCommandInjectionVerifier(): SubmissionVerifier {
   return createSubmittedTextSubmissionVerifier({
-    resolvePath: (agentSessionId, cwd) => resolveQwenSessionPath(agentSessionId, cwd),
+    resolvePath: (agentSessionId, cwd, place) => resolveQwenSessionPath(agentSessionId, cwd, place),
     extractUserTurn: extractQwenUserTurn,
   });
 }

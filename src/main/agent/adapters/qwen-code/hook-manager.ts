@@ -107,6 +107,14 @@ export interface QwenBuildHooksOptions {
    * session offered `kangentic_mark_background_service`.
    */
   backgroundShellHintCommand?: string | null;
+  /**
+   * Builds each event hook's command in place of `node <event-bridge>`: for a
+   * Qwen installed in a WSL distro, the transport's `wslHookEventCommand`,
+   * with the same event types and directives. Qwen passes the payload on
+   * stdin and closes it, which the transport's `event` mode reads. Absent:
+   * the node bridge, as before.
+   */
+  eventCommand?: (eventType: string, ...directives: string[]) => string;
 }
 
 /**
@@ -156,14 +164,22 @@ export const QWEN_BRIDGE_COPY_NAME = 'qwen-event-bridge.cjs';
 /** The background shell hint bridge's copy, for the same reason. */
 export const QWEN_HINT_BRIDGE_COPY_NAME = 'qwen-background-shell-hint-bridge.cjs';
 
-/** Build a single Qwen hook entry for the event bridge. */
-function bridgeEntry(eventBridge: string, eventsPath: string, eventType: string, ...directives: string[]): QwenHookEntry {
+/** Build a single Qwen hook entry for the event bridge, or the command `eventCommand` builds in its place. */
+function bridgeEntry(
+  eventBridge: string,
+  eventsPath: string,
+  eventCommand: QwenBuildHooksOptions['eventCommand'],
+  eventType: string,
+  ...directives: string[]
+): QwenHookEntry {
   return {
     matcher: '*',
     hooks: [{
       name: `kangentic-${eventType}`,
       type: 'command',
-      command: buildBridgeCommand(QWEN_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
+      command: eventCommand
+        ? eventCommand(eventType, ...directives)
+        : buildBridgeCommand(QWEN_HOOK_SHELL, eventBridge, eventsPath, eventType, ...directives),
     }],
   };
 }
@@ -210,7 +226,7 @@ export function buildHooks(
     const userEntries: unknown = userHooks[hookEvent];
     return [
       ...(Array.isArray(userEntries) ? userEntries : []),
-      bridgeEntry(eventBridge, eventsPath, eventType, ...directives),
+      bridgeEntry(eventBridge, eventsPath, options.eventCommand, eventType, ...directives),
     ];
   };
   // The session's mode at each prompt and turn end (SessionEvent.planMode),

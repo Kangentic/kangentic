@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { qwenHomeDir } from './qwen-home';
+import { cliPathForTarget, cliPlatformForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
 import {
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
+  type StoredCliTarget,
 } from '../../../../shared/types';
 
 /**
@@ -68,9 +70,11 @@ export class QwenSessionHistoryParser {
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
+    /** Where the CLI runs when it is not this machine (a WSL distro). */
+    cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
-    const directory = qwenChatsDir(cwd);
+    const directory = qwenChatsDir(cwd, placeFromStored(options.cliTarget ?? null));
     const filePath = path.join(directory, `${agentSessionId}.jsonl`);
 
     const maxAttempts = 10;
@@ -194,8 +198,11 @@ function toNumber(value: unknown): number | undefined {
  * internally - guarantees the test mkdir and the parser scan agree
  * byte-for-byte.
  */
-export function qwenChatsDir(cwd: string): string {
-  return path.join(qwenHomeDir(), 'projects', qwenProjectSlug(cwd), 'chats');
+export function qwenChatsDir(cwd: string, place: CliPlace | null = null): string {
+  // A Qwen in a WSL distro was given the `/mnt` form of the cwd, and slugs it
+  // as Linux does: case kept.
+  const slug = place ? qwenProjectSlug(cliPathForTarget(cwd, place), cliPlatformForTarget(place)) : qwenProjectSlug(cwd);
+  return path.join(qwenHomeDir(place), 'projects', slug, 'chats');
 }
 
 /**
@@ -204,9 +211,10 @@ export function qwenChatsDir(cwd: string): string {
  * Windows (case-insensitive NTFS) and replaces every non-alphanumeric
  * character with `-`. Exported so the relocation migration computes the
  * exact same `~/.qwen/projects/<slug>/` directory name the CLI uses.
+ * `platform` is the one the CLI runs on.
  */
-export function qwenProjectSlug(cwd: string): string {
-  const normalized = process.platform === 'win32' ? cwd.toLowerCase() : cwd;
+export function qwenProjectSlug(cwd: string, platform: NodeJS.Platform = process.platform): string {
+  const normalized = platform === 'win32' ? cwd.toLowerCase() : cwd;
   return normalized.replace(/[^a-zA-Z0-9]/g, '-');
 }
 

@@ -6,7 +6,15 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { backgroundShellHintCommandFor, offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
+import {
+  backgroundShellHintCommandFor,
+  offersMarkBackgroundService,
+  shippedHintBridgePath,
+  wslBackgroundShellHintCommandFor,
+} from '../../shared/background-command-hooks';
+import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import {
   buildHooks,
   QWEN_BACKGROUND_COMMAND_SPEC,
@@ -48,6 +56,13 @@ export interface QwenCommandOptions {
    * picks how Kangentic's MCP server is delivered (see `supportsMcpConfigFlag`).
    */
   cliVersion?: string | null;
+  /**
+   * A Qwen installed in a WSL distro (`CommandOptions.cliTarget`): named by the
+   * path the distro sees, its hooks run the WSL hook transport's script instead
+   * of the node bridge, and on NAT networking Kangentic's server is the
+   * transport's stdio bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /**
@@ -81,16 +96,26 @@ export function supportsMcpConfigFlag(cliVersion: string | null | undefined): bo
   return major > 0 || minor >= MCP_CONFIG_FLAG_MIN_MINOR;
 }
 
-/** Kangentic's own server entry, in Qwen's native shape (`httpUrl` is streamable HTTP). */
-function kangenticServerEntry(url: string, token: string): { httpUrl: string; headers: Record<string, string> } {
-  return { httpUrl: url, headers: { 'X-Kangentic-Token': token } };
+/**
+ * Kangentic's own server entry, in Qwen's native shape: `httpUrl` is
+ * streamable HTTP, and a stdio server (the WSL hook transport's bridge, for a
+ * distro on NAT networking) is `command`, `args` and `env`. The token rides
+ * the header or the bridge's environment, in a file, never argv.
+ */
+function kangenticServerEntry(server: KangenticMcpServer): Record<string, unknown> {
+  if (server.kind === 'stdio') return { command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } };
+  return { httpUrl: server.url, headers: { 'X-Kangentic-Token': server.token } };
 }
 
 export class QwenCommandBuilder {
   buildQwenCommand(options: QwenCommandOptions): string {
     const { shell } = options;
-    const parts = [quoteArg(options.qwenPath, shell)];
+    // A Qwen in a WSL distro is started by the path the distro sees; the PTY's
+    // cwd reaches it as its `/mnt` path.
+    const place = options.cliTarget ?? null;
+    const parts = [quoteArg(place ? place.linuxCliPath : options.qwenPath, shell)];
     const mcpDelivery = this.mcpDelivery(options);
+    const kangenticServer = mcpDelivery === 'none' ? null : this.kangenticServer(options);
     const writesSettings = this.shouldWriteMergedSettings(options);
 
     // Seed .git/info/exclude BEFORE any write so the settings.json
@@ -100,7 +125,7 @@ export class QwenCommandBuilder {
     // runs.
     this.seedGitExcludes(options, mcpDelivery, writesSettings);
     if (writesSettings) {
-      this.createMergedSettings(options, mcpDelivery);
+      this.createMergedSettings(options, mcpDelivery, kangenticServer);
     }
 
     // Permission mode mapping to Qwen Code --approval-mode flags.
@@ -143,10 +168,10 @@ export class QwenCommandBuilder {
 
     // Kangentic's MCP server, on a fresh start and on a resume alike. A file
     // path, never inline JSON, so the token stays out of the command line.
-    if (mcpDelivery === 'flag') {
-      const mcpConfigPath = this.writeMcpConfigFile(options);
+    if (mcpDelivery === 'flag' && kangenticServer) {
+      const mcpConfigPath = this.writeMcpConfigFile(options, kangenticServer);
       if (mcpConfigPath) {
-        parts.push('--mcp-config', quoteArg(toForwardSlash(mcpConfigPath), shell));
+        parts.push('--mcp-config', quoteArg(cliPathForTarget(mcpConfigPath, place), shell));
       }
     }
 
@@ -228,13 +253,30 @@ export class QwenCommandBuilder {
   }
 
   /**
+   * Kangentic's server for this spawn (`kangenticMcpServer`): the URL, or for
+   * a Qwen in a WSL distro on NAT networking the transport's bridge, prepared
+   * in the session's directory, whose relay the spawn attaches. Null for a
+   * distro build with no session directory, which every production spawn path
+   * supplies. A failed write of the bridge throws, as the settings write does.
+   */
+  private kangenticServer(options: QwenCommandOptions): KangenticMcpServer | null {
+    if (!options.mcpServerUrl || !options.mcpServerToken) return null;
+    const place = options.cliTarget ?? null;
+    const sessionFile = options.eventsOutputPath ?? options.statusOutputPath;
+    if (place && !sessionFile) return null;
+    // A Qwen on this machine dials the URL, so `directory` is not written then.
+    const directory = sessionFile ? path.dirname(sessionFile) : options.cwd;
+    return kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory });
+  }
+
+  /**
    * Write the session's `mcp.json` beside its status and events files and
    * return its path, or null (logged) when the build has no session directory,
    * which every production spawn path supplies.
    */
-  private writeMcpConfigFile(options: QwenCommandOptions): string | null {
+  private writeMcpConfigFile(options: QwenCommandOptions, server: KangenticMcpServer): string | null {
     const sessionFile = options.statusOutputPath ?? options.eventsOutputPath;
-    if (!sessionFile || !options.mcpServerUrl || !options.mcpServerToken) {
+    if (!sessionFile) {
       console.warn('[qwen] MCP server enabled but no session directory to write mcp.json into - skipping MCP wiring');
       return null;
     }
@@ -246,7 +288,7 @@ export class QwenCommandBuilder {
     fs.mkdirSync(sessionDir, { recursive: true });
     const mcpConfigPath = path.join(sessionDir, 'mcp.json');
     const mcpConfig = {
-      mcpServers: { kangentic: kangenticServerEntry(options.mcpServerUrl, options.mcpServerToken) },
+      mcpServers: { kangentic: kangenticServerEntry(server) },
     };
     // sync-write-ok: same reason as the mkdir above.
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
@@ -294,14 +336,25 @@ export class QwenCommandBuilder {
    * `removeHooks()` strips it on session exit / suspend. User-defined
    * `mcpServers` are preserved either way.
    */
-  private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery): void {
+  private createMergedSettings(options: QwenCommandOptions, mcpDelivery: QwenMcpDelivery, kangenticServer: KangenticMcpServer | null): void {
     const projectRoot = options.projectRoot || options.cwd;
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
     const merged: QwenSettings = { ...baseSettings };
+    const place = options.cliTarget ?? null;
 
-    if (eventsPath) {
+    if (options.eventsOutputPath && place) {
+      // A Qwen in a WSL distro may have no node, so its hooks publish through
+      // the WSL hook transport (same event types and directives), and the
+      // background shell hint through its `reply`. No bridge copy or events
+      // path from the environment is needed: the script finds its own folder.
+      const wslHooks = prepareWslHookTransport(path.dirname(options.eventsOutputPath));
+      merged.hooks = buildHooks('', '', baseSettings.hooks || {}, {
+        backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, wslHooks, place),
+        eventCommand: (eventType, ...directives) => wslHookEventCommand(wslHooks, place, eventType, ...directives),
+      });
+    } else if (eventsPath) {
       // On Windows a hook command reaches node through an escaped cmd line, and
       // no quoted path survives that (QWEN_HOOK_SHELL). The command then names
       // a copy of the bridge relative to the cwd Qwen runs hooks in, and the
@@ -331,10 +384,10 @@ export class QwenCommandBuilder {
     }
 
     const userMcpServers = baseSettings.mcpServers;
-    if (mcpDelivery === 'settings' && options.mcpServerUrl && options.mcpServerToken) {
+    if (mcpDelivery === 'settings' && kangenticServer) {
       merged.mcpServers = {
         ...(userMcpServers ?? {}),
-        kangentic: kangenticServerEntry(options.mcpServerUrl, options.mcpServerToken),
+        kangentic: kangenticServerEntry(kangenticServer),
       };
     } else if (userMcpServers) {
       merged.mcpServers = userMcpServers;

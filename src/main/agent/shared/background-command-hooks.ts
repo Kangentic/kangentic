@@ -10,7 +10,9 @@ import {
   type BackgroundLaunchDirective,
 } from './directive-builders';
 import { buildBackgroundShellHintCommand, type BackgroundShellHintSpecV2 } from './background-shell-hint-hook';
-import type { HookShell } from './hook-utils';
+import { encodeHookSpec, type HookShell } from './hook-utils';
+import type { CliPlace } from './cli-target';
+import { wslHookReplyCommand, type WslHookPaths } from './wsl-hook-transport';
 
 /**
  * Shared builders that turn an adapter's `BackgroundCommandSpec` into its
@@ -114,4 +116,22 @@ export function backgroundShellHintCommandFor(
   const hintSpec = backgroundShellHintSpecOf(spec);
   if (!hintSpec) return null;
   return buildBackgroundShellHintCommand(windowsShell, hintBridgePath, hintSpec);
+}
+
+/**
+ * The hint hook's command for a CLI installed in a WSL distro: the WSL hook
+ * transport's `reply`, which Kangentic answers with the hint bridge's own
+ * logic (`backgroundShellHintReply`), so a distro with no node gets the same
+ * hint. Null whenever `backgroundShellHintCommandFor` would be.
+ */
+export function wslBackgroundShellHintCommandFor(
+  options: Pick<CommandOptions, 'mcpServerEnabled' | 'mcpServerToken' | 'mcpServerUrl'>,
+  spec: BackgroundCommandSpec,
+  paths: WslHookPaths,
+  place: CliPlace,
+): string | null {
+  if (!offersMarkBackgroundService(options)) return null;
+  const hintSpec = backgroundShellHintSpecOf(spec);
+  if (!hintSpec) return null;
+  return wslHookReplyCommand(paths, place, 'background-shell-hint', encodeHookSpec(hintSpec));
 }

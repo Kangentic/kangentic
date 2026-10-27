@@ -11,6 +11,7 @@ import { migrateQwenProjectData } from './project-relocation';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -49,6 +50,8 @@ export class QwenAdapter implements AgentAdapter {
   // result, `task_stop` stops it, and a PostToolUse `additionalContext` reaches
   // the model (QWEN_BACKGROUND_COMMAND_SPEC, measured on 0.25.3).
   readonly backgroundCommands = { source: 'hooks', launchHint: true } as const;
+  /** A Qwen installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -74,13 +77,14 @@ export class QwenAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(workingDirectory: string): Promise<void> {
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // Qwen Code's folder-trust feature (inherited from upstream Gemini CLI)
     // is gated on security.folderTrust.enabled in ~/.qwen/settings.json.
     // When the user has opted in, pre-populate the worktree entry in
     // ~/.qwen/trustedFolders.json so the trust prompt does not block
-    // drag-to-spawn. When disabled (default), this is a no-op.
-    await ensureWorktreeTrust(workingDirectory);
+    // drag-to-spawn. When disabled (default), this is a no-op. A Qwen in a
+    // WSL distro reads both from the distro's Qwen directory.
+    await ensureWorktreeTrust(workingDirectory, place ?? null);
   }
 
   /**
@@ -90,8 +94,8 @@ export class QwenAdapter implements AgentAdapter {
    * per task forever. See `removeWorktreeTrust` for the two deliberate
    * asymmetries with the write path.
    */
-  async onWorktreeRemoved(worktreePath: string): Promise<void> {
-    await removeWorktreeTrust(worktreePath);
+  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
+    await removeWorktreeTrust(worktreePath, place ?? null);
   }
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -241,19 +245,24 @@ export class QwenAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    return QwenSessionHistoryParser.locate({ agentSessionId, cwd });
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return QwenSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    const filePath = locateQwenTranscriptFile(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const filePath = locateQwenTranscriptFile(agentSessionId, cwd, place ?? null);
     const entries = await parseQwenTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    return readQwenTranscriptPage(agentSessionId, locateQwenTranscriptFile(agentSessionId, cwd), request);
+  readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    return readQwenTranscriptPage(agentSessionId, locateQwenTranscriptFile(agentSessionId, cwd, place ?? null), request);
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
@@ -280,6 +289,8 @@ export class QwenAdapter implements AgentAdapter {
       args: ['--output-format', 'text', '--chat-recording=false', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
+      // A Qwen installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
@@ -306,6 +317,8 @@ export class QwenAdapter implements AgentAdapter {
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
+      // A Qwen installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error, and the absence of the flag is what
       // "the agent's own default" means to the CLI.

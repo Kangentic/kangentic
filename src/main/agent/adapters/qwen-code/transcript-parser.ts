@@ -5,6 +5,7 @@ import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { qwenChatsDir } from './session-history-parser';
+import type { CliPlace } from '../../shared/cli-target';
 
 /** A Qwen record without its own uuid is named by its line, so the tail, its notice and every page count lines. */
 const UUIDS_NUMBER_LINES = true;
@@ -158,9 +159,10 @@ function parseQwenRecord(agentSessionId: string, line: string, lineNumber: numbe
  * Build the absolute path to Qwen's session JSONL for a known session id and
  * cwd. The filename is exactly `<sessionId>.jsonl` (the adapter owns the id
  * via `--session-id`). Non-polling; the parser tolerates a missing file.
+ * `place`: a Qwen in a WSL distro keeps it in the distro (`qwenChatsDir`).
  */
-export function locateQwenTranscriptFile(agentSessionId: string, cwd: string): string {
-  return path.join(qwenChatsDir(cwd), `${agentSessionId}.jsonl`);
+export function locateQwenTranscriptFile(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
+  return path.join(qwenChatsDir(cwd, place), `${agentSessionId}.jsonl`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
