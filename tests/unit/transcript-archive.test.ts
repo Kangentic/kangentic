@@ -12,7 +12,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import {
@@ -25,6 +25,7 @@ import { parseClaudeTranscript, parseClaudeTranscriptWindow } from '../../src/ma
 import { resolveSessionTranscript, resolveTaskTranscript } from '../../src/main/agent/transcript-service';
 import { openTestDatabase } from './helpers/test-database';
 import type { TranscriptEntry } from '../../src/shared/types';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 
 const WINDOW_BYTES = 2000;
 const ALL = Number.MAX_SAFE_INTEGER;
@@ -81,7 +82,11 @@ interface Fixture {
   walked: string[];
 }
 
-function fixture(options: { conversations?: string[]; windowBytes?: number } = {}): Fixture {
+function fixture(options: {
+  conversations?: string[];
+  windowBytes?: number;
+  mayReadPlace?: (place: CliPlace | null) => Promise<boolean>;
+} = {}): Fixture {
   const directory = temporaryDirectory();
   const database = openTestDatabase();
   openDatabases.push(database);
@@ -106,6 +111,7 @@ function fixture(options: { conversations?: string[]; windowBytes?: number } = {
   };
   const archive = new TranscriptArchive({
     getDb: () => database, getAdapter: () => adapter, windowBytes: options.windowBytes ?? WINDOW_BYTES,
+    mayReadPlace: options.mayReadPlace,
   });
   return { database, archive, directory, transcriptPath: pathFor(conversations[0]), walked };
 }
@@ -281,6 +287,27 @@ describe('transcript archive', () => {
     const task = await resolveTaskTranscript(database, 'session-1');
     expect(task?.archivedAgentName).toBe('Claude Code');
     expect(task?.degraded).toBe(false);
+  });
+
+  // Reading a stopped WSL distro's share starts it, so neither walk touches a
+  // conversation there until the distro runs; then it is archived as any other.
+  it('leaves a conversation in a stopped WSL distro for a walk while it runs', async () => {
+    let running = false;
+    const mayReadPlace = vi.fn(async () => running);
+    const { database, archive, transcriptPath, walked } = fixture({ mayReadPlace });
+    database.prepare('UPDATE sessions SET cli_target = ? WHERE id = ?').run(
+      JSON.stringify({ kind: 'wsl', distro: 'Ubuntu', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu' }),
+      'session-1',
+    );
+    writeTranscript(transcriptPath, transcriptLines(2));
+
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('skipped');
+    expect(await archive.sweep('project-1', () => true)).toEqual({ archived: 0, purged: 0 });
+    expect(walked).toEqual([]);
+    expect(mayReadPlace.mock.calls[0][0]).toEqual(expect.objectContaining({ distro: 'Ubuntu' }));
+
+    running = true;
+    expect(await archive.archiveSession('project-1', 'session-1')).toBe('archived');
   });
 
   it('does nothing on a database without the archive tables', async () => {

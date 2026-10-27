@@ -42,16 +42,23 @@ const {
   mockGetProjectDb,
   capturedHistoryDeps,
   constructedRepositories,
+  isWslDistroRunningMock,
 } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockOn: vi.fn(),
   mockGetProjectDb: vi.fn(),
   capturedHistoryDeps: [] as unknown[],
   constructedRepositories: [] as Array<{ database: unknown }>,
+  isWslDistroRunningMock: vi.fn(async () => true),
 }));
 
 vi.mock('electron', () => ({
   ipcMain: { handle: mockHandle, on: mockOn },
+}));
+
+vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/agent/shared/wsl-distro')>()),
+  isWslDistroRunning: isWslDistroRunningMock,
 }));
 
 vi.mock('node:fs', () => ({
@@ -387,6 +394,32 @@ describe('registerAllIpc command terminal history deps', () => {
 
       expect(agentRegistryGet).toHaveBeenCalledWith('named-agent');
       expect(locateMock(adapter)).toHaveBeenCalledWith('conversation-6', '/mock/project-6', null);
+    });
+
+    // A conversation a WSL distro holds is looked for there. Looking while the
+    // distro is stopped would start it just to draw the list, so its row stays.
+    describe('a conversation in a WSL distro', () => {
+      const WSL_TARGET = JSON.stringify({ kind: 'wsl', distro: 'Ubuntu', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu' });
+
+      it('looks in the distro while it runs', async () => {
+        isWslDistroRunningMock.mockResolvedValue(true);
+        const adapter = makeAdapter(RESUMABLE_BY_ID, async () => null);
+        agentRegistryGet.mockReturnValue(adapter);
+
+        await expect(deps.conversationAvailable('resumable-agent', 'conversation-7', '/mock/project', WSL_TARGET)).resolves.toBe(false);
+
+        expect(locateMock(adapter)).toHaveBeenCalledWith('conversation-7', '/mock/project', expect.objectContaining({ distro: 'Ubuntu' }));
+      });
+
+      it('keeps the row without looking while the distro is stopped', async () => {
+        isWslDistroRunningMock.mockResolvedValue(false);
+        const adapter = makeAdapter(RESUMABLE_BY_ID, async () => null);
+        agentRegistryGet.mockReturnValue(adapter);
+
+        await expect(deps.conversationAvailable('resumable-agent', 'conversation-8', '/mock/project', WSL_TARGET)).resolves.toBe(true);
+
+        expect(locateMock(adapter)).not.toHaveBeenCalled();
+      });
     });
   });
 });

@@ -192,6 +192,19 @@ describe('assessResumeConversation - a CLI that ran in a WSL distro (#286)', () 
     writeStatusFile({ reportedPath: LINUX_TRANSCRIPT });
     await expect(assess({ records: [wslRecord()] })).resolves.toBe('never-started');
   });
+
+  // A conversation with turns reaches Claude's proof, which is handed paths
+  // the guard already mapped (and a row's path the session manager mapped as
+  // it arrived). Mapping one of those again names a file that is never there,
+  // which is a false `expired`: a fresh conversation in place of the resume.
+  it('resumes a conversation with turns whose file the distro holds, with its path mapped once', async () => {
+    writeStatusFile({ reportedPath: LINUX_TRANSCRIPT, currentUsage: TURN_USAGE, totalCostUsd: 0.12 });
+    const onShare = sharePath(LINUX_TRANSCRIPT);
+    fs.mkdirSync(path.dirname(onShare), { recursive: true });
+    fs.writeFileSync(onShare, '{"type":"user"}\n', 'utf8');
+
+    await expect(assess({ records: [{ ...wslRecord(), transcript_path: onShare }] })).resolves.toBe('unknown');
+  });
 });
 
 describe('assessResumeConversation - falls back to the SessionStart hook', () => {

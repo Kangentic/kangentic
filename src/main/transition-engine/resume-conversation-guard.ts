@@ -34,7 +34,7 @@ export type ResumeLineageRecord = Pick<
  * as it was otherwise, where a Linux path never confirms anything missing.
  */
 function reportedPathOnHost(candidate: string | null | undefined, place: CliPlace | null): string | null | undefined {
-  return candidate && place && candidate.startsWith('/') ? hostPathForTarget(candidate, place) : candidate;
+  return candidate ? hostPathForTarget(candidate, place) : candidate;
 }
 
 /** A record known only by its id: the verdict reads its session folder and nothing else. */

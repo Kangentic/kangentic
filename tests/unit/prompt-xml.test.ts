@@ -9,6 +9,7 @@ import {
 } from '../../src/main/agent/shared/prompt-xml';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../src/shared/background-shell-hold';
 import { toWslPath } from '../../src/shared/paths';
+import { cliPathForTarget, type CliPlace } from '../../src/main/agent/shared/cli-target';
 
 describe('mapHandoffSessionPath', () => {
   // A receiving CLI in a WSL distro opens the prior session's file by the
@@ -30,6 +31,51 @@ describe('mapHandoffSessionPath', () => {
   it('leaves a handoff with no session file alone', () => {
     const xml = buildHandoffXml({ sourceDisplayName: 'Codex CLI', sessionFilePath: null, targetHasMcpAccess: true });
     expect(mapHandoffSessionPath(xml, toWslPath)).toBe(xml);
+  });
+
+  // The transition engine maps the path only for a receiver in a distro
+  // (`cliPathForTarget` with its place); a receiver on this machine gets the
+  // path as the source's locator gave it, which for a distro source is the
+  // share path Windows opens. Red-green: mapping a path into another distro
+  // with `toWslPath` alone hands the receiver the source distro's Linux path,
+  // which in its own distro can name a different file.
+  describe('across this machine and WSL distros', () => {
+    const SHARE_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.claude\\projects\\-mnt-c-proj\\abc.jsonl';
+
+    function placeIn(distro: string): CliPlace {
+      return {
+        kind: 'wsl',
+        distro,
+        facts: {
+          distro,
+          homeLinux: '/home/dev',
+          homeUnc: `\\\\wsl.localhost\\${distro}\\home\\dev`,
+          uncRoot: `\\\\wsl.localhost\\${distro}`,
+          interactivePath: '/usr/bin',
+          env: {},
+          networkingMode: 'nat',
+        },
+      };
+    }
+
+    function handoffTo(sessionFilePath: string, receiver: CliPlace): string {
+      const xml = buildHandoffXml({ sourceDisplayName: 'Claude Code', sessionFilePath, targetHasMcpAccess: true });
+      return mapHandoffSessionPath(xml, (hostPath) => cliPathForTarget(hostPath, receiver));
+    }
+
+    it('hands a receiver in the same distro the Linux path of a distro source', () => {
+      expect(handoffTo(SHARE_PATH, placeIn('Ubuntu')))
+        .toContain('<session_history_path>/home/dev/.claude/projects/-mnt-c-proj/abc.jsonl</session_history_path>');
+    });
+
+    it('leaves the share path for a receiver in another distro', () => {
+      expect(handoffTo(SHARE_PATH, placeIn('Debian'))).toContain(`<session_history_path>${SHARE_PATH}</session_history_path>`);
+    });
+
+    it('hands a receiver in a distro the /mnt path of a source on this machine', () => {
+      expect(handoffTo('C:\\Users\\dev\\.codex\\sessions\\rollout.jsonl', placeIn('Ubuntu')))
+        .toContain('<session_history_path>/mnt/c/Users/dev/.codex/sessions/rollout.jsonl</session_history_path>');
+    });
   });
 });
 

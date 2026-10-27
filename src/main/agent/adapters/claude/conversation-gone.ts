@@ -47,7 +47,7 @@ export async function proveClaudeConversationGone(params: {
   const place = params.place ?? null;
   const fileName = `${params.agentSessionId}.jsonl`;
   const reportedPath = params.reportedPaths
-    .map((candidate) => (place && candidate.startsWith('/') ? hostPathForTarget(candidate, place) : candidate))
+    .map((candidate) => hostPathForTarget(candidate, place))
     .find((candidate) => path.isAbsolute(candidate) && path.basename(candidate) === fileName);
   if (!reportedPath) return false;
 

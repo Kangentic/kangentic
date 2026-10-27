@@ -31,7 +31,7 @@ import { writeTransaction } from '../../db/transaction';
 import { awaitWriteTurn } from '../write-budget';
 import { touchBounded } from '../../agent/shared/bounded-lru';
 import type { AgentAdapter } from '../../agent/agent-adapter';
-import { placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
+import { mayReadPlaceUnattended, placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
 import type { TranscriptEntry } from '../../../shared/types';
 
 const compress = promisify(brotliCompress);
@@ -56,6 +56,8 @@ export interface TranscriptArchiveDeps {
   getAdapter(sessionType: string): ArchiveAdapter | undefined;
   /** The walk's window. The indexer's 8 MiB, so a line the index reads the archive reads too. */
   windowBytes: number;
+  /** Whether a conversation's file may be read now without starting its WSL distro (`mayReadPlaceUnattended`). */
+  mayReadPlace?: (place: CliPlace | null) => Promise<boolean>;
 }
 
 export type ArchiveOutcome = 'archived' | 'unchanged' | 'missing-source' | 'unsupported' | 'skipped' | 'error';
@@ -93,7 +95,11 @@ export function hasArchiveTables(db: Database.Database): boolean {
 }
 
 export class TranscriptArchive {
-  constructor(private readonly deps: TranscriptArchiveDeps) {}
+  private readonly mayReadPlace: (place: CliPlace | null) => Promise<boolean>;
+
+  constructor(private readonly deps: TranscriptArchiveDeps) {
+    this.mayReadPlace = deps.mayReadPlace ?? mayReadPlaceUnattended;
+  }
 
   /**
    * Archive the conversation one session ran, by the session's id. A turn end,
@@ -155,6 +161,7 @@ export class TranscriptArchive {
       if (!shouldContinue()) return result;
       const adapter = this.deps.getAdapter(target.sessionType);
       if (!adapter?.parseTranscriptWindow) continue;
+      if (!(await this.mayReadPlace(target.place))) continue;
       const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
       if (!sourcePath) continue;
       const stat = await fs.promises.stat(sourcePath).catch(() => null);
@@ -218,6 +225,9 @@ export class TranscriptArchive {
   private async archiveConversation(db: Database.Database, target: ArchiveTarget): Promise<ArchiveOutcome> {
     const adapter = this.deps.getAdapter(target.sessionType);
     if (!adapter?.parseTranscriptWindow) return 'unsupported';
+    // A stopped WSL distro would start if its file were read; a later walk
+    // with the distro running archives it.
+    if (!(await this.mayReadPlace(target.place))) return 'skipped';
     const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
     if (!sourcePath) return 'missing-source';
     const stat = await fs.promises.stat(sourcePath).catch(() => null);
