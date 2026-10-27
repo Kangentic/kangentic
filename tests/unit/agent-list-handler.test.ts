@@ -76,7 +76,7 @@ type MockAdapter = {
   permissions: { mode: string; label: string }[];
   defaultPermission: string;
   detect: () => Promise<{ found: boolean; path: string | null; version: string | null }>;
-  probeAuth?: () => Promise<boolean | null>;
+  probeAuth?: (cliPath: string) => Promise<boolean | null>;
   discoverCapabilities?: (cliPath: string, forceRefresh?: boolean) => Promise<unknown>;
   modelDisplayName?: (modelId: string) => string | null;
   invalidateDetectionCache: () => void;
@@ -293,6 +293,21 @@ describe('AGENT_LIST IPC handler - probeAuth integration', () => {
     const results = await invokeAgentList();
 
     expect(results[0].authenticated).toBe(true);
+  });
+
+  it('probes the CLI path detect() found, so a project\'s own CLI path is the one asked', async () => {
+    const probeAuth = vi.fn(async (_cliPath: string) => true as boolean | null);
+    mockRegistryAdapters = [
+      makeAdapter({
+        name: 'grok',
+        detect: vi.fn(async () => ({ found: true, path: '/opt/project-grok/bin/grok', version: '1.0.0' })),
+        probeAuth,
+      }),
+    ];
+
+    await invokeAgentList();
+
+    expect(probeAuth).toHaveBeenCalledWith('/opt/project-grok/bin/grok');
   });
 
   it('sets authenticated to false when probeAuth resolves to false', async () => {

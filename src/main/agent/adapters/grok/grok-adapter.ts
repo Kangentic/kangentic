@@ -348,15 +348,14 @@ export class GrokAdapter implements AgentAdapter {
    * Auth probe via `grok models`, which prints "You are not authenticated."
    * from local state (no network round-trip observed; the model list comes
    * from grok's cache). Note grok currently serves a free tier without
-   * login, so `false` here means "not signed in", not "unusable".
+   * login, so `false` here means "not signed in", not "unusable". It asks
+   * the CLI the project detected, not the one on PATH.
    */
-  async probeAuth(): Promise<boolean | null> {
-    const info = await this.detector.detect();
-    if (!info.found || !info.path) return null;
+  async probeAuth(cliPath: string): Promise<boolean | null> {
     try {
       const output = process.platform === 'win32'
-        ? (await execAsync(`${quoteCmdExecutable(info.path)} models`, { timeout: 5000, windowsHide: true })).stdout
-        : (await execFileAsync(info.path, ['models'], { timeout: 5000 })).stdout;
+        ? (await execAsync(`${quoteCmdExecutable(cliPath)} models`, { timeout: 5000, windowsHide: true })).stdout
+        : (await execFileAsync(cliPath, ['models'], { timeout: 5000 })).stdout;
       return !/not authenticated/i.test(output);
     } catch {
       return null;

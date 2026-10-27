@@ -13,11 +13,9 @@
  * test in that shared file - the same constraint documented in
  * grok-capability-discovery-help-fallback.test.ts.
  *
- * The detector's own PATH-lookup / --version probe pipeline is stubbed via
- * a spy on `detector.detect` (the private-field-access pattern already
- * established in opencode-adapter-wiring.test.ts) rather than also mocking
- * `which` and exec-version: probeAuth's own `grok models` exec branch is
- * what is under test here, not detection.
+ * The probe is handed the CLI path the project detected (agent-list passes
+ * `detect()`'s result), so it must run that path, not whatever `grok` is on
+ * PATH: a project's own CLI path can name another install.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -32,21 +30,23 @@ vi.mock('node:util', () => ({
 
 import { execFile, exec } from 'node:child_process';
 import { GrokAdapter } from '../../src/main/agent/adapters/grok/grok-adapter';
-import type { AgentInfo } from '../../src/main/agent/agent-adapter';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
 
-/** Bypasses the real which()/--version pipeline; only probeAuth's own exec branch is under test. */
-function stubDetection(adapter: GrokAdapter, info: AgentInfo): void {
-  const detector = (adapter as unknown as { detector: { detect: () => Promise<AgentInfo> } }).detector;
-  vi.spyOn(detector, 'detect').mockResolvedValue(info);
-}
+const CLI_PATH = '/opt/project-grok/bin/grok';
 
 function setModelsOutput(stdout: string): void {
   const result = Promise.resolve({ stdout, stderr: '' });
   execMock.mockReturnValue(result);
   execFileMock.mockReturnValue(result);
+}
+
+/** The program the probe started, whichever exec form this platform uses. */
+function probedProgram(): string {
+  const execCall = execMock.mock.calls[0] as [string] | undefined;
+  const execFileCall = execFileMock.mock.calls[0] as [string] | undefined;
+  return execCall?.[0] ?? execFileCall?.[0] ?? '';
 }
 
 beforeEach(() => {
@@ -59,50 +59,29 @@ afterEach(() => {
 });
 
 describe('GrokAdapter.probeAuth', () => {
-  it('returns null without shelling out to `grok models` when the CLI is not detected', async () => {
-    const adapter = new GrokAdapter();
-    stubDetection(adapter, { found: false, path: null, version: null });
-
-    const result = await adapter.probeAuth();
-
-    expect(result).toBeNull();
-    expect(execMock).not.toHaveBeenCalled();
-    expect(execFileMock).not.toHaveBeenCalled();
+  it('runs `models` on the CLI path it is given', async () => {
+    setModelsOutput('grok-4.6\n');
+    await new GrokAdapter().probeAuth(CLI_PATH);
+    expect(probedProgram()).toContain(CLI_PATH);
+    expect(probedProgram().includes('models') || (execFileMock.mock.calls[0]?.[1] as string[] | undefined)?.includes('models')).toBe(true);
   });
 
   it('returns true when `grok models` succeeds without the "not authenticated" string', async () => {
-    const adapter = new GrokAdapter();
-    stubDetection(adapter, { found: true, path: '/usr/bin/grok', version: '1.0.0' });
     setModelsOutput('grok-4.6\ngrok-4-fast\n');
-
-    const result = await adapter.probeAuth();
-
-    expect(result).toBe(true);
+    expect(await new GrokAdapter().probeAuth(CLI_PATH)).toBe(true);
   });
 
   it('returns false when `grok models` reports the user is not authenticated', async () => {
-    const adapter = new GrokAdapter();
-    stubDetection(adapter, { found: true, path: '/usr/bin/grok', version: '1.0.0' });
     setModelsOutput('You are not authenticated. Run `grok login` to continue.\n');
-
-    const result = await adapter.probeAuth();
-
-    expect(result).toBe(false);
+    expect(await new GrokAdapter().probeAuth(CLI_PATH)).toBe(false);
   });
 
   it('matches the "not authenticated" string case-insensitively', async () => {
-    const adapter = new GrokAdapter();
-    stubDetection(adapter, { found: true, path: '/usr/bin/grok', version: '1.0.0' });
     setModelsOutput('NOT AUTHENTICATED\n');
-
-    const result = await adapter.probeAuth();
-
-    expect(result).toBe(false);
+    expect(await new GrokAdapter().probeAuth(CLI_PATH)).toBe(false);
   });
 
   it('returns null when the `grok models` invocation throws (timeout, ENOENT, ...)', async () => {
-    const adapter = new GrokAdapter();
-    stubDetection(adapter, { found: true, path: '/usr/bin/grok', version: '1.0.0' });
     const reject = (): Promise<{ stdout: string }> => {
       const promise = Promise.reject(new Error('ETIMEDOUT')) as Promise<{ stdout: string }>;
       promise.catch(() => {});
@@ -110,9 +89,6 @@ describe('GrokAdapter.probeAuth', () => {
     };
     execMock.mockImplementation(reject);
     execFileMock.mockImplementation(reject);
-
-    const result = await adapter.probeAuth();
-
-    expect(result).toBeNull();
+    expect(await new GrokAdapter().probeAuth(CLI_PATH)).toBeNull();
   });
 });
