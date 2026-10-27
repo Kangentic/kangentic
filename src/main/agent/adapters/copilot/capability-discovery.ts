@@ -10,7 +10,6 @@
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-import os from 'node:os';
 import path from 'node:path';
 import {
   listMostRecentDirs,
@@ -18,6 +17,7 @@ import {
   parseJsonlRecords,
 } from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
+import { copilotHomeDir } from './copilot-home';
 
 
 const HELP_TIMEOUT_MS = 5000;
@@ -109,7 +109,7 @@ const SESSION_START_HEAD_BYTES = 64 * 1024;
  */
 async function scanCopilotSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
-  const sessionsRoot = path.join(os.homedir(), '.copilot', 'session-state');
+  const sessionsRoot = path.join(copilotHomeDir(), 'session-state');
   const sessionDirs = await listMostRecentDirs(sessionsRoot, 10);
 
   for (const sessionDir of sessionDirs) {

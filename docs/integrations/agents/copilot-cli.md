@@ -8,6 +8,7 @@ sources:
   - resource: src/main/agent/adapters/copilot/detector.ts
   - resource: src/main/agent/adapters/copilot/command-builder.ts
   - resource: src/main/agent/adapters/copilot/hook-manager.ts
+  - resource: src/main/agent/adapters/copilot/copilot-home.ts
   - resource: src/main/agent/adapters/copilot/status-parser.ts
 ---
 # GitHub Copilot CLI
@@ -29,6 +30,8 @@ Per-session config is written to `<eventsOutputPath dir>/copilot-config/` and pa
 - `hooks/kangentic.json` holds the hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`) as `{ "version": 1, "hooks": ... }`. Copilot reads every `*.json` in `<COPILOT_HOME>/hooks/` as user hooks, and has since 0.0.422, so one file covers every version.
 - `settings.json` is a copy of the user's `~/.copilot/settings.json` plus the `statusLine` bridge and `banner: never`. Copilot 1.0.93 reads user settings only from this file.
 - `config.json` is a copy of the user's (signed-in account, trusted folders) with the same two settings for older versions. It never carries hooks: 1.0.8 through 1.0.92 read config.json hooks as well as the hooks folder, so hooks in both would fire twice. Earlier Kangentic versions wrote their hooks there, which 1.0.93 ignores.
+
+The user's Copilot home those copies come from is `$COPILOT_HOME` when set, else `~/.copilot` (`copilotHomeDir`, `copilot-home.ts`), the same folder `--config-dir` names for a session. The history verifier, the model scan, the answer run's session cleanup and the relocation pass read it too. Before, a user with `COPILOT_HOME` set got every session seeded without their sign-in. Only an absolute value is taken.
 
 The adapter tracks these directories keyed by the session's own id (`CommandOptions.ptySessionId`), so `removeHooks(directory, sessionId?)` cleans that session's directory and never the one of the task's next session. It deletes Kangentic's files one by one and never recursively, because Copilot keeps the session's `session-state/` in the same config home and the next resume by `--session-id` needs it. The project-delete sweep (no `sessionId`) cleans every directory recorded for its folder.
 

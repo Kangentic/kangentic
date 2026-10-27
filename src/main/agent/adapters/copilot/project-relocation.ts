@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { replacePathPrefix } from '../../../../shared/paths';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { copilotHomeDir } from './copilot-home';
 
 /**
  * Migrate GitHub Copilot CLI's per-session working directory when a Kangentic
@@ -26,7 +26,7 @@ export async function migrateCopilotProjectData(oldProjectPath: string, newProje
   const oldResolved = path.resolve(oldProjectPath);
   const newResolved = path.resolve(newProjectPath);
 
-  const sessionStateRoot = path.join(os.homedir(), '.copilot', 'session-state');
+  const sessionStateRoot = path.join(copilotHomeDir(), 'session-state');
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(sessionStateRoot, { withFileTypes: true });
