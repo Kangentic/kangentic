@@ -249,6 +249,11 @@ msgstr ""
 msgid "Analytics"
 msgstr ""
 
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgctxt "between agent names"
+msgid "and"
+msgstr ""
+
 #: src/renderer/components/settings/settings-card.tsx
 msgctxt "between two links"
 msgid "and"
@@ -620,6 +625,11 @@ msgstr ""
 msgid "Connected"
 msgstr ""
 
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgctxt "connection state"
+msgid "Connected"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Connecting…"
 msgstr ""
@@ -882,10 +892,6 @@ msgstr ""
 msgid "Display language"
 msgstr ""
 
-#: src/renderer/components/settings/tabs/McpServerTab.tsx
-msgid "Documentation"
-msgstr ""
-
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "Download failed"
@@ -951,6 +957,11 @@ msgstr ""
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
 msgid "Extension"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
+msgctxt "connection state"
+msgid "Failed"
 msgstr ""
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
@@ -1155,10 +1166,6 @@ msgstr ""
 msgid "How the relay works"
 msgstr ""
 
-#: src/renderer/components/settings/tabs/McpServerTab.tsx
-msgid "How the server works and what each tool takes."
-msgstr ""
-
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
 msgstr ""
@@ -1230,6 +1237,10 @@ msgstr ""
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
+msgstr ""
+
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "Kangentic runs {wslAgentList} from WSL."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
@@ -1362,6 +1373,10 @@ msgid "Maximum simultaneous toasts on screen"
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "MCP connection"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "MCP server"
 msgstr ""
 
@@ -1473,6 +1488,10 @@ msgstr ""
 msgid "No shortcuts configured. Add one below or choose a preset."
 msgstr ""
 
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "No WSL support"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgctxt "no dictation model"
 msgid "None"
@@ -1533,10 +1552,6 @@ msgstr ""
 msgid "Only yours, in kangentic.local.json"
 msgstr ""
 
-#: src/renderer/components/settings/tabs/McpServerTab.tsx
-msgid "Open docs"
-msgstr ""
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Open other URLs. Off keeps agents on the page you loaded."
 msgstr ""
@@ -1585,10 +1600,6 @@ msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
-msgstr ""
-
-#: src/renderer/components/settings/settings-registry.ts
-msgid "Paths to agent CLI binaries (auto-detected if empty)"
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
@@ -2197,6 +2208,7 @@ msgid "Terminal text size in pixels"
 msgstr ""
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/McpServerTab.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Test connection"
 msgstr ""
@@ -2289,6 +2301,10 @@ msgstr ""
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "This hotkey is fixed and cannot be rebound"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "This project's path to the agent CLI (auto-detected if empty)"
 msgstr ""
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
@@ -2488,6 +2504,10 @@ msgid "Where this project lives on disk."
 msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
 msgstr ""
 
@@ -2578,6 +2598,11 @@ msgstr ""
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
+msgstr ""
+
+#. placeholder {0}: agent.cliTarget.distro
+#: src/renderer/components/settings/tabs/AgentTab.tsx
+msgid "WSL: {0}"
 msgstr ""
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
