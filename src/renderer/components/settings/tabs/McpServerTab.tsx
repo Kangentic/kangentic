@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { Plug } from 'lucide-react';
-import type { AppConfig } from '../../../../shared/types';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, CircleAlert, Loader2, Plug, Signal } from 'lucide-react';
+import type { AppConfig, McpConnectionCheck } from '../../../../shared/types';
 import {
-  MCP_SERVER_DOCS_URL,
   MCP_TOOL_CATEGORIES,
   MCP_TOOL_MANIFEST,
   mcpToolDocsUrl,
@@ -11,8 +10,8 @@ import {
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardTile, CardGroupTile } from '../settings-card';
 import { settingProps } from '../settings-registry';
-import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
-import { ExternalLinkButton } from '../../ExternalLinkButton';
+import { useSettingVisible } from '../settings-search';
+import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { Tooltip } from '../../Tooltip';
 
 /** What turning the server on does, behind the card's info icon. */
@@ -24,11 +23,83 @@ const GROUPS_CLOSED_ON_ARRIVAL: ReadonlySet<McpToolCategoryId> = new Set(
   MCP_TOOL_CATEGORIES.filter((category) => category.startsClosed).map((category) => category.id),
 );
 
+/** The connection check, answering a call that could not be made as a failure with its error. */
+function checkConnection(explicit: boolean): Promise<McpConnectionCheck> {
+  return window.electronAPI.mcpServer.checkConnection({ explicit })
+    .catch((error: unknown): McpConnectionCheck => ({ connected: false, error: error instanceof Error ? error.message : String(error) }));
+}
+
 /**
- * One card: the server's switch, then the docs and the tools it gives agents,
- * shown only while it is on. The docs row comes first, as a row of its own:
- * at the end of the list it read as one more tool. Each tool group is a tile
- * that collapses. A collapse is not remembered: every visit opens with every
+ * Whether agents can reach the server: Connected, or Failed with the error the
+ * check hit, as selectable text and nothing more. Checked on every visit; Test
+ * connection checks again, starting a stopped WSL distro a CLI path points
+ * into, which the check on arrival skips. While a check runs only the button
+ * changes. Replaces the Documentation tile: every tool cell already opens its
+ * own docs entry.
+ */
+function McpConnectionRow() {
+  const { searchId, label } = settingProps('mcpServer.connection');
+  const visible = useSettingVisible(searchId);
+  const [result, setResult] = useState<McpConnectionCheck | null>(null);
+  // The check on arrival starts as the row mounts.
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    let mounted = true;
+    void checkConnection(false).then((answer) => {
+      if (!mounted) return;
+      setResult(answer);
+      setChecking(false);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  const testConnection = useCallback(async () => {
+    setChecking(true);
+    setResult(await checkConnection(true));
+    setChecking(false);
+  }, []);
+  if (!visible) return null;
+  return (
+    <CardTile className="flex flex-col gap-1.5" testId={`setting-row-${searchId}`}>
+      <div className="flex items-center gap-3">
+        <span className={SETTING_LABEL_CLASS}>{label}</span>
+        <div className="ml-auto flex flex-shrink-0 items-center gap-3">
+          {result ? (
+            result.connected ? (
+              <span className="flex items-center gap-1 text-xs text-active" data-testid="mcp-connection-status">
+                <Check size={13} aria-hidden="true" />Connected
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs text-attention" data-testid="mcp-connection-status">
+                <CircleAlert size={13} aria-hidden="true" />Failed
+              </span>
+            )
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void testConnection()}
+            disabled={checking}
+            className="flex flex-shrink-0 items-center gap-1.5 rounded border border-edge-input bg-surface-hover px-3 py-1.5 text-xs text-fg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="mcp-connection-test"
+          >
+            {/* Signal, as every Test connection button in Settings draws it. */}
+            {checking ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Signal size={13} aria-hidden="true" />}
+            Test connection
+          </button>
+        </div>
+      </div>
+      {result && !result.connected ? (
+        <p className="select-text break-words font-mono text-xs text-attention" data-testid="mcp-connection-error">{result.error}</p>
+      ) : null}
+    </CardTile>
+  );
+}
+
+/**
+ * One card: the server's switch, then its connection and the tools it gives
+ * agents, shown only while it is on. The connection row comes first, as a row
+ * of its own. Each tool group is a tile that collapses. A collapse is not remembered: every visit opens with every
  * group open except the dev-leaning Diagnostics, so the everyday tools are
  * what a reader meets. Each tool is a cell that opens its docs entry; the
  * tooltip says what the tool does.
@@ -53,23 +124,14 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
     <SettingsCard
       icon={<Plug size={16} />}
       {...settingProps('mcpServer.enabled')}
+      searchIds={['mcpServer.connection']}
       info={HOW_IT_WORKS}
       checked={enabled}
       onChange={(value) => updateGlobal({ mcpServer: { enabled: value } })}
     >
       {enabled ? (
         <>
-          <CardTile className="flex items-center justify-between gap-3" testId="mcp-docs-row">
-            <div className="min-w-0">
-              <div className={SETTING_LABEL_CLASS}>Documentation</div>
-              <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>How the server works and what each tool takes.</p>
-            </div>
-            {/* A wrapper, because the link sizes itself with `self-start`,
-                which would lift it off this row's centre line. */}
-            <div className="flex-shrink-0">
-              <ExternalLinkButton label="Open docs" url={MCP_SERVER_DOCS_URL} testId="mcp-docs-link" />
-            </div>
-          </CardTile>
+          <McpConnectionRow />
           {MCP_TOOL_CATEGORIES.map((category) => {
             const tools = MCP_TOOL_MANIFEST.filter((tool) => tool.category === category.id);
             if (tools.length === 0) return null;

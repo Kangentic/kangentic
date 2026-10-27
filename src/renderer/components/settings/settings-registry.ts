@@ -153,6 +153,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── MCP Server ──
   { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'MCP server', description: 'Give agents tools to work with your board.', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query', 'session', 'stats', 'kangentic', 'available tools', 'how it works'] },
+  { id: 'mcpServer.connection', tabId: 'mcpServer', label: 'MCP connection', description: 'Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into.', scope: 'global', keywords: ['test connection', 'connected', 'failed', 'reach', 'wsl', 'distro', 'mcp'] },
 
   // ── Behavior > Sessions ──
   { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max concurrent sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit', 'queue', 'memory'] },

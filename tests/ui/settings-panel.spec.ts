@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Locator, Page } from '@playwright/test';
-import { MCP_SERVER_DOCS_URL, MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
+import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
 
 let browser: Browser;
 let page: Page;
@@ -1328,8 +1328,11 @@ test.describe('Settings Panel', () => {
     // No user-tunable task-creation cap anymore (it is now a fixed internal backstop).
     await expect(page.getByText('Max Tasks Per Session')).toHaveCount(0);
 
-    // The docs come first, as a row of their own.
-    await expect(page.getByTestId('mcp-docs-row')).toContainText('Documentation');
+    // The MCP connection row comes first, in the slot the Documentation tile
+    // left (every tool cell opens its own docs entry), and reads Connected.
+    await expect(page.getByTestId('setting-row-mcpServer.connection')).toContainText('MCP connection');
+    await expect(page.getByTestId('mcp-connection-status')).toHaveText('Connected');
+    await expect(page.getByTestId('mcp-docs-row')).toHaveCount(0);
 
     // The tools render from MCP_TOOL_MANIFEST, one collapsible tile per category,
     // each open on arrival unless the manifest marks it `startsClosed`
@@ -1365,9 +1368,8 @@ test.describe('Settings Panel', () => {
     // render, fails here, and a newly-added tool is covered for free.
     await expect(page.getByTestId('mcp-tool-cell')).toHaveCount(MCP_TOOL_MANIFEST.length);
 
-    // Each cell deep-links to its docs entry, and the docs row opens the page.
-    // Patch the mock's no-op openExternal to record URLs, click both, and assert
-    // what they opened.
+    // Each cell deep-links to its docs entry. Patch the mock's no-op
+    // openExternal to record URLs, click one, and assert what it opened.
     await page.evaluate(() => {
       window.__openedExternalUrls = [];
       window.electronAPI.shell.openExternal = async function (url: string) {
@@ -1375,10 +1377,9 @@ test.describe('Settings Panel', () => {
       };
     });
     await page.getByTestId('mcp-tool-cell').filter({ hasText: 'Create Task' }).click();
-    await page.getByTestId('mcp-docs-link').click();
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
-      .toEqual([mcpToolDocsUrl('kangentic_create_task'), MCP_SERVER_DOCS_URL]);
+      .toEqual([mcpToolDocsUrl('kangentic_create_task')]);
     // Restore the mock's default no-op so this patch does not leak into later tests
     // on the shared page (matches mock-electron-api.js shell.openExternal).
     await page.evaluate(() => {

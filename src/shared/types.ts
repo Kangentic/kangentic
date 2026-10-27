@@ -360,6 +360,17 @@ export type RemoteServerStatus =
     }
   | { reachable: false; reason: string };
 
+/**
+ * Whether agents can reach Kangentic's MCP server (the MCP connection row). A
+ * failure carries the error the check hit, as written: nothing is diagnosed.
+ */
+export type McpConnectionCheck = { connected: true } | { connected: false; error: string };
+
+/** The push a failed check at an agent session's start sends, once per run. */
+export interface McpConnectionFailure {
+  error: string;
+}
+
 export interface AgentSummarizeInput {
   /** Free-form text to summarize into a short task title. */
   prompt: string;
@@ -8250,6 +8261,17 @@ export interface ElectronAPI {
     getHistory: () => Promise<AnnouncementArchiveEntry[]>;
     markRead: (announcementId: string) => Promise<void>;
     onChanged: (callback: (payload: AnnouncementsChangedPayload) => void) => () => void;
+  };
+
+  mcpServer: {
+    /**
+     * Whether agents can reach the MCP server, from this machine and from each
+     * WSL distro a CLI path points into. `explicit` (Test connection) checks a
+     * stopped distro too, which starts it; a check on its own skips one.
+     */
+    checkConnection: (options?: { explicit?: boolean }) => Promise<McpConnectionCheck>;
+    /** Pushed once per run when an agent session starts and the check fails. */
+    onConnectionFailed: (callback: (payload: McpConnectionFailure) => void) => () => void;
   };
 
   // Backlog Attachments
