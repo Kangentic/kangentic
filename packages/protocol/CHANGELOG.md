@@ -2,6 +2,65 @@
 
 <!-- releases -->
 
+## [protocol-v0.24.0] - 2026-10-27
+
+Gives a phone a completed task's full report, and lets it list and resume the
+conversations of Command Terminals that ended. Additive on the wire;
+`PROTOCOL_VERSION` stays '3'.
+
+`get_task_report` joins `BOARD_TOOL_READ_NAMES`, so a phone reads it through its
+existing `board-tool-read` grant. Its result is a `TaskReportWire`, narrowed by
+`parseTaskReportWire`. It carries:
+
+- **The task's span.** `startedAt` is the earlier of its first move into a
+  working column and its first session start. `endedAt` is its last move into
+  Done, else its last session end.
+- **Its route** through the board's working columns, with the time and the stays
+  in each.
+- **The commits** the desktop's index links to it.
+- **Its per-file changes**, read from git, with their totals.
+- **`summaryState`**, which says whether a task summary is written and, when it
+  is not, why: `pending`, `off` or `indexing-off`.
+
+Lists are capped (200 files, 100 commits, 50 stays per column) and carry their
+full counts. A git failure costs only `changes`, and `changesError` says why. The
+parser degrades an unknown file status, summary kind or empty reason instead of
+throwing, so a newer desktop never breaks an older phone. A desktop older than
+this version refuses the tool as not allowed, and a phone falls back to
+`find_task`.
+
+The `command-terminal` verb gains two actions:
+
+- **`list-earlier`** answers with a `CommandTerminalEarlierResponsePayload`: the
+  project's ended Command Terminal conversations that can still be resumed,
+  newest first. Each is named by its `agentSessionId`, with a `name` (the
+  terminal's, else its first prompt, else null) and `endedAt`.
+  `parseCommandTerminalEarlierResponsePayload` drops a malformed row on its own.
+- **`resume`** starts a terminal on one of those conversations and is answered
+  like `start`. It adds two refusal codes: `conversation-gone` (it can no longer
+  be resumed, so drop the row) and `conversation-open` (a live terminal holds it,
+  or another resume is starting it).
+
+Send either action only when the snapshot's new `earlierConversationsOffered` is
+true; an older desktop refuses both as malformed.
+
+The `automations_disabled` doc comment is corrected. The desktop clears the
+switch by itself only when a task joins a workflow; a move out of Done or a
+restore from the archive keeps it.
+
+### Features
+- Give the phone a completed task's full report (267209f5)
+- List and resume earlier Command Terminal conversations from a phone (67282452)
+- Name earlier Command Terminal rows by their first prompt (ebb2042a)
+
+### Fixes
+- Point split-doc citations at the concept that holds each fact (2e31ac76)
+
+### Other
+- Share protocol guards and skip the task report's unused web links (7d9464f7)
+- Drop stale Done-clear notes from the automations switch's doc comment (69c2f7fc)
+- Point the README at the split mobile-bridge docs (7639f8e3)
+
 ## [protocol-v0.23.0] - 2026-10-18
 
 Lets the desktop clear notifications that have resolved. Additive on the wire;
