@@ -151,7 +151,8 @@ describe('an OpenCode session in a WSL distro', () => {
     const parsed = await new OpenCodeAdapter().parseTranscript(SESSION_ID, 'C:\\Users\\dev\\project', place);
     expect(parsed.entries.map((entry) => entry.kind)).toEqual(['user', 'assistant']);
     expect(executed).toHaveLength(1);
-    expect(path.basename(executed[0].file).toLowerCase()).toBe('wsl.exe');
+    // The file is a Windows path whichever OS runs the test.
+    expect(path.win32.basename(executed[0].file).toLowerCase()).toBe('wsl.exe');
     expect(executed[0].args.slice(-3)).toEqual(['export', SESSION_ID, '--pure']);
     expect(executed[0].args).toContain('/home/dev/.opencode/bin/opencode');
   });
