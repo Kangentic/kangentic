@@ -170,6 +170,27 @@ export interface HandoffXmlInput {
 // implementation in src/main/ipc/handlers/browser-payload.ts) so the user's
 // directive is the first thing the model sees. Structured pointers go in the
 // <handoff_context> envelope underneath.
+const SESSION_HISTORY_PATH_ELEMENT = /<session_history_path>([^<]*)<\/session_history_path>/;
+
+function unescapeXml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * The handoff prompt with its session history path rewritten by `map`: for a
+ * receiving CLI in a WSL distro, the path the distro opens the prior
+ * session's file by (`cliPathForTarget`). A prompt with no path is unchanged.
+ */
+export function mapHandoffSessionPath(handoffXml: string, map: (hostPath: string) => string): string {
+  return handoffXml.replace(SESSION_HISTORY_PATH_ELEMENT, (_element, escapedPath: string) =>
+    `<session_history_path>${escapeXml(map(unescapeXml(escapedPath)))}</session_history_path>`);
+}
+
 export function buildHandoffXml(input: HandoffXmlInput): string {
   const lines: string[] = [];
   lines.push(`You are continuing work on this task that was previously handled by ${input.sourceDisplayName}.`);

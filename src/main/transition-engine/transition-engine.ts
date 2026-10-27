@@ -31,7 +31,8 @@ import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
-import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
+import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
+import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
@@ -548,6 +549,11 @@ export class TransitionEngine {
     // once for this spawn. A distro CLI runs in that distro's shell, whatever
     // the Terminal setting says.
     const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+    // A handoff points the receiving agent at the prior session's file; a CLI
+    // in a WSL distro opens it by the path the distro sees.
+    if (cliTarget && handoffPromptPrefix) {
+      handoffPromptPrefix = mapHandoffSessionPath(handoffPromptPrefix, (hostPath) => cliPathForTarget(hostPath, cliTarget));
+    }
 
     // permissionOverride carries the destination lane's mode; the "plan
     // always wins, else task -> lane -> global" rule lives in
