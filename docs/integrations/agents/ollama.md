@@ -28,6 +28,10 @@ ollama run <model> [-- "<prompt>"]
 - The initial prompt is delivered as a single positional argument. The `--` end-of-options guard is pushed first (like Warp) so a prompt starting with `-` (a markdown bullet, a dashed list item) is taken as the positional argument rather than parsed as a flag. On Windows / non-unix shells, embedded double quotes in the prompt are rewritten to single quotes.
 - A no-prompt spawn (`ollama run <model>` with no prompt) drops into an interactive REPL the user types into.
 
+## WSL
+
+An Ollama installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with Ollama's Linux path, and the model picker's `ollama list` and a Knowledge Graph answer run through `wsl.exe` too, so all three talk to the distro's own daemon and its pulled models. Ollama wires no hooks, MCP server or transcript reader. Not yet run against an Ollama installed in a distro.
+
 ## Permission Modes
 
 Ollama has no autonomy / permission concept - it is a plain chat REPL. Per `cli-features-over-custom-layers.md`, the adapter exposes a single informational entry and injects no permission flags in `buildCommand()`.

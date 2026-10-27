@@ -4,6 +4,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { discoverOllamaCapabilities } from './capability-discovery';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { resolveCliTarget } from '../../shared/cli-target';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type {
   AgentPermissionEntry,
@@ -55,6 +56,10 @@ export class OllamaAdapter implements AgentAdapter {
     { mode: 'default', label: 'Chat' },
   ];
   readonly defaultPermission: PermissionMode = 'default';
+  // An Ollama installed in a WSL distro runs there, against the distro's own
+  // daemon: the session, the answer run and `ollama list` all start inside it.
+  // Ollama wires no hooks, MCP server or transcript reader.
+  readonly supportsWslCli = true;
 
   // Shared AgentDetector via composition (like Aider). `ollama --version`
   // prints `ollama version is X.Y.Z`.
@@ -62,6 +67,8 @@ export class OllamaAdapter implements AgentAdapter {
     binaryName: 'ollama',
     fallbackPaths: standardUnixFallbackPaths('ollama'),
     parseVersion: (raw) => raw.replace(/^ollama version is\s+/i, '').trim() || null,
+    // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+    supportsWslCli: true,
   });
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
@@ -91,7 +98,7 @@ export class OllamaAdapter implements AgentAdapter {
     // when set, else fall back to a common default (Ollama auto-pulls it if
     // it is not already installed).
     const model = options.model?.trim() || DEFAULT_OLLAMA_MODEL;
-    const parts: string[] = [quoteArg(options.agentPath, shell), 'run', quoteArg(model, shell)];
+    const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.agentPath, shell), 'run', quoteArg(model, shell)];
 
     // Initial prompt delivered as a single positional argument (one-shot
     // run). When absent (a no-prompt spawn), `ollama run <model>` drops into
@@ -191,6 +198,8 @@ export class OllamaAdapter implements AgentAdapter {
     if (!chosenModel) throw new Error('choose a model for Ollama in Settings > Knowledge Graph');
     return runCliPrintAnswer({
       cliPath,
+      // An Ollama installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
       args: ['run', chosenModel],
       prompt,
       cwd,
