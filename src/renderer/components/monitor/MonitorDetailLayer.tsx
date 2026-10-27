@@ -326,6 +326,8 @@ function MonitorDetailBridge(): null {
       if (session && !focusedIds.includes(session.id)) focusedIds.push(session.id);
     }
     void window.electronAPI?.sessions?.setFocused(focusedIds);
+    // No cleanup: the window's `ErrorBoundary` releases the focus when its
+    // tree is gone (see useFocusedSessionsSync for why not an unmount effect).
   }, [windows, sessions, isDetachedWindow]);
 
   return null;
