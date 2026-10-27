@@ -10,6 +10,7 @@
  */
 
 import { lazy, Suspense } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const KnowledgeGraphBody = lazy(() =>
@@ -61,8 +62,9 @@ interface LazyKnowledgeGraphProps {
 }
 
 export function LazyKnowledgeGraph({ onChooseAnswerAgent, onRevealTask, onOpenSettings }: LazyKnowledgeGraphProps = {}) {
+  const { t } = useLingui();
   return (
-    <PanelErrorBoundary label="Knowledge Graph">
+    <PanelErrorBoundary panel="Knowledge Graph" message={t`Failed to load the Knowledge Graph`}>
       <Suspense fallback={<KnowledgeGraphSkeleton />}>
         <KnowledgeGraphBody onChooseAnswerAgent={onChooseAnswerAgent} onRevealTask={onRevealTask} onOpenSettings={onOpenSettings} />
       </Suspense>

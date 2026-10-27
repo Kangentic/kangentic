@@ -1,11 +1,27 @@
 import React from 'react';
 import { RefreshCw } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { isChunkLoadError } from '../utils/chunk-load-error';
 import { reportBoundaryError } from '../error-reporting';
 
 interface PanelErrorBoundaryProps {
   children: React.ReactNode;
-  /** Names the surface in the message: "Failed to load the {label}". Default "panel". */
+  /**
+   * The surface's English name for analytics ("agent monitor"). Never shown, so
+   * it stays English in every language.
+   */
+  panel?: string;
+  /**
+   * The failure line, translated by the caller as one whole sentence
+   * ("Failed to load the agent monitor"), so no noun is spliced into another
+   * language's grammar.
+   */
+  message?: string;
+  /**
+   * The older form: an English noun spliced into "Failed to load the {label}",
+   * also sent to analytics. Kept for callers whose area is not yet extracted;
+   * new callers pass `panel` and `message`.
+   */
   label?: string;
 }
 
@@ -54,7 +70,7 @@ export class PanelErrorBoundary extends React.Component<
     reportBoundaryError(error);
     window.electronAPI?.analytics?.trackRendererError(error.message, {
       boundary: 'panel',
-      panel: this.props.label,
+      panel: this.props.panel ?? this.props.label,
     });
   }
 
@@ -69,13 +85,18 @@ export class PanelErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       const chunkLoadFailure = isChunkLoadError(this.state.error);
+      const panelLabel = this.props.label;
+      let failureLine: React.ReactNode;
+      if (this.props.message) failureLine = this.props.message;
+      else if (panelLabel) failureLine = <Trans>Failed to load the {panelLabel}</Trans>;
+      else failureLine = <Trans>Failed to load the panel</Trans>;
       return (
         <div
           data-testid="panel-error-boundary"
           className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center"
         >
           <span className="text-sm text-fg-secondary">
-            Failed to load the {this.props.label ?? 'panel'}
+            {failureLine}
           </span>
           {this.state.error?.message && (
             <span className="text-xs text-fg-muted max-w-xs break-words">
@@ -88,7 +109,9 @@ export class PanelErrorBoundary extends React.Component<
             className="flex items-center gap-1.5 text-xs px-3 py-1 rounded bg-surface-raised hover:bg-surface-raised/80 text-fg-secondary transition-colors"
           >
             <RefreshCw size={12} />
-            {chunkLoadFailure ? 'Reload' : 'Retry'}
+            {chunkLoadFailure
+              ? <Trans context="Action">Reload</Trans>
+              : <Trans context="Action">Retry</Trans>}
           </button>
         </div>
       );

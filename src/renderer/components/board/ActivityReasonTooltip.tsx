@@ -1,40 +1,8 @@
 import type { ReactNode } from 'react';
 import { Wrench, Users, Terminal, Lock } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
-import { formatDurationBetween } from '../../lib/datetime';
+import { formatActivityReasonText } from './activity-reason-text';
 import type { ActivityReason } from '../../../shared/types';
-
-/**
- * Plain-text summary of an `ActivityReason`. TaskCard's activity mark takes it
- * as its name and its Tooltip, explaining why the spinner is on (or why an idle
- * session is paused).
- *
- * Same priority ladder as the engine: permission > tool > subagent >
- * background-shell > turn-active > idle.
- *
- * The idle/permission cases append how long the session has needed the user
- * (`reason.since`, epoch ms - `ActivityEngine`'s `needsUserSince`). Computed
- * at render time, not ticked by an interval: a tooltip's text going a few
- * seconds stale between re-renders is normal (matches formatRelativeTime's
- * own Date.now() read), and a card-count worth of per-second timers on a
- * busy board is not a cost worth paying for a hover label.
- */
-export function formatActivityReasonText(reason: ActivityReason): string {
-  switch (reason.kind) {
-    case 'idle': return `Idle for ${formatDurationBetween(reason.since, Date.now())}`;
-    case 'permission': return `Awaiting permission for ${formatDurationBetween(reason.since, Date.now())}`;
-    case 'tool': {
-      if (reason.currentTool) return `Running ${reason.currentTool}`;
-      return `${reason.pendingCount} tool${reason.pendingCount === 1 ? '' : 's'} in flight`;
-    }
-    case 'subagent': return `${reason.depth} subagent${reason.depth === 1 ? '' : 's'} active`;
-    case 'background-shell': {
-      const idsHint = reason.ids.length > 0 ? ` (${reason.ids.join(', ')})` : '';
-      return `${reason.count} background shell${reason.count === 1 ? '' : 's'}${idsHint}`;
-    }
-    case 'turn-active': return 'Thinking';
-  }
-}
 
 /**
  * The glyph for a reason's kind, the one `ActivityReasonTooltip` below draws, with no colour
@@ -80,52 +48,49 @@ export function ActivityReasonTooltip({ reason, now }: {
    */
   now: number;
 }): ReactNode {
+  // The label is the same text the card's Tooltip and the monitor read.
+  const label = formatActivityReasonText(reason, now);
   switch (reason.kind) {
     case 'idle':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <ActivityMark mark="agent-idle" size={12} className="text-attention" />
-          <span>Idle for {formatDurationBetween(reason.since, now)}</span>
+          <span>{label}</span>
         </span>
       );
     case 'permission':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Lock size={12} className="text-attention" />
-          <span>Awaiting permission for {formatDurationBetween(reason.since, now)}</span>
+          <span>{label}</span>
         </span>
       );
     case 'tool':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Wrench size={12} className="text-blue-400" />
-          <span>
-            {reason.currentTool ? `Running ${reason.currentTool}` : `${reason.pendingCount} tool${reason.pendingCount === 1 ? '' : 's'} in flight`}
-          </span>
+          <span>{label}</span>
         </span>
       );
     case 'subagent':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Users size={12} className="text-purple-400" />
-          <span>{reason.depth} subagent{reason.depth === 1 ? '' : 's'} active</span>
+          <span>{label}</span>
         </span>
       );
     case 'background-shell':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <Terminal size={12} className="text-active" />
-          <span>
-            {reason.count} background shell{reason.count === 1 ? '' : 's'}
-            {reason.ids.length > 0 ? ` (${reason.ids.join(', ')})` : ''}
-          </span>
+          <span>{label}</span>
         </span>
       );
     case 'turn-active':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
           <ActivityMark mark="agent-working" size={12} className="text-active" />
-          <span>Thinking</span>
+          <span>{label}</span>
         </span>
       );
     default: {

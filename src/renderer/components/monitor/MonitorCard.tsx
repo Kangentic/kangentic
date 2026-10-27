@@ -33,7 +33,8 @@ import {
   trailModeFor,
   type ExcerptLines,
 } from '../board/CardMessageTrail';
-import { activityReasonIcon, formatActivityReasonText } from '../board/ActivityReasonTooltip';
+import { activityReasonIcon } from '../board/ActivityReasonTooltip';
+import { formatActivityReasonText } from '../board/activity-reason-text';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';

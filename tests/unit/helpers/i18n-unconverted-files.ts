@@ -116,7 +116,6 @@ export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
   // ── #917: board, panels, toasts and the rest of the renderer ──
 
   board: [
-    'src/renderer/components/board/ActivityReasonTooltip.tsx',
     'src/renderer/components/board/ArchivedTaskContextMenu.tsx',
     'src/renderer/components/board/BoardDialogs.tsx',
     'src/renderer/components/board/DeleteTaskDialog.tsx',
@@ -141,7 +140,6 @@ export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
     'src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx',
     'src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx',
     'src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx',
-    'src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx',
     'src/renderer/components/knowledge-graph/PanelRow.tsx',
     'src/renderer/components/knowledge-graph/TaskPriorWork.tsx',
     'src/renderer/components/knowledge-graph/panel-card.tsx',
@@ -151,7 +149,6 @@ export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
     'src/renderer/components/stats/BackgroundCard.tsx',
     'src/renderer/components/stats/BackgroundHistoryCard.tsx',
     'src/renderer/components/stats/KpiTiles.tsx',
-    'src/renderer/components/stats/LazyStatsDashboard.tsx',
     'src/renderer/components/stats/PerProjectTable.tsx',
     'src/renderer/components/stats/StatsCustomRangePicker.tsx',
     'src/renderer/components/stats/StatsDashboardBody.tsx',
@@ -168,7 +165,6 @@ export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
   ],
 
   monitor: [
-    'src/renderer/components/monitor/LazyMonitor.tsx',
     'src/renderer/components/monitor/MonitorBody.tsx',
     'src/renderer/components/monitor/MonitorCard.tsx',
     'src/renderer/components/monitor/MonitorPage.tsx',
@@ -252,7 +248,6 @@ export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
     'src/renderer/components/NameFromPromptButton.tsx',
     'src/renderer/components/NumberStepper.tsx',
     'src/renderer/components/OptionalTag.tsx',
-    'src/renderer/components/PanelErrorBoundary.tsx',
     'src/renderer/components/PrLink.tsx',
     'src/renderer/components/TemplateTextField.tsx',
     'src/renderer/components/TemplateVariablePicker.tsx',

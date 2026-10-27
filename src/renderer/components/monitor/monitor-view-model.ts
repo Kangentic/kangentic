@@ -9,7 +9,7 @@
  * cross-project tally inside every project row's selector).
  */
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
+import { formatActivityReasonText } from '../board/activity-reason-text';
 import { formatRelativeTime } from '../../lib/datetime';
 import type { ActivityMarkName } from '../ActivityMark';
 import type {

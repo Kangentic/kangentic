@@ -7,7 +7,12 @@
  * Toasting that verbatim shows the user a channel name and a TypeScript class
  * name in front of the sentence written for them. This strips the decoration and
  * returns the message the main process actually authored.
+ *
+ * Only the two fallbacks are this module's own words, so only they translate.
+ * The reasons main writes arrive in English and stay as written.
  */
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 
 /** `Error invoking remote method '<channel>': ` */
 const REMOTE_METHOD_PREFIX = /^Error invoking remote method '[^']*':\s*/;
@@ -23,7 +28,7 @@ const ERROR_CLASS_PREFIX = /^(?:[A-Z][A-Za-z0-9_$]*)?Error:\s*/;
  * The user-facing text of a failed IPC call. Falls back to a generic string for
  * a non-Error rejection so callers never interpolate `undefined`.
  */
-export function describeIpcError(error: unknown, fallback = 'Unknown error'): string {
+export function describeIpcError(error: unknown, fallback = i18n._(msg`Unknown error`)): string {
   if (!(error instanceof Error) || !error.message) return fallback;
   const withoutChannel = error.message.replace(REMOTE_METHOD_PREFIX, '');
   const withoutClass = withoutChannel.replace(ERROR_CLASS_PREFIX, '');
@@ -49,7 +54,7 @@ export function capitalizeFirstWord(text: string): string {
  * no period, one that already ends in `?`), and a toast body reads as a
  * sentence whichever it was. An empty reason gives `fallback`.
  */
-export function asSentence(reason: string | null | undefined, fallback = 'No reason was given.'): string {
+export function asSentence(reason: string | null | undefined, fallback = i18n._(msg`No reason was given.`)): string {
   const trimmed = (reason ?? '').trim();
   if (!trimmed) return fallback;
   const capitalized = capitalizeFirstWord(trimmed);

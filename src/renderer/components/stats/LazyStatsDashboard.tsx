@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { onIdle } from '../../utils/on-idle';
 
@@ -72,8 +73,9 @@ export function StatsDashboardSkeleton() {
  *  boundary (chunk-load failures offer Reload, per PanelErrorBoundary's
  *  poisoned-module-map handling) around the Suspense boundary. */
 export function LazyStatsDashboard() {
+  const { t } = useLingui();
   return (
-    <PanelErrorBoundary label="usage dashboard">
+    <PanelErrorBoundary panel="usage dashboard" message={t`Failed to load the usage dashboard`}>
       <Suspense fallback={<StatsDashboardSkeleton />}>
         <StatsDashboardBody />
       </Suspense>

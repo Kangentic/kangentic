@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -44,6 +45,7 @@ function PanelFallback() {
  * commits from git by `params`, as that tab does, rather than a working tree.
  */
 export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
+  const { t } = useLingui();
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? null);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));
@@ -62,7 +64,7 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
   }
 
   return (
-    <PanelErrorBoundary label="Changes panel">
+    <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
       <Suspense fallback={<PanelFallback />}>
         {/* Render the FULL task-detail layout (history region + Working/Staged/
             Branch tabs + file tree + diff pane), NOT the stripped standalone-dialog
@@ -113,6 +115,7 @@ function UnboardedTaskRoot({ params }: { params: PopOutTaskParams }) {
 }
 
 function CompletedChangesRoot({ params, task }: { params: PopOutTaskParams; task: Task }) {
+  const { t } = useLingui();
   const { changes, loading, error } = useTaskChanges(params.projectId, params.taskId);
 
   if (loading) return <PanelFallback />;
@@ -125,7 +128,7 @@ function CompletedChangesRoot({ params, task }: { params: PopOutTaskParams; task
   }
   if (changes.emptyReason) return <CompletedChangesEmpty reason={changes.emptyReason} />;
   return (
-    <PanelErrorBoundary label="Changes panel">
+    <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
       <Suspense fallback={<PanelFallback />}>
         {/* The completed tab's panel state is keyed `completed-<id>`; the pop-out
             keys its own (`popout-completed-<id>`), as the live pop-out does. */}

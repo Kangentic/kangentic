@@ -19,6 +19,48 @@ msgstr "{minutes}m {seconds}s"
 msgid "{seconds}s"
 msgstr "{seconds}s"
 
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgid "Failed to load the {panelLabel}"
+msgstr "Failed to load the {panelLabel}"
+
+#: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+msgid "Failed to load the Changes panel"
+msgstr "Failed to load the Changes panel"
+
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load the Command Terminal"
+msgstr "Failed to load the Command Terminal"
+
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "Failed to load the Conversation"
+msgstr "Failed to load the Conversation"
+
+#: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+msgid "Failed to load the File diff"
+msgstr "Failed to load the File diff"
+
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgid "Failed to load the panel"
+msgstr "Failed to load the panel"
+
 #: src/renderer/lib/datetime.ts
 msgid "just now"
 msgstr "just now"
+
+#: src/renderer/lib/ipc-error.ts
+msgid "No reason was given."
+msgstr "No reason was given."
+
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgctxt "Action"
+msgid "Reload"
+msgstr "Reload"
+
+#: src/renderer/components/PanelErrorBoundary.tsx
+msgctxt "Action"
+msgid "Retry"
+msgstr "Retry"
+
+#: src/renderer/lib/ipc-error.ts
+msgid "Unknown error"
+msgstr "Unknown error"

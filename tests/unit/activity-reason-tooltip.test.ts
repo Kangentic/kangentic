@@ -1,16 +1,14 @@
 /**
- * Unit tests for src/renderer/components/board/ActivityReasonTooltip.tsx's
- * plain-text formatter. Covers the idle/permission duration enrichment
- * (`reason.since`, epoch ms) and pins that every other reason kind is
- * unaffected. Also covers the `ActivityReasonTooltip` component's `now` prop:
- * the rendered duration is measured against the caller-supplied `now`, not
- * against the wall clock.
+ * Unit tests for the activity reason's plain-text formatter
+ * (src/renderer/components/board/activity-reason-text.ts). Covers the
+ * idle/permission duration enrichment (`reason.since`, epoch ms) and pins that
+ * every other reason kind is unaffected. Also covers the `ActivityReasonTooltip`
+ * component's `now` prop: the rendered duration is measured against the
+ * caller-supplied `now`, not against the wall clock.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import {
-  formatActivityReasonText,
-  ActivityReasonTooltip,
-} from '../../src/renderer/components/board/ActivityReasonTooltip';
+import { formatActivityReasonText } from '../../src/renderer/components/board/activity-reason-text';
+import { ActivityReasonTooltip } from '../../src/renderer/components/board/ActivityReasonTooltip';
 import { ActivityMark } from '../../src/renderer/components/ActivityMark';
 import type { ActivityReason } from '../../src/shared/types';
 

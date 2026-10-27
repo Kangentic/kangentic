@@ -6,3 +6,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: pt-BR\n"
+
+#: src/renderer/components/monitor/LazyMonitor.tsx
+msgid "Failed to load the agent monitor"
+msgstr ""
