@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { SquareActivity, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
@@ -33,6 +34,7 @@ const BOARD_REFETCH_DEBOUNCE_MS = 300;
  * this overlay whenever that pop-out is open.
  */
 export function MonitorPage() {
+  const { t } = useLingui();
   const close = useMonitorStore((state) => state.close);
   const statusBarVisible = useConfigStore((state) => state.config.statusBarVisible !== false);
 
@@ -108,12 +110,12 @@ export function MonitorPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <Tooltip label="Close agent monitor" keys="dialog.dismiss">
+            <Tooltip label={t`Close agent monitor`} keys="dialog.dismiss">
               <button
                 type="button"
                 onClick={() => overlay.requestClose()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Close agent monitor"
+                aria-label={t`Close agent monitor`}
                 data-testid="monitor-close"
               >
                 <X size={16} />
@@ -125,7 +127,7 @@ export function MonitorPage() {
               branding activity mark: those all mean a STATE, so one here would read
               as "this monitor is idle" rather than naming the surface. */}
           <SquareActivity size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
-          <h1 className="text-sm font-semibold text-fg">Agent Monitor</h1>
+          <h1 className="text-sm font-semibold text-fg"><Trans>Agent Monitor</Trans></h1>
         </DetachableSurfaceHeader>
 
         <LazyMonitor />

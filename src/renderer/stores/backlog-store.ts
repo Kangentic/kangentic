@@ -1,4 +1,6 @@
 import { create, type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type {
   BacklogTask,
   BacklogTaskCreateInput,
@@ -192,7 +194,7 @@ const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
       // Rollback: restore removed items
       set((state) => ({ items: [...state.items, ...removedItems] }));
       useToastStore.getState().addToast({
-        title: "Couldn't promote tasks",
+        title: i18n._(msg`Couldn't promote tasks`),
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });

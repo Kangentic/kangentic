@@ -8,6 +8,8 @@
  */
 
 import { useMemo } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import type {
   KnowledgeGraphBuildProgress,
@@ -116,7 +118,9 @@ export function useGraphView(): GraphView {
     if (!scope) {
       return { snapshot, islands: null, nodeProjectIds: null, regionProjectNames: null, pendingProjectIds: [], worldExtent: 1 };
     }
-    const nameOf = (projectId: string): string => projects.find((project) => project.id === projectId)?.name ?? 'Project';
+    // A project the list no longer holds still names its island.
+    const fallbackName = i18n._(msg`Project`);
+    const nameOf = (projectId: string): string => projects.find((project) => project.id === projectId)?.name ?? fallbackName;
     const loaded = scope.flatMap((projectId) => {
       const entry = scopeSnapshots[projectId];
       return entry ? [{ projectId, snapshot: entry }] : [];

@@ -1,4 +1,7 @@
 import { Bot } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { BackgroundCallTotals, BackgroundModelCount, BackgroundUsage } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs';
 import { translateText } from '../../i18n/translate';
@@ -53,7 +56,9 @@ function BackgroundCell({ label, totals, models, metric, footnote, isTotal, posi
  *  totals are on screen whichever way it is set. */
 function otherMetricLine(totals: BackgroundCallTotals, metric: UsageMetricMode): string {
   if (metric === 'cost') {
-    return totals.reportedCalls === 0 ? '' : `${formatTokenCount(backgroundTokens(totals))} tokens`;
+    if (totals.reportedCalls === 0) return '';
+    const tokenCount = formatTokenCount(backgroundTokens(totals));
+    return i18n._(msg`${tokenCount} tokens`);
   }
   return totals.costUsd === null ? '' : formatCost(totals.costUsd);
 }
@@ -70,6 +75,7 @@ function otherMetricLine(totals: BackgroundCallTotals, metric: UsageMetricMode):
  * wide sidebar.
  */
 export function BackgroundCard({ background, metric }: { background: BackgroundUsage | undefined; metric: UsageMetricMode }) {
+  const { t } = useLingui();
   // Optional: a payload cached from an older build has no Background figures,
   // which reads the same as a range with no calls.
   const totals = background?.totals;
@@ -78,25 +84,25 @@ export function BackgroundCard({ background, metric }: { background: BackgroundU
 
   return (
     <section
-      aria-label="Background calls"
+      aria-label={t`Background calls`}
       className="@container bg-surface-raised border border-edge rounded-lg px-4 py-3"
       data-testid="background-card"
     >
       <div className="flex items-center gap-2 min-w-0">
         <Bot size={14} className="text-fg-muted flex-shrink-0" aria-hidden />
-        <span className="text-[11px] uppercase tracking-wider text-fg-muted flex-shrink-0">Background</span>
+        <span className="text-[11px] uppercase tracking-wider text-fg-muted flex-shrink-0"><Trans>Background</Trans></span>
         <span className="text-[11px] text-fg-faint truncate">
-          Headless agent calls Kangentic makes for you, kept out of the totals above
+          <Trans>Headless agent calls Kangentic makes for you, kept out of the totals above</Trans>
         </span>
       </div>
       {!hasCalls || !background ? (
         <div className="text-sm text-fg-faint pt-3.5 pb-1" data-testid="background-card-empty">
-          No background calls in this range
+          <Trans>No background calls in this range</Trans>
         </div>
       ) : (
         <div className="grid grid-cols-3 @[720px]:grid-cols-6 gap-y-3 mt-2.5">
           <BackgroundCell
-            label="Total"
+            label={t`Total`}
             totals={background.totals}
             models={allModels}
             metric={metric}

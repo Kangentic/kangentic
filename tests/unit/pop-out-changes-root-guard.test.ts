@@ -21,6 +21,8 @@
  * the component body runs unmodified while the hooks resolve synchronously.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { Trans } from '@lingui/react';
 import type { Task } from '../../src/shared/types';
 
 const mockState = vi.hoisted(() => ({
@@ -43,6 +45,14 @@ vi.mock('../../src/renderer/stores/board-store', () => ({
   useBoardStore: (selector: (state: { tasks: Task[] }) => unknown) => selector({ tasks: mockState.tasks }),
 }));
 
+// `useLingui` reads React context, which needs a real render, so it resolves
+// synchronously against the active catalog the same way, like the store hooks.
+vi.mock('@lingui/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@lingui/react')>();
+  const { i18n: activeI18n } = await import('@lingui/core');
+  return { ...actual, useLingui: () => ({ i18n: activeI18n, _: activeI18n._.bind(activeI18n) }) };
+});
+
 import { PopOutChangesRoot } from '../../src/renderer/pop-out/roots/PopOutChangesRoot';
 import { TaskChangesDialog } from '../../src/renderer/components/dialogs/TaskChangesDialog';
 import { PanelErrorBoundary } from '../../src/renderer/components/PanelErrorBoundary';
@@ -61,6 +71,9 @@ function collectText(node: unknown): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(collectText).join('');
+  // A `<Trans>` element carries its message as a descriptor, not as children:
+  // read it the way the element renders it, through the active catalog.
+  if (isElementLike(node) && node.type === Trans) return i18n._(node.props as unknown as MessageDescriptor);
   if (isElementLike(node)) return collectText(node.props.children);
   return '';
 }

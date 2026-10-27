@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { SquareActivity } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { useShallow } from 'zustand/react/shallow';
 import type { MonitorSessionRow } from '../../../shared/types';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../../shared/notification-constants';
@@ -458,7 +459,7 @@ function EmptyState({ hasRows }: { hasRows: boolean }) {
   if (hasRows) {
     return (
       <div className="px-3 py-8 text-center text-fg-disabled text-sm" data-testid="monitor-empty-filtered">
-        No sessions match the current filters.
+        <Trans>No sessions match the current filters.</Trans>
       </div>
     );
   }
@@ -472,9 +473,9 @@ function EmptyState({ hasRows }: { hasRows: boolean }) {
           the EMPTY state, and every mark means a live agent state. */}
       <SquareActivity size={48} strokeWidth={1} />
       <div className="text-center">
-        <div className="text-lg font-medium text-fg-muted">No agents running</div>
+        <div className="text-lg font-medium text-fg-muted"><Trans>No agents running</Trans></div>
         <div className="text-sm mt-1">
-          Sessions from every project appear here as soon as an agent starts.
+          <Trans>Sessions from every project appear here as soon as an agent starts.</Trans>
         </div>
       </div>
     </div>

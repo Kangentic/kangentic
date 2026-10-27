@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import {
   closestCenter,
   closestCorners,
@@ -638,7 +640,14 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       const todoIndex = ordered.findIndex((swimlane) => swimlane.role === 'todo');
 
       const toast = useToastStore.getState().addToast;
-      if (todoIndex !== 0) { toast({ title: "Can't move To Do", message: 'To Do must stay the first column.', variant: 'warning' }); return; }
+      if (todoIndex !== 0) {
+        toast({
+          title: i18n._(msg`Can't move To Do`),
+          message: i18n._(msg`To Do must stay the first column.`),
+          variant: 'warning',
+        });
+        return;
+      }
 
       await reorderSwimlanes(ordered.map((swimlane) => swimlane.id));
       return;
@@ -824,7 +833,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       clearDropGap();
       await useBoardStore.getState().loadBoard();
       useToastStore.getState().addToast({
-        title: 'Drag failed',
+        title: i18n._(msg`Drag failed`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });

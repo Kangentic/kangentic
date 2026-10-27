@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
 import { LayoutGrid, Rows3, Table2, Search, Layers, ArrowUpDown } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg, plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { MonitorSessionRow, MonitorView } from '../../../shared/types';
 import { ButtonGroup } from '../ButtonGroup';
 import { Tooltip } from '../Tooltip';
@@ -23,10 +26,11 @@ import { MultiSelectDropdown } from '../MultiSelectDropdown';
  * (ButtonGroup, the rounded metric-toggle pill), just sorted into tiers.
  */
 
+// The option labels are descriptors, translated where the toolbar draws them.
 const LAYOUT_OPTIONS = [
-  { value: 'cards' as const, label: 'Cards', Icon: LayoutGrid },
-  { value: 'table' as const, label: 'Table', Icon: Table2 },
-  { value: 'list' as const, label: 'List', Icon: Rows3 },
+  { value: 'cards' as const, label: msg`Cards`, Icon: LayoutGrid },
+  { value: 'table' as const, label: msg`Table`, Icon: Table2 },
+  { value: 'list' as const, label: msg`List`, Icon: Rows3 },
 ];
 
 /**
@@ -38,15 +42,15 @@ const LAYOUT_OPTIONS = [
  *
  * Always one or the other; see MonitorGroupBy for why there is no "none".
  */
-const GROUP_OPTIONS: Array<{ value: MonitorView['groupBy']; label: string }> = [
-  { value: 'project', label: 'Project' },
-  { value: 'state', label: 'Status' },
+const GROUP_OPTIONS: Array<{ value: MonitorView['groupBy']; label: MessageDescriptor }> = [
+  { value: 'project', label: msg`Project` },
+  { value: 'state', label: msg`Status` },
 ];
 
 /** Just the two time directions; see MonitorSort for why attention is not here. */
-const SORT_OPTIONS: Array<{ value: MonitorView['sort']; label: string }> = [
-  { value: 'longest-running', label: 'Oldest' },
-  { value: 'recently-started', label: 'Newest' },
+const SORT_OPTIONS: Array<{ value: MonitorView['sort']; label: MessageDescriptor }> = [
+  { value: 'longest-running', label: msg`Oldest` },
+  { value: 'recently-started', label: msg`Newest` },
 ];
 
 interface MonitorToolbarProps {
@@ -57,6 +61,15 @@ interface MonitorToolbarProps {
 }
 
 export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToolbarProps) {
+  const { t, i18n } = useLingui();
+  const groupOptions = useMemo(
+    () => GROUP_OPTIONS.map((option) => ({ value: option.value, label: i18n._(option.label) })),
+    [i18n],
+  );
+  const sortOptions = useMemo(
+    () => SORT_OPTIONS.map((option) => ({ value: option.value, label: i18n._(option.label) })),
+    [i18n],
+  );
   // Derived from the UNFILTERED rows, deliberately: built from the filtered set
   // the option list would narrow to the current selection and deselecting a
   // project could never bring the others back. Rows are also the only source of
@@ -90,9 +103,16 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
     (count, option) => count + (selectedProjects.has(option.value) ? 1 : 0),
     0,
   );
+  const projectOptionCount = projectOptions.length;
   const projectTriggerText = representableSelectionCount === 0
-    ? 'All projects'
-    : `${representableSelectionCount} of ${projectOptions.length} ${projectOptions.length === 1 ? 'project' : 'projects'}`;
+    ? t`All projects`
+    : plural(projectOptionCount, {
+      one: `${representableSelectionCount} of # project`,
+      other: `${representableSelectionCount} of # projects`,
+    });
+
+  const totalSessionCount = rows.length;
+  const hiddenSessionCount = totalSessionCount - visibleCount;
 
   const toggleProject = (projectId: string) => {
     const next = selectedProjects.has(projectId)
@@ -119,7 +139,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
         <div
           className="flex items-center gap-1 rounded-xl border border-edge bg-surface/60 p-1"
           role="group"
-          aria-label="Layout"
+          aria-label={t`Layout`}
         >
           {LAYOUT_OPTIONS.map(({ value, label, Icon }) => (
             <button
@@ -135,7 +155,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
               data-testid={`monitor-layout-${value}`}
             >
               <Icon size={16} className={view.layout === value ? 'text-accent' : ''} aria-hidden />
-              {label}
+              {i18n._(label)}
             </button>
           ))}
         </div>
@@ -149,13 +169,13 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
           a wide gap rather than shoulder to shoulder. */}
       <div className="flex items-center gap-6 flex-wrap px-4 py-2 bg-surface-inset/40 border-y border-edge">
         <ButtonGroup
-          options={GROUP_OPTIONS}
+          options={groupOptions}
           value={view.groupBy}
           onChange={(groupBy) => setView({ groupBy })}
           size="sm"
           icon={<Layers size={14} />}
-          label="Group"
-          ariaLabel="Group sessions by"
+          label={t`Group`}
+          ariaLabel={t`Group sessions by`}
         />
 
         {/* Sorting is HIDDEN in the table layout, on purpose. A table sorts by
@@ -165,13 +185,13 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             still ARRIVE in this order; the headers just take over from here. */}
         {view.layout !== 'table' && (
           <ButtonGroup
-            options={SORT_OPTIONS}
+            options={sortOptions}
             value={view.sort}
             onChange={(sort) => setView({ sort })}
             size="sm"
             icon={<ArrowUpDown size={14} />}
-            label="Sort"
-            ariaLabel="Sort sessions by"
+            label={t`Sort`}
+            ariaLabel={t`Sort sessions by`}
           />
         )}
 
@@ -189,7 +209,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
         {(projectOptions.length >= 2 || (view.projectFilter.length > 0 && projectOptions.length > 0)) && (
           <div data-testid="monitor-project-filter">
             <MultiSelectDropdown
-              label="Projects"
+              label={t`Projects`}
               triggerText={projectTriggerText}
               align="left"
               options={projectOptions}
@@ -203,7 +223,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
         {/* "Live only", not "Hide inactive": this hides PAUSED and finished
             sessions, and calling those "inactive" collides with the Active/Idle
             words every other part of the view uses for something else. */}
-        <Tooltip label="Show only sessions with a live agent, hiding paused and recently finished">
+        <Tooltip label={t`Show only sessions with a live agent, hiding paused and recently finished`}>
           <button
             type="button"
             onClick={() => setView({ liveOnly: !view.liveOnly })}
@@ -215,7 +235,7 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             aria-pressed={view.liveOnly}
             data-testid="monitor-live-only"
           >
-            Live only
+            <Trans>Live only</Trans>
           </button>
         </Tooltip>
 
@@ -229,13 +249,13 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             type="text"
             value={view.textFilter}
             onChange={(event) => setView({ textFilter: event.target.value })}
-            placeholder="Filter sessions"
+            placeholder={t`Filter sessions`}
             // Twice the old width: this filter matches across title, project,
             // column, agent, model, ticket and labels, so the useful queries are
             // longer than a 44-wide box shows. The row has the space.
             className="w-full min-w-0 rounded-full border border-edge bg-surface/60 pl-7 pr-3 py-1 text-xs text-fg placeholder:text-fg-disabled focus:outline-none focus:border-accent"
             data-testid="monitor-text-filter"
-            aria-label="Filter sessions"
+            aria-label={t`Filter sessions`}
           />
         </div>
 
@@ -243,14 +263,20 @@ export function MonitorToolbar({ view, rows, visibleCount, setView }: MonitorToo
             just restated the tiles above, which is why it read as noise; filtered
             it is the one thing that explains where the missing sessions went. */}
         {visibleCount !== rows.length && (
-          <Tooltip label={`Filters are hiding ${rows.length - visibleCount} of ${rows.length} sessions`}>
+          <Tooltip label={plural(totalSessionCount, {
+            one: `Filters are hiding ${hiddenSessionCount} of # session`,
+            other: `Filters are hiding ${hiddenSessionCount} of # sessions`,
+          })}>
             <span
               className="flex items-center gap-1.5 rounded-full border border-edge bg-surface/60 px-3 py-1 text-xs text-fg-muted flex-shrink-0"
               data-testid="monitor-visible-count"
             >
-              <span className="tabular-nums text-fg font-medium">{visibleCount}</span>
-              of
-              <span className="tabular-nums">{rows.length}</span>
+              {/* "3of5" in the DOM, as before: the flex gap spaces the parts. */}
+              <Trans>
+                <span className="tabular-nums text-fg font-medium">{visibleCount}</span>
+                of
+                <span className="tabular-nums">{totalSessionCount}</span>
+              </Trans>
             </span>
           </Tooltip>
         )}

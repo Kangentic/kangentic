@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useLingui } from '@lingui/react/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
 import type { GitDiffFileEntry } from '../../../shared/types';
@@ -161,7 +161,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   if (!entry) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="changes-file-popout-empty">
-        No changes for this file
+        <Trans>No changes for this file</Trans>
       </div>
     );
   }

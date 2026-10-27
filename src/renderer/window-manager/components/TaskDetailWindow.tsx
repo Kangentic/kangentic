@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Check, Copy, Pencil, Trash2, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { Tooltip } from '../../components/Tooltip';
 import { TaskWorkflowPanel } from '../../components/workflows/TaskWorkflowPanel';
@@ -144,6 +145,7 @@ export function TaskDetailWindow({
   retainedProjectId,
   parked,
 }: TaskDetailWindowProps) {
+  const { t } = useLingui();
   // Hidden-but-mounted, for either reason. What the two share is everything
   // this window does about it: no terminal, no terminal claim, no registered
   // closer. What they do not share (which project the pane resolves against)
@@ -863,8 +865,8 @@ export function TaskDetailWindow({
     <div className="flex items-center gap-3 px-4 py-3 min-w-0">
       <Pencil size={14} className="text-fg-muted flex-shrink-0" />
       <h3 className="text-sm font-semibold text-fg flex items-center gap-2 min-w-0">
-        <span className="flex-shrink-0">Edit Task</span>
-        <Tooltip label="Copy task ID">
+        <span className="flex-shrink-0"><Trans>Edit Task</Trans></span>
+        <Tooltip label={t`Copy task ID`}>
           <button
             type="button"
             className="flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors font-normal"
@@ -890,8 +892,8 @@ export function TaskDetailWindow({
             icon={WorkflowIcon}
             onClick={handleToggleWorkflow}
             active={workflowPanelOpen}
-            tip={workflowPanelOpen ? 'Hide workflow' : 'Show workflow'}
-            ariaLabel="Toggle workflow"
+            tip={workflowPanelOpen ? t`Hide workflow` : t`Show workflow`}
+            ariaLabel={t`Toggle workflow`}
             testId="workflow-toggle"
           />
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" data-testid="edit-titlebar-divider" />
@@ -902,12 +904,12 @@ export function TaskDetailWindow({
         onToggle={handleToggleMaximized}
         testId="task-detail-maximize"
       />
-      <Tooltip label="Close window" keys="panel.close">
+      <Tooltip label={t`Close window`} keys="panel.close">
         <button
           type="button"
           onClick={closeWithGuard}
           data-testid="task-detail-close"
-          aria-label="Close window"
+          aria-label={t`Close window`}
           className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
         >
           <X size={16} />
@@ -977,7 +979,7 @@ export function TaskDetailWindow({
                   // A wrapper rather than handleSave itself, so the click event
                   // never arrives as its options argument.
                   onSubmit={() => void handleSave()}
-                  submitLabel="Save"
+                  submitLabel={t`Save`}
                   busy={actions.saving}
                   disabled={!!branchConfig.branchNameError}
                   leading={isInTodo ? (
@@ -987,7 +989,7 @@ export function TaskDetailWindow({
                       className="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs text-fg-faint transition-colors hover:bg-danger/10 hover:text-danger"
                     >
                       <Trash2 size={14} />
-                      Delete
+                      <Trans>Delete</Trans>
                     </button>
                   ) : undefined}
                 />
@@ -1050,12 +1052,12 @@ export function TaskDetailWindow({
 
       {actions.confirmDelete && (
         <ConfirmDialog
-          title="Delete task"
+          title={t`Delete task`}
           message={<>
-            <p>This will permanently delete the task, its session history, and any associated worktree.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p><Trans>This will permanently delete the task, its session history, and any associated worktree.</Trans></p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel="Delete"
+          confirmLabel={t`Delete`}
           variant="danger"
           showDontAskAgain
           onConfirm={actions.handleDelete}
@@ -1069,22 +1071,22 @@ export function TaskDetailWindow({
           so it offers Discard alone. */}
       {confirmDiscard && (canSaveEdits ? (
         <ConfirmDialog
-          title="Save changes before closing?"
-          confirmLabel="Save"
-          cancelLabel="Keep editing"
-          message="Your edits to this task are not saved."
-          secondaryAction={{ label: 'Discard', onClick: confirmDiscardAndClose, testId: 'task-detail-unsaved-discard' }}
+          title={t`Save changes before closing?`}
+          confirmLabel={t`Save`}
+          cancelLabel={t`Keep editing`}
+          message={t`Your edits to this task are not saved.`}
+          secondaryAction={{ label: t`Discard`, onClick: confirmDiscardAndClose, testId: 'task-detail-unsaved-discard' }}
           testId="task-detail-unsaved-confirm"
           onConfirm={saveAndClose}
           onCancel={cancelDiscard}
         />
       ) : (
         <ConfirmDialog
-          title="Discard unsaved changes?"
+          title={t`Discard unsaved changes?`}
           variant="warning"
-          confirmLabel="Discard"
-          cancelLabel="Keep editing"
-          message="Closing now will discard your unsaved edits to this task."
+          confirmLabel={t`Discard`}
+          cancelLabel={t`Keep editing`}
+          message={t`Closing now will discard your unsaved edits to this task.`}
           testId="task-detail-unsaved-confirm"
           onConfirm={confirmDiscardAndClose}
           onCancel={cancelDiscard}
@@ -1094,9 +1096,9 @@ export function TaskDetailWindow({
       {/* Enable worktree confirmation. */}
       {actions.showEnableWorktreeConfirm && (
         <ConfirmDialog
-          title="Enable worktree?"
-          message="This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
-          confirmLabel="Enable"
+          title={t`Enable worktree?`}
+          message={t`This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree.`}
+          confirmLabel={t`Enable`}
           variant="default"
           onConfirm={async () => {
             actions.setShowEnableWorktreeConfirm(false);

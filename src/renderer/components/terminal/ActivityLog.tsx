@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { formatTime } from '../../lib/datetime';
 import { useSessionStore } from '../../stores/session-store';
 import { Select } from '../settings/shared';
@@ -29,6 +32,7 @@ interface ActivityLogProps {
 }
 
 export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogProps) {
+  const { t } = useLingui();
   // Narrow selector: only re-render when events for visible sessions change.
   // useShallow compares each value by reference, so background session events
   // don't trigger re-renders here.
@@ -242,8 +246,8 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
       {allEvents.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm">
           {filteredLabel
-            ? `No activity yet for ${filteredLabel}...`
-            : 'Waiting for agent activity...'}
+            ? t`No activity yet for ${filteredLabel}...`
+            : t`Waiting for agent activity...`}
         </div>
       ) : (
         <div
@@ -298,6 +302,7 @@ function FilterPill({
   filterSessionId,
   onFilter,
 }: FilterPillProps) {
+  const { t } = useLingui();
   return (
     <div className="bg-surface pt-2 pb-1.5 mb-1 border-b border-edge">
       <Select
@@ -309,7 +314,7 @@ function FilterPill({
         chevronSize={12}
         chevronClassName="right-2"
       >
-        <option value="">All</option>
+        <option value="">{t`All`}</option>
         {sessionIds.map((sessionId) => (
           <option key={sessionId} value={sessionId}>
             {taskLabelMap.get(sessionId) || sessionId.slice(0, 8)}
@@ -395,47 +400,55 @@ type EventRenderer = (common: EventLineCommon, event: SessionEvent) => ReactNode
  * non-renderable set, so future `EventType` additions cannot be silently
  * dropped from the Activity tab.
  */
+//
+// The renderers are plain functions called at render time, not components, so
+// their text resolves through `i18n._(msg...)` when each line draws. The tool
+// name and every `detail` are the agent's own and stay as written.
 export const EVENT_RENDERERS: Partial<Record<EventType, EventRenderer>> = {
   [EventType.ToolStart]: (common, event) => (
-    <BadgeLine {...common} badge={event.tool || 'Tool'} detail={event.detail} />
+    <BadgeLine {...common} badge={event.tool || i18n._(msg`Tool`)} detail={event.detail} />
   ),
-  [EventType.Interrupted]: (common, event) => (
-    <BadgeLine {...common} badge={`${event.tool || 'Tool'} interrupted`} detail={event.detail} variant="warn" />
-  ),
+  [EventType.Interrupted]: (common, event) => {
+    const toolName = event.tool || i18n._(msg`Tool`);
+    return <BadgeLine {...common} badge={i18n._(msg`${toolName} interrupted`)} detail={event.detail} variant="warn" />;
+  },
   [EventType.TurnFailed]: (common, event) => (
-    <BadgeLine {...common} badge="Service error" detail={event.detail} variant="warn" />
+    <BadgeLine {...common} badge={i18n._(msg`Service error`)} detail={event.detail} variant="warn" />
   ),
   [EventType.TurnRetrying]: (common, event) => (
-    <BadgeLine {...common} badge="Retrying" detail={event.detail} variant="warn" />
+    <BadgeLine {...common} badge={i18n._(msg`Retrying`)} detail={event.detail} variant="warn" />
   ),
   [EventType.Idle]: (common, event) => (
-    <DimLine {...common} text={event.detail === IdleReason.Timeout ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />
+    <DimLine
+      {...common}
+      text={event.detail === IdleReason.Timeout ? i18n._(msg`Idle (no activity detected)`) : i18n._(msg`Idle (waiting for input)`)}
+    />
   ),
   [EventType.Prompt]: (common) => (
     <div className="flex items-baseline gap-1.5">
       <span className="text-zinc-600 shrink-0">{formatTime(common.ts)}</span>
       {common.showLabel && <span className={`${common.colorClass} font-semibold shrink-0`}>[{common.label}]</span>}
-      <span className="text-fg-muted">Thinking...</span>
+      <span className="text-fg-muted">{i18n._(msg`Thinking...`)}</span>
     </div>
   ),
-  [EventType.SessionStart]: (common) => <DimLine {...common} text="Session started" />,
-  [EventType.SessionEnd]: (common) => <DimLine {...common} text="Session ended" />,
-  [EventType.SubagentStart]: (common, event) => <BadgeLine {...common} badge="Subagent" detail={event.detail} />,
-  [EventType.SubagentStop]: (common, event) => <BadgeLine {...common} badge="Subagent done" detail={event.detail} />,
-  [EventType.Notification]: (common, event) => <BadgeLine {...common} badge="Notice" detail={event.detail} variant="warn" />,
-  [EventType.IdleHint]: (common, event) => <BadgeLine {...common} badge="Waiting for input" detail={event.detail} />,
-  [EventType.Compact]: (common) => <DimLine {...common} text="Compacting context..." />,
-  [EventType.TeammateIdle]: (common, event) => <DimDetailLine {...common} text="Teammate idle" detail={event.detail} />,
-  [EventType.TaskCompleted]: (common, event) => <BadgeLine {...common} badge="Task done" detail={event.detail} />,
-  [EventType.ConfigChange]: (common) => <DimLine {...common} text="Config changed" />,
-  [EventType.WorktreeCreate]: (common, event) => <BadgeLine {...common} badge="Worktree" detail={event.detail} />,
-  [EventType.WorktreeRemove]: (common, event) => <DimDetailLine {...common} text="Worktree removed" detail={event.detail} />,
-  [EventType.ModelStart]: (common, event) => <BadgeLine {...common} badge="Model" detail={event.detail} />,
-  [EventType.ModelEnd]: (common, event) => <DimDetailLine {...common} text="Model done" detail={event.detail} />,
-  [EventType.ToolSelectionStart]: (common) => <DimLine {...common} text="Selecting tool..." />,
+  [EventType.SessionStart]: (common) => <DimLine {...common} text={i18n._(msg`Session started`)} />,
+  [EventType.SessionEnd]: (common) => <DimLine {...common} text={i18n._(msg`Session ended`)} />,
+  [EventType.SubagentStart]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Subagent`)} detail={event.detail} />,
+  [EventType.SubagentStop]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Subagent done`)} detail={event.detail} />,
+  [EventType.Notification]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Notice`)} detail={event.detail} variant="warn" />,
+  [EventType.IdleHint]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Waiting for input`)} detail={event.detail} />,
+  [EventType.Compact]: (common) => <DimLine {...common} text={i18n._(msg`Compacting context...`)} />,
+  [EventType.TeammateIdle]: (common, event) => <DimDetailLine {...common} text={i18n._(msg`Teammate idle`)} detail={event.detail} />,
+  [EventType.TaskCompleted]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Task done`)} detail={event.detail} />,
+  [EventType.ConfigChange]: (common) => <DimLine {...common} text={i18n._(msg`Config changed`)} />,
+  [EventType.WorktreeCreate]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Worktree`)} detail={event.detail} />,
+  [EventType.WorktreeRemove]: (common, event) => <DimDetailLine {...common} text={i18n._(msg`Worktree removed`)} detail={event.detail} />,
+  [EventType.ModelStart]: (common, event) => <BadgeLine {...common} badge={i18n._(msg`Model`)} detail={event.detail} />,
+  [EventType.ModelEnd]: (common, event) => <DimDetailLine {...common} text={i18n._(msg`Model done`)} detail={event.detail} />,
+  [EventType.ToolSelectionStart]: (common) => <DimLine {...common} text={i18n._(msg`Selecting tool...`)} />,
   // The approval itself: its detail says where the task went ("Moved to Executing").
   [EventType.PlanAutoApproved]: (common, event) => (
-    <BadgeLine {...common} badge="Plan approved automatically" detail={event.detail} />
+    <BadgeLine {...common} badge={i18n._(msg`Plan approved automatically`)} detail={event.detail} />
   ),
 };
 

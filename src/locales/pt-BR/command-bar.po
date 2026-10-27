@@ -6,3 +6,177 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: pt-BR\n"
+
+#: src/renderer/components/command-bar/NewTerminalButton.tsx
+msgid "Add terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Command Terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Command Terminals"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Commands"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Couldn't check out branch"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+msgid "Couldn't open the window"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Couldn't resume conversation"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Couldn't start Command Terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Couldn't stop the old terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/stop-command-terminal.ts
+msgid "Couldn't stop the terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Couldn't switch branch"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Earlier"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Expand {name}"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Expand terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Failed to load the Changes panel"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Hide changes"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Hide Command Terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Hide panel"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/stop-command-terminal.ts
+msgid "Its process may still be running."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Maximize panel"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Move to its own window"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Open folder"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Open in new window"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Open project folder"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+msgid "Restore panel"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Restore the grid"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Resume {name}"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Resuming conversation..."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgctxt "Agent status"
+msgid "Running"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Show changes"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Starting Command Terminal..."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Stop {name}"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Stop one of the four to add another"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Stop terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Stopping terminal"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Stopping..."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Switch branch"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+msgid "The terminals are back in the panel."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Toggle changes"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Untitled conversation"
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+msgid "Wait for the terminals to start."
+msgstr ""
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Widen the panel to restore the grid"
+msgstr ""

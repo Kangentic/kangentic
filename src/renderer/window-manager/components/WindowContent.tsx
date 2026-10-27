@@ -13,7 +13,7 @@
 
 import { Suspense, lazy, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useLingui } from '@lingui/react/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { WindowTitleBar } from './WindowTitleBar';
@@ -168,7 +168,7 @@ function BoardTaskDetailContent({
           onRequestClose={requestClose}
         />
         <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-fg-faint">
-          This task is no longer available.
+          <Trans>This task is no longer available.</Trans>
         </div>
       </div>
     );

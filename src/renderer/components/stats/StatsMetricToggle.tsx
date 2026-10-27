@@ -1,4 +1,7 @@
 import { CircleDollarSign, Hash } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
 
 interface StatsMetricToggleProps {
@@ -6,9 +9,9 @@ interface StatsMetricToggleProps {
   onChange: (metric: UsageMetricMode) => void;
 }
 
-const METRIC_TOGGLE_OPTIONS: ReadonlyArray<{ value: UsageMetricMode; label: string; Icon: typeof CircleDollarSign }> = [
-  { value: 'cost', label: 'Cost', Icon: CircleDollarSign },
-  { value: 'tokens', label: 'Tokens', Icon: Hash },
+const METRIC_TOGGLE_OPTIONS: ReadonlyArray<{ value: UsageMetricMode; label: MessageDescriptor; Icon: typeof CircleDollarSign }> = [
+  { value: 'cost', label: msg`Cost`, Icon: CircleDollarSign },
+  { value: 'tokens', label: msg`Tokens`, Icon: Hash },
 ];
 
 /**
@@ -18,11 +21,12 @@ const METRIC_TOGGLE_OPTIONS: ReadonlyArray<{ value: UsageMetricMode; label: stri
  * the quieter time filters on the row below.
  */
 export function StatsMetricToggle({ metric, onChange }: StatsMetricToggleProps) {
+  const { t, i18n } = useLingui();
   return (
     <div
       className="flex items-center gap-0.5 rounded-full border border-edge bg-surface/60 p-0.5"
       role="group"
-      aria-label="Chart metric"
+      aria-label={t`Chart metric`}
       data-testid="stats-metric-group"
     >
       {METRIC_TOGGLE_OPTIONS.map(({ value, label, Icon }) => (
@@ -38,7 +42,7 @@ export function StatsMetricToggle({ metric, onChange }: StatsMetricToggleProps) 
           aria-pressed={metric === value}
         >
           <Icon size={14} className={metric === value ? 'text-accent' : ''} aria-hidden />
-          {label}
+          {i18n._(label)}
         </button>
       ))}
     </div>

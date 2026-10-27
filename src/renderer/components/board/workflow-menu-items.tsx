@@ -1,5 +1,6 @@
 import React from 'react';
 import { Workflow as WorkflowIcon } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { workflowColor } from '../workflows/workflow-graph';
 import type { BoardWorkflow } from '../../utils/board-workflow';
 
@@ -24,7 +25,7 @@ export function OpenWorkflowMenuItem({ workflow, onOpen, onClose }: { workflow: 
       data-testid="context-open-workflow"
     >
       <WorkflowIcon size={14} style={{ color: workflowColor(workflow.colorSlot) }} />
-      Open workflow
+      <Trans>Open workflow</Trans>
     </button>
   );
 }

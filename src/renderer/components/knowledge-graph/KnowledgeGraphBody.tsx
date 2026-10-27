@@ -22,6 +22,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Brain, Compass, CornerDownLeft, Loader2, Sparkles, X } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { useConfigStore } from '../../stores/config-store';
 import { KnowledgeGraphChat } from './KnowledgeGraphChat';
@@ -48,7 +50,7 @@ import { knowledgeGraphSupported } from '../../lib/knowledge-graph-support';
 import { Tooltip } from '../Tooltip';
 import type { KnowledgeGraphGranularity, KnowledgeGraphRelatedTask } from '../../../shared/types';
 import { useChromeInsets } from './useChromeInsets';
-import { KnowledgeGraphNodeDetail, openConversationForNode } from './KnowledgeGraphNodeDetail';
+import { KnowledgeGraphNodeDetail, openConversationForNode, type KnowledgeGraphDetailBackTarget } from './KnowledgeGraphNodeDetail';
 import { openKnowledgeGraphConversation } from './open-knowledge-graph-conversation';
 import { useGraphView } from './use-graph-view';
 import { KnowledgeGraphProjectsPicker } from './KnowledgeGraphProjectsPicker';
@@ -95,6 +97,7 @@ interface KnowledgeGraphBodyProps {
 }
 
 export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSettings }: KnowledgeGraphBodyProps) {
+  const { t } = useLingui();
   // The open project's snapshot, or several projects composed into islands.
   const graphView = useGraphView();
   const snapshot = graphView.snapshot;
@@ -142,11 +145,14 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     }),
     [agentList, configuredAnswerAgent, configuredAnswerModel],
   );
-  const askAgentLabel = useMemo(
+  // The answering agent's name, or null before one resolves: each sentence
+  // that names it has a "the agent" form of its own.
+  const askAgentName = useMemo(
     () => resolveAnswerAgent({ agents: agentList, configured: configuredAnswerAgent, requireFound: true })?.displayName
-      ?? 'the agent',
+      ?? null,
     [agentList, configuredAnswerAgent],
   );
+  const askAgentText = askAgentName ? t`Ask ${askAgentName}` : t`Ask the agent`;
   // Shown only in a host with no settings panel to open (the detached window),
   // and only once Enter was pressed, so the map is never covered by a notice.
   const [showSetupHint, setShowSetupHint] = useState(false);
@@ -642,14 +648,20 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
    */
   const selectedNode = selectedIndex !== null ? nodes?.[selectedIndex] ?? null : null;
   const exploredNode = exploreFromIndex !== null ? nodes?.[exploreFromIndex] ?? null : null;
+  const exploredTitle = exploredNode?.title ?? null;
 
-  const detailBack = useMemo(() => {
+  const detailBack = useMemo((): { run: () => void; target: KnowledgeGraphDetailBackTarget } | null => {
     if (detailTrail.length > 0) {
-      const previous = nodes?.[detailTrail[detailTrail.length - 1]];
-      return { run: goBack, label: previous?.title ?? 'the previous conversation' };
+      const previousTitle = nodes?.[detailTrail[detailTrail.length - 1]]?.title;
+      return {
+        run: goBack,
+        target: previousTitle === null || previousTitle === undefined
+          ? { kind: 'previous-conversation' }
+          : { kind: 'conversation', title: previousTitle },
+      };
     }
     if (chatOpen) {
-      return { run: () => selectNode(null), label: 'the chat' };
+      return { run: () => selectNode(null), target: { kind: 'chat' } };
     }
     return null;
   }, [detailTrail, nodes, goBack, chatOpen, selectNode]);
@@ -672,10 +684,10 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
   // The box says when a question will be asked across several projects, since
   // the answer then names each task's project.
   const askPlaceholder = scopeProjectIds && scopeProjectIds.length > 1
-    ? `Ask across ${scopeProjectIds.length} projects`
+    ? plural(scopeProjectIds.length, { one: 'Ask across # project', other: 'Ask across # projects' })
     : codeIndexed
-      ? 'Ask about your tasks, conversations and code'
-      : 'Ask about your tasks and conversations';
+      ? t`Ask about your tasks, conversations and code`
+      : t`Ask about your tasks and conversations`;
 
   // Offered however many projects are indexed, once the list has loaded. With
   // one it names the scope, and the projects with nothing indexed sit in its
@@ -695,8 +707,8 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     return (
       <CenteredNotice
         icon={<Loader2 size={22} className="animate-spin" />}
-        title="Reading the index"
-        body="Loading what this project has indexed."
+        title={t`Reading the index`}
+        body={t`Loading what this project has indexed.`}
       />
     );
   }
@@ -705,8 +717,8 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
     return (
       <CenteredNotice
         icon={<Brain size={22} />}
-        title="No project open"
-        body="Open a project to see what its conversation index has learned."
+        title={t`No project open`}
+        body={t`Open a project to see what its conversation index has learned.`}
       />
     );
   }
@@ -795,12 +807,12 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
                   chosen, the tip says where the choice is made instead. */}
               {queryText.trim() ? (
                 <Tooltip
-                  label={setupGap ? 'Choose an agent and model in Settings > Knowledge Graph.' : `Ask ${askAgentLabel}`}
+                  label={setupGap ? t`Choose an agent and model in Settings > Knowledge Graph.` : askAgentText}
                   testId="knowledge-graph-ask-tip"
                 >
                   <button
                     type="submit"
-                    aria-label={`Ask ${askAgentLabel}`}
+                    aria-label={askAgentText}
                     data-testid="knowledge-graph-ask"
                     className="rounded p-1 text-accent-fg hover:bg-surface-hover cursor-pointer"
                   >
@@ -816,7 +828,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
             className="mt-1.5 rounded-md border border-edge bg-surface-raised/85 px-2 py-1 text-xs text-fg-muted backdrop-blur"
             data-testid="knowledge-graph-setup-hint"
           >
-            Choose an agent and model in Settings &gt; Knowledge Graph, in the main window.
+            <Trans>Choose an agent and model in Settings &gt; Knowledge Graph, in the main window.</Trans>
           </div>
         ) : null}
         {/* Says what the map is currently scoped to, and takes it back. Without
@@ -829,13 +841,15 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
           >
             <Compass size={11} className="flex-shrink-0" aria-hidden />
             <span className="min-w-0 flex-1 truncate">
-              Around {`"${exploredNode.title ?? 'Untitled conversation'}"`}
+              {exploredTitle === null
+                ? <Trans>Around &quot;Untitled conversation&quot;</Trans>
+                : <Trans>Around &quot;{exploredTitle}&quot;</Trans>}
             </span>
             <button
               type="button"
               onClick={() => setExploreFromIndex(null)}
               className="rounded p-0.5 hover:bg-surface-hover hover:text-fg cursor-pointer"
-              aria-label="Stop exploring this neighbourhood"
+              aria-label={t`Stop exploring this neighbourhood`}
               data-testid="knowledge-graph-explore-clear"
             >
               <X size={11} />
@@ -892,7 +906,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
               onSelectNeighbor={followNeighbor}
               onExploreFrom={selectedIndex === null ? undefined : () => setExploreFromIndex(selectedIndex)}
               onBack={detailBack?.run}
-              backLabel={detailBack?.label}
+              backTarget={detailBack?.target}
               nodeProjectId={selectedIndex !== null ? graphView.nodeProjectIds?.[selectedIndex] ?? null : null}
             />
           </div>
@@ -901,7 +915,7 @@ export function KnowledgeGraphBody({ onChooseAnswerAgent, onRevealTask, onOpenSe
         <div data-graph-chrome="right" className="overlay-panel-in absolute bottom-3 right-3 top-3 z-10 w-[25.25rem]">
           <KnowledgeGraphChat
             thread={thread}
-            agentName={askAgentLabel}
+            agentName={askAgentName}
             onAsk={ask}
             onRetry={retryChatTurn}
             onEnd={endChat}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { Trans } from '@lingui/react/macro';
 import { CommandTerminalLayer, useCloseCommandWindowOnRemoval } from '../../components/command-bar/CommandTerminalLayer';
 import { commandWindowManager } from '../../window-manager';
 import { useConfigStore } from '../../stores/config-store';
@@ -97,14 +98,14 @@ export function PopOutCommandTerminalRoot({ params }: { params: PopOutProjectPar
   if (loadState === 'missing') {
     return (
       <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-missing">
-        This project is no longer in Kangentic.
+        <Trans>This project is no longer in Kangentic.</Trans>
       </div>
     );
   }
   if (loadState === 'failed') {
     return (
       <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-failed">
-        Couldn't load the terminals for this window.
+        <Trans>Couldn't load the terminals for this window.</Trans>
       </div>
     );
   }

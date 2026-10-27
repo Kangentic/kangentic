@@ -19,13 +19,14 @@
 import type React from 'react';
 import { useState } from 'react';
 import { Brain, Filter, Loader2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { SettingsCard, CardSourceList, CardStatusRow, CardTile } from '../settings/settings-card';
 import { settingProps } from '../settings/settings-registry';
 import type { KnowledgeGraphBuildProgress, KnowledgeGraphIndexSummary } from '../../../shared/types';
 import { CARD_CLASS, GroupLabel, OpenSettingsButton, SectionHeader } from './panel-card';
 import { buildProgressRow } from './index-panel-lines';
 import { useIndexSourceLines } from './use-index-source-lines';
-import { KNOWLEDGE_GRAPH_UNAVAILABLE_TAG, knowledgeGraphUnsupportedLine } from '../../lib/knowledge-graph-support';
+import { knowledgeGraphUnavailableTag, knowledgeGraphUnsupportedLine } from '../../lib/knowledge-graph-support';
 
 export interface KnowledgeGraphNoMapProps {
   /** `off`: the Knowledge Graph is switched off. `pending`: on, and no map yet.
@@ -43,6 +44,7 @@ export interface KnowledgeGraphNoMapProps {
 }
 
 export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, projectsPicker, onOpenSettings }: KnowledgeGraphNoMapProps) {
+  const { t } = useLingui();
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const knowledgeGraphLabel = settingProps('knowledgeGraph.enabled').label;
   const showPicker = mode === 'pending' && projectsPicker !== undefined && projectsPicker !== null;
@@ -55,15 +57,15 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
             <div className={CARD_CLASS} data-testid="knowledge-graph-pending-scope">
               <SectionHeader
                 icon={<Filter size={13} aria-hidden />}
-                label="Filter"
+                label={t`Filter`}
                 collapsed={filterCollapsed}
                 onToggle={() => setFilterCollapsed((current) => !current)}
                 testId="knowledge-graph-filter-toggle"
               />
               {!filterCollapsed ? (
                 <div className="px-3 pb-3">
-                  <GroupLabel hint="Which projects the map shows and a question is asked across. Starts on the open project.">
-                    Projects
+                  <GroupLabel hint={t`Which projects the map shows and a question is asked across. Starts on the open project.`}>
+                    {t`Projects`}
                   </GroupLabel>
                   {projectsPicker}
                 </div>
@@ -93,8 +95,8 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
               <SettingsCard
                 icon={<Brain size={16} />}
                 label={knowledgeGraphLabel}
-                description="Places conversations by meaning, with a local model."
-                tag={KNOWLEDGE_GRAPH_UNAVAILABLE_TAG}
+                description={t`Places conversations by meaning, with a local model.`}
+                tag={knowledgeGraphUnavailableTag()}
                 testId="knowledge-graph-unsupported-card"
               >
                 <CardTile testId="knowledge-graph-unsupported-why">
@@ -107,8 +109,8 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
                 label={knowledgeGraphLabel}
                 // Not the Settings card's description: here the card says what
                 // the map needs, which is what is missing.
-                description="Places conversations by meaning, with a local model."
-                tag="Off"
+                description={t`Places conversations by meaning, with a local model.`}
+                tag={t`Off`}
                 testId="knowledge-graph-off-card"
               >
                 {onOpenSettings ? (
@@ -116,7 +118,7 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
                 ) : (
                   // The detached window has no Settings of its own.
                   <CardTile testId="knowledge-graph-off-where">
-                    <p className="text-xs text-fg-secondary">Turn it on in Settings &gt; Knowledge Graph, in the main window.</p>
+                    <p className="text-xs text-fg-secondary"><Trans>Turn it on in Settings &gt; Knowledge Graph, in the main window.</Trans></p>
                   </CardTile>
                 )}
               </SettingsCard>
@@ -125,8 +127,8 @@ export function KnowledgeGraphNoMap({ mode, building, buildProgress, index, proj
             ) : (
               <SettingsCard
                 icon={<Brain size={16} />}
-                label="No map yet"
-                description="Nothing has been indexed for this project yet."
+                label={t`No map yet`}
+                description={t`Nothing has been indexed for this project yet.`}
                 testId="knowledge-graph-empty-card"
               />
             )}
@@ -143,21 +145,22 @@ function BuildingCard({ buildProgress, index, onOpenSettings }: {
   index: KnowledgeGraphIndexSummary;
   onOpenSettings?: () => void;
 }) {
+  const { t } = useLingui();
   // A build runs only with the Knowledge Graph on, so the lines read as on.
   const sourceLines = useIndexSourceLines(index, true);
   const row = buildProgressRow(buildProgress);
   return (
     <SettingsCard
       icon={<Loader2 size={16} className="animate-spin" />}
-      label="Building the map"
-      description="Once per project, in the background. Later updates take moments."
+      label={t`Building the map`}
+      description={t`Once per project, in the background. Later updates take moments.`}
       testId="knowledge-graph-building-card"
     >
       <CardStatusRow
         label={row.label}
         value={row.value}
         percent={row.percent}
-        progressLabel="Map built"
+        progressLabel={t`Map built`}
         testId="knowledge-graph-building-progress"
       />
       <CardSourceList readOnly lines={sourceLines} testId="knowledge-graph-building-sources" />

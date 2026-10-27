@@ -4,6 +4,8 @@
  * `src/shared/keybindings.ts`; this module is the part that touches
  * `KeyboardEvent` / `PointerEvent` and the host platform.
  */
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { isMouseCombo, normalizeCombo } from '../../shared/keybindings';
 
 /** True on macOS, where `Mod` resolves to Cmd (metaKey) instead of Ctrl.
@@ -140,12 +142,19 @@ const MAIN_KEY_LABELS: Record<string, string> = {
   ArrowDown: '↓',
 };
 
-/** Human-readable labels for the bindable mouse buttons. */
-const MOUSE_COMBO_LABELS: Record<string, string> = {
-  'Mouse:Middle': 'Middle Click',
-  'Mouse:Back': 'Back Click',
-  'Mouse:Forward': 'Forward Click',
+/** Human-readable labels for the bindable mouse buttons, translated where a
+ *  combo is formatted. The modifier and key labels above are key caps and stay
+ *  as written. */
+const MOUSE_COMBO_LABELS: Record<string, MessageDescriptor> = {
+  'Mouse:Middle': msg`Middle Click`,
+  'Mouse:Back': msg`Back Click`,
+  'Mouse:Forward': msg`Forward Click`,
 };
+
+function mouseComboLabel(token: string): string {
+  const label = MOUSE_COMBO_LABELS[token];
+  return label ? i18n._(label) : token;
+}
 
 /**
  * Split a canonical combo into display segments for rendering as `<kbd>`
@@ -155,7 +164,7 @@ const MOUSE_COMBO_LABELS: Record<string, string> = {
  */
 export function formatComboSegments(combo: string): string[] {
   // A mouse combo renders one segment per button (a chord becomes two chips).
-  if (isMouseCombo(combo)) return combo.split('+').map((token) => MOUSE_COMBO_LABELS[token] ?? token);
+  if (isMouseCombo(combo)) return combo.split('+').map(mouseComboLabel);
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);

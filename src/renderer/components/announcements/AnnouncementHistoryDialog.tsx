@@ -1,4 +1,5 @@
 import { ChevronRight, Megaphone } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Tooltip } from '../Tooltip';
 import { useAnnouncementsStore } from '../../stores/announcements-store';
@@ -80,6 +81,7 @@ const HISTORY_BODY_MIN_HEIGHT = 'min-h-[150px]';
  * into something that needs paging.
  */
 export function AnnouncementHistoryDialog() {
+  const { t } = useLingui();
   const historyOpen = useAnnouncementsStore((state) => state.historyOpen);
   const history = useAnnouncementsStore((state) => state.history);
   const dialogAnnouncement = useAnnouncementsStore((state) => state.dialogAnnouncement);
@@ -90,7 +92,7 @@ export function AnnouncementHistoryDialog() {
   return (
     <BaseDialog
       onClose={closeHistory}
-      title="Announcements"
+      title={t`Announcements`}
       icon={<Megaphone size={16} className="text-accent" />}
       // max-h, not a fixed h: the archive is usually one or two entries early
       // on, and a fixed 60vh box left almost all of it empty. The list grows to
@@ -113,7 +115,7 @@ export function AnnouncementHistoryDialog() {
           className={`flex-1 ${HISTORY_BODY_MIN_HEIGHT} flex items-center justify-center px-6 py-10 text-center text-sm text-fg-muted`}
           data-testid="announcement-history-empty"
         >
-          No announcements yet. Product news shows up here as it is published.
+          <Trans>No announcements yet. Product news shows up here as it is published.</Trans>
         </div>
       ) : (
         <div

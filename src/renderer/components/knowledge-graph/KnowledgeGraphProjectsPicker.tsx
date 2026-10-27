@@ -17,6 +17,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { KnowledgeGraphProjectSummary } from '../../../shared/types';
 import { isIndexedProject } from '../../../shared/index-summary';
 import { OverlayPopover } from '../OverlayPopover';
@@ -51,9 +54,9 @@ export function scopeLabel(
   selectedIds: ReadonlyArray<string>,
   indexed: ReadonlyArray<KnowledgeGraphProjectSummary>,
 ): string {
-  if (selectedIds.length === 1) return indexed.find((project) => project.id === selectedIds[0])?.name ?? '1 project';
-  if (indexed.length > 1 && indexed.every((project) => selectedIds.includes(project.id))) return 'All projects';
-  return `${selectedIds.length} projects`;
+  if (selectedIds.length === 1) return indexed.find((project) => project.id === selectedIds[0])?.name ?? i18n._(msg`1 project`);
+  if (indexed.length > 1 && indexed.every((project) => selectedIds.includes(project.id))) return i18n._(msg`All projects`);
+  return plural(selectedIds.length, { one: '# project', other: '# projects' });
 }
 
 export function KnowledgeGraphProjectsPicker({
@@ -63,6 +66,7 @@ export function KnowledgeGraphProjectsPicker({
   pendingIds,
   onChange,
 }: KnowledgeGraphProjectsPickerProps) {
+  const { t } = useLingui();
   const [open, setOpenState] = useState(false);
   const [query, setQuery] = useState('');
   // The search clears as the menu closes, so the next open lists every project.
@@ -134,6 +138,8 @@ export function KnowledgeGraphProjectsPicker({
   };
 
   const label = scopeLabel(selectedIds, indexed);
+  const selectedCount = selectedIds.length;
+  const indexedCount = indexed.length;
   const shownIndexed = indexed.filter(matches);
   const shownNotIndexed = notIndexed.filter(matches);
 
@@ -150,7 +156,7 @@ export function KnowledgeGraphProjectsPicker({
       >
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">
-          {selectedIds.length} of {indexed.length}
+          <Trans>{selectedCount} of {indexedCount}</Trans>
         </span>
         <ChevronDown size={14} className="flex-shrink-0 text-fg-muted" aria-hidden />
       </button>
@@ -176,14 +182,14 @@ export function KnowledgeGraphProjectsPicker({
                 moveFocus(null, 1);
               }
             }}
-            placeholder="Find a project"
-            aria-label="Find a project"
+            placeholder={t`Find a project`}
+            aria-label={t`Find a project`}
             className="w-full rounded border border-edge-input bg-surface py-1 pl-7 pr-2 text-xs text-fg placeholder:text-fg-muted outline-none focus:border-accent"
             data-testid="knowledge-graph-projects-search"
           />
         </div>
         <div className="flex items-center gap-1 px-3 pb-1.5 text-[11px] text-fg-muted">
-          <span className="flex-1">{selectedIds.length} of {indexed.length} shown</span>
+          <span className="flex-1"><Trans>{selectedCount} of {indexedCount} shown</Trans></span>
           <button
             type="button"
             onClick={() => onChange(indexed.map((project) => project.id))}
@@ -191,9 +197,9 @@ export function KnowledgeGraphProjectsPicker({
             className="rounded px-1.5 py-0.5 hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
             data-testid="knowledge-graph-projects-all"
           >
-            All
+            <Trans>All</Trans>
           </button>
-          <Tooltip label="Just the open project">
+          <Tooltip label={t`Just the open project`}>
             <button
               type="button"
               // The scope is never empty, so None is the open project alone.
@@ -202,7 +208,7 @@ export function KnowledgeGraphProjectsPicker({
               className="rounded px-1.5 py-0.5 hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
               data-testid="knowledge-graph-projects-none"
             >
-              None
+              <Trans>None</Trans>
             </button>
           </Tooltip>
         </div>
@@ -210,7 +216,7 @@ export function KnowledgeGraphProjectsPicker({
           className="min-h-0 flex-1 overflow-y-auto pb-1.5"
           role="listbox"
           aria-multiselectable="true"
-          aria-label="Projects"
+          aria-label={t`Projects`}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault();
@@ -219,11 +225,13 @@ export function KnowledgeGraphProjectsPicker({
           }}
         >
           {shownIndexed.length === 0 && shownNotIndexed.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-fg-muted">No project matches that.</p>
+            <p className="px-3 py-2 text-xs text-fg-muted"><Trans>No project matches that.</Trans></p>
           ) : null}
           {shownIndexed.map((project) => {
             const isOn = selected.has(project.id);
             const isPending = isOn && pendingIds.includes(project.id);
+            const conversationCount = project.conversations.toLocaleString();
+            const taskRecordCount = project.taskRecords.toLocaleString();
             return (
               <button
                 key={project.id}
@@ -243,10 +251,10 @@ export function KnowledgeGraphProjectsPicker({
                   {isOn ? <Check size={10} strokeWidth={3} /> : null}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                {isPending ? <span className="flex-shrink-0 text-[11px] text-fg-muted">Building</span> : null}
+                {isPending ? <span className="flex-shrink-0 text-[11px] text-fg-muted"><Trans>Building</Trans></span> : null}
                 {/* The count is what the map draws; the task records it also
                     searches are named on hover. */}
-                <Tooltip label={`${project.conversations.toLocaleString()} conversations, ${project.taskRecords.toLocaleString()} task records`}>
+                <Tooltip label={t`${conversationCount} conversations, ${taskRecordCount} task records`}>
                   <span className="flex-shrink-0 text-[11px] tabular-nums text-fg-faint">
                     {project.conversations}
                   </span>
@@ -257,10 +265,10 @@ export function KnowledgeGraphProjectsPicker({
           {shownNotIndexed.length > 0 ? (
             <>
               <div className="mx-3 mb-1 mt-1.5 border-t border-edge pt-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-                Not indexed
+                <Trans>Not indexed</Trans>
               </div>
               {shownNotIndexed.map((project) => (
-                <Tooltip key={project.id} label="Nothing indexed yet, so there is no map to draw">
+                <Tooltip key={project.id} label={t`Nothing indexed yet, so there is no map to draw`}>
                   <button
                     type="button"
                     role="option"

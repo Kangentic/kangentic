@@ -1,4 +1,5 @@
 import React from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 
 /**
@@ -12,14 +13,16 @@ export function SendToBacklogDialog({ title, onConfirm, onCancel }: {
   onConfirm: (dontAskAgain: boolean) => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
+  const taskTitle = title;
   return (
     <ConfirmDialog
-      title="Send to Backlog"
+      title={t`Send to Backlog`}
       message={<>
-        <p>This will move &quot;{title}&quot; to the backlog and clean up its session and worktree.</p>
-        <p className="text-fg-muted mt-1">You can move it back to the board later.</p>
+        <p><Trans>This will move "{taskTitle}" to the backlog and clean up its session and worktree.</Trans></p>
+        <p className="text-fg-muted mt-1"><Trans>You can move it back to the board later.</Trans></p>
       </>}
-      confirmLabel="Send to Backlog"
+      confirmLabel={t`Send to Backlog`}
       showDontAskAgain
       testId="send-to-backlog-dialog"
       onConfirm={onConfirm}

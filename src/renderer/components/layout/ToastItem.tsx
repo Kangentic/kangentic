@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { X, Copy, Check, List, Settings, RotateCw, Download } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { countdownRemaining, type Toast, type ToastActionIcon } from '../../stores/toast-store';
 import { useNow } from '../../hooks/useNow';
 import { formatTimeAgo } from '../../lib/datetime';
@@ -124,6 +125,7 @@ interface ToastItemProps {
 }
 
 export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
+  const { t } = useLingui();
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -240,12 +242,12 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
           {toast.since && <ToastAge since={toast.since} />}
           <span className="flex-1" />
           {toast.variant === 'error' && (
-            <Tooltip label={copied ? 'Message copied' : 'Copy message'}>
+            <Tooltip label={copied ? t`Message copied` : t`Copy message`}>
               <button
                 type="button"
                 onClick={handleCopyClick}
                 data-testid="toast-copy"
-                aria-label={copied ? 'Message copied' : 'Copy message'}
+                aria-label={copied ? t`Message copied` : t`Copy message`}
                 className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
               >
                 {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
@@ -256,7 +258,7 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
             type="button"
             onClick={handleDismissClick}
             data-testid="toast-dismiss"
-            aria-label="Dismiss"
+            aria-label={t`Dismiss`}
             className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
           >
             <X size={14} />

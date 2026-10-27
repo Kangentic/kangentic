@@ -1,5 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg, plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
 import type { PerToolStat } from '../../../shared/types';
@@ -32,15 +35,21 @@ interface SortState {
 
 const DEFAULT_SORT: SortState = { key: 'calls', direction: 'desc' };
 
-const TOKENS_COLUMN_TIP = 'Estimated tokens this tool\'s output added to the main conversation. Not billed tokens; subagent calls are not counted.';
+function tokensColumnTip(): string {
+  return i18n._(msg`Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted.`);
+}
 
-const AVG_COLUMN_TIP = 'Average run time of the calls Time counts.';
+function avgColumnTip(): string {
+  return i18n._(msg`Average run time of the calls Time counts.`);
+}
 
-/** Header tooltip for Time, naming how many calls it leaves out. */
+/** Header tooltip for Time, naming how many calls it leaves out. One whole message per count. */
 function timeColumnTip(waitedCalls: number): string {
-  if (waitedCalls === 0) return 'How long each tool ran.';
-  const leftOut = waitedCalls === 1 ? 'the 1 call that' : `the ${waitedCalls} calls that`;
-  return `How long each tool ran. Leaves out ${leftOut} waited for your answer or approval.`;
+  if (waitedCalls === 0) return i18n._(msg`How long each tool ran.`);
+  return plural(waitedCalls, {
+    one: 'How long each tool ran. Leaves out the # call that waited for your answer or approval.',
+    other: 'How long each tool ran. Leaves out the # calls that waited for your answer or approval.',
+  });
 }
 
 /** Calls whose run time `totalDurationMs` holds: every call except the ones that waited on the user. */
@@ -93,19 +102,20 @@ const VALUE_CELL_CLASS = 'py-1 pr-3 last:pr-0 text-right text-fg-secondary';
 /** A sortable column after Tool and Calls, shown only when some row has a value for it. */
 interface ValueColumn {
   key: Exclude<NumericSortKey, 'calls'>;
-  label: string;
+  /** Resolved where the header draws. */
+  label: MessageDescriptor;
   /** Header tip, given the table's count of calls that waited on the user. */
   tip?: (waitedCalls: number) => string;
   cell: (row: PerToolStat) => ReactNode;
 }
 
 const VALUE_COLUMNS: ValueColumn[] = [
-  { key: 'time', label: 'Time', tip: timeColumnTip, cell: (row) => formatOptional(runTimeMs(row), formatToolDuration) },
-  { key: 'avg', label: 'Avg', tip: () => AVG_COLUMN_TIP, cell: (row) => formatOptional(averageDurationMs(row), formatToolDuration) },
-  { key: 'tokens', label: 'Tokens', tip: () => TOKENS_COLUMN_TIP, cell: (row) => formatOptional(row.resultTokens, formatTokenCount) },
-  { key: 'cost', label: 'Cost', cell: (row) => formatOptional(row.costUsd, formatCost) },
-  { key: 'inputTokens', label: 'In', cell: (row) => formatOptional(row.inputTokens, formatTokenCount) },
-  { key: 'outputTokens', label: 'Out', cell: (row) => formatOptional(row.outputTokens, formatTokenCount) },
+  { key: 'time', label: msg`Time`, tip: timeColumnTip, cell: (row) => formatOptional(runTimeMs(row), formatToolDuration) },
+  { key: 'avg', label: msg`Avg`, tip: avgColumnTip, cell: (row) => formatOptional(averageDurationMs(row), formatToolDuration) },
+  { key: 'tokens', label: msg`Tokens`, tip: tokensColumnTip, cell: (row) => formatOptional(row.resultTokens, formatTokenCount) },
+  { key: 'cost', label: msg`Cost`, cell: (row) => formatOptional(row.costUsd, formatCost) },
+  { key: 'inputTokens', label: msg`In`, cell: (row) => formatOptional(row.inputTokens, formatTokenCount) },
+  { key: 'outputTokens', label: msg`Out`, cell: (row) => formatOptional(row.outputTokens, formatTokenCount) },
 ];
 
 function SortableHeader({
@@ -169,6 +179,7 @@ interface ByToolTableProps {
  * both and sorts last on either.
  */
 export function ByToolTable({ rows }: ByToolTableProps) {
+  const { t, i18n: activeI18n } = useLingui();
   const [requestedSort, setRequestedSort] = useState<SortState>(DEFAULT_SORT);
 
   const hasDurations = rows.some((row) => row.totalDurationMs > 0);
@@ -214,19 +225,19 @@ export function ByToolTable({ rows }: ByToolTableProps) {
       <table className="w-full text-xs tabular-nums">
         <thead>
           <tr className="text-fg-faint">
-            <SortableHeader label="Tool" sortKey="tool" sort={sort} onSort={handleSort} align="left" />
-            <SortableHeader label="Calls" sortKey="calls" sort={sort} onSort={handleSort} />
+            <SortableHeader label={t`Tool`} sortKey="tool" sort={sort} onSort={handleSort} align="left" />
+            <SortableHeader label={t`Calls`} sortKey="calls" sort={sort} onSort={handleSort} />
             {valueColumns.map((column) => (
               <SortableHeader
                 key={column.key}
-                label={column.label}
+                label={activeI18n._(column.label)}
                 sortKey={column.key}
                 sort={sort}
                 onSort={handleSort}
                 tip={column.tip?.(waitedCalls)}
               />
             ))}
-            {anyInterrupted && <th className="text-right font-normal pt-2 pb-1">Failed</th>}
+            {anyInterrupted && <th className="text-right font-normal pt-2 pb-1"><Trans>Failed</Trans></th>}
           </tr>
         </thead>
         <tbody>

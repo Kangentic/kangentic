@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent, type MouseEvent, type RefObject, type SyntheticEvent } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ProjectSearchEntry } from '../../shared/types';
 import {
   detectDescriptionMentionTrigger,
@@ -159,10 +161,10 @@ export function useDescriptionMentions({
   const menuOpen = !disabled && !!mentionTrigger;
   const activeMentionItem = mentionResults[activeMentionIndex] ?? null;
   const helperText = useMemo(() => {
-    if (mentionError) return 'File search unavailable.';
-    if (mentionTrigger?.query.length === 0) return 'Type to search files and folders.';
-    if (mentionLoading) return 'Searching files and folders...';
-    return 'No matching files or folders.';
+    if (mentionError) return i18n._(msg`File search unavailable.`);
+    if (mentionTrigger?.query.length === 0) return i18n._(msg`Type to search files and folders.`);
+    if (mentionLoading) return i18n._(msg`Searching files and folders...`);
+    return i18n._(msg`No matching files or folders.`);
   }, [mentionError, mentionLoading, mentionTrigger]);
 
   useEffect(() => {

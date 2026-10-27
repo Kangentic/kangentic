@@ -17,6 +17,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, ChevronDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { Swimlane } from '../../shared/types';
 import { OverlayPopover } from './OverlayPopover';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -51,6 +52,7 @@ interface ListedChoice {
 const GLYPH_SIZE = 14;
 
 export function ColumnPicker({ value, columns, onChange, leadingOption, testId, ariaLabel }: ColumnPickerProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -129,7 +131,7 @@ export function ColumnPicker({ value, columns, onChange, leadingOption, testId, 
     ...columns.map((column) => ({ value: column.value, label: column.name, kind: 'column' as const, column })),
   ];
   if (!listed.some((choice) => choice.value === value)) {
-    listed.push({ value, label: `${value} (not on this board)`, kind: 'missing', column: null });
+    listed.push({ value, label: t`${value} (not on this board)`, kind: 'missing', column: null });
   }
   const selected = listed.find((choice) => choice.value === value) ?? listed[0];
 

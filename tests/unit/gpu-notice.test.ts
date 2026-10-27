@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveGpuNotice, GPU_NOTICE_MESSAGE, GPU_NOTICE_TITLE } from '../../src/renderer/utils/gpu-notice';
+import { resolveGpuNotice, gpuNoticeMessage, gpuNoticeTitle } from '../../src/renderer/utils/gpu-notice';
 
 /**
  * The should-we-say-anything decision for the graphics recovery toast
@@ -47,12 +47,12 @@ describe('resolveGpuNotice', () => {
     // established what killed the GPU process, so naming the display driver
     // would be a confident guess; and a failure count is evidence for us,
     // not guidance for the reader. Sentry gets both.
-    for (const copy of [GPU_NOTICE_TITLE, GPU_NOTICE_MESSAGE]) {
+    for (const copy of [gpuNoticeTitle(), gpuNoticeMessage()]) {
       expect(copy).not.toMatch(/driver/i);
       expect(copy).not.toMatch(/\d/);
     }
     // "repeated", not "5 times", which also means the resolver never has to
     // choose between "failed" and "failed once".
-    expect(GPU_NOTICE_MESSAGE).toContain('Repeated failures');
+    expect(gpuNoticeMessage()).toContain('Repeated failures');
   });
 });

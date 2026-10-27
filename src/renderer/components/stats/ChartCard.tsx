@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Loader } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 
 interface ChartCardProps {
   title: string;
@@ -9,6 +10,7 @@ interface ChartCardProps {
   loading?: boolean;
   /** Nothing recorded for this card in the selected range. */
   empty?: boolean;
+  /** Defaults to "No usage recorded yet". */
   emptyMessage?: string;
   className?: string;
   /** Body height (the chart area). */
@@ -25,12 +27,13 @@ export function ChartCard({
   headerRight,
   loading = false,
   empty = false,
-  emptyMessage = 'No usage recorded yet',
+  emptyMessage,
   className = '',
   bodyClassName = 'h-48',
   testId,
   children,
 }: ChartCardProps) {
+  const { t } = useLingui();
   return (
     <div className={`bg-surface-raised border border-edge rounded-lg p-4 ${className}`} data-testid={testId}>
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -47,7 +50,7 @@ export function ChartCard({
           </div>
         ) : empty ? (
           <div className="h-full flex items-center justify-center text-sm text-fg-faint">
-            {emptyMessage}
+            {emptyMessage ?? t`No usage recorded yet`}
           </div>
         ) : (
           children

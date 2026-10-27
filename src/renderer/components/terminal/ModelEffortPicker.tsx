@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -74,6 +75,7 @@ export function ModelEffortPicker({
   telemetryLanded = false,
   mode,
 }: ModelEffortPickerProps) {
+  const { t } = useLingui();
   const taskId = target.kind === 'task' ? target.taskId : null;
   const task = useBoardStore((s) => (taskId ? s.tasks.find((t) => t.id === taskId) ?? null : null));
   const swimlaneModelOverride = useBoardStore((s) =>
@@ -192,7 +194,7 @@ export function ModelEffortPicker({
     projectDefaultModel,
   });
   const modelLabel = modelDisplay.value === null
-    ? 'Default'
+    ? t({ message: 'Default', context: 'Default value' })
     : liveModelName != null
       ? modelDisplay.value
       : modelRowLabel(modelDisplay.value, modelDisplayNames);
@@ -205,7 +207,7 @@ export function ModelEffortPicker({
   const showModelTrigger = supportsModel;
   const showEffortTrigger = supportsEffort && !agentReportsNoEffort
     && (mode === 'prespawn' || effectiveEffort != null);
-  const effortLabel = effectiveEffort ?? 'Default';
+  const effortLabel = effectiveEffort ?? t({ message: 'Default', context: 'Default value' });
 
   // Marking provenance is a LIVE-bar concern: the defect is a running agent's
   // bar reading as telemetry when it is not. PreSpawnContextBar has no session,
@@ -222,9 +224,20 @@ export function ModelEffortPicker({
   // Copy for an unconfirmed value. Only one case reaches here now: no snapshot
   // has arrived yet, which is transient and resolves on its own. A model with no
   // effort levels hides the pill entirely (`agentReportsNoEffort`) rather than
-  // explaining a value that does not apply.
-  const effortProvisionalTitle = 'Waiting for the agent to report. Showing your configured default.';
-  const modelProvisionalTitle = 'Waiting for the agent to report. Showing the model this session was started with.';
+  // explaining a value that does not apply. Each tip is one whole message, the
+  // provisional sentences included, so no translation joins pieces.
+  const modelTriggerTip = modelConfirmed
+    ? t`Click to change model`
+    : t`Waiting for the agent to report. Showing the model this session was started with. Click to change.`;
+  const modelStaticTip = modelConfirmed
+    ? t`This agent does not support changing the model from Kangentic`
+    : t`Waiting for the agent to report. Showing the model this session was started with. This agent does not support changing it from Kangentic.`;
+  const effortTriggerTip = effortConfirmed
+    ? t`Click to change effort`
+    : t`Waiting for the agent to report. Showing your configured default. Click to change.`;
+  const effortStaticTip = effortConfirmed
+    ? t`This agent does not support changing the effort level from Kangentic`
+    : t`Waiting for the agent to report. Showing your configured default. This agent does not support changing it from Kangentic.`;
 
   // The column/project default the "Use column default" row reverts to, in the
   // same humanized form the option rows use.
@@ -261,7 +274,7 @@ export function ModelEffortPicker({
       {showModelTrigger ? (
         <span className="relative inline-flex">
           <Tooltip
-            label={modelConfirmed ? 'Click to change model' : `${modelProvisionalTitle} Click to change.`}
+            label={modelTriggerTip}
             enabled={openPopover !== 'model'}
           >
             <button
@@ -285,7 +298,7 @@ export function ModelEffortPicker({
           {openPopover === 'model' && (
             <ContextBarPopover
               triggerRef={modelTriggerRef}
-              title="Model"
+              title={t`Model`}
               aliasOptions={aliasOptionsForPopover}
               options={modelOptionsForPopover}
               pinnedOptions={pinnedModelOptions}
@@ -303,11 +316,7 @@ export function ModelEffortPicker({
         </span>
       ) : (
         liveModelName && (
-          <Tooltip
-            label={modelConfirmed
-              ? 'This agent does not support changing the model from Kangentic'
-              : `${modelProvisionalTitle} This agent does not support changing it from Kangentic.`}
-          >
+          <Tooltip label={modelStaticTip}>
             <span
               className={`${pillForProvenance(modelConfirmed)} text-fg-muted`}
               data-testid="context-bar-model-static"
@@ -321,7 +330,7 @@ export function ModelEffortPicker({
       {showEffortTrigger ? (
         <span className="relative inline-flex">
           <Tooltip
-            label={effortConfirmed ? 'Click to change effort' : `${effortProvisionalTitle} Click to change.`}
+            label={effortTriggerTip}
             enabled={openPopover !== 'effort'}
           >
             <button
@@ -339,7 +348,7 @@ export function ModelEffortPicker({
           {openPopover === 'effort' && (
             <ContextBarPopover
               triggerRef={effortTriggerRef}
-              title="Effort"
+              title={t`Effort`}
               options={effortOptions.map((value) => ({ value, label: value }))}
               currentValue={currentEffortValue}
               swimlaneDefault={swimlaneEffortOverride ?? projectDefaultEffort}
@@ -351,11 +360,7 @@ export function ModelEffortPicker({
         </span>
       ) : (
         !agentReportsNoEffort && effectiveEffort && (
-          <Tooltip
-            label={effortConfirmed
-              ? 'This agent does not support changing the effort level from Kangentic'
-              : `${effortProvisionalTitle} This agent does not support changing it from Kangentic.`}
-          >
+          <Tooltip label={effortStaticTip}>
             <span
               className={`${pillForProvenance(effortConfirmed)} text-fg-faint`}
               data-testid="context-bar-effort-static"

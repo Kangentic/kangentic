@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { FolderPlus, FolderTree, ChevronUp } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../../OverlayPopover';
 import { Tooltip } from '../../Tooltip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -19,6 +20,7 @@ export interface SidebarFooterActionsProps {
  * sync with the text button's padding by hand.
  */
 export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooterActionsProps) {
+  const { t } = useLingui();
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +67,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         ref={containerRef}
         className="flex items-stretch rounded-md border border-edge/60 overflow-hidden focus-within:border-edge"
       >
-        <Tooltip label="Open folder as project">
+        <Tooltip label={t`Open folder as project`}>
           <button
             type="button"
             // Closes the caret menu too: this button is inside `containerRef`, so
@@ -79,17 +81,17 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
             data-testid="sidebar-new-project-button"
           >
             <FolderPlus size={14} />
-            Add project
+            <Trans>Add project</Trans>
           </button>
         </Tooltip>
-        <Tooltip label="More project actions" enabled={!menuOpen}>
+        <Tooltip label={t`More project actions`} enabled={!menuOpen}>
           <button
             ref={caretRef}
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => setMenuOpen((open) => !open)}
             className="flex-shrink-0 inline-flex items-center justify-center w-7 border-l border-edge/60 cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
-            aria-label="More project actions"
+            aria-label={t`More project actions`}
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             data-testid="sidebar-footer-more-button"
@@ -121,7 +123,7 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
           data-testid="sidebar-new-group-button"
         >
           <FolderTree size={14} className="text-fg-faint" />
-          New group
+          <Trans>New group</Trans>
         </button>
       </OverlayPopover>
     </div>

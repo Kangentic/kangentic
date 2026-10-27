@@ -13,6 +13,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Search, ChevronUp, ChevronDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { HeaderActionButton } from '../HeaderActionButton';
 import type { DisplayRow } from './display-rows';
 
@@ -70,7 +71,9 @@ function buildSnippet(text: string, matchStart: number, matchEnd: number): { sni
 }
 
 export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, ConversationSearchBarProps>(
-  function ConversationSearchBar({ rows, onNavigate, placeholder = 'Search this conversation' }, ref) {
+  function ConversationSearchBar({ rows, onNavigate, placeholder }, ref) {
+    const { t } = useLingui();
+    const inputPlaceholder = placeholder ?? t`Search this conversation`;
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
     // The current match is held by its row's uuid, not its index: a page of
@@ -159,9 +162,11 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
       [goToNext, goToPrevious],
     );
 
+    const position = currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0;
+    const total = matches.length;
     const countLabel = matches.length === 0
-      ? (debouncedQuery.trim().length > 0 ? 'No results' : '')
-      : `${currentMatchIndex >= 0 ? currentMatchIndex + 1 : 0} of ${matches.length}`;
+      ? (debouncedQuery.trim().length > 0 ? t`No results` : '')
+      : t`${position} of ${total}`;
 
     return (
       <div
@@ -176,7 +181,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder={placeholder}
+            placeholder={inputPlaceholder}
             className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder:text-fg-faint focus:outline-none"
             data-testid="conversation-search-input"
           />
@@ -189,7 +194,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             icon={ChevronUp}
             onClick={goToPrevious}
             disabled={matches.length === 0}
-            tip="Previous match"
+            tip={t`Previous match`}
             size="small"
             testId="conversation-search-previous"
           />
@@ -197,7 +202,7 @@ export const ConversationSearchBar = forwardRef<ConversationSearchBarHandle, Con
             icon={ChevronDown}
             onClick={goToNext}
             disabled={matches.length === 0}
-            tip="Next match"
+            tip={t`Next match`}
             size="small"
             testId="conversation-search-next"
           />

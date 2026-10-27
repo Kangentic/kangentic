@@ -1,5 +1,6 @@
 import React from 'react';
 import { RefreshCw, RotateCcw } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { reportBoundaryError } from '../error-reporting';
 import { syncFocusedTerminals } from '../utils/focused-terminals';
 
@@ -71,9 +72,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex flex-col items-center justify-center h-screen bg-surface text-fg-tertiary gap-4 p-8">
-          <h1 className="text-xl font-semibold text-fg">Something went wrong</h1>
+          <h1 className="text-xl font-semibold text-fg"><Trans>Something went wrong</Trans></h1>
           <p className="text-sm text-fg-muted max-w-md text-center">
-            {this.state.error?.message || 'An unexpected error occurred.'}
+            {this.state.error?.message || <Trans>An unexpected error occurred.</Trans>}
           </p>
           <div className="flex items-center gap-2">
             <button
@@ -82,7 +83,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
               className="flex items-center gap-2 px-4 py-2 bg-accent-emphasis hover:bg-accent rounded-md text-sm text-accent-on transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
-              Reload
+              <Trans context="Action">Reload</Trans>
             </button>
             <button
               onClick={this.handleRetry}
@@ -90,7 +91,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
               className="flex items-center gap-2 px-4 py-2 bg-surface-hover hover:bg-edge-input rounded-md text-sm text-fg-secondary transition-colors"
             >
               <RotateCcw className="w-4 h-4" />
-              Try again
+              <Trans>Try again</Trans>
             </button>
           </div>
         </div>

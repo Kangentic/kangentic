@@ -6,3 +6,264 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: it\n"
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "(dev)"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "(worktree)"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+msgid "{activeSessions, plural, one {# agents} other {# agents}}"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+msgid "{activeTasks, plural, one {{activeTasksText} tasks} other {{activeTasksText} tasks}}"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "{agentCount, plural, one {Show all # agent} other {Show all # agents}}"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+msgid "{agentName} not found"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "{foundAgentCount, plural, one {# agent} other {# agents}}"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+msgid "{queued, plural, one {# queued} other {# queued}}"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Agent Monitor"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Agents"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Agents run inside your repo, so they pick up the instructions and config already there"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Announcements"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Check again for git and agent CLIs"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Checking your setup"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Checking..."
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Close"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Command Terminal"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copied!"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy \"{loginCommand}\" to clipboard"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Copy <0>{loginCommand}</0>"
+msgstr ""
+
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "Copy message"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Core"
+msgstr ""
+
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "Dismiss"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Each task runs on its own branch, so two agents never edit the same files"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Focus agent monitor window"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Focus Knowledge Graph window"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Focus usage stats window"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work."
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Hide Command Terminal"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Hide setup"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Install"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Install git and one agent CLI to run tasks."
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Install git to run tasks."
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Install one agent CLI to run tasks."
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Installed"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Isolates every task"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Kanban for AI coding agents"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Maximize"
+msgstr ""
+
+#: src/renderer/components/layout/ToastItem.tsx
+msgid "Message copied"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Minimize"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Not installed"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Not signed in"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Open a project"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Pair a phone"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Quick Find"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Read the setup guide"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Reads your project's setup"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Refresh"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Runs real terminals"
+msgstr ""
+
+#: src/renderer/components/layout/AppLayout.tsx
+msgid "Select a project from the sidebar"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Settings"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Show setup"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Sign in to {signedOutAgentName} to run tasks."
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Update available"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Usage Stats"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "v{appVersion}"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "v{version}"
+msgstr ""
+
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Version {pendingVersion} is ready to install"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "Watch an agent work and type back to steer it"
+msgstr ""
+
+#: src/renderer/components/layout/StatusBar.tsx
+msgid "What's new in v{appVersion}"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "When you open a project"
+msgstr ""
+
+#: src/renderer/components/layout/WelcomeScreen.tsx
+msgid "You can look around now and install an agent later."
+msgstr ""

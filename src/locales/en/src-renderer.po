@@ -7,17 +7,696 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" failed against the task's current state."
+msgstr "\"{automationName}\" failed against the task's current state."
+
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" failed on {columnName}."
+msgstr "\"{automationName}\" failed on {columnName}."
+
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" is still running against the task's current state."
+msgstr "\"{automationName}\" is still running against the task's current state."
+
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" succeeded against the task's current state."
+msgstr "\"{automationName}\" succeeded against the task's current state."
+
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" was interrupted against the task's current state."
+msgstr "\"{automationName}\" was interrupted against the task's current state."
+
+#: src/renderer/App.tsx
+msgid "\"{automationName}\" was skipped against the task's current state."
+msgstr "\"{automationName}\" was skipped against the task's current state."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "\"{projectName}\" is now at {projectPath}."
+msgstr "\"{projectName}\" is now at {projectPath}."
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "\"{swimlaneName}\""
+msgstr "\"{swimlaneName}\""
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "\"{taskTitle}\""
+msgstr "\"{taskTitle}\""
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" did not run {command}."
+msgstr "\"{taskTitle}\" did not run {command}."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" exited with code {exitCode}."
+msgstr "\"{taskTitle}\" exited with code {exitCode}."
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "\"{taskTitle}\" in {columnName}."
+msgstr "\"{taskTitle}\" in {columnName}."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" is {phase}."
+msgstr "\"{taskTitle}\" is {phase}."
+
+#: src/renderer/stores/board-store/task-completion-slice.ts
+msgid "\"{taskTitle}\" is archived."
+msgstr "\"{taskTitle}\" is archived."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "\"{taskTitle}\" is asking to run a tool."
+msgstr "\"{taskTitle}\" is asking to run a tool."
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "\"{taskTitle}\" is back in {columnName}."
+msgstr "\"{taskTitle}\" is back in {columnName}."
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "\"{taskTitle}\" is back on the board."
+msgstr "\"{taskTitle}\" is back on the board."
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "\"{taskTitle}\" is running."
+msgstr "\"{taskTitle}\" is running."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" is waiting on the git queue."
+msgstr "\"{taskTitle}\" is waiting on the git queue."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "\"{taskTitle}\" is waiting on you."
+msgstr "\"{taskTitle}\" is waiting on you."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" ran {command} and cleared your unsent text."
+msgstr "\"{taskTitle}\" ran {command} and cleared your unsent text."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" ran {command} and interrupted the agent mid-task."
+msgstr "\"{taskTitle}\" ran {command} and interrupted the agent mid-task."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" ran {command} and restarted the session to deliver it."
+msgstr "\"{taskTitle}\" ran {command} and restarted the session to deliver it."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" ran {command}, cleared your unsent text and restarted the session to deliver it."
+msgstr "\"{taskTitle}\" ran {command}, cleared your unsent text and restarted the session to deliver it."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" ran {command}, interrupted the agent mid-task and restarted the session to deliver it."
+msgstr "\"{taskTitle}\" ran {command}, interrupted the agent mid-task and restarted the session to deliver it."
+
+#: src/renderer/lib/auto-name-scheduler.ts
+msgid "\"{taskTitle}\" replaces the placeholder title."
+msgstr "\"{taskTitle}\" replaces the placeholder title."
+
+#: src/renderer/lib/conversation-expired.ts
+msgid "\"{taskTitle}\" started fresh because its conversation from {lastActive} expired."
+msgstr "\"{taskTitle}\" started fresh because its conversation from {lastActive} expired."
+
+#: src/renderer/lib/conversation-expired.ts
+msgid "\"{taskTitle}\" started fresh because its last conversation expired."
+msgstr "\"{taskTitle}\" started fresh because its last conversation expired."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
+msgstr "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
+msgstr "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
+msgstr "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
+msgstr "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {waited # day} other {waited # days}}"
+msgstr "{amount, plural, one {waited # day} other {waited # days}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
+msgstr "{amount, plural, one {Waited # day} other {Waited # days}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
+msgstr "{amount, plural, one {waited # hour} other {waited # hours}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
+msgstr "{amount, plural, one {Waited # hour} other {Waited # hours}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
+msgstr "{amount, plural, one {waited # minute} other {waited # minutes}}"
+
+#: src/renderer/lib/paused-for-memory.ts
+msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
+msgstr "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "{basePill} will be checked out in the project folder"
+msgstr "{basePill} will be checked out in the project folder"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "{branchPill} exists and will be checked out in a new worktree"
+msgstr "{branchPill} exists and will be checked out in a new worktree"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "{branchPill} exists and will be checked out in the project folder"
+msgstr "{branchPill} exists and will be checked out in the project folder"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "{branchPill} will be created from {basePill} in a new worktree"
+msgstr "{branchPill} will be created from {basePill} in a new worktree"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "{branchPill} will be created from {basePill} in the project folder"
+msgstr "{branchPill} will be created from {basePill} in the project folder"
+
+#: src/renderer/stores/host-memory-store.ts
+msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
+msgstr "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
+
+#: src/renderer/stores/host-memory-store.ts
+msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
+msgstr "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
+
+#: src/renderer/components/TemplateTextField.tsx
+msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
+msgstr "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
+msgstr "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\".} other {Couldn't stop # processes from \"{taskTitle}\".}}"
+msgstr "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\".} other {Couldn't stop # processes from \"{taskTitle}\".}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
+msgstr "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}.} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}.}}"
+msgstr "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}.} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}.}}"
+
 #: src/renderer/utils/format-session.ts
 msgid "{hours}h {minutes}m"
 msgstr "{hours}h {minutes}m"
+
+#: src/renderer/App.tsx
+msgid "{interruptedCount, plural, one {# automation didn't finish before Kangentic closed.} other {# automations didn't finish before Kangentic closed.}}"
+msgstr "{interruptedCount, plural, one {# automation didn't finish before Kangentic closed.} other {# automations didn't finish before Kangentic closed.}}"
+
+#: src/renderer/App.tsx
+msgid "{interruptedCount, plural, one {Automation interrupted} other {Automations interrupted}}"
+msgstr "{interruptedCount, plural, one {Automation interrupted} other {Automations interrupted}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{keptCount, plural, one {# process from \"{taskTitle}\" is still running.} other {# processes from \"{taskTitle}\" are still running.}}"
+msgstr "{keptCount, plural, one {# process from \"{taskTitle}\" is still running.} other {# processes from \"{taskTitle}\" are still running.}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{keptCount, plural, one {# process from {taskCount, plural, other {# tasks}} is still running.} other {# processes from {taskCount, plural, other {# tasks}} are still running.}}"
+msgstr "{keptCount, plural, one {# process from {taskCount, plural, other {# tasks}} is still running.} other {# processes from {taskCount, plural, other {# tasks}} are still running.}}"
 
 #: src/renderer/utils/format-session.ts
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}m {seconds}s"
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
+msgstr "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
+msgstr "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
+
+#: src/renderer/stores/host-memory-store.ts
+msgid "{remaining} of memory reservations left."
+msgstr "{remaining} of memory reservations left."
+
 #: src/renderer/utils/format-session.ts
 msgid "{seconds}s"
 msgstr "{seconds}s"
+
+#: src/renderer/App.tsx
+msgid "{sessionIdShort} exited with code {exitCode}."
+msgstr "{sessionIdShort} exited with code {exitCode}."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "{sessionIdShort} is asking to run a tool."
+msgstr "{sessionIdShort} is asking to run a tool."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "{sessionIdShort} is waiting on you."
+msgstr "{sessionIdShort} is waiting on you."
+
+#: src/renderer/App.tsx
+msgid "{sessionIdShort} was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
+msgstr "{sessionIdShort} was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{stoppedCount, plural, one {Stopped # leftover process from \"{taskTitle}\".} other {Stopped # leftover processes from \"{taskTitle}\".}}"
+msgstr "{stoppedCount, plural, one {Stopped # leftover process from \"{taskTitle}\".} other {Stopped # leftover processes from \"{taskTitle}\".}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "{stoppedCount, plural, one {Stopped # leftover process from {taskCount, plural, other {# tasks}}.} other {Stopped # leftover processes from {taskCount, plural, other {# tasks}}.}}"
+msgstr "{stoppedCount, plural, one {Stopped # leftover process from {taskCount, plural, other {# tasks}}.} other {Stopped # leftover processes from {taskCount, plural, other {# tasks}}.}}"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "{taskCount, plural, one {# task is back in {columnName}.} other {# tasks are back in {columnName}.}}"
+msgstr "{taskCount, plural, one {# task is back in {columnName}.} other {# tasks are back in {columnName}.}}"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "{taskCount, plural, one {# task is back on the board.} other {# tasks are back on the board.}}"
+msgstr "{taskCount, plural, one {# task is back on the board.} other {# tasks are back on the board.}}"
+
+#: src/renderer/App.tsx
+msgid "{taskCount, plural, one {The task of \"{workflowTitle}\" is in Done.} other {All # tasks of \"{workflowTitle}\" are in Done.}}"
+msgstr "{taskCount, plural, one {The task of \"{workflowTitle}\" is in Done.} other {All # tasks of \"{workflowTitle}\" are in Done.}}"
+
+#: src/renderer/components/ColumnPicker.tsx
+msgid "{value} (not on this board)"
+msgstr "{value} (not on this board)"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
+msgstr "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
+
+#: src/renderer/App.tsx
+msgid "A project"
+msgstr "A project"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "A tmux server. Stopping it ends all your tmux sessions."
+msgstr "A tmux server. Stopping it ends all your tmux sessions."
+
+#: src/renderer/components/KebabMenu.tsx
+msgid "Actions"
+msgstr "Actions"
+
+#: src/renderer/utils/agent-display-name.ts
+msgid "Agent"
+msgstr "Agent"
+
+#: src/renderer/App.tsx
+msgid "Agent didn't start"
+msgstr "Agent didn't start"
+
+#: src/renderer/utils/idle-toast.ts
+msgid "Agent finished"
+msgstr "Agent finished"
+
+#: src/renderer/App.tsx
+msgid "Agent paused"
+msgstr "Agent paused"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Agent resumed"
+msgstr "Agent resumed"
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Agent started"
+msgstr "Agent started"
+
+#: src/renderer/stores/host-memory-store.ts
+msgid "Almost no memory reservations left."
+msgstr "Almost no memory reservations left."
+
+#: src/renderer/components/ErrorBoundary.tsx
+msgid "An unexpected error occurred."
+msgstr "An unexpected error occurred."
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "Auto-generated branch will be created from {basePill} in a new worktree"
+msgstr "Auto-generated branch will be created from {basePill} in a new worktree"
+
+#: src/renderer/App.tsx
+msgid "Automation failed"
+msgstr "Automation failed"
+
+#: src/renderer/utils/keybindings.ts
+msgid "Back Click"
+msgstr "Back Click"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Back to writing markdown"
+msgstr "Back to writing markdown"
+
+#: src/renderer/App.tsx
+msgid "Base branch not refreshed"
+msgstr "Base branch not refreshed"
+
+#: src/renderer/lib/pr-state.ts
+msgid "blocked"
+msgstr "blocked"
+
+#: src/renderer/hooks/useBoardDragDrop.ts
+msgid "Can't move To Do"
+msgstr "Can't move To Do"
+
+#: src/renderer/App.tsx
+msgid "Change not saved to disk"
+msgstr "Change not saved to disk"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Choose a project folder"
+msgstr "Choose a project folder"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Choose folder"
+msgstr "Choose folder"
+
+#: src/renderer/components/MultiSelectDropdown.tsx
+msgctxt "Action"
+msgid "Clear"
+msgstr "Clear"
+
+#: src/renderer/components/FilterPopover.tsx
+msgid "Clear all filters"
+msgstr "Clear all filters"
+
+#: src/renderer/components/ToolbarSearchFilter.tsx
+msgid "Clear search"
+msgstr "Clear search"
+
+#: src/renderer/components/DataTable.tsx
+msgid "Click to sort - Shift+Click adds a secondary sort"
+msgstr "Click to sort - Shift+Click adds a secondary sort"
+
+#: src/renderer/pop-out/PopOutWindowFrame.tsx
+msgid "Close"
+msgstr "Close"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#: src/renderer/window-manager/components/WindowTitleBar.tsx
+msgid "Close window"
+msgstr "Close window"
+
+#: src/renderer/lib/pr-state.ts
+msgid "closed"
+msgstr "closed"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Closing now will discard your unsaved edits to this task."
+msgstr "Closing now will discard your unsaved edits to this task."
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "Column changed by agent"
+msgstr "Column changed by agent"
+
+#: src/renderer/App.tsx
+msgid "Command didn't run"
+msgstr "Command didn't run"
+
+#: src/renderer/utils/shell-display-name.ts
+msgid "Command Prompt"
+msgstr "Command Prompt"
+
+#: src/renderer/App.tsx
+msgid "Command ran"
+msgstr "Command ran"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Command terminal"
+msgstr "Command terminal"
+
+#: src/renderer/lib/pr-state.ts
+msgid "conflicts"
+msgstr "conflicts"
+
+#: src/renderer/App.tsx
+msgid "Conversation moved"
+msgstr "Conversation moved"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Copy conversation"
+msgstr "Copy conversation"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Copy conversation as Markdown"
+msgstr "Copy conversation as Markdown"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Copy task ID"
+msgstr "Copy task ID"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Copying <0>{copiedEntries}</0> of <1>{totalEntries}</1>..."
+msgstr "Copying <0>{copiedEntries}</0> of <1>{totalEntries}</1>..."
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Couldn't add project"
+msgstr "Couldn't add project"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't add the task"
+msgstr "Couldn't add the task"
+
+#: src/renderer/stores/board-store/board-config-slice.ts
+msgid "Couldn't apply kangentic.json"
+msgstr "Couldn't apply kangentic.json"
+
+#: src/renderer/stores/board-store/task-slice.ts
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't apply model or effort"
+msgstr "Couldn't apply model or effort"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't change plan approval"
+msgstr "Couldn't change plan approval"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't change the route"
+msgstr "Couldn't change the route"
+
+#: src/renderer/stores/board-store/task-completion-slice.ts
+msgid "Couldn't complete task"
+msgstr "Couldn't complete task"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't create the workflow"
+msgstr "Couldn't create the workflow"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Couldn't delete task"
+msgstr "Couldn't delete task"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Couldn't delete tasks"
+msgstr "Couldn't delete tasks"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't delete the workflow"
+msgstr "Couldn't delete the workflow"
+
+#: src/renderer/components/NameFromPromptButton.tsx
+msgid "Couldn't generate title"
+msgstr "Couldn't generate title"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't link the tasks"
+msgstr "Couldn't link the tasks"
+
+#: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+msgid "Couldn't load the terminals for this window."
+msgstr "Couldn't load the terminals for this window."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Couldn't move project"
+msgstr "Couldn't move project"
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Couldn't move task"
+msgstr "Couldn't move task"
+
+#: src/renderer/stores/project-store.ts
+msgid "Couldn't open project"
+msgstr "Couldn't open project"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Couldn't open that folder"
+msgstr "Couldn't open that folder"
+
+#: src/renderer/utils/session-toggle.ts
+msgid "Couldn't pause session"
+msgstr "Couldn't pause session"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't pause the workflow"
+msgstr "Couldn't pause the workflow"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't pause the workflow agent"
+msgstr "Couldn't pause the workflow agent"
+
+#: src/renderer/stores/backlog-store.ts
+msgid "Couldn't promote tasks"
+msgstr "Couldn't promote tasks"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Couldn't read that folder"
+msgstr "Couldn't read that folder"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't remove the link"
+msgstr "Couldn't remove the link"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't remove the task"
+msgstr "Couldn't remove the task"
+
+#: src/renderer/lib/auto-name-scheduler.ts
+msgid "Couldn't rename task"
+msgstr "Couldn't rename task"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't rename the workflow"
+msgstr "Couldn't rename the workflow"
+
+#: src/renderer/stores/board-store/swimlane-slice.ts
+msgid "Couldn't reorder columns"
+msgstr "Couldn't reorder columns"
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Couldn't reorder task"
+msgstr "Couldn't reorder task"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Couldn't restore task"
+msgstr "Couldn't restore task"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Couldn't restore tasks"
+msgstr "Couldn't restore tasks"
+
+#: src/renderer/utils/session-toggle.ts
+msgid "Couldn't resume session"
+msgstr "Couldn't resume session"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't resume the workflow"
+msgstr "Couldn't resume the workflow"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't resume the workflow agent"
+msgstr "Couldn't resume the workflow agent"
+
+#: src/renderer/App.tsx
+msgid "Couldn't run again"
+msgstr "Couldn't run again"
+
+#: src/renderer/stores/board-store/swimlane-slice.ts
+msgid "Couldn't save profiles"
+msgstr "Couldn't save profiles"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't save the layout"
+msgstr "Couldn't save the layout"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't save the task"
+msgstr "Couldn't save the task"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't start the workflow"
+msgstr "Couldn't start the workflow"
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Couldn't start the workflow agent"
+msgstr "Couldn't start the workflow agent"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Couldn't stop it. Try again, or close it yourself."
+msgstr "Couldn't stop it. Try again, or close it yourself."
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Couldn't stop processes"
+msgstr "Couldn't stop processes"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Delete"
+msgstr "Delete"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Delete task"
+msgstr "Delete task"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Describe the task for the agent..."
+msgstr "Describe the task for the agent..."
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Dictation could not start: {reason}"
+msgstr "Dictation could not start: {reason}"
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Dictation could not start."
+msgstr "Dictation could not start."
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Dictation failed to start"
+msgstr "Dictation failed to start"
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Dictation failed: {reason}"
+msgstr "Dictation failed: {reason}"
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Dictation failed."
+msgstr "Dictation failed."
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Discard"
+msgstr "Discard"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Discard unsaved changes?"
+msgstr "Discard unsaved changes?"
+
+#: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+msgid "Download didn't finish"
+msgstr "Download didn't finish"
+
+#: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+msgid "Downloaded"
+msgstr "Downloaded"
+
+#: src/renderer/lib/pr-state.ts
+msgid "draft"
+msgstr "draft"
+
+#: src/renderer/hooks/useBoardDragDrop.ts
+msgid "Drag failed"
+msgstr "Drag failed"
+
+#: src/renderer/components/DataTable.tsx
+msgid "Drag to reorder"
+msgstr "Drag to reorder"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Edit Task"
+msgstr "Edit Task"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Enable"
+msgstr "Enable"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Enable worktree?"
+msgstr "Enable worktree?"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
 msgid "Failed to load the {panelLabel}"
@@ -43,24 +722,704 @@ msgstr "Failed to load the File diff"
 msgid "Failed to load the panel"
 msgstr "Failed to load the panel"
 
+#: src/renderer/components/NumberStepper.tsx
+msgid "Fewer: {ariaLabel}"
+msgstr "Fewer: {ariaLabel}"
+
+#: src/renderer/hooks/useDescriptionMentions.ts
+msgid "File search unavailable."
+msgstr "File search unavailable."
+
+#: src/renderer/components/ToolbarSearchFilter.tsx
+msgid "Filter"
+msgstr "Filter"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Float this window out of the tiled layout"
+msgstr "Float this window out of the tiled layout"
+
+#: src/renderer/pop-out/PopOutButton.tsx
+msgid "Focus detached window"
+msgstr "Focus detached window"
+
+#: src/renderer/utils/keybindings.ts
+msgid "Forward Click"
+msgstr "Forward Click"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "From:"
+msgstr "From:"
+
+#: src/renderer/components/NameFromPromptButton.tsx
+msgid "Generate a title from the description"
+msgstr "Generate a title from the description"
+
+#: src/renderer/components/NameFromPromptButton.tsx
+msgid "Generating a title"
+msgstr "Generating a title"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Git setup failed"
+msgstr "Git setup failed"
+
+#: src/renderer/utils/gpu-notice.ts
+msgid "Graphics acceleration off"
+msgstr "Graphics acceleration off"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Has an open window."
+msgstr "Has an open window."
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Hide workflow"
+msgstr "Hide workflow"
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Initializing..."
+msgstr "Initializing..."
+
+#: src/renderer/hooks/useBranchSettings.ts
+msgid "Invalid git branch name"
+msgstr "Invalid git branch name"
+
+#: src/renderer/components/IsolatedBadge.tsx
+msgid "Isolated"
+msgstr "Isolated"
+
+#: src/renderer/components/IsolatedBadge.tsx
+msgid "Isolated session"
+msgstr "Isolated session"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "It may have been moved or renamed."
+msgstr "It may have been moved or renamed."
+
+#: src/renderer/components/IsolatedBadge.tsx
+msgid "Its own context, separate from the main conversation"
+msgstr "Its own context, separate from the main conversation"
+
+#: src/renderer/stores/project-store.ts
+msgid "Its record could not be found after refreshing the project list."
+msgstr "Its record could not be found after refreshing the project list."
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Jump to start"
+msgstr "Jump to start"
+
 #: src/renderer/lib/datetime.ts
 msgid "just now"
 msgstr "just now"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
+msgstr "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
+
+#: src/renderer/stores/board-store/board-config-slice.ts
+msgid "kangentic.json warning"
+msgstr "kangentic.json warning"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Keep editing"
+msgstr "Keep editing"
+
+#: src/renderer/components/FilterPopover.tsx
+msgid "Labels"
+msgstr "Labels"
+
+#: src/renderer/utils/format-tokens.ts
+msgid "Latest"
+msgstr "Latest"
+
+#: src/renderer/utils/format-tokens.ts
+msgid "Latest {modelFamily}"
+msgstr "Latest {modelFamily}"
+
+#: src/renderer/utils/format-tokens.ts
+msgid "Latest {modelFamily}, currently {currentModel}"
+msgstr "Latest {modelFamily}, currently {currentModel}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Leftover processes"
+msgstr "Leftover processes"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Leftover processes stopped"
+msgstr "Leftover processes stopped"
+
+#: src/renderer/stores/host-memory-store.ts
+msgid "Low on memory"
+msgstr "Low on memory"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Make a first commit so each task gets its own worktree."
+msgstr "Make a first commit so each task gets its own worktree."
+
+#: src/renderer/pop-out/PopOutWindowFrame.tsx
+msgid "Maximize"
+msgstr "Maximize"
+
+#: src/renderer/lib/pr-state.ts
+msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
+msgstr "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
+
+#: src/renderer/lib/pr-state.ts
+msgid "Merge conflicts with the base branch as of the last PR refresh"
+msgstr "Merge conflicts with the base branch as of the last PR refresh"
+
+#: src/renderer/lib/pr-state.ts
+msgid "merged"
+msgstr "merged"
+
+#: src/renderer/hooks/useDictation.ts
+msgid "Microphone access was denied. Enable it in your OS settings."
+msgstr "Microphone access was denied. Enable it in your OS settings."
+
+#: src/renderer/utils/keybindings.ts
+msgid "Middle Click"
+msgstr "Middle Click"
+
+#: src/renderer/pop-out/PopOutWindowFrame.tsx
+msgid "Minimize"
+msgstr "Minimize"
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "Model change saved"
+msgstr "Model change saved"
+
+#: src/renderer/components/NumberStepper.tsx
+msgid "More: {ariaLabel}"
+msgstr "More: {ariaLabel}"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Move <0>\"{pendingProjectName}\"</0> to a new folder?"
+msgstr "Move <0>\"{pendingProjectName}\"</0> to a new folder?"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Move Folder"
+msgstr "Move Folder"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Move Project Folder"
+msgstr "Move Project Folder"
+
+#: src/renderer/App.tsx
+msgid "Moved \"{taskTitle}\" to {columnName}."
+msgstr "Moved \"{taskTitle}\" to {columnName}."
+
+#: src/renderer/App.tsx
+msgid "Moved \"{taskTitle}\" to the next column."
+msgstr "Moved \"{taskTitle}\" to the next column."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Moving project folder..."
+msgstr "Moving project folder..."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "Needs permission"
+msgstr "Needs permission"
+
+#: src/renderer/lib/conversation-expired-toast.ts
+msgid "New conversation"
+msgstr "New conversation"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "No active agent sessions."
+msgstr "No active agent sessions."
+
+#: src/renderer/pop-out/roots/PopOutBrowserRoot.tsx
+msgid "No active session for this task"
+msgstr "No active session for this task"
+
+#: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+msgid "No changes for this file"
+msgstr "No changes for this file"
+
+#: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+msgid "No changes on this branch"
+msgstr "No changes on this branch"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "No commits yet"
+msgstr "No commits yet"
+
+#: src/renderer/components/DataTable.tsx
+msgid "No data"
+msgstr "No data"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "No longer running."
+msgstr "No longer running."
+
+#: src/renderer/hooks/useDescriptionMentions.ts
+msgid "No matching files or folders."
+msgstr "No matching files or folders."
+
+#: src/renderer/hooks/useDictation.ts
+msgid "No microphone is available."
+msgstr "No microphone is available."
+
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "No project is currently open"
+msgstr "No project is currently open"
+
+#: src/renderer/hooks/useCommandBar.ts
+msgid "No project open"
+msgstr "No project open"
 
 #: src/renderer/lib/ipc-error.ts
 msgid "No reason was given."
 msgstr "No reason was given."
 
+#: src/renderer/utils/worktree-placement.tsx
+msgid "Not a git repository"
+msgstr "Not a git repository"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Nothing to preview"
+msgstr "Nothing to preview"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Old folder not removed"
+msgstr "Old folder not removed"
+
+#: src/renderer/utils/format-tokens.ts
+msgid "Older versions"
+msgstr "Older versions"
+
+#: src/renderer/lib/pr-state.ts
+msgid "open"
+msgstr "open"
+
+#: src/renderer/hooks/useCommandBar.ts
+msgid "Open a project first."
+msgstr "Open a project first."
+
+#: src/renderer/pop-out/PopOutButton.tsx
+msgid "Open in new window"
+msgstr "Open in new window"
+
+#: src/renderer/components/PrLink.tsx
+msgid "Open PR #{prNumber} in browser"
+msgstr "Open PR #{prNumber} in browser"
+
+#: src/renderer/components/PrLink.tsx
+msgid "Open PR in browser"
+msgstr "Open PR in browser"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Open task"
+msgstr "Open task"
+
+#: src/renderer/components/OptionalTag.tsx
+msgid "Optional"
+msgstr "Optional"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Other work uses it too. Stopping it can break that work."
+msgstr "Other work uses it too. Stopping it can break that work."
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Paste or drop files here"
+msgstr "Paste or drop files here"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Pick the folder that holds your code."
+msgstr "Pick the folder that holds your code."
+
+#: src/renderer/App.tsx
+msgid "Plan complete"
+msgstr "Plan complete"
+
+#: src/renderer/App.tsx
+msgid "Plan complete: {taskTitle}"
+msgstr "Plan complete: {taskTitle}"
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Pop out"
+msgstr "Pop out"
+
+#: src/renderer/components/PrLink.tsx
+msgid "PR"
+msgstr "PR"
+
+#: src/renderer/components/PrLink.tsx
+msgid "PR #{prNumber}"
+msgstr "PR #{prNumber}"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Preview"
+msgstr "Preview"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Preview rendered markdown"
+msgstr "Preview rendered markdown"
+
+#: src/renderer/components/FilterPopover.tsx
+msgid "Priority"
+msgstr "Priority"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Processes from \"{taskTitle}\""
+msgstr "Processes from \"{taskTitle}\""
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Processes from {taskCount, plural, other {# tasks}}"
+msgstr "Processes from {taskCount, plural, other {# tasks}}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Processes still running"
+msgstr "Processes still running"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Project moved"
+msgstr "Project moved"
+
+#: src/renderer/stores/project-store.ts
+msgid "Project not available"
+msgstr "Project not available"
+
+#: src/renderer/lib/pr-state.ts
+msgid "queued"
+msgstr "queued"
+
+#: src/renderer/App.tsx
+msgid "Ran again"
+msgstr "Ran again"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Ran in the project folder."
+msgstr "Ran in the project folder."
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Ran in the worktree."
+msgstr "Ran in the worktree."
+
+#: src/renderer/lib/pr-state.ts
+msgid "ready"
+msgstr "ready"
+
+#: src/renderer/lib/pr-state.ts
+msgid "Ready to merge as of the last PR refresh"
+msgstr "Ready to merge as of the last PR refresh"
+
+#: src/renderer/utils/session-toggle.ts
+msgid "Reconnected"
+msgstr "Reconnected"
+
+#: src/renderer/components/ErrorBoundary.tsx
 #: src/renderer/components/PanelErrorBoundary.tsx
 msgctxt "Action"
 msgid "Reload"
 msgstr "Reload"
+
+#: src/renderer/components/LabelInput.tsx
+msgid "Remove {label}"
+msgstr "Remove {label}"
+
+#: src/renderer/utils/gpu-notice.ts
+msgid "Repeated failures shut down your last run."
+msgstr "Repeated failures shut down your last run."
+
+#: src/renderer/lib/pr-state.ts
+msgid "Required checks or policies are queued as of the last PR refresh"
+msgstr "Required checks or policies are queued as of the last PR refresh"
+
+#: src/renderer/lib/pr-state.ts
+msgid "Required checks or policies are running as of the last PR refresh"
+msgstr "Required checks or policies are running as of the last PR refresh"
+
+#: src/renderer/stores/updater-store.ts
+msgid "Restart to update"
+msgstr "Restart to update"
+
+#: src/renderer/App.tsx
+msgid "Resume follows the conversation started by /clear."
+msgstr "Resume follows the conversation started by /clear."
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+#: src/renderer/utils/task-progress.ts
+msgid "Resuming agent..."
+msgstr "Resuming agent..."
 
 #: src/renderer/components/PanelErrorBoundary.tsx
 msgctxt "Action"
 msgid "Retry"
 msgstr "Retry"
 
+#: src/renderer/App.tsx
+#: src/renderer/stores/host-memory-store.ts
+msgid "Review"
+msgstr "Review"
+
+#: src/renderer/App.tsx
+msgid "Run again"
+msgstr "Run again"
+
+#: src/renderer/lib/pr-state.ts
+msgid "running"
+msgstr "running"
+
+#: src/renderer/App.tsx
+msgid "Running agents are resuming."
+msgstr "Running agents are resuming."
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "Runs in the project folder"
+msgstr "Runs in the project folder"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "Runs in the project folder on {branchPill}"
+msgstr "Runs in the project folder on {branchPill}"
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Runs in the project folder."
+msgstr "Runs in the project folder."
+
+#: src/renderer/lib/leftover-processes.ts
+msgid "Runs in the worktree."
+msgstr "Runs in the worktree."
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "Runs on the remote server"
+msgstr "Runs on the remote server"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Save"
+msgstr "Save"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Save changes before closing?"
+msgstr "Save changes before closing?"
+
+#: src/renderer/hooks/useDescriptionMentions.ts
+msgid "Searching files and folders..."
+msgstr "Searching files and folders..."
+
+#: src/renderer/window-manager/components/ConversationWindow.tsx
+msgid "Session"
+msgstr "Session"
+
+#: src/renderer/App.tsx
+msgid "Session ended"
+msgstr "Session ended"
+
+#: src/renderer/App.tsx
+#: src/renderer/stores/host-memory-store.ts
+msgid "Settings"
+msgstr "Settings"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Show workflow"
+msgstr "Show workflow"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Some worktrees remain"
+msgstr "Some worktrees remain"
+
+#: src/renderer/components/ErrorBoundary.tsx
+msgid "Something went wrong"
+msgstr "Something went wrong"
+
+#: src/renderer/utils/format-tokens.ts
+msgid "Specific versions"
+msgstr "Specific versions"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Started a git repo"
+msgstr "Started a git repo"
+
+#: src/renderer/utils/task-progress.ts
+msgid "Starting agent..."
+msgstr "Starting agent..."
+
+#: src/renderer/App.tsx
+msgid "Still preparing"
+msgstr "Still preparing"
+
+#: src/renderer/App.tsx
+msgid "Still preparing: {taskTitle}"
+msgstr "Still preparing: {taskTitle}"
+
+#: src/renderer/stores/board-store/task-completion-slice.ts
+msgid "Task completed"
+msgstr "Task completed"
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "Task created by agent"
+msgstr "Task created by agent"
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "Task deleted by agent"
+msgstr "Task deleted by agent"
+
+#: src/renderer/lib/auto-name-scheduler.ts
+msgid "Task renamed"
+msgstr "Task renamed"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Task restored"
+msgstr "Task restored"
+
+#: src/renderer/hooks/useAgentDrivenInvalidation.ts
+msgid "Task updated by agent"
+msgstr "Task updated by agent"
+
+#: src/renderer/stores/board-store/archived-tasks-slice.ts
+msgid "Tasks restored"
+msgstr "Tasks restored"
+
+#: src/renderer/hooks/useAddProject.ts
+msgid "Tasks will share one working tree in this folder."
+msgstr "Tasks will share one working tree in this folder."
+
+#: src/renderer/components/TemplateVariablePicker.tsx
+msgid "Template variable"
+msgstr "Template variable"
+
+#: src/renderer/App.tsx
+msgid "Terminals restarted"
+msgstr "Terminals restarted"
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "The agent runs on a remote server"
+msgstr "The agent runs on a remote server"
+
+#: src/renderer/App.tsx
+msgid "The automation did not start."
+msgstr "The automation did not start."
+
+#: src/renderer/stores/project-store.ts
+msgid "The list has been refreshed."
+msgstr "The list has been refreshed."
+
+#: src/renderer/lib/knowledge-graph-support.ts
+msgid "The local model does not run on {platformName}."
+msgstr "The local model does not run on {platformName}."
+
+#: src/renderer/lib/auto-name-scheduler.ts
+msgid "The new title was not saved."
+msgstr "The new title was not saved."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "The original copy remains at {originalPath}."
+msgstr "The original copy remains at {originalPath}."
+
+#: src/renderer/utils/worktree-placement.tsx
+msgid "The project folder is itself a git worktree"
+msgstr "The project folder is itself a git worktree"
+
+#: src/renderer/stores/project-store.ts
+msgid "The project list may be out of sync. Try again."
+msgstr "The project list may be out of sync. Try again."
+
+#: src/renderer/stores/board-store/task-slice.ts
+msgid "The running agent picks it up the next time it resumes."
+msgstr "The running agent picks it up the next time it resumes."
+
+#: src/renderer/utils/session-toggle.ts
+msgid "The session was already running."
+msgstr "The session was already running."
+
+#: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+msgid "The task's changes could not be read"
+msgstr "The task's changes could not be read"
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
+msgstr "These active agent sessions will be stopped and resumed automatically at the new location:"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "This action cannot be undone."
+msgstr "This action cannot be undone."
+
+#: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+msgid "This project is no longer in Kangentic."
+msgstr "This project is no longer in Kangentic."
+
+#: src/renderer/window-manager/components/WindowContent.tsx
+msgid "This task is no longer available."
+msgstr "This task is no longer available."
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
+msgstr "This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "This will permanently delete the task, its session history, and any associated worktree."
+msgstr "This will permanently delete the task, its session history, and any associated worktree."
+
+#: src/renderer/hooks/useBoardDragDrop.ts
+msgid "To Do must stay the first column."
+msgstr "To Do must stay the first column."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "To:"
+msgstr "To:"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Toggle workflow"
+msgstr "Toggle workflow"
+
+#: src/renderer/components/ErrorBoundary.tsx
+msgid "Try again"
+msgstr "Try again"
+
+#: src/renderer/components/LabelInput.tsx
+msgid "Type to add..."
+msgstr "Type to add..."
+
+#: src/renderer/hooks/useDescriptionMentions.ts
+msgid "Type to search files and folders."
+msgstr "Type to search files and folders."
+
+#: src/renderer/lib/knowledge-graph-support.ts
+msgid "Unavailable"
+msgstr "Unavailable"
+
+#: src/renderer/utils/shell-display-name.ts
+msgid "Unknown"
+msgstr "Unknown"
+
 #: src/renderer/lib/ipc-error.ts
 msgid "Unknown error"
 msgstr "Unknown error"
+
+#: src/renderer/stores/updater-store.ts
+msgid "Update ready"
+msgstr "Update ready"
+
+#: src/renderer/App.tsx
+msgid "Updates blocked"
+msgstr "Updates blocked"
+
+#: src/renderer/stores/updater-store.ts
+msgid "Version {version} is ready to install."
+msgstr "Version {version} is ready to install."
+
+#: src/renderer/hooks/useProjectRelocation.tsx
+msgid "Workflow agent"
+msgstr "Workflow agent"
+
+#: src/renderer/App.tsx
+msgid "Workflow complete"
+msgstr "Workflow complete"
+
+#: src/renderer/App.tsx
+msgid "Workflow complete: {workflowTitle}"
+msgstr "Workflow complete: {workflowTitle}"
+
+#: src/renderer/utils/workflow-refusal.ts
+msgid "Workflow controls this task"
+msgstr "Workflow controls this task"
+
+#: src/renderer/App.tsx
+msgid "Workflow stalled"
+msgstr "Workflow stalled"
+
+#: src/renderer/components/DescriptionEditor.tsx
+msgid "Write"
+msgstr "Write"
+
+#: src/renderer/window-manager/components/TaskDetailWindow.tsx
+msgid "Your edits to this task are not saved."
+msgstr "Your edits to this task are not saved."

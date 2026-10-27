@@ -1,4 +1,6 @@
 import { useCallback, useMemo } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useSessionStore } from '../stores/session-store';
 import { useBoardStore } from '../stores/board-store';
 import type { Session, SessionUsage, ActivityState, SessionDisplayState, SwimlaneRole } from '../../shared/types';
@@ -39,9 +41,9 @@ function deriveOverlayLabel(
   autoCommand: string | null | undefined,
 ): string {
   if (pendingCommandLabel) return pendingCommandLabel;
-  if (isResuming) return 'Resuming agent...';
+  if (isResuming) return i18n._(msg`Resuming agent...`);
   if (autoCommand) return autoCommand;
-  return 'Starting agent...';
+  return i18n._(msg`Starting agent...`);
 }
 
 /**

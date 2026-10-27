@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { fetchGitBranches } from '../utils/git-branches';
 import { fetchProjectProbe } from '../utils/project-probe';
 import type { ReactNode } from 'react';
@@ -91,7 +93,7 @@ export function useBranchSettings(options: UseBranchSettingsOptions) {
 
   const branchNameError = useMemo(
     () => customBranchName.trim() && !isValidGitBranchName(customBranchName.trim())
-      ? 'Invalid git branch name'
+      ? i18n._(msg`Invalid git branch name`)
       : '',
     [customBranchName],
   );

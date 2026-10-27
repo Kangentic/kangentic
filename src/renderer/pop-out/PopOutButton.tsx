@@ -1,4 +1,5 @@
 import { SquareArrowOutUpRight } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { usePopOut } from './usePopOut';
 import { Tooltip } from '../components/Tooltip';
 import type { PopOutKind, PopOutParamsByKind } from '../../shared/pop-out';
@@ -11,8 +12,9 @@ export function PopOutButton<K extends PopOutKind>({ kind, params, label }: {
   /** The button's name and tip, when it should not follow the window's state. */
   label?: string;
 }) {
+  const { t } = useLingui();
   const { isOpen, open, focus } = usePopOut(kind, params);
-  const name = label ?? (isOpen ? 'Focus detached window' : 'Open in new window');
+  const name = label ?? (isOpen ? t`Focus detached window` : t`Open in new window`);
   return (
     <Tooltip label={name}>
       <button

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Search, Filter, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { CountBadge } from './CountBadge';
 import { FilterPopover } from './FilterPopover';
 import { OverlayPopover } from './OverlayPopover';
@@ -53,6 +54,7 @@ export function ToolbarSearchFilter({
   onClearFilters,
   filterCollapse,
 }: ToolbarSearchFilterProps) {
+  const { t } = useLingui();
   const [showFilterPopover, setShowFilterPopover] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
@@ -105,7 +107,7 @@ export function ToolbarSearchFilter({
             type="button"
             onClick={() => onSearchChange('')}
             className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
-            aria-label="Clear search"
+            aria-label={t`Clear search`}
             data-testid={searchClearTestId}
           >
             <X size={14} />
@@ -114,12 +116,12 @@ export function ToolbarSearchFilter({
       </div>
 
       <div className="relative shrink-0">
-        <Tooltip label="Filter" enabled={!showFilterPopover}>
+        <Tooltip label={t`Filter`} enabled={!showFilterPopover}>
           <button
             ref={filterButtonRef}
             type="button"
             onClick={() => setShowFilterPopover(!showFilterPopover)}
-            aria-label="Filter"
+            aria-label={t`Filter`}
             className={`flex items-center gap-1.5 py-1.5 text-sm border rounded transition-colors ${filterButtonSizing} ${
               hasActiveFilters
                 ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
@@ -128,7 +130,7 @@ export function ToolbarSearchFilter({
             data-testid={filterTestId}
           >
             <Filter size={14} className="shrink-0" />
-            <span className={filterCollapse?.label}>Filter</span>
+            <span className={filterCollapse?.label}><Trans>Filter</Trans></span>
             {/* Tinted from the button's own tone, which is the accent while a
                 filter is active. It stays when the label collapses, so the
                 icon-only button still says how many filters are on. */}

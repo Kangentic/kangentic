@@ -1,7 +1,11 @@
 /**
  * Maps agent identifiers (e.g. 'claude') to human-readable display names.
- * Modeled after shell-display-name.ts.
+ * Modeled after shell-display-name.ts. Agent names stay as written; only the
+ * generic "Agent" fallback translates.
  */
+
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 
 interface AgentMeta {
   /** Full product name, e.g. "Claude Code". */
@@ -109,13 +113,13 @@ export const RECOMMENDED_AGENT_ORDER = ['claude', 'codex', 'gemini'];
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */
 export function agentDisplayName(agentId: string | null | undefined): string {
-  if (!agentId) return 'Agent';
+  if (!agentId) return i18n._(msg`Agent`);
   return AGENT_META[agentId]?.display ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 
 /** Short name for model/context fallbacks (e.g. 'claude' -> 'Claude'). */
 export function agentShortName(agentId: string | null | undefined): string {
-  if (!agentId) return 'Agent';
+  if (!agentId) return i18n._(msg`Agent`);
   return AGENT_META[agentId]?.short ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 

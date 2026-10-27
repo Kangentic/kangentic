@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { Pencil, ArrowDownToLine, Maximize2, ClipboardList, Workflow as WorkflowIcon } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { TaskCard } from './TaskCard';
 import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -27,10 +28,11 @@ import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 const SupersededLine = React.memo(function SupersededLine({ taskId }: { taskId: string }) {
   const superseder = useWorkflowStore((state) => state.supersededBy[taskId]);
   if (!superseder) return null;
+  const workflowTitle = superseder.title;
   return (
     <div className="mt-1.5 flex items-center gap-1.5 min-w-0 text-xs text-fg-faint" data-testid="superseded-line">
       <WorkflowIcon size={12} strokeWidth={2} className="flex-shrink-0" style={{ color: workflowColor(superseder.colorSlot) }} />
-      <span className="truncate">Superseded by {superseder.title}</span>
+      <span className="truncate"><Trans>Superseded by {workflowTitle}</Trans></span>
     </div>
   );
 });
@@ -42,6 +44,7 @@ export interface DoneSwimlaneProps {
 }
 
 export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
+  const { t } = useLingui();
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showCompletedDialog, setShowCompletedDialog] = useState(false);
 
@@ -93,6 +96,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
 
   const hasArchived = archivedTotalCount > 0;
   const previewTasks = archivedTasks.slice(0, ARCHIVED_PREVIEW_LIMIT);
+  const columnName = swimlane.name;
 
 
   return (
@@ -133,7 +137,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           <button
             type="button"
             data-testid="edit-column-btn"
-            aria-label={`Edit ${swimlane.name} column`}
+            aria-label={t`Edit ${columnName} column`}
             onClick={(event: React.MouseEvent) => {
               event.stopPropagation();
               openBoardManager(swimlane.id);
@@ -168,7 +172,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
               ) : (
                 <div className="flex flex-col items-center gap-1.5">
                   <ArrowDownToLine size={20} className="opacity-50" />
-                  <span className="text-xs">Drop here to complete</span>
+                  <span className="text-xs"><Trans>Drop here to complete</Trans></span>
                 </div>
               )}
             </SortableContext>
@@ -189,7 +193,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
         >
           <span className="flex items-center gap-1.5 text-sm font-medium text-fg-muted">
             <ClipboardList size={14} />
-            Completed ({archivedTotalCount})
+            <Trans>Completed ({archivedTotalCount})</Trans>
           </span>
           {hasArchived && (
             <Maximize2 size={14} className="text-fg-disabled group-hover:text-fg-muted transition-colors" />
@@ -221,7 +225,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
             );
           })}
           {!hasArchived && (
-            <div className="text-xs text-fg-disabled text-center py-3">No completed tasks yet</div>
+            <div className="text-xs text-fg-disabled text-center py-3"><Trans>No completed tasks yet</Trans></div>
           )}
           {/* View all as last row in the list */}
           {hasArchived && (
@@ -232,7 +236,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
               data-testid="view-all-completed"
             >
               <Maximize2 size={14} />
-              <span className="text-sm">View all</span>
+              <span className="text-sm"><Trans>View all</Trans></span>
               <CountBadge count={archivedTotalCount} variant="tinted" size="pill" testId="view-all-completed-count" />
             </button>
           )}
@@ -241,12 +245,12 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
 
       {pendingDeleteId && (
         <ConfirmDialog
-          title="Delete completed task"
+          title={t`Delete completed task`}
           message={<>
-            <p>This will permanently delete the task, its session history, and any associated worktree.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p><Trans>This will permanently delete the task, its session history, and any associated worktree.</Trans></p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel="Delete"
+          confirmLabel={t`Delete`}
           variant="danger"
           showDontAskAgain
           onConfirm={handleConfirmDelete}

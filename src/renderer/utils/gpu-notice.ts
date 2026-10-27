@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { GpuGraphicsStatus } from '../../shared/types';
 
 /**
@@ -23,9 +25,15 @@ export interface GpuNoticeResult {
   message: string;
 }
 
-export const GPU_NOTICE_TITLE = 'Graphics acceleration off';
+/** The notice's title, in the session's language. A function, so it reads the catalog when the toast is raised. */
+export function gpuNoticeTitle(): string {
+  return i18n._(msg`Graphics acceleration off`);
+}
 
-export const GPU_NOTICE_MESSAGE = 'Repeated failures shut down your last run.';
+/** The notice's body, in the session's language. */
+export function gpuNoticeMessage(): string {
+  return i18n._(msg`Repeated failures shut down your last run.`);
+}
 
 export function resolveGpuNotice(status: GpuGraphicsStatus | null | undefined): GpuNoticeResult | null {
   if (!status?.noticePending) return null;
@@ -33,5 +41,5 @@ export function resolveGpuNotice(status: GpuGraphicsStatus | null | undefined): 
   // a status claiming one without the other is incoherent enough that saying
   // nothing beats saying something wrong.
   if (!status.softwareRendering) return null;
-  return { title: GPU_NOTICE_TITLE, message: GPU_NOTICE_MESSAGE };
+  return { title: gpuNoticeTitle(), message: gpuNoticeMessage() };
 }

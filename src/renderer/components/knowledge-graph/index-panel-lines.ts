@@ -11,6 +11,8 @@
  * carries no rate, so a running line shows its share without a time left.
  */
 
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { CardSourceLineProps } from '../settings/settings-card';
 import {
   alwaysOnLine,
@@ -75,7 +77,7 @@ function alwaysOnSource(index: KnowledgeGraphIndexSummary, corpus: KnowledgeGrap
  */
 function codeSource(index: KnowledgeGraphIndexSummary, codeOn: boolean, requirement: string | undefined): SourceLineState {
   if (requirement) return { requirement };
-  if (isEmpty(index, 'code')) return codeOn ? notYetIndexed() : { value: 'Off', tone: 'muted' };
+  if (isEmpty(index, 'code')) return codeOn ? notYetIndexed() : { value: i18n._(msg`Off`), tone: 'muted' };
   return codeLine(codeStatus(index), undefined);
 }
 
@@ -83,9 +85,9 @@ function codeSource(index: KnowledgeGraphIndexSummary, codeOn: boolean, requirem
 export function indexSourceLines(input: IndexSourceLinesInput): CardSourceLineProps[] {
   const { index, semanticAvailable, summariesOn, codeOn, requirements } = input;
   return [
-    { label: 'Conversations', ...alwaysOnSource(index, 'conversation', semanticAvailable, 'Conversations embedded'), testId: 'knowledge-graph-index-source-conversations' },
-    { label: 'Tasks', ...alwaysOnSource(index, 'task', semanticAvailable, 'Tasks embedded'), testId: 'knowledge-graph-index-source-tasks' },
-    { label: 'Commits', ...alwaysOnSource(index, 'commit', semanticAvailable, 'Commits indexed'), testId: 'knowledge-graph-index-source-commits' },
+    { label: i18n._(msg`Conversations`), ...alwaysOnSource(index, 'conversation', semanticAvailable, i18n._(msg`Conversations embedded`)), testId: 'knowledge-graph-index-source-conversations' },
+    { label: i18n._(msg`Tasks`), ...alwaysOnSource(index, 'task', semanticAvailable, i18n._(msg`Tasks embedded`)), testId: 'knowledge-graph-index-source-tasks' },
+    { label: i18n._(msg`Commits`), ...alwaysOnSource(index, 'commit', semanticAvailable, i18n._(msg`Commits indexed`)), testId: 'knowledge-graph-index-source-commits' },
     {
       label: settingProps('knowledgeGraph.taskSummaries').label,
       info: translateText(SUMMARIES_INFO),
@@ -107,9 +109,9 @@ export interface IndexMapLinesInput {
   storageBytes: number;
 }
 
-const LINKS_INFO = 'Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee.';
-const TRANSCRIPT_GONE_INFO = 'The agent\'s transcript file is gone, but the indexed text and its embeddings are still here and still searchable.';
-const NOT_YET_INDEXED_INFO = 'The background sweep has not reached these conversations yet.';
+const LINKS_INFO = msg`Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee.`;
+const TRANSCRIPT_GONE_INFO = msg`The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable.`;
+const NOT_YET_INDEXED_INFO = msg`The background sweep has not reached these conversations yet.`;
 
 /**
  * What only the map has: its links, and what the index holds beyond the
@@ -119,27 +121,27 @@ const NOT_YET_INDEXED_INFO = 'The background sweep has not reached these convers
 export function indexMapLines(input: IndexMapLinesInput): CardSourceLineProps[] {
   const { edgeCount, coverage, storageBytes } = input;
   const lines: CardSourceLineProps[] = [
-    { label: 'Links', info: LINKS_INFO, value: edgeCount.toLocaleString(), testId: 'knowledge-graph-index-fact-map' },
+    { label: i18n._(msg`Links`), info: i18n._(LINKS_INFO), value: edgeCount.toLocaleString(), testId: 'knowledge-graph-index-fact-map' },
   ];
   if (coverage.sourceMissingButSearchable.documents > 0) {
-    lines.push({ label: 'Transcript gone', info: TRANSCRIPT_GONE_INFO, value: coverage.sourceMissingButSearchable.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-transcript-gone' });
+    lines.push({ label: i18n._(msg`Transcript gone`), info: i18n._(TRANSCRIPT_GONE_INFO), value: coverage.sourceMissingButSearchable.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-transcript-gone' });
   }
   if (coverage.notYetIndexed.documents > 0) {
-    lines.push({ label: 'Not yet indexed', info: NOT_YET_INDEXED_INFO, value: coverage.notYetIndexed.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-not-yet-indexed' });
+    lines.push({ label: i18n._(msg`Not yet indexed`), info: i18n._(NOT_YET_INDEXED_INFO), value: coverage.notYetIndexed.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-not-yet-indexed' });
   }
   if (coverage.failed.documents > 0) {
-    lines.push({ label: 'Failed to index', tone: 'caution', problem: coverage.failed.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-failed' });
+    lines.push({ label: i18n._(msg`Failed to index`), tone: 'caution', problem: coverage.failed.documents.toLocaleString(), testId: 'knowledge-graph-index-fact-failed' });
   }
   if (storageBytes > 0) {
-    lines.push({ label: 'Size on disk', value: formatBytes(storageBytes), testId: 'knowledge-graph-index-fact-size' });
+    lines.push({ label: i18n._(msg`Size on disk`), value: formatBytes(storageBytes), testId: 'knowledge-graph-index-fact-size' });
   }
   return lines;
 }
 
-const BUILD_STAGE_LABELS: Record<KnowledgeGraphBuildProgress['stage'], string> = {
-  reading: 'Reading conversations',
-  placing: 'Placing conversations',
-  naming: 'Naming regions',
+const BUILD_STAGE_LABELS: Record<KnowledgeGraphBuildProgress['stage'], MessageDescriptor> = {
+  reading: msg`Reading conversations`,
+  placing: msg`Placing conversations`,
+  naming: msg`Naming regions`,
 };
 
 /**
@@ -149,5 +151,5 @@ const BUILD_STAGE_LABELS: Record<KnowledgeGraphBuildProgress['stage'], string> =
 export function buildProgressRow(progress: KnowledgeGraphBuildProgress | null): { label: string; value: string; percent: number } {
   const stage = progress?.stage ?? 'reading';
   const percent = Math.max(0, Math.min(99, progress?.percent ?? 0));
-  return { label: BUILD_STAGE_LABELS[stage], value: `${percent}%`, percent };
+  return { label: i18n._(BUILD_STAGE_LABELS[stage]), value: `${percent}%`, percent };
 }

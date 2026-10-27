@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { useConfigStore } from '../../stores/config-store';
@@ -194,6 +195,7 @@ export function CommandTerminalPanel({
   onOpenInNewWindow,
   openInNewWindowDisabledReason,
 }: CommandTerminalPanelProps) {
+  const { t } = useLingui();
   const areaRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [areaSize, setAreaSize] = useState({ width: 0, height: 0 });
@@ -392,12 +394,12 @@ export function CommandTerminalPanel({
             data-testid="command-terminal-panel-header"
           >
             <SquareTerminal size={14} className="text-fg-muted flex-shrink-0" />
-            <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg">Command Terminal</span>
+            <span className="flex-1 min-w-0 truncate text-[13px] font-semibold text-fg"><Trans>Command Terminal</Trans></span>
             <Tooltip
               label={tipLabel({
                 disabled: openInNewWindowDisabledReason !== null,
                 disabledReason: openInNewWindowDisabledReason,
-                tip: 'Move to its own window',
+                tip: t`Move to its own window`,
               })}
             >
               <button
@@ -405,29 +407,29 @@ export function CommandTerminalPanel({
                 onClick={onOpenInNewWindow}
                 disabled={openInNewWindowDisabledReason !== null}
                 className={`${PANEL_CONTROL_CLASS} disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-faint`}
-                aria-label="Open in new window"
+                aria-label={t`Open in new window`}
                 data-testid="command-terminal-panel-pop-out"
               >
                 <SquareArrowOutUpRight size={PANEL_CONTROL_ICON_PX} />
               </button>
             </Tooltip>
-            <Tooltip label={geometry.maximized ? 'Restore panel' : 'Maximize panel'} keys="panel.maximize">
+            <Tooltip label={geometry.maximized ? t`Restore panel` : t`Maximize panel`} keys="panel.maximize">
               <button
                 type="button"
                 onClick={toggleMaximized}
                 className={PANEL_CONTROL_CLASS}
-                aria-label={geometry.maximized ? 'Restore panel' : 'Maximize panel'}
+                aria-label={geometry.maximized ? t`Restore panel` : t`Maximize panel`}
                 data-testid="command-terminal-panel-maximize"
               >
                 {geometry.maximized ? <Minimize size={PANEL_CONTROL_ICON_PX} /> : <Maximize size={PANEL_CONTROL_ICON_PX} />}
               </button>
             </Tooltip>
-            <Tooltip label="Hide panel" keys="panel.close">
+            <Tooltip label={t`Hide panel`} keys="panel.close">
               <button
                 type="button"
                 onClick={onHide}
                 className={PANEL_CONTROL_CLASS}
-                aria-label="Hide Command Terminal"
+                aria-label={t`Hide Command Terminal`}
                 data-testid="command-terminal-panel-hide"
               >
                 <X size={PANEL_CONTROL_ICON_PX} />

@@ -7,6 +7,317 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "\"{taskTitle}\": {reason}"
+msgstr "\"{taskTitle}\": {reason}"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "{finishedCount, plural, one {# recently finished} other {# recently finished}}"
+msgstr "{finishedCount, plural, one {# recently finished} other {# recently finished}}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "{projectOptionCount, plural, one {{representableSelectionCount} of # project} other {{representableSelectionCount} of # projects}}"
+msgstr "{projectOptionCount, plural, one {{representableSelectionCount} of # project} other {{representableSelectionCount} of # projects}}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "{totalSessionCount, plural, one {Filters are hiding {hiddenSessionCount} of # session} other {Filters are hiding {hiddenSessionCount} of # sessions}}"
+msgstr "{totalSessionCount, plural, one {Filters are hiding {hiddenSessionCount} of # session} other {Filters are hiding {hiddenSessionCount} of # sessions}}"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "{workingProjectCount, plural, one {across # project} other {across # projects}}"
+msgstr "{workingProjectCount, plural, one {across # project} other {across # projects}}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "<0>{visibleCount}</0>of<1>{totalSessionCount}</1>"
+msgstr "<0>{visibleCount}</0>of<1>{totalSessionCount}</1>"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgctxt "Agent status"
+msgid "Active"
+msgstr "Active"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Agent"
+msgstr "Agent"
+
+#: src/renderer/components/monitor/MonitorPage.tsx
+msgid "Agent Monitor"
+msgstr "Agent Monitor"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "Agents actively running right now, across every project in view"
+msgstr "Agents actively running right now, across every project in view"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "Agents waiting on a response from you, across every project in view"
+msgstr "Agents waiting on a response from you, across every project in view"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "All projects"
+msgstr "All projects"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Automations"
+msgstr "Automations"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Awaiting permission {when}"
+msgstr "Awaiting permission {when}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Cards"
+msgstr "Cards"
+
+#: src/renderer/components/monitor/MonitorPage.tsx
+msgid "Close agent monitor"
+msgstr "Close agent monitor"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Column"
+msgstr "Column"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Context"
+msgstr "Context"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't archive task"
+msgstr "Couldn't archive task"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't delete task"
+msgstr "Couldn't delete task"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't move task"
+msgstr "Couldn't move task"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't send task to backlog"
+msgstr "Couldn't send task to backlog"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't turn off automations"
+msgstr "Couldn't turn off automations"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Couldn't turn on automations"
+msgstr "Couldn't turn on automations"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "Default value"
+msgid "Default"
+msgstr "Default"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Disabled"
+msgstr "Disabled"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Doing now"
+msgstr "Doing now"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Effort"
+msgstr "Effort"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Enabled"
+msgstr "Enabled"
+
 #: src/renderer/components/monitor/LazyMonitor.tsx
 msgid "Failed to load the agent monitor"
 msgstr "Failed to load the agent monitor"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Filter sessions"
+msgstr "Filter sessions"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#: src/renderer/components/monitor/MonitorCard.tsx
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Finished"
+msgstr "Finished"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Finished {when}"
+msgstr "Finished {when}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Group"
+msgstr "Group"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Group sessions by"
+msgstr "Group sessions by"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgctxt "Agent status"
+msgid "Idle"
+msgstr "Idle"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "last active {when}"
+msgstr "last active {when}"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Layout"
+msgstr "Layout"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "List"
+msgstr "List"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Live only"
+msgstr "Live only"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "longest since {when}"
+msgstr "longest since {when}"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Model"
+msgstr "Model"
+
+#: src/renderer/components/monitor/MonitorCard.tsx
+msgid "Needs you"
+msgstr "Needs you"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Newest"
+msgstr "Newest"
+
+#: src/renderer/components/monitor/MonitorBody.tsx
+msgid "No agents running"
+msgstr "No agents running"
+
+#: src/renderer/components/monitor/MonitorBody.tsx
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "No sessions match the current filters."
+msgstr "No sessions match the current filters."
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Oldest"
+msgstr "Oldest"
+
+#: src/renderer/components/monitor/MonitorCard.tsx
+msgid "Open {taskTitle}"
+msgstr "Open {taskTitle}"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Open on board"
+msgstr "Open on board"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#: src/renderer/components/monitor/MonitorCard.tsx
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "Agent status"
+msgid "Paused"
+msgstr "Paused"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "paused or waiting to start"
+msgstr "paused or waiting to start"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Permission"
+msgstr "Permission"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Permission mode the session was spawned under"
+msgstr "Permission mode the session was spawned under"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Project"
+msgstr "Project"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Projects"
+msgstr "Projects"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "Projects in view with at least one live session"
+msgstr "Projects in view with at least one live session"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Reasoning effort the session is running with"
+msgstr "Reasoning effort the session is running with"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Recently finished"
+msgstr "Recently finished"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Runtime"
+msgstr "Runtime"
+
+#: src/renderer/components/monitor/MonitorBody.tsx
+msgid "Sessions from every project appear here as soon as an agent starts."
+msgstr "Sessions from every project appear here as soon as an agent starts."
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "Sessions you paused, plus any queued waiting for a free slot"
+msgstr "Sessions you paused, plus any queued waiting for a free slot"
+
+#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+msgid "Show in project"
+msgstr "Show in project"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Show only sessions with a live agent, hiding paused and recently finished"
+msgstr "Show only sessions with a live agent, hiding paused and recently finished"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Sort"
+msgstr "Sort"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Sort sessions by"
+msgstr "Sort sessions by"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Status"
+msgstr "Status"
+
+#: src/renderer/components/monitor/MonitorToolbar.tsx
+msgid "Table"
+msgstr "Table"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+#: src/renderer/components/monitor/useMonitorDetailOwnership.ts
+msgid "Task"
+msgstr "Task"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "The workflow the task belongs to"
+msgstr "The workflow the task belongs to"
+
+#: src/renderer/components/monitor/MonitorCard.tsx
+msgid "Waiting to start"
+msgstr "Waiting to start"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Whether the agent is working, waiting on you, paused, or finished"
+msgstr "Whether the agent is working, waiting on you, paused, or finished"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Whether the column's automations run for the task"
+msgstr "Whether the column's automations run for the task"
+
+#: src/renderer/components/monitor/MonitorSummaryCards.tsx
+msgid "with a live session"
+msgstr "with a live session"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgid "Workflow"
+msgstr "Workflow"
+
+#: src/renderer/components/monitor/MonitorCard.tsx
+msgid "Working"
+msgstr "Working"

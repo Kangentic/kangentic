@@ -49,6 +49,8 @@
 // open their task only when the user clicks the card, which is the user asking
 // for that task, so its detail may take focus like any user open.
 import { useEffect } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useBoardStore } from '../stores/board-store';
 import { useBacklogStore } from '../stores/backlog-store';
 import { useConfigStore } from '../stores/config-store';
@@ -132,8 +134,8 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(createdByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          title: 'Task created by agent',
-          message: `"${taskTitle}" in ${columnName}.`,
+          title: i18n._(msg`Task created by agent`),
+          message: i18n._(msg`"${{ taskTitle }}" in ${{ columnName }}.`),
           variant: 'success',
           onOpen: openTaskOnCardClick(taskId, createdByAgentProjectId),
         });
@@ -155,8 +157,8 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(updatedByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          title: 'Task updated by agent',
-          message: `"${taskTitle}"`,
+          title: i18n._(msg`Task updated by agent`),
+          message: i18n._(msg`"${{ taskTitle }}"`),
           variant: 'info',
           onOpen: openTaskOnCardClick(taskId, updatedByAgentProjectId),
         });
@@ -178,8 +180,8 @@ export function useAgentDrivenInvalidation(): void {
           invalidateProject(deletedByAgentProjectId);
         }
         useToastStore.getState().addToast({
-          title: 'Task deleted by agent',
-          message: `"${taskTitle}"`,
+          title: i18n._(msg`Task deleted by agent`),
+          message: i18n._(msg`"${{ taskTitle }}"`),
           variant: 'info',
         });
       }));
@@ -319,8 +321,8 @@ export function useAgentDrivenInvalidation(): void {
         // exists. Say what the payload actually tells us. Distinguishing the
         // three would mean threading a discriminator through the channel.
         useToastStore.getState().addToast({
-          title: 'Column changed by agent',
-          message: `"${swimlaneName}"`,
+          title: i18n._(msg`Column changed by agent`),
+          message: i18n._(msg`"${{ swimlaneName }}"`),
           variant: 'info',
         });
       }));

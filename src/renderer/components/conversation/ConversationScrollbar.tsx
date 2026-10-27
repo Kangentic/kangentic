@@ -28,6 +28,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { ArrowDown, Hash } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { formatMonthDayTime, formatTime } from '../../lib/datetime';
 import { computeThumbGeometry, thumbPositionToOffset, isScrolledToBottom, FAR_FROM_BOTTOM_PX, type ScrollGeometry } from './scrollbar-math';
 import { ConversationSkeleton } from './ConversationSkeleton';
@@ -385,6 +386,8 @@ export function ConversationScrollbar({
     ? Math.min(rows.length - 1, Math.max(0, Math.round(progress * (rows.length - 1))))
     : 0;
   const anchoredRow = rows[anchoredIndex];
+  const position = anchoredIndex + 1;
+  const total = rows.length;
   const showExpandedThumb = isDragging || isHoveringRail;
 
   return (
@@ -434,7 +437,7 @@ export function ConversationScrollbar({
               {anchoredRow.entry.ts > 0 && <span>{formatTime(anchoredRow.entry.ts)}</span>}
               <span className="flex items-center gap-1 text-fg-muted">
                 <Hash size={11} className="flex-shrink-0" />
-                {anchoredIndex + 1} of {rows.length}
+                <Trans>{position} of {total}</Trans>
               </span>
             </div>
           )}
@@ -449,7 +452,7 @@ export function ConversationScrollbar({
           data-far={distanceFromBottom > FAR_FROM_BOTTOM_PX || !windowReachesTail ? 'true' : undefined}
         >
           <ArrowDown size={13} />
-          Jump to latest
+          <Trans>Jump to latest</Trans>
         </button>
       )}
     </>

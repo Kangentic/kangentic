@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Trash2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { SendToBacklogDialog } from './SendToBacklogDialog';
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
@@ -43,6 +44,7 @@ interface TaskCardProps {
  * draws too.
  */
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
+  const { t } = useLingui();
   const view = useTaskCardViewModel(task);
   const { displayState } = view;
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
@@ -105,15 +107,15 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     const taskTitle = task.title;
     await useBacklogStore.getState().demoteTask({ taskId: task.id });
     useToastStore.getState().addToast({
-      title: 'Sent to backlog',
-      message: `"${taskTitle}"`,
+      title: t`Sent to backlog`,
+      message: t`"${taskTitle}"`,
       variant: 'info',
     });
   };
 
   const handleMoveTo = async (targetSwimlaneId: string) => {
     const { swimlanes: currentSwimlanes, tasks: currentTasks, moveTask } = useBoardStore.getState();
-    const targetName = currentSwimlanes.find((lane) => lane.id === targetSwimlaneId)?.name ?? 'column';
+    const targetName = currentSwimlanes.find((lane) => lane.id === targetSwimlaneId)?.name;
     const laneTasks = currentTasks.filter(
       (boardTask) => boardTask.swimlane_id === targetSwimlaneId,
     );
@@ -125,9 +127,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     // If a confirmation dialog was triggered, moveTask returns early without
     // moving. Don't show a success toast in that case.
     if (useBoardStore.getState().pendingMoveConfirm) return;
+    const movedTaskTitle = task.title;
     useToastStore.getState().addToast({
-      title: 'Task moved',
-      message: `"${task.title}" is now in ${targetName}.`,
+      title: t`Task moved`,
+      // A lane that is gone by now reads "column" in its place, as one sentence.
+      message: targetName === undefined
+        ? t`"${movedTaskTitle}" is now in column.`
+        : t`"${movedTaskTitle}" is now in ${targetName}.`,
       variant: 'success',
       onOpen: moveProjectId !== null ? () => openTaskFromNotification(moveProjectId, movedTaskId) : undefined,
     });
@@ -145,8 +151,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     );
     await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length }, useProjectStore.getState().currentProject?.id ?? null);
     useToastStore.getState().addToast({
-      title: 'Task archived',
-      message: `"${taskTitle}"`,
+      title: t`Task archived`,
+      message: t`"${taskTitle}"`,
       variant: 'info',
     });
   };
@@ -183,9 +189,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     const toggleProjectId = useProjectStore.getState().currentProject?.id ?? null;
     const toggledTaskId = task.id;
     useBoardStore.getState().updateTask({ id: toggledTaskId, automations_disabled: disable }).catch((error: unknown) => {
+      const toggledTaskTitle = task.title;
+      // Main's reason, as written.
+      const reason = asSentence(describeIpcError(error));
       useToastStore.getState().addToast({
-        title: disable ? "Couldn't turn off automations" : "Couldn't turn on automations",
-        message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
+        title: disable ? t`Couldn't turn off automations` : t`Couldn't turn on automations`,
+        message: t`"${toggledTaskTitle}": ${reason}`,
         variant: 'warning',
         onOpen: toggleProjectId !== null ? () => openTaskFromNotification(toggleProjectId, toggledTaskId) : undefined,
       });

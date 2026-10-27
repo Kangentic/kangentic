@@ -6,3 +6,255 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/browser/AttachmentChips.tsx
+msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
+msgstr "{strokeCount, plural, one {# stroke} other {# strokes}}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "{viewportWidth} x {viewportHeight}"
+msgstr "{viewportWidth} x {viewportHeight}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Agent is driving"
+msgstr "Agent is driving"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Already at the largest zoom"
+msgstr "Already at the largest zoom"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Already at the smallest zoom"
+msgstr "Already at the smallest zoom"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
+msgstr "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "at {zoomPercent}%"
+msgstr "at {zoomPercent}%"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Back"
+msgstr "Back"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgctxt "Action"
+msgid "Clear"
+msgstr "Clear"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Clear all strokes"
+msgstr "Clear all strokes"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Click elements to capture their identity"
+msgstr "Click elements to capture their identity"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Close browser"
+msgstr "Close browser"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Close the browser and free its memory. Show reopens the page."
+msgstr "Close the browser and free its memory. Show reopens the page."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Couldn't save URL"
+msgstr "Couldn't save URL"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Couldn't send to agent"
+msgstr "Couldn't send to agent"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Default URL saved"
+msgstr "Default URL saved"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Draw"
+msgstr "Draw"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "e.g. \"Explain what I marked\""
+msgstr "e.g. \"Explain what I marked\""
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "e.g. \"Match the circled spacing\""
+msgstr "e.g. \"Match the circled spacing\""
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "e.g. \"Why is this misaligned?\""
+msgstr "e.g. \"Why is this misaligned?\""
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Enter a valid http:// or https:// URL."
+msgstr "Enter a valid http:// or https:// URL."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Enter in the note also sends"
+msgstr "Enter in the note also sends"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Esc stops inspecting"
+msgstr "Esc stops inspecting"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Failed to load: {finalUrl}"
+msgstr "Failed to load: {finalUrl}"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Forward"
+msgstr "Forward"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "https://example.com or localhost:5173"
+msgstr "https://example.com or localhost:5173"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Inspect"
+msgstr "Inspect"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Inspect failed"
+msgstr "Inspect failed"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Invalid URL: {target}"
+msgstr "Invalid URL: {target}"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
+msgstr "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "No earlier page"
+msgstr "No earlier page"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "No forward page"
+msgstr "No forward page"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Nothing drawn yet"
+msgstr "Nothing drawn yet"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
+msgstr "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Only http:// and https:// URLs are allowed."
+msgstr "Only http:// and https:// URLs are allowed."
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgctxt "Action"
+msgid "Open"
+msgstr "Open"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Open {pickUrl}"
+msgstr "Open {pickUrl}"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Open a URL to preview"
+msgstr "Open a URL to preview"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Open in new window"
+msgstr "Open in new window"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Or Ctrl+scroll wheel"
+msgstr "Or Ctrl+scroll wheel"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Quick picks"
+msgstr "Quick picks"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgctxt "Action"
+msgid "Reload"
+msgstr "Reload"
+
+#: src/renderer/components/browser/AttachmentChips.tsx
+msgid "Remove from queue"
+msgstr "Remove from queue"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgctxt "Action"
+msgid "Reset"
+msgstr "Reset"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Reset this page to the pane's own size"
+msgstr "Reset this page to the pane's own size"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Reset viewport"
+msgstr "Reset viewport"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Reset zoom (current {zoomPercent}%)"
+msgstr "Reset zoom (current {zoomPercent}%)"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Reset zoom to 100%"
+msgstr "Reset zoom to 100%"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Save as project default"
+msgstr "Save as project default"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Save as project default for all tasks"
+msgstr "Save as project default for all tasks"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Send"
+msgstr "Send"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Send to agent"
+msgstr "Send to agent"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "The browser pane opens it for this project."
+msgstr "The browser pane opens it for this project."
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "This URL is the project default"
+msgstr "This URL is the project default"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Toggle draw mode"
+msgstr "Toggle draw mode"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Undo"
+msgstr "Undo"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Undo last stroke"
+msgstr "Undo last stroke"
+
+#: src/renderer/components/browser/BrowserEmptyState.tsx
+msgid "Webpack, generic"
+msgstr "Webpack, generic"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "What should the agent do with this?"
+msgstr "What should the agent do with this?"
+
+#: src/renderer/components/browser/AttachmentChips.tsx
+msgid "Will send:"
+msgstr "Will send:"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Zoom in"
+msgstr "Zoom in"
+
+#: src/renderer/components/browser/BrowserPane.tsx
+msgid "Zoom out"
+msgstr "Zoom out"

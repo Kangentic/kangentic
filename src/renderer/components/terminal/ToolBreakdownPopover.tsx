@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Wrench } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { ByToolTable } from '../shared/ByToolTable';
@@ -149,12 +150,12 @@ export function ToolBreakdownPopover({
     >
       <div className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint flex items-center gap-1.5">
         <Wrench size={11} />
-        Tool calls
+        <Trans>Tool calls</Trans>
       </div>
       {displayRows.length > 0 ? (
         <ByToolTable rows={displayRows} />
       ) : (
-        <div className="px-3 py-3 text-xs text-fg-disabled whitespace-nowrap">No tool calls yet</div>
+        <div className="px-3 py-3 text-xs text-fg-disabled whitespace-nowrap"><Trans>No tool calls yet</Trans></div>
       )}
     </OverlayPopover>
   );

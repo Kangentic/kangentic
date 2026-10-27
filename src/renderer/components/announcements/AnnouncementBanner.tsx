@@ -1,4 +1,5 @@
 import { Megaphone, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useAnnouncementsStore, selectBannerAnnouncement } from '../../stores/announcements-store';
 import { useConfigStore } from '../../stores/config-store';
 import { Tooltip } from '../Tooltip';
@@ -15,6 +16,7 @@ import { Tooltip } from '../Tooltip';
  * (.claude/rules/restore-no-animation-replay.md).
  */
 export function AnnouncementBanner() {
+  const { t } = useLingui();
   const active = useAnnouncementsStore((state) => state.active);
   const openDialog = useAnnouncementsStore((state) => state.openDialog);
   const dismissedIds = useConfigStore((state) => state.config.dismissedAnnouncementIds);
@@ -40,12 +42,12 @@ export function AnnouncementBanner() {
         onClick={() => openDialog(banner, 'banner')}
         className="flex-shrink-0 text-xs text-fg-secondary underline underline-offset-2 hover:text-fg transition-colors cursor-pointer"
       >
-        Learn more
+        <Trans>Learn more</Trans>
       </button>
       <button
         type="button"
         data-testid="announcement-dismiss"
-        aria-label="Dismiss announcement"
+        aria-label={t`Dismiss announcement`}
         onClick={() => dismissAnnouncement(banner.id)}
         className="flex-shrink-0 rounded p-1 text-fg-faint hover:text-fg hover:bg-surface-hover transition-colors"
       >

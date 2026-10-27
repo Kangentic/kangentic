@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Loader2, Sparkles } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { namingAgentReady } from '../../shared/answer-agent';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
@@ -47,6 +48,7 @@ export function useNameFromPromptAvailable(description: string): boolean {
  * the button is 32x32 and matches the input's vertical rhythm.
  */
 export function NameFromPromptButton({ description, onTitle }: NameFromPromptButtonProps): ReactElement | null {
+  const { t } = useLingui();
   const available = useNameFromPromptAvailable(description);
   const [isPending, setIsPending] = useState(false);
   // Track unmount via ref so a late-arriving summarize result doesn't call setState
@@ -76,7 +78,7 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
         onTitle(result.title);
       } else {
         useToastStore.getState().addToast({
-          title: "Couldn't generate title",
+          title: t`Couldn't generate title`,
           message: asSentence(result.reason),
           variant: 'warning',
         });
@@ -84,14 +86,14 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
     } catch (error) {
       if (!mountedRef.current) return;
       useToastStore.getState().addToast({
-        title: "Couldn't generate title",
+        title: t`Couldn't generate title`,
         message: asSentence(describeIpcError(error, String(error))),
         variant: 'error',
       });
     } finally {
       if (mountedRef.current) setIsPending(false);
     }
-  }, [description, isPending, onTitle]);
+  }, [description, isPending, onTitle, t]);
 
   if (!available) return null;
 
@@ -99,8 +101,8 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
     <Tooltip
       label={tipLabel({
         disabled: isPending,
-        disabledReason: 'Generating a title',
-        tip: 'Generate a title from the description',
+        disabledReason: t`Generating a title`,
+        tip: t`Generate a title from the description`,
       })}
     >
       <button
@@ -108,7 +110,7 @@ export function NameFromPromptButton({ description, onTitle }: NameFromPromptBut
         onClick={handleClick}
         disabled={isPending}
         data-testid="name-from-prompt-button"
-        aria-label="Generate a title from the description"
+        aria-label={t`Generate a title from the description`}
         // `surface-control`, matching the title input beside it (see
         // FIELD_CONTROL_BASE in `Field.tsx` for why the token exists). Hover stays
         // border + text only: the fill can sit at or past `surface-hover`, so a bg

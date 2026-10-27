@@ -6,3 +6,107 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "{matchCount, plural, one {# match} other {# matches}}"
+msgstr "{matchCount, plural, one {# match} other {# matches}}"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "All projects"
+msgstr "All projects"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "archived"
+msgstr "archived"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Ask the Knowledge Graph: <0>\"{question}\"</0>"
+msgstr "Ask the Knowledge Graph: <0>\"{question}\"</0>"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Backlog"
+msgstr "Backlog"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Close search"
+msgstr "Close search"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Conversations"
+msgstr "Conversations"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "History"
+msgstr "History"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Matched by meaning"
+msgstr "Matched by meaning"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "No keyword matches in any project."
+msgstr "No keyword matches in any project."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "No keyword matches in this project."
+msgstr "No keyword matches in this project."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Opens the active terminal"
+msgstr "Opens the active terminal"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Opens the conversation history"
+msgstr "Opens the conversation history"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Projects"
+msgstr "Projects"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Search across tasks, backlog, conversations, session events, and projects."
+msgstr "Search across tasks, backlog, conversations, session events, and projects."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Search failed"
+msgstr "Search failed"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Search tasks, backlog, conversations, session events, projects..."
+msgstr "Search tasks, backlog, conversations, session events, projects..."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Searching..."
+msgstr "Searching..."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Session events"
+msgstr "Session events"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "System"
+msgstr "System"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Tasks"
+msgstr "Tasks"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Terminal"
+msgstr "Terminal"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "This project"
+msgstr "This project"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Tool"
+msgstr "Tool"
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "Type to find by title, description, or tool call."
+msgstr "Type to find by title, description, or tool call."
+
+#: src/renderer/components/search/SearchPalette.tsx
+msgid "You"
+msgstr "You"

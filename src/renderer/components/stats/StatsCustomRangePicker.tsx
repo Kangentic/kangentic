@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CalendarRange, X } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { Select } from '../settings/shared';
@@ -21,8 +23,13 @@ interface MonthOption {
   label: string;
 }
 
+/** The session's language, as src/renderer/lib/datetime.ts formats dates (an empty locale throws). */
+function displayLocale(): string | undefined {
+  return i18n.locale || undefined;
+}
+
 function monthLabel(monthStartMs: number): string {
-  return new Date(monthStartMs).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  return new Date(monthStartMs).toLocaleDateString(displayLocale(), { month: 'short', year: 'numeric' });
 }
 
 function monthValue(date: Date): string {
@@ -52,7 +59,7 @@ export function customWindowLabel(customWindow: UsageCustomWindow): string {
   const fromDate = new Date(customWindow.sinceMs);
   const sameYear = fromDate.getFullYear() === new Date(lastMonthStartMs).getFullYear();
   const fromLabel = sameYear
-    ? fromDate.toLocaleDateString(undefined, { month: 'short' })
+    ? fromDate.toLocaleDateString(displayLocale(), { month: 'short' })
     : monthLabel(customWindow.sinceMs);
   return `${fromLabel} - ${monthLabel(lastMonthStartMs)}`;
 }
@@ -65,6 +72,7 @@ export function customWindowLabel(customWindow: UsageCustomWindow): string {
  * Applied state renders as a dismissible accent chip, like the drill chip.
  */
 export function StatsCustomRangePicker({ customWindow, onApply, onClear }: StatsCustomRangePickerProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [fromValue, setFromValue] = useState<string>(() => monthValue(new Date()));
   const [toValue, setToValue] = useState<string>(() => monthValue(new Date()));
@@ -135,7 +143,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
     <div className="relative">
       {customWindow ? (
         <span className="flex items-center rounded-full border border-accent/60 bg-accent/10 text-xs text-fg">
-          <Tooltip label="Edit the custom range" enabled={!open}>
+          <Tooltip label={t`Edit the custom range`} enabled={!open}>
             <button
               ref={triggerRef}
               type="button"
@@ -147,12 +155,12 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
               {customWindowLabel(customWindow)}
             </button>
           </Tooltip>
-          <Tooltip label="Clear custom range">
+          <Tooltip label={t`Clear custom range`}>
             <button
               type="button"
               onClick={onClear}
               className="pl-1.5 pr-2 py-1 cursor-pointer text-fg-muted hover:text-fg transition-colors"
-              aria-label="Clear custom range"
+              aria-label={t`Clear custom range`}
               data-testid="stats-custom-clear"
             >
               <X size={14} />
@@ -160,7 +168,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
           </Tooltip>
         </span>
       ) : (
-        <Tooltip label="Pick a custom month range" enabled={!open}>
+        <Tooltip label={t`Pick a custom month range`} enabled={!open}>
           <button
             ref={triggerRef}
             type="button"
@@ -169,7 +177,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
             data-testid="stats-custom-trigger"
           >
             <CalendarRange size={14} />
-            Custom
+            <Trans context="Date range">Custom</Trans>
           </button>
         </Tooltip>
       )}
@@ -182,7 +190,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
       >
         <div className="flex flex-col gap-2">
           <label className="flex items-center justify-between gap-3 text-xs text-fg-secondary">
-            From
+            <Trans>From</Trans>
             <Select
               value={fromValue}
               onChange={(event) => setFromValue(event.target.value)}
@@ -196,7 +204,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
             </Select>
           </label>
           <label className="flex items-center justify-between gap-3 text-xs text-fg-secondary">
-            To
+            <Trans>To</Trans>
             <Select
               value={toValue}
               onChange={(event) => setToValue(event.target.value)}
@@ -215,7 +223,7 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
             className="mt-1 rounded-md bg-accent/15 border border-accent/40 px-2.5 py-1 text-xs font-medium text-fg cursor-pointer hover:bg-accent/25 transition-colors"
             data-testid="stats-custom-apply"
           >
-            Apply
+            <Trans>Apply</Trans>
           </button>
         </div>
       </OverlayPopover>

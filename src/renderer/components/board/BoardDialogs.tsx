@@ -1,10 +1,14 @@
 import { useCallback } from 'react';
 import { Check, Trash2 } from 'lucide-react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { BoardManagerDialog } from '../dialogs/BoardManagerDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
+
+/** The branch name inside the Done confirm's sentences. */
+const BRANCH_CODE_CLASS = 'font-mono text-[11px] bg-surface px-1 py-0.5 rounded break-all';
 
 /** Confirm dialog for board config changes, showing the project name. */
 function ConfigChangeDialog({ projectId, onConfirm, onCancel }: {
@@ -12,24 +16,28 @@ function ConfigChangeDialog({ projectId, onConfirm, onCancel }: {
   onConfirm: (dontAskAgain: boolean) => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useProjectStore((s) => s.currentProject);
   const project = projects.find((p) => p.id === projectId);
-  const projectName = project?.name ?? 'Unknown project';
+  const projectName = project?.name;
   const isCrossProject = currentProject?.id !== projectId;
-  const message = isCrossProject
-    ? `Changes detected in kangentic.json for "${projectName}". Apply the updated board configuration? This will switch to that project.`
-    : 'Changes detected in kangentic.json. Apply the updated board configuration?';
+  // One whole sentence per case: a project that is no longer listed reads
+  // "Unknown project" in its place.
+  let message: string;
+  if (!isCrossProject) message = t`Changes detected in kangentic.json. Apply the updated board configuration?`;
+  else if (projectName === undefined) message = t`Changes detected in kangentic.json for "Unknown project". Apply the updated board configuration? This will switch to that project.`;
+  else message = t`Changes detected in kangentic.json for "${projectName}". Apply the updated board configuration? This will switch to that project.`;
 
   return (
     <ConfirmDialog
       testId="config-change-dialog"
-      title="Board configuration changed"
+      title={t`Board configuration changed`}
       message={message}
-      confirmLabel="Apply"
-      cancelLabel="Dismiss"
+      confirmLabel={t`Apply`}
+      cancelLabel={t`Dismiss`}
       showDontAskAgain
-      dontAskAgainLabel="Always apply automatically"
+      dontAskAgainLabel={t`Always apply automatically`}
       onConfirm={onConfirm}
       onCancel={onCancel}
     />
@@ -44,24 +52,32 @@ function MoveConfirmMessage({ uncommittedFileCount, unpushedCommitCount, hasWork
   taskTitle: string;
 }) {
   const hasSpecificCounts = uncommittedFileCount > 0 || unpushedCommitCount > 0;
+  // Raw, as printed before: a `#` would group a count past 999 ("1,234").
+  const fileCountText = String(uncommittedFileCount);
+  const commitCountText = String(unpushedCommitCount);
   return (
     <div className="space-y-2">
       <p>
-        Resetting <span className="font-medium">"{taskTitle}"</span> will
-        {hasWorktree ? ' delete its worktree and' : ''} destroy its session history.
+        {hasWorktree
+          ? <Trans>Resetting <span className="font-medium">"{taskTitle}"</span> will delete its worktree and destroy its session history.</Trans>
+          : <Trans>Resetting <span className="font-medium">"{taskTitle}"</span> will destroy its session history.</Trans>}
       </p>
       {hasSpecificCounts ? (
         <ul className="list-disc list-inside text-red-400 font-medium">
           {uncommittedFileCount > 0 && (
-            <li>{uncommittedFileCount} uncommitted file{uncommittedFileCount !== 1 ? 's' : ''}</li>
+            <li>
+              <Plural value={uncommittedFileCount} one={`${fileCountText} uncommitted file`} other={`${fileCountText} uncommitted files`} />
+            </li>
           )}
           {unpushedCommitCount > 0 && (
-            <li>{unpushedCommitCount} unpushed commit{unpushedCommitCount !== 1 ? 's' : ''}</li>
+            <li>
+              <Plural value={unpushedCommitCount} one={`${commitCountText} unpushed commit`} other={`${commitCountText} unpushed commits`} />
+            </li>
           )}
         </ul>
       ) : (
         <p className="text-red-400 font-medium">
-          Unable to verify pending changes. There may be unsaved work.
+          <Trans>Unable to verify pending changes. There may be unsaved work.</Trans>
         </p>
       )}
     </div>
@@ -89,6 +105,7 @@ export function BoardDialogs() {
   const boardManagerAddDraftRequest = useBoardStore((s) => s.boardManagerAddDraftRequest);
   const closeBoardManager = useBoardStore((s) => s.closeBoardManager);
   const updateConfig = useConfigStore((s) => s.updateConfig);
+  const { t } = useLingui();
 
   const handleConfigConfirm = useCallback((dontAskAgain: boolean) => {
     if (dontAskAgain) {
@@ -109,10 +126,10 @@ export function BoardDialogs() {
 
       {pendingMoveConfirm && (
         <ConfirmDialog
-          title="Reset task?"
+          title={t`Reset task?`}
           variant="danger"
-          confirmLabel="Reset"
-          cancelLabel="Keep Working"
+          confirmLabel={t({ message: 'Reset', context: 'Action' })}
+          cancelLabel={t`Keep Working`}
           message={
             <MoveConfirmMessage
               uncommittedFileCount={pendingMoveConfirm.uncommittedFileCount}
@@ -131,24 +148,23 @@ export function BoardDialogs() {
         // Prefer the worktree's live HEAD branch over the stored slug: agents
         // rename branches inside the worktree, so the slug can be stale.
         const displayBranch = pendingDoneConfirm.currentBranch ?? pendingDoneConfirm.task.branch_name;
-        const branchCode = displayBranch ? (
-          <code className="font-mono text-[11px] bg-surface px-1 py-0.5 rounded break-all">
-            {displayBranch}
-          </code>
-        ) : null;
+        const doneTaskTitle = pendingDoneConfirm.task.title;
+        // Raw, as printed before: a `#` would group a count past 999 ("1,234").
+        const fileCountText = String(uncommittedFileCount);
+        const commitCountText = String(unpushedCommitCount);
         return (
           <ConfirmDialog
-            title="Move to Done?"
+            title={t`Move to Done?`}
             // This dialog only opens when the probe found pending changes (or
             // failed); a clean Done move is recoverable and skips confirmation
             // entirely, so there is no "don't ask again" escape hatch here.
             variant="danger"
-            confirmLabel="Move"
-            cancelLabel="Cancel"
+            confirmLabel={t`Move`}
+            cancelLabel={t`Cancel`}
             message={
               <div className="space-y-2">
                 <p className="font-medium text-fg break-words">
-                  "{pendingDoneConfirm.task.title}"
+                  <Trans>"{doneTaskTitle}"</Trans>
                 </p>
                 {/* Red is reserved for data the move genuinely destroys:
                     uncommitted files, at-risk local-only commits (below), and the
@@ -156,7 +172,11 @@ export function BoardDialogs() {
                 {uncommittedFileCount > 0 && (
                   <ul className="list-disc list-inside text-red-400 font-medium" data-testid="done-confirm-uncommitted">
                     <li>
-                      {uncommittedFileCount} uncommitted file{uncommittedFileCount !== 1 ? 's' : ''} will be lost
+                      <Plural
+                        value={uncommittedFileCount}
+                        one={`${fileCountText} uncommitted file will be lost`}
+                        other={`${fileCountText} uncommitted files will be lost`}
+                      />
                     </li>
                   </ul>
                 )}
@@ -165,7 +185,7 @@ export function BoardDialogs() {
                   // know the worktree is suspect. Mirror MoveConfirmMessage's
                   // fallback copy so the user still sees a danger signal.
                   <p className="text-red-400 font-medium">
-                    Unable to verify pending changes. There may be unsaved work.
+                    <Trans>Unable to verify pending changes. There may be unsaved work.</Trans>
                   </p>
                 )}
                 {/* The count is non-zero only when the move force-deletes the
@@ -179,14 +199,29 @@ export function BoardDialogs() {
                 {autoCleanup && unpushedCommitCount > 0 && (
                   <ul className="list-disc list-inside text-red-400 font-medium" data-testid="done-confirm-unpushed">
                     <li>
-                      {unpushedCommitCount} commit{unpushedCommitCount !== 1 ? 's' : ''} exist{unpushedCommitCount !== 1 ? '' : 's'} only on {branchCode ? <>branch {branchCode}</> : 'the local branch'} and will be lost when the branch is deleted
+                      {/* One message per branch fact, each a plural, so "exists"
+                          agrees with the count and the branch name sits inside
+                          the sentence. */}
+                      {displayBranch ? (
+                        <Plural
+                          value={unpushedCommitCount}
+                          one={<>{commitCountText} commit exists only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>}
+                          other={<>{commitCountText} commits exist only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>}
+                        />
+                      ) : (
+                        <Plural
+                          value={unpushedCommitCount}
+                          one={`${commitCountText} commit exists only on the local branch and will be lost when the branch is deleted`}
+                          other={`${commitCountText} commits exist only on the local branch and will be lost when the branch is deleted`}
+                        />
+                      )}
                     </li>
                   </ul>
                 )}
                 <ul className="space-y-1.5">
                   <li className="flex items-start gap-2">
                     <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
-                    <span>Local worktree will be deleted</span>
+                    <span><Trans>Local worktree will be deleted</Trans></span>
                   </li>
                   {displayBranch && (
                     autoCleanup ? (
@@ -195,26 +230,26 @@ export function BoardDialogs() {
                       <li className="flex items-start gap-2" data-testid="done-confirm-branch-fate">
                         <Trash2 size={14} className="text-fg-muted mt-0.5 shrink-0" aria-hidden />
                         <span>
-                          Branch {branchCode} will be deleted
+                          <Trans>Branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> will be deleted</Trans>
                         </span>
                       </li>
                     ) : (
                       <li className="flex items-start gap-2" data-testid="done-confirm-branch-fate">
                         <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
                         <span>
-                          Branch {branchCode} will be kept
+                          <Trans>Branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> will be kept</Trans>
                         </span>
                       </li>
                     )
                   )}
                   <li className="flex items-start gap-2">
                     <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
-                    <span>Session history will be kept</span>
+                    <span><Trans>Session history will be kept</Trans></span>
                   </li>
                 </ul>
                 {!autoCleanup && (
                   <p className="text-fg-muted">
-                    If this task is resumed, the worktree will be recreated from the branch's last commit.
+                    <Trans>If this task is resumed, the worktree will be recreated from the branch's last commit.</Trans>
                   </p>
                 )}
               </div>

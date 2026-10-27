@@ -1,4 +1,6 @@
 import { SquareTerminal, ClipboardCheck } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -16,6 +18,7 @@ import { bakedReleaseNotes } from '../../lib/baked-release-notes';
  * Mod+Shift+U), which is now the only usage surface.
  */
 export function StatusBar() {
+  const { t } = useLingui();
   const allSessions = useSessionStore((s) => s.sessions);
   const appVersion = useConfigStore((s) => s.appVersion);
   const tasks = useBoardStore((s) => s.tasks);
@@ -35,7 +38,10 @@ export function StatusBar() {
   const doneSwimlaneIds = new Set(
     swimlanes.filter((s) => s.role === 'done').map((s) => s.id),
   );
-  const activeTasks = tasks.filter((t) => !doneSwimlaneIds.has(t.swimlane_id)).length;
+  const activeTasks = tasks.filter((task) => !doneSwimlaneIds.has(task.swimlane_id)).length;
+  // Shown raw today, so a board past 999 tasks keeps "1000 tasks", not "1,000".
+  const activeTasksText = String(activeTasks);
+  const agentName = agentEntry?.displayName ?? '';
 
   // `data-dismiss-layer`: the status bar belongs to the board layer, so dead space here
   // light-dismisses an open task window. It needs its own marker because it sits OUTSIDE
@@ -54,13 +60,14 @@ export function StatusBar() {
           <span className="flex items-center gap-1.5" data-testid="session-count">
             <SquareTerminal size={14} className={activeSessions > 0 ? 'text-active' : 'text-fg-faint'} />
             <span className={activeSessions > 0 ? 'text-active' : ''}>
-              {activeSessions} agents
+              {/* "1 agents" is today's English for one, kept as written. */}
+              <Plural value={activeSessions} one="# agents" other="# agents" />
             </span>
-            {queued > 0 && <span className="text-fg-faint">{queued} queued</span>}
+            {queued > 0 && <span className="text-fg-faint"><Plural value={queued} one="# queued" other="# queued" /></span>}
           </span>
           <span className="flex items-center gap-1.5" data-testid="task-count">
             <ClipboardCheck size={14} />
-            {activeTasks} tasks
+            {plural(activeTasks, { one: `${activeTasksText} tasks`, other: `${activeTasksText} tasks` })}
           </span>
         </div>
       )}
@@ -69,7 +76,7 @@ export function StatusBar() {
 
       <div className="flex items-center gap-4">
         {agentEntry && !agentEntry.found && (
-          <span className="text-red-400" data-testid="agent-not-found">{agentEntry.displayName} not found</span>
+          <span className="text-red-400" data-testid="agent-not-found"><Trans>{agentName} not found</Trans></span>
         )}
         {appVersion && (
           // Passing `onClick` makes Pill render a real <button> with
@@ -80,7 +87,7 @@ export function StatusBar() {
           // and a static one correctly reads as dead space that dismisses.
           // Tooltip adds no click to a child without one, so the span survives
           // the wrap, and its empty label shows nothing.
-          <Tooltip label={bakedReleaseNotes ? `What's new in v${appVersion}` : ''}>
+          <Tooltip label={bakedReleaseNotes ? t`What's new in v${appVersion}` : ''}>
             <Pill
               size="sm"
               onClick={bakedReleaseNotes ? openWhatsNew : undefined}
@@ -89,7 +96,7 @@ export function StatusBar() {
                 bakedReleaseNotes ? ' hover:text-fg-secondary hover:border-fg-faint transition-colors' : ''
               }`}
             >
-              v{appVersion}
+              <Trans>v{appVersion}</Trans>
             </Pill>
           </Tooltip>
         )}

@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { PRMergeReadiness, PRState } from '../../shared/types';
 
 const OPEN_BADGE_CLASS = 'bg-emerald-400/10 text-emerald-400 ring-1 ring-emerald-400/20';
@@ -31,24 +33,24 @@ export function prStatePresentation(
     case 'open':
       switch (readiness) {
         case 'ready':
-          return { label: 'ready', badgeClass: OPEN_BADGE_CLASS };
+          return { label: i18n._(msg`ready`), badgeClass: OPEN_BADGE_CLASS };
         case 'blocked':
-          return { label: 'blocked', badgeClass: 'bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/20' };
+          return { label: i18n._(msg`blocked`), badgeClass: 'bg-amber-400/10 text-amber-400 ring-1 ring-amber-400/20' };
         case 'conflicting':
-          return { label: 'conflicts', badgeClass: 'bg-orange-400/10 text-orange-400 ring-1 ring-orange-400/20' };
+          return { label: i18n._(msg`conflicts`), badgeClass: 'bg-orange-400/10 text-orange-400 ring-1 ring-orange-400/20' };
         case 'queued':
-          return { label: 'queued', badgeClass: IN_FLIGHT_BADGE_CLASS };
+          return { label: i18n._(msg`queued`), badgeClass: IN_FLIGHT_BADGE_CLASS };
         case 'running':
-          return { label: 'running', badgeClass: IN_FLIGHT_BADGE_CLASS };
+          return { label: i18n._(msg`running`), badgeClass: IN_FLIGHT_BADGE_CLASS };
         default:
-          return { label: 'open', badgeClass: OPEN_BADGE_CLASS };
+          return { label: i18n._(msg`open`), badgeClass: OPEN_BADGE_CLASS };
       }
     case 'draft':
-      return { label: 'draft', badgeClass: 'bg-fg-muted/10 text-fg-muted ring-1 ring-fg-muted/20' };
+      return { label: i18n._(msg`draft`), badgeClass: 'bg-fg-muted/10 text-fg-muted ring-1 ring-fg-muted/20' };
     case 'merged':
-      return { label: 'merged', badgeClass: 'bg-purple-400/10 text-purple-400 ring-1 ring-purple-400/20' };
+      return { label: i18n._(msg`merged`), badgeClass: 'bg-purple-400/10 text-purple-400 ring-1 ring-purple-400/20' };
     case 'closed':
-      return { label: 'closed', badgeClass: 'bg-red-400/10 text-red-400 ring-1 ring-red-400/20' };
+      return { label: i18n._(msg`closed`), badgeClass: 'bg-red-400/10 text-red-400 ring-1 ring-red-400/20' };
     default:
       return { label: '', badgeClass: '' };
   }
@@ -69,15 +71,15 @@ export function prMergeReadinessTooltip(
   if (state !== 'open') return undefined;
   switch (readiness) {
     case 'ready':
-      return 'Ready to merge as of the last PR refresh';
+      return i18n._(msg`Ready to merge as of the last PR refresh`);
     case 'blocked':
-      return 'Merge blocked by reviews, checks, or branch rules as of the last PR refresh';
+      return i18n._(msg`Merge blocked by reviews, checks, or branch rules as of the last PR refresh`);
     case 'conflicting':
-      return 'Merge conflicts with the base branch as of the last PR refresh';
+      return i18n._(msg`Merge conflicts with the base branch as of the last PR refresh`);
     case 'queued':
-      return 'Required checks or policies are queued as of the last PR refresh';
+      return i18n._(msg`Required checks or policies are queued as of the last PR refresh`);
     case 'running':
-      return 'Required checks or policies are running as of the last PR refresh';
+      return i18n._(msg`Required checks or policies are running as of the last PR refresh`);
     default:
       return undefined;
   }

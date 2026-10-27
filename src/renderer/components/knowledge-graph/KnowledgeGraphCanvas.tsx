@@ -33,6 +33,9 @@ import {
 } from 'react';
 import { Keyboard, RotateCcw } from 'lucide-react';
 import { Color, Vector3 } from 'three';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useKnowledgeGraphScene, type RememberedCamera } from './useKnowledgeGraphScene';
 import {
   WORLD_SIZE,
@@ -397,6 +400,7 @@ export function KnowledgeGraphCanvas({
   cameraMemory,
   cameraMemoryKey = null,
 }: KnowledgeGraphCanvasProps) {
+  const { t } = useLingui();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   // One answer to "which region is this node in", rather than one per call site.
@@ -1331,10 +1335,12 @@ export function KnowledgeGraphCanvas({
           data-testid="knowledge-graph-webgl-unavailable"
         >
           <div className="max-w-md text-center">
-            <div className="mb-1 text-sm font-semibold text-fg">The map needs a GPU</div>
+            <div className="mb-1 text-sm font-semibold text-fg"><Trans>The map needs a GPU</Trans></div>
             <p className="text-sm text-fg-muted">
-              This machine could not provide a 3D drawing context, so the map cannot be drawn.
-              Coverage and search still work.
+              <Trans>
+                This machine could not provide a 3D drawing context, so the map cannot be drawn.
+                Coverage and search still work.
+              </Trans>
             </p>
           </div>
         </div>
@@ -1542,7 +1548,7 @@ export function KnowledgeGraphCanvas({
           left: `clamp(${paneInsets.left + toolbarHalfWidth}px, 50%, calc(100% - ${paneInsets.right + toolbarHalfWidth}px))`,
         }}
       >
-        <Tooltip label="Fly back to the opening view">
+        <Tooltip label={t`Fly back to the opening view`}>
           <button
             type="button"
             onClick={handleResetView}
@@ -1551,17 +1557,17 @@ export function KnowledgeGraphCanvas({
             className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
           >
             <RotateCcw size={14} aria-hidden />
-            Reset view
+            <Trans>Reset view</Trans>
           </button>
         </Tooltip>
         <span className="h-5 w-px bg-edge" aria-hidden />
-        <Tooltip label="Show the camera keys" enabled={!legendOpen}>
+        <Tooltip label={t`Show the camera keys`} enabled={!legendOpen}>
           <button
             ref={legendButtonRef}
             type="button"
             onClick={() => setLegendOpen((open) => !open)}
             onPointerDown={(event) => event.stopPropagation()}
-            aria-label="Controls"
+            aria-label={t`Controls`}
             aria-expanded={legendOpen}
             data-testid="knowledge-graph-camera-toggle"
             className={`flex h-8 items-center gap-2 rounded-md px-3 text-xs transition-colors hover:bg-surface-hover hover:text-fg cursor-pointer ${legendOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted'}`}
@@ -1570,7 +1576,7 @@ export function KnowledgeGraphCanvas({
             {/* Dropped on a narrow surface: at the 900px floor with the chat open,
                 the gap between the rails is about 200px, and the labelled
                 toolbar is wider than that. Reset view keeps its label. */}
-            <span className="hidden @[1100px]:inline">Controls</span>
+            <span className="hidden @[1100px]:inline"><Trans>Controls</Trans></span>
           </button>
         </Tooltip>
 
@@ -1601,11 +1607,15 @@ export function KnowledgeGraphCanvas({
                 beside them where they sit on the board. A flat row of the same
                 letters is a list of letters; this is a picture of where your
                 fingers go, and it is recognised rather than read. */}
-            <LegendGroup binding="move" label="Fly Forward and Sideways">
+            <LegendGroup binding="move" label={t`Fly Forward and Sideways`}>
+              {/* i18n-ok: a key cap names the physical key */}
               <KeyCap>W</KeyCap>
               <div className="flex gap-[3px]">
+                {/* i18n-ok: a key cap names the physical key */}
                 <KeyCap>A</KeyCap>
+                {/* i18n-ok: a key cap names the physical key */}
                 <KeyCap>S</KeyCap>
+                {/* i18n-ok: a key cap names the physical key */}
                 <KeyCap>D</KeyCap>
               </div>
             </LegendGroup>
@@ -1617,9 +1627,11 @@ export function KnowledgeGraphCanvas({
                 and the panel becomes five equal things. */}
             <span className="h-4 w-px bg-edge/60" aria-hidden />
 
-            <LegendGroup binding="up-and-down" label="Fly Up and Down">
+            <LegendGroup binding="up-and-down" label={t`Fly Up and Down`}>
               <div className="flex gap-[3px]">
+                {/* i18n-ok: a key cap names the physical key */}
                 <KeyCap>Q</KeyCap>
+                {/* i18n-ok: a key cap names the physical key */}
                 <KeyCap>E</KeyCap>
               </div>
             </LegendGroup>
@@ -1631,14 +1643,14 @@ export function KnowledgeGraphCanvas({
                 button at all, so the gesture the legend used to advertise did
                 nothing whatsoever. A legend that names a control the app does not
                 have is worse than no legend. */}
-            <LegendGroup binding="orbit" label="Orbit the Map">
-              <KeyCap>Drag</KeyCap>
+            <LegendGroup binding="orbit" label={t`Orbit the Map`}>
+              <KeyCap>{t`Drag`}</KeyCap>
             </LegendGroup>
-            <LegendGroup binding="pan" label="Pan the View">
-              <KeyCap>Right Drag</KeyCap>
+            <LegendGroup binding="pan" label={t`Pan the View`}>
+              <KeyCap>{t`Right Drag`}</KeyCap>
             </LegendGroup>
-            <LegendGroup binding="zoom" label="Zoom In and Out">
-              <KeyCap>Scroll</KeyCap>
+            <LegendGroup binding="zoom" label={t`Zoom In and Out`}>
+              <KeyCap>{t`Scroll`}</KeyCap>
             </LegendGroup>
           </div>
         ) : null}
@@ -1794,14 +1806,17 @@ function rankByMetric(
 /** Wall time as someone would say it: "3m", "1h 12m", "2d 4h". */
 export function formatDuration(milliseconds: number): string {
   const totalMinutes = Math.round(milliseconds / 60000);
-  if (totalMinutes < 1) return 'under a minute';
-  if (totalMinutes < 60) return `${totalMinutes}m`;
+  if (totalMinutes < 1) return i18n._(msg`under a minute`);
+  if (totalMinutes < 60) {
+    const minutes = totalMinutes;
+    return i18n._(msg`${minutes}m`);
+  }
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  if (hours < 24) return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+  if (hours < 24) return minutes === 0 ? i18n._(msg`${hours}h`) : i18n._(msg`${hours}h ${minutes}m`);
   const days = Math.floor(hours / 24);
   const remainingHours = hours % 24;
-  return remainingHours === 0 ? `${days}d` : `${days}d ${remainingHours}h`;
+  return remainingHours === 0 ? i18n._(msg`${days}d`) : i18n._(msg`${days}d ${remainingHours}h`);
 }
 
 /**
@@ -1836,9 +1851,14 @@ export function formatCostWithTokens(
   tokens: number | null | undefined,
 ): string | null {
   if (usd == null && tokens == null) return null;
-  if (usd == null) return `${formatCompactCount(tokens ?? 0)} tokens`;
+  if (usd == null) {
+    const tokenText = formatCompactCount(tokens ?? 0);
+    return i18n._(msg`${tokenText} tokens`);
+  }
   const cost = formatCost(usd);
-  return tokens ? `${cost} (${formatCompactCount(tokens)} tokens)` : cost;
+  if (!tokens) return cost;
+  const tokenText = formatCompactCount(tokens);
+  return i18n._(msg`${cost} (${tokenText} tokens)`);
 }
 
 /** Large counts as k / M, since a raw seven-digit token count is unreadable. */
@@ -1887,6 +1907,7 @@ function RegionHoverCard({
   containerWidth: number;
   containerHeight: number;
 }) {
+  const { t } = useLingui();
   const summary = useMemo(() => {
     if (!cluster) return null;
     let count = 0;
@@ -1915,9 +1936,14 @@ function RegionHoverCard({
 
   const flipX = x + HOVER_CARD_OFFSET + HOVER_CARD_WIDTH > containerWidth;
   const flipY = y + HOVER_CARD_MAX_HEIGHT > containerHeight;
-  const activeRange = summary.latest > 0
-    ? `${new Date(summary.earliest).toLocaleDateString()} to ${new Date(summary.latest).toLocaleDateString()}`
-    : null;
+  let activeRange: string | null = null;
+  if (summary.latest > 0) {
+    const earliestDate = new Date(summary.earliest).toLocaleDateString();
+    const latestDate = new Date(summary.latest).toLocaleDateString();
+    activeRange = t`${earliestDate} to ${latestDate}`;
+  }
+  const doneCount = summary.done;
+  const totalCount = summary.count;
 
   return (
     <div
@@ -1939,23 +1965,23 @@ function RegionHoverCard({
         />
         <span className="min-w-0 truncate text-xs font-semibold text-fg">{cluster.label}</span>
       </div>
-      <div className="mt-0.5 text-[11px] text-fg-faint">Region of the map</div>
+      <div className="mt-0.5 text-[11px] text-fg-faint"><Trans>Region of the map</Trans></div>
 
       <dl className="mt-2 border-t border-edge pt-1.5 space-y-0.5">
-        <HoverFact label="Conversations" value={summary.count.toLocaleString()} />
+        <HoverFact label={t`Conversations`} value={summary.count.toLocaleString()} />
         {/* Shipped versus total, because "12 conversations" says nothing about
             whether the area went anywhere. */}
-        <HoverFact label={translateText(TASK_OUTCOME_LABELS.done)} value={`${summary.done} of ${summary.count}`} />
+        <HoverFact label={translateText(TASK_OUTCOME_LABELS.done)} value={t`${doneCount} of ${totalCount}`} />
         {summary.durationMs > 0 ? (
-          <HoverFact label="Time spent" value={formatDuration(summary.durationMs)} />
+          <HoverFact label={t`Time spent`} value={formatDuration(summary.durationMs)} />
         ) : null}
         {summary.costUsd > 0 ? (
           <HoverFact
-            label="Cost"
+            label={t`Cost`}
             value={formatCostWithTokens(summary.costUsd, summary.tokens) ?? formatCost(summary.costUsd)}
           />
         ) : null}
-        {activeRange ? <HoverFact label="Active" value={activeRange} /> : null}
+        {activeRange ? <HoverFact label={t({ message: 'Active', context: 'Date range' })} value={activeRange} /> : null}
       </dl>
     </div>
   );
@@ -1994,7 +2020,9 @@ function HoverCard({
   // Taller than it was now that it carries outcome, region and facts, so the
   // edge test has to grow with it or the card clips at the bottom of the map.
   const flipY = y + HOVER_CARD_MAX_HEIGHT > containerHeight;
+  const { t } = useLingui();
   const outcome = OUTCOME_PRESENTATION[node.outcome ?? 'none'];
+  const agentName = node.agent;
   const modelName = node.model ? humanizeModelId(node.model) ?? node.model : null;
   const spend = formatCostWithTokens(node.costUsd, node.tokens);
   return (
@@ -2010,7 +2038,7 @@ function HoverCard({
       }}
     >
       <div className="text-xs font-semibold leading-snug text-fg line-clamp-2">
-        {node.title ?? 'Untitled conversation'}
+        {node.title ?? t`Untitled conversation`}
       </div>
 
       {/* The two things that place a conversation before you commit a click:
@@ -2039,18 +2067,18 @@ function HoverCard({
       {/* Facts, smallest last. Separated by a rule rather than by mid-dots so a
           long agent name cannot run into the next value. */}
       <dl className="mt-2 border-t border-edge pt-1.5 space-y-0.5">
-        {node.agent ? (
-          <HoverFact label="Agent" value={node.model ? `${node.agent}, ${modelName}` : node.agent} />
+        {agentName ? (
+          <HoverFact label={t`Agent`} value={node.model ? t`${agentName}, ${modelName}` : agentName} />
         ) : null}
         {/* What the work COST, not how the index stored it. "N indexed chunks"
             is an artifact of chunking and answers nothing anyone asks about a
             past conversation; how long it ran and what it spent do. Each row is
             omitted when its metric was never captured, rather than printing a
             zero the conversation has not earned. */}
-        {node.durationMs ? <HoverFact label="Ran for" value={formatDuration(node.durationMs)} /> : null}
-        {spend ? <HoverFact label="Cost" value={spend} /> : null}
+        {node.durationMs ? <HoverFact label={t`Ran for`} value={formatDuration(node.durationMs)} /> : null}
+        {spend ? <HoverFact label={t`Cost`} value={spend} /> : null}
         {node.lastActivityMs ? (
-          <HoverFact label="Last active" value={new Date(node.lastActivityMs).toLocaleDateString()} />
+          <HoverFact label={t`Last active`} value={new Date(node.lastActivityMs).toLocaleDateString()} />
         ) : null}
       </dl>
     </div>

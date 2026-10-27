@@ -1,4 +1,5 @@
 import { Megaphone } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { QrImage } from '../QrImage';
@@ -21,6 +22,7 @@ function AnnouncementLinkButton({ link }: { link: AnnouncementLink }) {
  * announcements carry (the 220px pairing QR is sized for far denser payloads).
  */
 function AnnouncementLinkList({ links }: { links: AnnouncementLink[] }) {
+  const { t } = useLingui();
   if (links.length === 0) return null;
   const qrLinks = links.filter((link) => link.qr);
   const plainLinks = links.filter((link) => !link.qr);
@@ -28,12 +30,16 @@ function AnnouncementLinkList({ links }: { links: AnnouncementLink[] }) {
     <div className="space-y-3">
       {qrLinks.length > 0 && (
         <div className="grid grid-cols-[repeat(auto-fit,minmax(13rem,1fr))] gap-3 justify-items-center">
-          {qrLinks.map((link) => (
-            <div key={link.url} className="w-full max-w-[15rem] flex flex-col items-center gap-2" data-testid="announcement-qr-block">
-              <QrImage value={link.url} size={180} alt={`QR code: ${link.label}`} testId="announcement-qr" />
-              <AnnouncementLinkButton link={link} />
-            </div>
-          ))}
+          {qrLinks.map((link) => {
+            // The link's own label, as the announcement wrote it.
+            const linkLabel = link.label;
+            return (
+              <div key={link.url} className="w-full max-w-[15rem] flex flex-col items-center gap-2" data-testid="announcement-qr-block">
+                <QrImage value={link.url} size={180} alt={t`QR code: ${linkLabel}`} testId="announcement-qr" />
+                <AnnouncementLinkButton link={link} />
+              </div>
+            );
+          })}
         </div>
       )}
       {plainLinks.length > 0 && (
@@ -92,7 +98,7 @@ export function AnnouncementDialog() {
             data-testid="announcement-close"
             className="px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on"
           >
-            Close
+            <Trans>Close</Trans>
           </button>
         </div>
       }

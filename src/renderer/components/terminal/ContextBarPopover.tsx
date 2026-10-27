@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
-import { MODEL_ALIAS_GROUP_HEADING, modelVersionSectionLabel } from '../../utils/format-tokens';
+import { modelAliasGroupHeading, modelVersionSectionLabel } from '../../utils/format-tokens';
 import { Tooltip } from '../Tooltip';
 
 /**
@@ -113,6 +114,7 @@ export function ContextBarPopover({
   onClose: () => void;
   testId?: string;
 }) {
+  const { t } = useLingui();
   const popoverRef = useRef<HTMLDivElement>(null);
   // Collapsed by default. Forced open when the checked value sits in the
   // collapsed section and `expandToCurrent` says the check marks a choice the
@@ -125,6 +127,7 @@ export function ContextBarPopover({
     );
   const showPinnedExpanded = pinnedExpanded || (expandToCurrent && currentIsDemoted);
   const hasAliases = aliasOptions.length > 0;
+  const swimlaneDefaultText = swimlaneDefaultLabel ?? swimlaneDefault;
   // The ContextBar is always pinned to the bottom of its container (task-detail
   // dialog, bottom panel, or the floating command-terminal overlay). Prefer
   // opening upward so the menu never renders past a floating container's bottom
@@ -165,6 +168,7 @@ export function ContextBarPopover({
   // versions" (`indent` matches it visually to the section's dated-pin rows).
   const renderOptionRow = (option: PopoverOption, indent: boolean) => {
     const oneMillionValue = option.oneMillionValue ?? null;
+    const contextLabel = option.contextLabel;
     // The row checkmark lights for either spelling of the same base model
     // (`claude-opus-4-8` and `claude-opus-4-8[1m]` share one row).
     const isCurrent =
@@ -195,13 +199,13 @@ export function ContextBarPopover({
             {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
           </button>
         </Tooltip>
-        {oneMillionValue === null && option.contextLabel && (
-          <Tooltip label={`${option.contextLabel} context window`}>
+        {oneMillionValue === null && contextLabel && (
+          <Tooltip label={t`${contextLabel} context window`}>
             <span
               className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
               data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
             >
-              {option.contextLabel}
+              {contextLabel}
             </span>
           </Tooltip>
         )}
@@ -217,6 +221,7 @@ export function ContextBarPopover({
               }`}
               data-testid={testId ? `${testId}-option-1m-${oneMillionValue}` : undefined}
             >
+              {/* i18n-ok: a context-window size, a unit like the badge's "200K" */}
               1M
             </button>
           </Tooltip>
@@ -277,7 +282,7 @@ export function ContextBarPopover({
       )}
       {hasAliases && (
         <div data-testid={testId ? `${testId}-alias-group` : undefined}>
-          <div className="px-3 pb-0.5 text-[11px] font-medium text-fg-faint">{MODEL_ALIAS_GROUP_HEADING}</div>
+          <div className="px-3 pb-0.5 text-[11px] font-medium text-fg-faint">{modelAliasGroupHeading()}</div>
           {aliasOptions.map(renderAliasRow)}
         </div>
       )}
@@ -318,7 +323,7 @@ export function ContextBarPopover({
               data-testid={testId ? `${testId}-option-clear` : undefined}
             >
               <Check size={12} className={`flex-shrink-0 ${currentValue === null ? 'text-fg-secondary' : 'text-transparent'}`} />
-              <span className="flex-1 truncate">Use column default <span className="text-fg-disabled">({swimlaneDefaultLabel ?? swimlaneDefault})</span></span>
+              <span className="flex-1 truncate"><Trans>Use column default <span className="text-fg-disabled">({swimlaneDefaultText})</span></Trans></span>
             </button>
           </Tooltip>
         </div>

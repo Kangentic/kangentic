@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Swimlane, Task } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
@@ -41,7 +43,7 @@ export function showWorkflowRefusal(
 ): void {
   const workflow = boardWorkflowNow(task);
   useToastStore.getState().addToast({
-    title: 'Workflow controls this task',
+    title: i18n._(msg`Workflow controls this task`),
     message: refusal,
     variant: 'info',
     onOpen: workflow

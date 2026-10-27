@@ -30,6 +30,8 @@
 import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../src/renderer/components/DataTable';
 
 interface Row {
@@ -47,15 +49,16 @@ function renderTable(props: {
   virtualized?: boolean;
   sortableEnabled?: boolean;
 }): string {
+  // Inside the I18nProvider the table's `useLingui` reads from, as in the app.
   return renderToStaticMarkup(
-    createElement(DataTable<Row>, {
+    createElement(I18nProvider, { i18n }, createElement(DataTable<Row>, {
       columns,
       columnGroups: props.columnGroups,
       data: [],
       rowKey: (row: Row) => row.id,
       virtualized: props.virtualized,
       sortableEnabled: props.sortableEnabled,
-    }),
+    })),
   );
 }
 

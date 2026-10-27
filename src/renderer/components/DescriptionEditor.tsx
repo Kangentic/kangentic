@@ -1,5 +1,6 @@
 import { useRef, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from 'react';
 import { Paperclip, Eye, PenLine } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { DescriptionMentionMenu } from './DescriptionMentionMenu';
 import { Tooltip } from './Tooltip';
@@ -60,11 +61,13 @@ export function DescriptionEditor({
   onChange,
   onPaste,
   testId = 'description',
-  placeholder = 'Describe the task for the agent...',
+  placeholder: placeholderProp,
   textareaRef,
   mentionSearchCwd = null,
   className,
 }: DescriptionEditorProps) {
+  const { t } = useLingui();
+  const placeholder = placeholderProp ?? t`Describe the task for the agent...`;
   const [showPreview, setShowPreview] = useState(false);
   const internalTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resolvedTextareaRef = textareaRef ?? internalTextareaRef;
@@ -299,7 +302,7 @@ export function DescriptionEditor({
                   weakest text in the app. Nothing here is disabled. */}
               <span className="inline-flex items-center gap-2 rounded-md border border-dashed border-edge px-3 py-1.5 text-xs text-fg-muted">
                 <Paperclip size={14} />
-                Paste or drop files here
+                <Trans>Paste or drop files here</Trans>
               </span>
             </div>
           </div>
@@ -312,11 +315,11 @@ export function DescriptionEditor({
             {value ? (
               <MarkdownRenderer content={value} />
             ) : (
-              <span className="text-sm text-fg-faint">Nothing to preview</span>
+              <span className="text-sm text-fg-faint"><Trans>Nothing to preview</Trans></span>
             )}
           </div>
         )}
-        <Tooltip label={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}>
+        <Tooltip label={showPreview ? t`Back to writing markdown` : t`Preview rendered markdown`}>
           <button
             type="button"
             onClick={togglePreview}
@@ -327,7 +330,7 @@ export function DescriptionEditor({
             // on the scrollbar track, which read as one broken control - so the
             // top simply matches it.
             className={`absolute top-3 right-3 z-10 ${toggleButtonClass(showPreview)}`}
-            aria-label={showPreview ? 'Back to writing markdown' : 'Preview rendered markdown'}
+            aria-label={showPreview ? t`Back to writing markdown` : t`Preview rendered markdown`}
             aria-pressed={showPreview}
             data-testid="description-preview-toggle"
           >
@@ -335,7 +338,7 @@ export function DescriptionEditor({
             {/* "Write" / "Preview" rather than "Source": it is the vocabulary
                 every git forge uses for this exact control, so it is what a user
                 arrives already knowing. */}
-            {showPreview ? 'Write' : 'Preview'}
+            {showPreview ? <Trans>Write</Trans> : <Trans>Preview</Trans>}
           </button>
         </Tooltip>
       </div>

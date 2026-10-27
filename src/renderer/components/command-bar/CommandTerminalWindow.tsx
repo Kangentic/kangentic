@@ -18,6 +18,9 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
@@ -54,11 +57,6 @@ import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
-
-/** The launch overlay's label, before the spawn returns and after it, so the
- *  hand-off from the window's overlay to the pane's reads as one surface. */
-const COMMAND_TERMINAL_LAUNCH_LABEL = 'Starting Command Terminal...';
-const COMMAND_TERMINAL_RESUME_LABEL = 'Resuming conversation...';
 
 /** What a window attaches to at mount; see `resolveMountAttach`. */
 type MountAttach =
@@ -98,6 +96,7 @@ interface CommandTerminalWindowProps {
 }
 
 export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTerminalWindowProps) {
+  const { t } = useLingui();
   const windowId = managedWindow.id;
   // The window's durable anchor IS its Command Terminal slot id (`slot-1`,
   // `slot-2`, ...). It pairs the persistent window to its ephemeral PTY across
@@ -140,7 +139,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const { hideLayer, resumeBeside, gridFits } = useCommandTerminalLayer();
   // While the panel is too small for the grid, the layer keeps one terminal
   // expanded, so there is no grid to restore to.
-  const restoreDisabledReason = isExpanded && !gridFits ? 'Widen the panel to restore the grid' : null;
+  const restoreDisabledReason = isExpanded && !gridFits ? t`Widen the panel to restore the grid` : null;
 
   // What this window attaches to at mount, decided ONCE, before the first
   // paint, so the mount effect below only performs side effects and the two
@@ -309,14 +308,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         // A row clicked while this terminal was still starting.
         takePendingResumeRef.current();
         if (result.checkoutError) {
-          useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
+          useToastStore.getState().addToast({ title: i18n._(msg`Couldn't check out branch`), message: result.checkoutError, variant: 'warning' });
         }
       })
       .catch((error) => {
         // Main's refusals (the cap, a taken slot, a shell that did not start)
         // are sentences written for the user; drop Electron's IPC decoration.
         useToastStore.getState().addToast({
-          title: resumeAgentSessionId ? "Couldn't resume conversation" : "Couldn't start Command Terminal",
+          title: resumeAgentSessionId ? i18n._(msg`Couldn't resume conversation`) : i18n._(msg`Couldn't start Command Terminal`),
           message: asSentence(describeIpcError(error, String(error))),
           variant: 'error',
         });
@@ -350,7 +349,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     const projectId = useProjectStore.getState().currentProject?.id ?? null;
     return projectId !== null && !!useSessionStore.getState().pendingCommandTerminalResumes[transientKey(projectId, slot)];
   });
-  const launchLabel = startingResume ? COMMAND_TERMINAL_RESUME_LABEL : COMMAND_TERMINAL_LAUNCH_LABEL;
+  // The launch overlay's label, before the spawn returns and after it, so the
+  // hand-off from the window's overlay to the pane's reads as one surface.
+  const launchLabel = startingResume ? t`Resuming conversation...` : t`Starting Command Terminal...`;
 
   // Lift the shimmer if the session exits before its agent is on screen.
   useEffect(() => {
@@ -395,8 +396,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     const killOutcome = await useSessionStore.getState().killTransientSessionBySlot(projectId, slot);
     if (killOutcome === 'failed') {
       useToastStore.getState().addToast({
-        title: "Couldn't stop the old terminal",
-        message: 'Its process may still be running.',
+        title: i18n._(msg`Couldn't stop the old terminal`),
+        message: i18n._(msg`Its process may still be running.`),
         variant: 'warning',
       });
     }
@@ -429,11 +430,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       setStartingResume(false);
       const result = await spawnInSlot(grid, resolvedBranch);
       if (result.checkoutError) {
-        useToastStore.getState().addToast({ title: "Couldn't check out branch", message: result.checkoutError, variant: 'warning' });
+        useToastStore.getState().addToast({ title: i18n._(msg`Couldn't check out branch`), message: result.checkoutError, variant: 'warning' });
       }
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't switch branch",
+        title: i18n._(msg`Couldn't switch branch`),
         message: asSentence(describeIpcError(error, String(error))),
         variant: 'error',
       });
@@ -456,7 +457,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       await spawnInSlot(grid, undefined, agentSessionId);
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't resume conversation",
+        title: i18n._(msg`Couldn't resume conversation`),
         message: asSentence(describeIpcError(error, String(error))),
         variant: 'error',
       });
@@ -562,7 +563,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
           {/* StopButtonIcon's branches all render through IconSlot, so the node under the
               pointer survives an activity change mid-press (see IconSlot). */}
-          <Tooltip label={stopping ? 'Stopping terminal' : 'Stop terminal'}>
+          <Tooltip label={stopping ? t`Stopping terminal` : t`Stop terminal`}>
             <button
               onClick={handleTerminate}
               disabled={stopping}
@@ -572,7 +573,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               // Tracks `stopping` like the tip and the kebab item's label: an explicit
               // aria-label wins the accessible-name computation, so leaving it static would
               // hide the pending state from exactly the users who cannot see the spinner.
-              aria-label={stopping ? 'Stopping terminal' : 'Stop terminal'}
+              aria-label={stopping ? t`Stopping terminal` : t`Stop terminal`}
               data-testid="command-bar-terminate-button"
             >
               <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
@@ -609,7 +610,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               <HeaderActionButton
                 icon={FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(projectPath)}
-                tip="Open project folder"
+                tip={t`Open project folder`}
                 testId="command-bar-folder-button"
               />
             </div>
@@ -621,8 +622,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                 icon={GitCompare}
                 onClick={handleToggleChanges}
                 active={changesOpen}
-                tip={changesOpen ? 'Hide changes' : 'Show changes'}
-                ariaLabel="Toggle changes"
+                tip={changesOpen ? t`Hide changes` : t`Show changes`}
+                ariaLabel={t`Toggle changes`}
                 testId="command-bar-changes-toggle"
               />
             </div>
@@ -668,25 +669,25 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   {projectPath && (
                     <KebabMenuItem
                       icon={<FolderOpen size={14} />}
-                      label="Open folder"
+                      label={t`Open folder`}
                       onClick={() => { close(); window.electronAPI.shell.openPath(projectPath); }}
                     />
                   )}
                   <KebabMenuItem
                     icon={<SquareChevronRight size={14} />}
-                    label="Commands"
+                    label={t`Commands`}
                     onClick={() => { close(); setShowCommandPalette(true); }}
                   />
                   <KebabMenuItem
                     icon={<GitBranch size={14} />}
-                    label="Switch branch"
+                    label={t`Switch branch`}
                     onClick={() => { close(); setBranchMenuOpen(true); }}
                     data-testid="command-bar-kebab-switch-branch"
                   />
                   {projectPath && (
                     <KebabMenuItem
                       icon={<GitCompare size={14} />}
-                      label={changesOpen ? 'Hide changes' : 'Show changes'}
+                      label={changesOpen ? t`Hide changes` : t`Show changes`}
                       onClick={() => { close(); handleToggleChanges(); }}
                     />
                   )}
@@ -707,7 +708,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                   <KebabMenuDivider />
                   <KebabMenuItem
                     icon={<CircleStop size={14} />}
-                    label={stopping ? 'Stopping...' : 'Stop terminal'}
+                    label={stopping ? t`Stopping...` : t`Stop terminal`}
                     onClick={() => { close(); handleTerminate(); }}
                     disabled={stopping}
                     destructive
@@ -739,7 +740,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               label={tipLabel({
                 disabled: restoreDisabledReason !== null,
                 disabledReason: restoreDisabledReason,
-                tip: isExpanded ? 'Restore the grid' : 'Expand terminal',
+                tip: isExpanded ? t`Restore the grid` : t`Expand terminal`,
               })}
             >
               <button
@@ -749,7 +750,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
                 className={`p-1.5 rounded transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40 ${
                   isExpanded ? 'bg-surface-hover text-fg' : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover'
                 }`}
-                aria-label={isExpanded ? 'Restore the grid' : 'Expand terminal'}
+                aria-label={isExpanded ? t`Restore the grid` : t`Expand terminal`}
                 data-testid="command-bar-expand"
               >
                 {isExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
@@ -806,7 +807,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         {/* Changes panel */}
         {changesOpen && projectPath && (
           <div className="w-1/2 min-h-0 border-l border-edge">
-            <PanelErrorBoundary label="Changes panel">
+            <PanelErrorBoundary panel="Changes panel" message={t`Failed to load the Changes panel`}>
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center h-full">

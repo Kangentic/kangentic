@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { Pencil, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import type { ProjectGroup } from '../../../../shared/types';
 
 export interface GroupContextMenuProps {
@@ -68,7 +69,7 @@ export function GroupContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left"
       >
         <Pencil size={14} className="text-fg-faint" />
-        Rename
+        <Trans>Rename</Trans>
       </button>
 
       <button
@@ -81,7 +82,7 @@ export function GroupContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
       >
         <ArrowUp size={14} className="text-fg-faint" />
-        Move up
+        <Trans>Move up</Trans>
       </button>
 
       <button
@@ -94,7 +95,7 @@ export function GroupContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
       >
         <ArrowDown size={14} className="text-fg-faint" />
-        Move down
+        <Trans>Move down</Trans>
       </button>
 
       <div className="border-t border-edge my-1" />
@@ -107,7 +108,7 @@ export function GroupContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-400 hover:bg-red-400/10 transition-colors text-left"
       >
         <Trash2 size={14} />
-        Delete
+        <Trans>Delete</Trans>
       </button>
     </div>
   );

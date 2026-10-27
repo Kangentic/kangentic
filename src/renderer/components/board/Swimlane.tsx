@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { GripVertical, Pencil, ClipboardPlus } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { SwimlaneIcon } from '../../utils/swimlane-icons';
@@ -20,6 +21,7 @@ export interface SwimlaneProps {
 }
 
 export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHandleProps }: SwimlaneProps) {
+  const { t } = useLingui();
   const [showNewTask, setShowNewTask] = useState(false);
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
   const { setNodeRef } = useDroppable({
@@ -36,6 +38,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
   const taskIds = useMemo(() => (taskIdsKey === '' ? [] : taskIdsKey.split(',')), [taskIdsKey]);
 
   const role = swimlane.role;
+  const columnName = swimlane.name;
   const isGhost = swimlane.is_ghost;
   const isSystemColumn = role !== null;
   const isDraggable = !!dragHandleProps && !isGhost;
@@ -58,7 +61,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
   // fixed-position New Task dialog inside it still escapes the clip.
   return (
     // A ghost column says why it is greyed out wherever the pointer rests on it.
-    <Tooltip label={isGhost ? 'Removed from team config. Move tasks to continue.' : ''}>
+    <Tooltip label={isGhost ? t`Removed from team config. Move tasks to continue.` : ''}>
       <div
         data-testid="swimlane"
         data-swimlane-name={swimlane.name}
@@ -95,13 +98,13 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
               // keyboard sensor lifts the column from here. It draws no text, so it
               // names itself. Tooltip chains its own pointer handlers after
               // dnd-kit's, so the press that starts a drag still reaches the sensor.
-              <Tooltip label="Drag to reorder">
+              <Tooltip label={t`Drag to reorder`}>
                 {/* select-none-ok: the handle draws a grip icon and no text, and it
                     inherits the header's `select-none` anyway. */}
                 <div
                   {...dragHandleProps}
                   onClick={(event: React.MouseEvent) => event.stopPropagation()}
-                  aria-label={`Reorder ${swimlane.name} column`}
+                  aria-label={t`Reorder ${columnName} column`}
                   data-testid="column-drag-handle"
                   className="text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing transition-colors -ml-1"
                 >
@@ -129,7 +132,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             <button
               type="button"
               data-testid="edit-column-btn"
-              aria-label={`Edit ${swimlane.name} column`}
+              aria-label={t`Edit ${columnName} column`}
               onClick={(event: React.MouseEvent) => {
                 event.stopPropagation();
                 openBoardManager(swimlane.id);
@@ -173,13 +176,13 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
             data-testid="swimlane-add-task"
           >
             <ClipboardPlus size={16} />
-            Add task
+            <Trans>Add task</Trans>
           </button>
         )}
         {isGhost && (
           <div className="px-3 py-2 border-t border-edge/50">
             <span className="text-xs text-fg-disabled italic">
-              Removed from team config
+              <Trans>Removed from team config</Trans>
             </span>
           </div>
         )}

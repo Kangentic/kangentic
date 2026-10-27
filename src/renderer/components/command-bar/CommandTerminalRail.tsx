@@ -16,6 +16,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { History } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
@@ -40,9 +41,6 @@ export const COMMAND_RAIL_WIDTH_PX = 248;
 /** One Earlier row (44px) plus the 2px gap between rows. */
 const EARLIER_ROW_PITCH_PX = 46;
 const EARLIER_ROW_GAP_PX = 2;
-
-/** Why Add terminal and the Earlier rows are off: every slot is taken. */
-export const AT_CAP_REASON = 'Stop one of the four to add another';
 
 const MINUTE_MS = 60 * 1000;
 const RECENT_MS = 2 * 24 * 60 * MINUTE_MS;
@@ -88,6 +86,7 @@ interface RunningRowProps {
 
 /** One terminal behind the expanded one: its live Stop button, then its name. */
 function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) {
+  const { t } = useLingui();
   const sessionId = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, terminal.slot)]?.sessionId ?? null : null);
   const label = useSessionStore((state) =>
@@ -107,7 +106,7 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
 
   return (
     <div className="flex h-9 flex-shrink-0 items-center gap-2.5 rounded-md px-2 hover:bg-surface-hover" data-testid="command-terminal-running-row" data-command-slot={terminal.slot}>
-      <Tooltip label="Ends the terminal, and Earlier keeps its conversation if it was used">
+      <Tooltip label={t`Ends the terminal, and Earlier keeps its conversation if it was used`}>
         <button
           type="button"
           onClick={() => void handleStop()}
@@ -115,7 +114,7 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
           className={`inline-flex flex-shrink-0 items-center justify-center rounded-full disabled:cursor-not-allowed ${
             stopping ? 'text-fg-muted' : isThinking || isIdle ? '' : 'text-red-400'
           }`}
-          aria-label={`Stop ${name}`}
+          aria-label={t`Stop ${name}`}
           data-testid="command-terminal-running-stop"
         >
           <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
@@ -126,7 +125,7 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
           type="button"
           onClick={() => onExpand(terminal.windowId)}
           className="min-w-0 flex-1 truncate text-left text-[13px] text-fg"
-          aria-label={`Expand ${name}`}
+          aria-label={t`Expand ${name}`}
           data-testid="command-terminal-running-expand"
         >
           {name}
@@ -157,25 +156,28 @@ export function CommandTerminalRail({
   onExpand,
   onStop,
 }: CommandTerminalRailProps) {
+  const { t } = useLingui();
   const { entries, hide } = useCommandTerminalHistory(projectId);
   const listRef = useRef<HTMLDivElement>(null);
   const rowsThatFit = useRowsThatFit(listRef);
   const now = useMinuteClock();
   const visibleEntries = entries.slice(0, rowsThatFit);
+  // Why Add terminal and the Earlier rows are off: every slot is taken.
+  const atCapReason = t`Stop one of the four to add another`;
 
   return (
     <nav
-      aria-label="Command Terminals"
+      aria-label={t`Command Terminals`}
       className="flex flex-shrink-0 flex-col border-r border-edge px-2 py-2.5 select-none"
       style={{ width: COMMAND_RAIL_WIDTH_PX }}
       data-testid="command-terminal-rail"
     >
       <div className="flex-shrink-0 pb-1">
-        <NewTerminalButton onNewTerminal={onNewTerminal} disabledReason={atCap ? AT_CAP_REASON : null} />
+        <NewTerminalButton onNewTerminal={onNewTerminal} disabledReason={atCap ? atCapReason : null} />
       </div>
       {running && running.length > 0 && (
         <>
-          <div className="px-2 pt-3 pb-1 text-xs text-fg-muted">Running</div>
+          <div className="px-2 pt-3 pb-1 text-xs text-fg-muted"><Trans context="Agent status">Running</Trans></div>
           <div className="flex flex-shrink-0 flex-col gap-0.5" data-testid="command-terminal-running">
             {running.map((terminal) => (
               <RunningRow key={terminal.windowId} projectId={projectId} terminal={terminal} onExpand={onExpand} onStop={onStop} />
@@ -188,15 +190,15 @@ export function CommandTerminalRail({
           mounted either way, so it has measured how many rows fit before the
           first one arrives. */}
       {entries.length > 0 && (
-        <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading">Earlier</div>
+        <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading"><Trans>Earlier</Trans></div>
       )}
       <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden" data-testid="command-terminal-earlier">
         {visibleEntries.map((entry) => {
-          const name = commandTerminalHistoryName(entry) ?? 'Untitled conversation';
+          const name = commandTerminalHistoryName(entry) ?? t`Untitled conversation`;
           return (
             // No tip while it can be clicked: the row reads as what it resumes.
             // At the cap it says why it is off.
-            <Tooltip key={entry.agentSessionId} label={tipLabel({ disabled: atCap, disabledReason: AT_CAP_REASON })}>
+            <Tooltip key={entry.agentSessionId} label={tipLabel({ disabled: atCap, disabledReason: atCapReason })}>
               <button
                 type="button"
                 onClick={() => {
@@ -205,7 +207,7 @@ export function CommandTerminalRail({
                 }}
                 disabled={atCap}
                 className="flex h-11 flex-shrink-0 items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-                aria-label={`Resume ${name}`}
+                aria-label={t`Resume ${name}`}
                 data-testid="command-terminal-earlier-row"
                 data-agent-session-id={entry.agentSessionId}
               >

@@ -1,5 +1,6 @@
 import { useRef, type CSSProperties } from 'react';
 import { Download, Mic, RotateCcw } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useDictationStore } from '../../stores/dictation-store';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useDictationChipPosition } from '../../hooks/useDictationChipPosition';
@@ -28,6 +29,7 @@ export function LiveDictationChip() {
 }
 
 function LiveDictationChipContent() {
+  const { t } = useLingui();
   const status = useDictationStore((state) => state.status);
   const error = useDictationStore((state) => state.error);
   const targetKind = useDictationStore((state) => state.targetKind);
@@ -74,28 +76,29 @@ function LiveDictationChipContent() {
   // what made this read as broken.
   const busy = status === 'busy';
 
+  // `error` arrives worded (and translated) by whatever set it, so it shows as given.
   const label = error
     ? error
     : busy
-      ? 'Still sending the last one'
+      ? t`Still sending the last one`
       : downloading
-      ? `Preparing model... ${downloadPercent}%`
+      ? t`Preparing model... ${downloadPercent}%`
       : noTarget
         ? (refusal === 'password'
           // Naming the reason matters here: the user is looking straight at a
           // field they just clicked, so "nothing focused" reads as a bug rather
           // than as the deliberate refusal it is.
-          ? 'Dictation is off in password fields'
-          : 'No terminal or input focused')
+          ? t`Dictation is off in password fields`
+          : t`No terminal or input focused`)
         : recording
-          ? 'Listening'
+          ? t`Listening`
           // Finalizing is the one state left. An idle chip is always
           // downloading, and error and busy have their own labels above.
-          : (willSubmit ? 'Sending...' : 'Inserting...');
+          : (willSubmit ? t`Sending...` : t`Inserting...`);
 
   // Trailing hint, separated by spacing and a muted tone rather than a glyph.
   const hint = recording && !noTarget
-    ? (willSubmit ? 'Release to send' : 'Release to insert')
+    ? (willSubmit ? t`Release to send` : t`Release to insert`)
     : null;
 
   return (
@@ -153,14 +156,14 @@ function LiveDictationChipContent() {
                 while the chip holds its min width. */}
             <span className="flex-1" aria-hidden />
             <div className="w-px h-4 bg-edge mx-1" aria-hidden />
-            <Tooltip label="Clear and start over">
+            <Tooltip label={t`Clear and start over`}>
               <button
                 type="button"
                 onClick={() => dictationPopupActions.clear()}
                 className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-xs text-fg-muted hover:bg-surface-hover hover:text-fg"
                 data-testid="dictation-live-clear"
               >
-                <RotateCcw size={12} /> Clear
+                <RotateCcw size={12} />{' '}<Trans context="Action">Clear</Trans>
               </button>
             </Tooltip>
           </>

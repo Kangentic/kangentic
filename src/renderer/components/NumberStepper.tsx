@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 
 /**
  * A small whole-number control: minus, the typable value, plus. For a count a
@@ -23,6 +24,7 @@ export interface NumberStepperProps {
 }
 
 export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = false, ariaLabel, testId }: NumberStepperProps) {
+  const { t } = useLingui();
   // What is being typed, while it is being typed. Null shows the committed value.
   const [typed, setTyped] = useState<string | null>(null);
   const clamp = (next: number): number => Math.min(max, Math.max(min, Math.round(next)));
@@ -55,7 +57,7 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
     >
       <button
         type="button"
-        aria-label={`Fewer: ${ariaLabel}`}
+        aria-label={t`Fewer: ${ariaLabel}`}
         data-testid={testId ? `${testId}-decrement` : undefined}
         disabled={disabled || value <= min}
         onClick={() => onChange(clamp(value - 1))}
@@ -81,7 +83,7 @@ export function NumberStepper({ value, onChange, min = 1, max = 999, disabled = 
       />
       <button
         type="button"
-        aria-label={`More: ${ariaLabel}`}
+        aria-label={t`More: ${ariaLabel}`}
         data-testid={testId ? `${testId}-increment` : undefined}
         disabled={disabled || value >= max}
         onClick={() => onChange(clamp(value + 1))}

@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import type { HostMemoryAgentPausedEvent, HostMemoryPressureEvent } from '../../shared/types';
 import { countStillPaused, notePausedOutcomes, type PausedAgentOutcome } from '../lib/paused-for-memory';
 import { useConfigStore } from './config-store';
@@ -91,11 +93,16 @@ function formatGigabytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-/** The paused toast's title and body for a count. */
+/**
+ * The paused toast's title and body for a count, in the session's language. An
+ * exact `=1` branch, not `one`: the singular names no number, which would read
+ * wrong for the other counts some languages file under `one` (21, 31...).
+ */
 export function pausedToastCopy(count: number): { title: string; message: string } {
-  return count === 1
-    ? { title: 'Idle agent paused', message: 'Kangentic paused it to free memory.' }
-    : { title: `${count} idle agents paused`, message: 'Kangentic paused them to free memory.' };
+  return {
+    title: i18n._(msg`${plural({ count }, { 1: 'Idle agent paused', other: '# idle agents paused' })}`),
+    message: i18n._(msg`${plural({ count }, { 1: 'Kangentic paused it to free memory.', other: 'Kangentic paused them to free memory.' })}`),
+  };
 }
 
 function openBehaviorSettings(): void {
@@ -134,9 +141,10 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
     }
 
     const { sample } = event;
-    const message = sample.commitRemainingBytes !== null
-      ? `${formatGigabytes(sample.commitRemainingBytes)} of memory reservations left.`
-      : 'Almost no memory reservations left.';
+    const remaining = sample.commitRemainingBytes !== null ? formatGigabytes(sample.commitRemainingBytes) : null;
+    const message = remaining !== null
+      ? i18n._(msg`${{ remaining }} of memory reservations left.`)
+      : i18n._(msg`Almost no memory reservations left.`);
 
     // Persistent: a standing condition, not a transient event. It clears
     // when receiveRecovery() fires.
@@ -151,12 +159,12 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
     // `since` is the sample's time, so a toast left up reads its age instead
     // of quoting a dip that may be long past.
     const toastId = useToastStore.getState().addToast({
-      title: 'Low on memory',
+      title: i18n._(msg`Low on memory`),
       message,
       variant: 'warning',
       persistent: true,
       since: sample.ts,
-      action: { label: 'Settings', icon: 'settings', onClick: openBehaviorSettings },
+      action: { label: i18n._(msg`Settings`), icon: 'settings', onClick: openBehaviorSettings },
     });
 
     set({ lastEvent: event, pressureToastId: toastId });
@@ -192,7 +200,7 @@ const createHostMemoryStore = () => create<HostMemoryState>((set, get) => ({
       variant: 'info',
       persistent: true,
       since: event.pausedAt,
-      action: { label: 'Review', icon: 'review', onClick: () => useHostMemoryStore.getState().openReview() },
+      action: { label: i18n._(msg`Review`), icon: 'review', onClick: () => useHostMemoryStore.getState().openReview() },
     });
     set({ pausedAgents, pausedOutcomes, pausedToastId: toastId });
   },

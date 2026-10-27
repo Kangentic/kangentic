@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { UpdateDownloadedInfo } from '../../shared/types';
 import { useConfigStore } from './config-store';
 import { useToastStore } from './toast-store';
@@ -60,13 +62,14 @@ const createUpdaterStore = () => create<UpdaterState>((set, get) => ({
       // would keep the title-bar indicator offering notes for a version that
       // is no longer the one `installUpdate()` would install.
       set({ pendingUpdate: null, isModalOpen: false, autoOpened: false });
+      const version = info.version;
       useToastStore.getState().addToast({
-        title: 'Update ready',
-        message: `Version ${info.version} is ready to install.`,
+        title: i18n._(msg`Update ready`),
+        message: i18n._(msg`Version ${{ version }} is ready to install.`),
         variant: 'info',
         persistent: true, // the user must act or dismiss
         action: {
-          label: 'Restart to update',
+          label: i18n._(msg`Restart to update`),
           icon: 'update',
           onClick: () => window.electronAPI.updater.installUpdate(),
         },

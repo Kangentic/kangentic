@@ -1,4 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
@@ -39,8 +41,8 @@ export function useCommandBar() {
     const currentProject = useProjectStore.getState().currentProject;
     if (!currentProject) {
       useToastStore.getState().addToast({
-        title: 'No project open',
-        message: 'Open a project first.',
+        title: i18n._(msg`No project open`),
+        message: i18n._(msg`Open a project first.`),
         variant: 'warning',
       });
       return;

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 
 /**
@@ -12,14 +13,16 @@ export function DeleteTaskDialog({ title, onConfirm, onCancel }: {
   onConfirm: (dontAskAgain: boolean) => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
+  const taskTitle = title;
   return (
     <ConfirmDialog
-      title="Delete task"
+      title={t`Delete task`}
       message={<>
-        <p>This will permanently delete &quot;{title}&quot; and its session data.</p>
-        <p className="text-red-400 font-medium">This action cannot be undone.</p>
+        <p><Trans>This will permanently delete "{taskTitle}" and its session data.</Trans></p>
+        <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
       </>}
-      confirmLabel="Delete"
+      confirmLabel={t`Delete`}
       variant="danger"
       showDontAskAgain
       testId="delete-task-dialog"

@@ -6,3 +6,27 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+msgid "Announcements"
+msgstr "Announcements"
+
+#: src/renderer/components/announcements/AnnouncementDialog.tsx
+msgid "Close"
+msgstr "Close"
+
+#: src/renderer/components/announcements/AnnouncementBanner.tsx
+msgid "Dismiss announcement"
+msgstr "Dismiss announcement"
+
+#: src/renderer/components/announcements/AnnouncementBanner.tsx
+msgid "Learn more"
+msgstr "Learn more"
+
+#: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+msgid "No announcements yet. Product news shows up here as it is published."
+msgstr "No announcements yet. Product news shows up here as it is published."
+
+#: src/renderer/components/announcements/AnnouncementDialog.tsx
+msgid "QR code: {linkLabel}"
+msgstr "QR code: {linkLabel}"

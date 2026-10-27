@@ -6,6 +6,7 @@
 
 import type React from 'react';
 import { ChevronDown, ChevronRight, Settings } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { InfoHint } from './PanelRow';
 import { Tooltip } from '../Tooltip';
 
@@ -25,8 +26,9 @@ export function GroupLabel({ children, hint }: { children: string; hint?: string
  * Settings card's own button look (its Rebuild), full width.
  */
 export function OpenSettingsButton({ onClick, testId }: { onClick: () => void; testId: string }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label="Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph">
+    <Tooltip label={t`Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph`}>
       <button
         type="button"
         onClick={onClick}
@@ -34,7 +36,7 @@ export function OpenSettingsButton({ onClick, testId }: { onClick: () => void; t
         data-testid={testId}
       >
         <Settings size={13} aria-hidden />
-        Open Settings
+        <Trans>Open Settings</Trans>
       </button>
     </Tooltip>
   );

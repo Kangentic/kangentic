@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
 import type { ModelAliasOption } from '../../shared/types';
 
@@ -112,15 +114,21 @@ export function aliasRowView(
   };
 }
 
-/** Heading over a model picker's floating alias rows. */
+/** Heading over a model picker's floating alias rows. The English constant
+ *  stays for callers not yet switched to `modelAliasGroupHeading`. */
 export const MODEL_ALIAS_GROUP_HEADING = 'Latest';
+
+/** `MODEL_ALIAS_GROUP_HEADING` in the session's language, read where it renders. */
+export function modelAliasGroupHeading(): string {
+  return i18n._(msg`Latest`);
+}
 
 /**
  * Label of a model picker's collapsed section: with aliases above it the
  * section holds every specific version, without them only the older ones.
  */
 export function modelVersionSectionLabel(hasAliases: boolean): string {
-  return hasAliases ? 'Specific versions' : 'Older versions';
+  return hasAliases ? i18n._(msg`Specific versions`) : i18n._(msg`Older versions`);
 }
 
 /**
@@ -158,10 +166,10 @@ export function modelAliasTitle(
 ): string | null {
   const alias = aliases.find((candidate) => candidate.id === id);
   if (!alias) return null;
-  const label = modelRowLabel(alias.id, displayNames);
-  return alias.resolvesTo
-    ? `Latest ${label}, currently ${modelRowLabel(alias.resolvesTo, displayNames)}`
-    : `Latest ${label}`;
+  const modelFamily = modelRowLabel(alias.id, displayNames);
+  if (!alias.resolvesTo) return i18n._(msg`Latest ${{ modelFamily }}`);
+  const currentModel = modelRowLabel(alias.resolvesTo, displayNames);
+  return i18n._(msg`Latest ${{ modelFamily }}, currently ${{ currentModel }}`);
 }
 
 /**

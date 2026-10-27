@@ -1,4 +1,5 @@
 import { FileDown } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 
 /**
  * Persistent overlay that captures file drag-and-drop events above xterm's canvas.
@@ -39,7 +40,7 @@ export function FileDropOverlay({
       {hoveringOverlay && (
         <span className="absolute bottom-4 right-3 flex items-center gap-1.5 text-xs text-fg-faint pointer-events-none">
           <FileDown size={13} />
-          Drop files to insert path
+          <Trans>Drop files to insert path</Trans>
         </span>
       )}
     </div>

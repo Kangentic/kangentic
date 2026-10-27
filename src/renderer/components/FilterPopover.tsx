@@ -1,5 +1,6 @@
 import React from 'react';
 import { X } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { Pill } from './Pill';
 
 interface FilterPopoverProps {
@@ -62,7 +63,7 @@ export const FilterPopover = React.memo(function FilterPopover({
     <>
       {/* Priority section - horizontal toggleable pills */}
       <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-        Priority
+        <Trans>Priority</Trans>
       </div>
       <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
         {priorities.map((priority, index) => {
@@ -94,7 +95,7 @@ export const FilterPopover = React.memo(function FilterPopover({
         <>
           <div className="my-1.5 border-t border-edge" />
           <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-            Labels
+            <Trans>Labels</Trans>
           </div>
           <div className="grid grid-cols-2 gap-1.5 px-3 py-1.5">
             {allLabels.map((label) => {
@@ -134,7 +135,7 @@ export const FilterPopover = React.memo(function FilterPopover({
             className="w-full px-3 py-1.5 text-xs leading-none text-fg-secondary hover:text-fg text-left hover:bg-surface-hover/30 flex items-center gap-1.5 cursor-pointer transition-colors"
           >
             <X size={12} />
-            Clear all filters
+            <Trans>Clear all filters</Trans>
           </button>
         </>
       )}

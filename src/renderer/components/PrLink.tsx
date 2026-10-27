@@ -1,5 +1,6 @@
 import { type MouseEvent } from 'react';
 import { GitPullRequest, ExternalLink } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Pill } from './Pill';
 import { Tooltip } from './Tooltip';
 import { prStatePresentation, prMergeReadinessTooltip } from '../lib/pr-state';
@@ -62,11 +63,14 @@ interface PrLinkProps {
  * beside the board card title and the task-detail header title.
  */
 export function PrLink({ prUrl, prNumber, prState, prMergeReadiness, testId, className }: PrLinkProps) {
+  const { t } = useLingui();
   // pr_number can be null (a PR linked before number tracking); fall back to a
-  // bare "PR" label rather than rendering the literal string "PR #null".
-  const prLabel = prNumber != null ? `PR #${prNumber}` : 'PR';
+  // bare "PR" label rather than rendering the literal string "PR #null". A
+  // string, so `Pill` trims it to its cap height like any bare text child.
+  const prLabel = prNumber != null ? t`PR #${prNumber}` : t`PR`;
+  const openTip = prNumber != null ? t`Open PR #${prNumber} in browser` : t`Open PR in browser`;
   return (
-    <Tooltip label={`Open ${prLabel} in browser`}>
+    <Tooltip label={openTip}>
       <Pill
         shape="square"
         size="xs"

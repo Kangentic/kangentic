@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useConfigStore } from '../stores/config-store';
 import { useDictationStore } from '../stores/dictation-store';
 import { useKeybinding } from './useKeybinding';
@@ -277,8 +279,8 @@ export function useDictation(): void {
         cleanupSubscriptions();
         useDictationStore.getState().setError(
           permission === 'denied'
-            ? 'Microphone access was denied. Enable it in your OS settings.'
-            : 'No microphone is available.',
+            ? i18n._(msg`Microphone access was denied. Enable it in your OS settings.`)
+            : i18n._(msg`No microphone is available.`),
         );
         return;
       }
@@ -396,8 +398,9 @@ export function useDictation(): void {
         void window.electronAPI.dictation.cancel(startedSessionId).catch(() => undefined);
       }
       cleanupSubscriptions();
+      // The error's own text is shown as written; only the fallback translates.
       useDictationStore.getState().setError(
-        error instanceof Error ? error.message : 'Dictation failed to start',
+        error instanceof Error ? error.message : i18n._(msg`Dictation failed to start`),
       );
     }
   }, [cleanupSubscriptions, stopCapture]);
@@ -480,8 +483,10 @@ export function useDictation(): void {
       // committing nothing, mirroring the mic-permission-denied path above:
       // cleanup, setError, return (no reset - the error stays visible).
       cleanupSubscriptions();
+      // The reason is the engine's own text and stays as written.
+      const reason = error instanceof Error ? error.message : null;
       useDictationStore.getState().setError(
-        error instanceof Error ? `Dictation failed: ${error.message}` : 'Dictation failed.',
+        reason !== null ? i18n._(msg`Dictation failed: ${{ reason }}`) : i18n._(msg`Dictation failed.`),
       );
       return;
     }
@@ -574,10 +579,12 @@ export function useDictation(): void {
   const startDictationSafely = useCallback((): void => {
     void startDictation().catch((error: unknown) => {
       activeRef.current = false;
+      // The reason is the error's own text and stays as written.
+      const reason = error instanceof Error ? error.message : null;
       useDictationStore.getState().setError(
-        error instanceof Error
-          ? `Dictation could not start: ${error.message}`
-          : 'Dictation could not start.',
+        reason !== null
+          ? i18n._(msg`Dictation could not start: ${{ reason }}`)
+          : i18n._(msg`Dictation could not start.`),
       );
     });
   }, [startDictation]);

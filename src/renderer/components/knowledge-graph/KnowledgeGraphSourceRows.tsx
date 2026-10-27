@@ -14,7 +14,7 @@
  */
 
 import { useState } from 'react';
-import { Plural } from '@lingui/react/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
 
@@ -37,8 +37,10 @@ export function KnowledgeGraphSourceRows({
   /** The reader opened these rows, so the map should show this turn. */
   onReveal: () => void;
 }) {
+  const { t } = useLingui();
   const [expanded, setExpanded] = useState(false);
   if (rows.length === 0) return null;
+  const rowCount = rows.length;
   const expand = (): void => {
     setExpanded(true);
     onReveal();
@@ -68,7 +70,7 @@ export function KnowledgeGraphSourceRows({
         <Tooltip
           key={task.key}
           label={task.title}
-          detail={canOpenTask(task) ? undefined : 'No recorded conversation to open here'}
+          detail={canOpenTask(task) ? undefined : t`No recorded conversation to open here`}
         >
           <button
             type="button"
@@ -99,7 +101,7 @@ export function KnowledgeGraphSourceRows({
           className="self-start py-0.5 text-[11.5px] text-fg-muted hover:text-fg cursor-pointer"
           data-testid="knowledge-graph-chat-rows-more"
         >
-          Show all {rows.length}
+          <Trans>Show all {rowCount}</Trans>
         </button>
       ) : null}
       {/* Every expansion folds back. Reported: after "Show all 32" there was no
@@ -111,7 +113,7 @@ export function KnowledgeGraphSourceRows({
           className="self-start py-0.5 text-[11.5px] text-fg-muted hover:text-fg cursor-pointer"
           data-testid="knowledge-graph-chat-rows-fewer"
         >
-          {collapsed ? 'Hide tasks' : 'Show fewer'}
+          {collapsed ? <Trans>Hide tasks</Trans> : <Trans>Show fewer</Trans>}
         </button>
       ) : null}
     </div>

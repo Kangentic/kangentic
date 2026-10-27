@@ -1,5 +1,6 @@
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, SquareTerminal, X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
 import { translateText } from '../i18n/translate';
 import type { PopOutKind } from '../../shared/pop-out';
@@ -35,8 +36,11 @@ const SURFACE_ICONS: Record<PopOutKind, typeof ChartColumn> = {
  * basename, via resolveSurfaceTitle - the same value main gave the BrowserWindow).
  */
 export function PopOutWindowFrame({ kind, title, documentTitle, children }: { kind: PopOutKind; title?: string; documentTitle?: string; children: ReactNode }) {
+  const { t } = useLingui();
   const meta = POP_OUT_SURFACES[kind];
   const Icon = SURFACE_ICONS[kind];
+  // The surface's own name comes from the shared list (src/shared/pop-out.ts),
+  // resolved here, where it draws.
   const displayTitle = title ?? translateText(meta.title);
   const osTitle = documentTitle ?? displayTitle;
 
@@ -86,32 +90,32 @@ export function PopOutWindowFrame({ kind, title, documentTitle, children }: { ki
         </div>
         {!isMac && (
           <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
-            <Tooltip label="Minimize">
+            <Tooltip label={t`Minimize`}>
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.minimize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Minimize"
+                aria-label={t`Minimize`}
               >
                 <Minus size={16} />
               </button>
             </Tooltip>
-            <Tooltip label="Maximize">
+            <Tooltip label={t`Maximize`}>
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.maximize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Maximize"
+                aria-label={t`Maximize`}
               >
                 <Square size={14} />
               </button>
             </Tooltip>
-            <Tooltip label="Close">
+            <Tooltip label={t`Close`}>
               <button
                 type="button"
                 onClick={() => window.electronAPI.window.close()}
                 className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
-                aria-label="Close"
+                aria-label={t`Close`}
                 data-testid="popout-close"
               >
                 <X size={16} />

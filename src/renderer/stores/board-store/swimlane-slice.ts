@@ -1,4 +1,6 @@
 import { type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { BoardProfile, Swimlane, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../../shared/types';
 import { useToastStore } from '../toast-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
@@ -54,7 +56,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     } catch (error) {
       await get().loadBoardProfiles();
       useToastStore.getState().addToast({
-        title: "Couldn't save profiles",
+        title: i18n._(msg`Couldn't save profiles`),
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -104,7 +106,7 @@ export const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice
     } catch (err) {
       await get().loadBoard();
       useToastStore.getState().addToast({
-        title: "Couldn't reorder columns",
+        title: i18n._(msg`Couldn't reorder columns`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });

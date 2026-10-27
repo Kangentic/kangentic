@@ -8,6 +8,8 @@
  * (the failure shape of `ProjectListItem`, which recomputes the full
  * cross-project tally inside every project row's selector).
  */
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { formatActivityReasonText } from '../board/activity-reason-text';
 import { formatRelativeTime } from '../../lib/datetime';
@@ -35,13 +37,21 @@ export const BUCKET_ORDER: readonly MonitorStateBucket[] = [
  *
  * That frees "Paused" for the genuinely suspended/queued bucket, which is what
  * the board card calls that state too.
+ *
+ * Descriptors, resolved where they are drawn (`bucketLabel`), so each read takes
+ * the session's catalog.
  */
-export const BUCKET_LABELS: Record<MonitorStateBucket, string> = {
-  'needs-you': 'Idle',
-  working: 'Active',
-  idle: 'Paused',
-  finished: 'Recently finished',
+export const BUCKET_LABELS: Record<MonitorStateBucket, MessageDescriptor> = {
+  'needs-you': msg({ message: 'Idle', context: 'Agent status' }),
+  working: msg({ message: 'Active', context: 'Agent status' }),
+  idle: msg({ message: 'Paused', context: 'Agent status' }),
+  finished: msg`Recently finished`,
 };
+
+/** A bucket's display name, in the session's language. */
+export function bucketLabel(bucket: MonitorStateBucket): string {
+  return i18n._(BUCKET_LABELS[bucket]);
+}
 
 /**
  * Which bucket a row belongs to.
@@ -148,9 +158,12 @@ function hasDescription(row: MonitorSessionRow): boolean {
  * does, so the pill just reports when ("9 minutes ago"). `permission` keeps its
  * label because it says something the colour cannot - the agent is blocked on a
  * specific approval, not merely waiting.
+ *
+ * Each entry is the whole line around the relative time ("Awaiting permission 2
+ * minutes ago"), one message, so a language can put the time where it reads.
  */
-const SINCE_LABELS: Partial<Record<ActivityReason['kind'], string>> = {
-  permission: 'Awaiting permission',
+const SINCE_PHRASES: Partial<Record<ActivityReason['kind'], (when: string) => string>> = {
+  permission: (when) => i18n._(msg`Awaiting permission ${{ when }}`),
 };
 
 /**
@@ -169,13 +182,15 @@ const SINCE_LABELS: Partial<Record<ActivityReason['kind'], string>> = {
 export function formatMonitorStatus(row: MonitorSessionRow): string {
   const reason = row.activityReason;
   if (reason && 'since' in reason) {
-    const label = SINCE_LABELS[reason.kind];
+    const phrase = SINCE_PHRASES[reason.kind];
     const when = formatRelativeTime(reason.since);
-    return label ? `${label} ${when}` : when;
+    return phrase ? phrase(when) : when;
   }
   if (reason) return formatActivityReasonText(reason);
   if (row.status === 'exited') {
-    return `Finished ${row.exitedAt ? formatRelativeTime(row.exitedAt) : ''}`.trim();
+    if (!row.exitedAt) return i18n._(msg`Finished`);
+    const when = formatRelativeTime(row.exitedAt);
+    return i18n._(msg`Finished ${{ when }}`).trim();
   }
   return '';
 }
@@ -296,7 +311,7 @@ export function groupRows(
   const groups = new Map<string, MonitorGroup>();
   for (const row of rows) {
     const key = groupBy === 'state' ? bucketOf(row) : row.projectId;
-    const label = groupBy === 'state' ? BUCKET_LABELS[bucketOf(row)] : row.projectName;
+    const label = groupBy === 'state' ? bucketLabel(bucketOf(row)) : row.projectName;
     const existing = groups.get(key);
     if (existing) existing.rows.push(row);
     else groups.set(key, { key, label, rows: [row] });

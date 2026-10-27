@@ -7,6 +7,694 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/components/stats/useStatsData.ts
+msgid "(default)"
+msgstr "(default)"
+
+#: src/renderer/components/stats/useStatsData.ts
+msgid "(unknown)"
+msgstr "(unknown)"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{agentName} default"
+msgstr "{agentName} default"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{agents} reported no usage for these calls, so their tokens and cost are not known."
+msgstr "{agents} reported no usage for these calls, so their tokens and cost are not known."
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{blindAgentCount, plural, one {{blindLabel} does not report subagent usage, so fan-outs in this range cannot be counted.} other {{blindLabel} do not report subagent usage, so fan-outs in this range cannot be counted.}}"
+msgstr "{blindAgentCount, plural, one {{blindLabel} does not report subagent usage, so fan-outs in this range cannot be counted.} other {{blindLabel} do not report subagent usage, so fan-outs in this range cannot be counted.}}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{blindAgentCount, plural, one {Excludes {blindLabel}, which does not report subagent usage.} other {Excludes {blindLabel}, which do not report subagent usage.}}"
+msgstr "{blindAgentCount, plural, one {Excludes {blindLabel}, which does not report subagent usage.} other {Excludes {blindLabel}, which do not report subagent usage.}}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{cacheReadText} read"
+msgstr "{cacheReadText} read"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{calls, plural, one {{callCount} call, {failedCount} failed or timed out (still paid for).} other {{callCount} calls, {failedCount} failed or timed out (still paid for).}}"
+msgstr "{calls, plural, one {{callCount} call, {failedCount} failed or timed out (still paid for).} other {{callCount} calls, {failedCount} failed or timed out (still paid for).}}"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{calls, plural, one {{callCount} call.} other {{callCount} calls.}}"
+msgstr "{calls, plural, one {{callCount} call.} other {{callCount} calls.}}"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{calls, plural, one {{callCount} call} other {{callCount} calls}}"
+msgstr "{calls, plural, one {{callCount} call} other {{callCount} calls}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{costBucketUnit, select, hour {Cost per hour by model} day {Cost per day by model} week {Cost per week by model} other {Cost per {costBucketMinutes} minutes by model}}"
+msgstr "{costBucketUnit, select, hour {Cost per hour by model} day {Cost per day by model} week {Cost per week by model} other {Cost per {costBucketMinutes} minutes by model}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{costBucketUnit, select, hour {cost per hour, stacked by model} day {cost per day, stacked by model} week {cost per week, stacked by model} other {cost per {costBucketMinutes} minutes, stacked by model}}"
+msgstr "{costBucketUnit, select, hour {cost per hour, stacked by model} day {cost per day, stacked by model} week {cost per week, stacked by model} other {cost per {costBucketMinutes} minutes, stacked by model}}"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "{freshInput} fresh input, {output} output, {cacheWrite} cache write, {cacheRead} cache read."
+msgstr "{freshInput} fresh input, {output} output, {cacheWrite} cache write, {cacheRead} cache read."
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{freshInputText} in / {outputText} out"
+msgstr "{freshInputText} in / {outputText} out"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{leadingNames} and {lastName}"
+msgstr "{leadingNames} and {lastName}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{liveSessionCount} active now"
+msgstr "{liveSessionCount} active now"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
+msgstr "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
+
+#: src/renderer/components/stats/BreakdownCard.tsx
+msgid "{sliceLabel}: {cost}, {tokenCount} tokens"
+msgstr "{sliceLabel}: {cost}, {tokenCount} tokens"
+
+#: src/renderer/components/stats/BreakdownCard.tsx
+msgid "{sliceLabel}: {tokenCount} tokens"
+msgstr "{sliceLabel}: {tokenCount} tokens"
+
+#: src/renderer/components/stats/BreakdownCard.tsx
+msgid "{sliceLabel}: {tokenCount} tokens, {cost}"
+msgstr "{sliceLabel}: {tokenCount} tokens, {cost}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{subagentCacheReadText} cache read."
+msgstr "{subagentCacheReadText} cache read."
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{subagentCount, plural, one {{subagentCountText} subagent} other {{subagentCountText} subagents}}"
+msgstr "{subagentCount, plural, one {{subagentCountText} subagent} other {{subagentCountText} subagents}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour over the selected range} day {Cache hit rate per day over the selected range} week {Cache hit rate per week over the selected range} other {Cache hit rate per {tokenBucketMinutes} minutes over the selected range}}"
+msgstr "{tokenBucketUnit, select, hour {Cache hit rate per hour over the selected range} day {Cache hit rate per day over the selected range} week {Cache hit rate per week over the selected range} other {Cache hit rate per {tokenBucketMinutes} minutes over the selected range}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour} day {Cache hit rate per day} week {Cache hit rate per week} other {Cache hit rate per {tokenBucketMinutes} minutes}}"
+msgstr "{tokenBucketUnit, select, hour {Cache hit rate per hour} day {Cache hit rate per day} week {Cache hit rate per week} other {Cache hit rate per {tokenBucketMinutes} minutes}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{tokenBucketUnit, select, hour {Tokens per hour by model} day {Tokens per day by model} week {Tokens per week by model} other {Tokens per {tokenBucketMinutes} minutes by model}}"
+msgstr "{tokenBucketUnit, select, hour {Tokens per hour by model} day {Tokens per day by model} week {Tokens per week by model} other {Tokens per {tokenBucketMinutes} minutes by model}}"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "{tokenBucketUnit, select, hour {tokens per hour, stacked by model} day {tokens per day, stacked by model} week {tokens per week, stacked by model} other {tokens per {tokenBucketMinutes} minutes, stacked by model}}"
+msgstr "{tokenBucketUnit, select, hour {tokens per hour, stacked by model} day {tokens per day, stacked by model} week {tokens per week, stacked by model} other {tokens per {tokenBucketMinutes} minutes, stacked by model}}"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+msgid "{tokenCount} tokens"
+msgstr "{tokenCount} tokens"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "{tokensPerHourText} tokens/hr"
+msgstr "{tokensPerHourText} tokens/hr"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "About these numbers"
+msgstr "About these numbers"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Agent with the most tokens in this project over the range"
+msgstr "Agent with the most tokens in this project over the range"
+
+#: src/renderer/components/stats/StatsScopePicker.tsx
+msgid "All Projects"
+msgstr "All Projects"
+
+#: src/renderer/components/stats/period-options.ts
+msgid "All Time"
+msgstr "All Time"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "API-equivalent"
+msgstr "API-equivalent"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "API-equivalent cost as each agent reported it"
+msgstr "API-equivalent cost as each agent reported it"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "API-equivalent cost as reported by agents (subscription sessions may report $0)"
+msgstr "API-equivalent cost as reported by agents (subscription sessions may report $0)"
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "Apply"
+msgstr "Apply"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "Average {averageTime} per call."
+msgstr "Average {averageTime} per call."
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts."
+msgstr "Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts."
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Average wall time per call"
+msgstr "Average wall time per call"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Avg Active"
+msgstr "Avg Active"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count."
+msgstr "Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count."
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Avg time"
+msgstr "Avg time"
+
+#: src/renderer/components/stats/StatsFilterRow.tsx
+msgid "Back to the full range"
+msgstr "Back to the full range"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+msgid "Background"
+msgstr "Background"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+msgid "Background calls"
+msgstr "Background calls"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures."
+msgstr "Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures."
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Background calls by day"
+msgstr "Background calls by day"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Burn Rate"
+msgstr "Burn Rate"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Burn rate (cost/hr)"
+msgstr "Burn rate (cost/hr)"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Burn rate (tokens/hr)"
+msgstr "Burn rate (tokens/hr)"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Burn rate over time in cost per hour"
+msgstr "Burn rate over time in cost per hour"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Burn rate over time in tokens per hour"
+msgstr "Burn rate over time in tokens per hour"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "By agent"
+msgstr "By agent"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "By effort"
+msgstr "By effort"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "By model"
+msgstr "By model"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "By subagent"
+msgstr "By subagent"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "cache hit rate"
+msgstr "cache hit rate"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#: src/renderer/components/stats/useStatsData.ts
+msgid "Cache read"
+msgstr "Cache read"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Cache Read"
+msgstr "Cache Read"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Cache read as a share of all input: {cacheReadText} read against {cacheWriteText} written and {freshInputText} fresh."
+msgstr "Cache read as a share of all input: {cacheReadText} read against {cacheWriteText} written and {freshInputText} fresh."
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Cache read over all input"
+msgstr "Cache read over all input"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Cache Reads"
+msgstr "Cache Reads"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#: src/renderer/components/stats/useStatsData.ts
+msgid "Cache write"
+msgstr "Cache write"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Calls"
+msgstr "Calls"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Calls that errored or timed out. They still cost what the agent reported."
+msgstr "Calls that errored or timed out. They still cost what the agent reported."
+
+#: src/renderer/components/stats/StatsMetricToggle.tsx
+msgid "Chart metric"
+msgstr "Chart metric"
+
+#: src/renderer/components/stats/StatsScopePicker.tsx
+msgid "Choose which project's usage to view"
+msgstr "Choose which project's usage to view"
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "Clear custom range"
+msgstr "Clear custom range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "CLI invocations, counting each resume of a conversation separately"
+msgstr "CLI invocations, counting each resume of a conversation separately"
+
+#: src/renderer/components/stats/StatsPage.tsx
+msgid "Close usage stats"
+msgstr "Close usage stats"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Compactions"
+msgstr "Compactions"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Context compactions across the range"
+msgstr "Context compactions across the range"
+
+#: src/renderer/components/stats/BreakdownCard.tsx
+msgid "cost"
+msgstr "cost"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+#: src/renderer/components/stats/StatsMetricToggle.tsx
+msgid "Cost"
+msgstr "Cost"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
+msgstr "Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Cost covers finalized sessions plus any currently running, refreshed live as they progress."
+msgstr "Cost covers finalized sessions plus any currently running, refreshed live as they progress."
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0."
+msgstr "Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0."
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Cost Share"
+msgstr "Cost Share"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "cost/hr"
+msgstr "cost/hr"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "cumulative cost"
+msgstr "cumulative cost"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Cumulative cost over the selected range"
+msgstr "Cumulative cost over the selected range"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Cumulative spend"
+msgstr "Cumulative spend"
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgctxt "Date range"
+msgid "Custom"
+msgstr "Custom"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Day"
+msgstr "Day"
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "Edit the custom range"
+msgstr "Edit the custom range"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Failed"
+msgstr "Failed"
+
 #: src/renderer/components/stats/LazyStatsDashboard.tsx
 msgid "Failed to load the usage dashboard"
 msgstr "Failed to load the usage dashboard"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Failed to load usage stats: {error}"
+msgstr "Failed to load usage stats: {error}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Files"
+msgstr "Files"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Files changed by agent sessions (git diff vs the base branch)"
+msgstr "Files changed by agent sessions (git diff vs the base branch)"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Finalized sessions in the range"
+msgstr "Finalized sessions in the range"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Fresh in"
+msgstr "Fresh in"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Fresh input and output from {subagentTurnCountText} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them."
+msgstr "Fresh input and output from {subagentTurnCountText} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them."
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Fresh input and output on the main thread. {cacheWriteText} cache write and {cacheReadText} cache read are counted separately and priced differently."
+msgstr "Fresh input and output on the main thread. {cacheWriteText} cache write and {cacheReadText} cache read are counted separately and priced differently."
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Fresh input tokens across the turns in this range (cache reads counted separately)"
+msgstr "Fresh input tokens across the turns in this range (cache reads counted separately)"
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "From"
+msgstr "From"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+msgid "Headless agent calls Kangentic makes for you, kept out of the totals above"
+msgstr "Headless agent calls Kangentic makes for you, kept out of the totals above"
+
+#: src/renderer/components/stats/useStatsData.ts
+msgctxt "Usage statistics"
+msgid "Input"
+msgstr "Input"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Job"
+msgstr "Job"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Last Active"
+msgstr "Last Active"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Lines"
+msgstr "Lines"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Lines added / removed by agent sessions (git diff vs the base branch)"
+msgstr "Lines added / removed by agent sessions (git diff vs the base branch)"
+
+#: src/renderer/components/stats/period-options.ts
+msgctxt "Usage statistics"
+msgid "Live"
+msgstr "Live"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Model"
+msgstr "Model"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Most recent session start in the range"
+msgstr "Most recent session start in the range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "No activity tracking recorded in this range"
+msgstr "No activity tracking recorded in this range"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No agent turns recorded in the last 2 hours"
+msgstr "No agent turns recorded in the last 2 hours"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No agent turns recorded in this range"
+msgstr "No agent turns recorded in this range"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "No background calls in this range"
+msgstr "No background calls in this range"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "No calls in this range"
+msgstr "No calls in this range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "No cost reported by agents in this range"
+msgstr "No cost reported by agents in this range"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No input recorded in the last 2 hours"
+msgstr "No input recorded in the last 2 hours"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No input recorded in this range"
+msgstr "No input recorded in this range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "No per-turn token data recorded in this range"
+msgstr "No per-turn token data recorded in this range"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "No project usage recorded yet"
+msgstr "No project usage recorded yet"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No spend recorded in the last 2 hours"
+msgstr "No spend recorded in the last 2 hours"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "No subagent turns recorded in this range"
+msgstr "No subagent turns recorded in this range"
+
+#: src/renderer/components/stats/ChartCard.tsx
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "No usage recorded yet"
+msgstr "No usage recorded yet"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "None reported by these agents in this range"
+msgstr "None reported by these agents in this range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Not reported by these agents in this range"
+msgstr "Not reported by these agents in this range"
+
+#: src/renderer/components/stats/useStatsData.ts
+msgctxt "Usage statistics"
+msgid "Other"
+msgstr "Other"
+
+#: src/renderer/components/stats/useStatsData.ts
+msgid "Other ({foldedCount})"
+msgstr "Other ({foldedCount})"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#: src/renderer/components/stats/useStatsData.ts
+msgctxt "Usage statistics"
+msgid "Output"
+msgstr "Output"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Output tokens across the turns in this range"
+msgstr "Output tokens across the turns in this range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "over {coveredSessionsCompact} sessions"
+msgstr "over {coveredSessionsCompact} sessions"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Per-turn capture starts {captureStart}, so this covers less of the range than Cost does."
+msgstr "Per-turn capture starts {captureStart}, so this covers less of the range than Cost does."
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "Pick a custom month range"
+msgstr "Pick a custom month range"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Priced at API list rates from the tokens each agent reported. Not what a subscription was billed."
+msgstr "Priced at API list rates from the tokens each agent reported. Not what a subscription was billed."
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+#: src/renderer/components/stats/StatsScopePicker.tsx
+msgid "Project"
+msgstr "Project"
+
+#: src/renderer/components/stats/StatsScopePicker.tsx
+msgid "Project scope"
+msgstr "Project scope"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Registered project - click a row to view that project in the dashboard"
+msgstr "Registered project - click a row to view that project in the dashboard"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgctxt "Action"
+msgid "Retry"
+msgstr "Retry"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Sessions"
+msgstr "Sessions"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Share of fresh input plus output across all projects in the range"
+msgstr "Share of fresh input plus output across all projects in the range"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}"
+msgstr "Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Subagents"
+msgstr "Subagents"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "The agent reported no usage for these calls, so their tokens and cost are not known."
+msgstr "The agent reported no usage for these calls, so their tokens and cost are not known."
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "The Knowledge Graph index is restarting. The figures refresh when it is back."
+msgstr "The Knowledge Graph index is restarting. The figures refresh when it is back."
+
+#: src/renderer/components/stats/period-options.ts
+msgid "This Month"
+msgstr "This Month"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "This project's share of the total cost across all projects in the range"
+msgstr "This project's share of the total cost across all projects in the range"
+
+#: src/renderer/components/stats/period-options.ts
+msgid "This Week"
+msgstr "This Week"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "Time the agent was working, per session, excluding idle. Covers the {coveredSessionsText} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts."
+msgstr "Time the agent was working, per session, excluding idle. Covers the {coveredSessionsText} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts."
+
+#: src/renderer/components/stats/StatsCustomRangePicker.tsx
+msgid "To"
+msgstr "To"
+
+#: src/renderer/components/stats/period-options.ts
+msgid "Today"
+msgstr "Today"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Token Share"
+msgstr "Token Share"
+
+#: src/renderer/components/stats/BreakdownCard.tsx
+#: src/renderer/components/stats/charts/KngDonut.tsx
+msgid "tokens"
+msgstr "tokens"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/StatsMetricToggle.tsx
+msgid "Tokens"
+msgstr "Tokens"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "Tokens and cost as each agent reported them"
+msgstr "Tokens and cost as each agent reported them"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it."
+msgstr "Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it."
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "Tokens by type"
+msgstr "Tokens by type"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Tokens In"
+msgstr "Tokens In"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Tokens Out"
+msgstr "Tokens Out"
+
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "tokens per 5 minutes, stacked by token type"
+msgstr "tokens per 5 minutes, stacked by token type"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Tokens served from the prompt cache, counted apart from Tokens In"
+msgstr "Tokens served from the prompt cache, counted apart from Tokens In"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/StatsDashboardBody.tsx
+msgid "tokens/hr"
+msgstr "tokens/hr"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Tool Calls"
+msgstr "Tool Calls"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Top Agent"
+msgstr "Top Agent"
+
+#: src/renderer/components/stats/BackgroundCard.tsx
+msgid "Total"
+msgstr "Total"
+
+#: src/renderer/components/stats/PerProjectTable.tsx
+msgid "Total tool calls across sessions in the range"
+msgstr "Total tool calls across sessions in the range"
+
+#: src/renderer/components/stats/StatsPage.tsx
+msgid "Usage"
+msgstr "Usage"
+
+#: src/renderer/components/stats/background-display.ts
+msgid "Usage reported for {reportedCount} of them."
+msgstr "Usage reported for {reportedCount} of them."
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "vs last month"
+msgstr "vs last month"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "vs last week"
+msgstr "vs last week"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "vs preceding window"
+msgstr "vs preceding window"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "vs prior 2h"
+msgstr "vs prior 2h"
+
+#: src/renderer/components/stats/KpiTiles.tsx
+msgid "vs yesterday"
+msgstr "vs yesterday"
+
+#: src/renderer/components/stats/BackgroundHistoryCard.tsx
+msgid "What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default"
+msgstr "What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default"

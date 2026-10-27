@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink, ChevronDown } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { DOCS_URLS } from '../../../shared/docs-links';
 import { MINIMUM_GIT_VERSION_DISPLAY } from '../../../shared/git-minimum-version';
 import { useConfigStore } from '../../stores/config-store';
@@ -30,6 +32,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
   /** Extra classes for the row's root, such as a grid span. */
   className?: string;
 }) {
+  const { t } = useLingui();
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const unauthenticated = !loading && found && authenticated === false;
@@ -75,21 +78,21 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
           </div>
           <div className="h-4 flex items-center">
             {loading ? (
-              <span className="text-xs text-fg-faint">Checking...</span>
+              <span className="text-xs text-fg-faint"><Trans>Checking...</Trans></span>
             ) : unauthenticated ? (
               <div className="flex items-center gap-1">
-                <span className="text-xs text-attention">Not signed in</span>
+                <span className="text-xs text-attention"><Trans>Not signed in</Trans></span>
                 {loginCommand && (
                   <>
                     <span className="text-xs text-fg-faint">-</span>
-                    <Tooltip label={`Copy "${loginCommand}" to clipboard`}>
+                    <Tooltip label={t`Copy "${loginCommand}" to clipboard`}>
                       <button
                         className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
                         onClick={handleCopy}
-                        aria-label={`Copy "${loginCommand}" to clipboard`}
+                        aria-label={t`Copy "${loginCommand}" to clipboard`}
                         data-testid={testId ? `${testId}-copy-login` : undefined}
                       >
-                        {copied ? 'Copied!' : <>Copy <code className="font-mono">{loginCommand}</code></>}
+                        {copied ? <Trans>Copied!</Trans> : <Trans>Copy <code className="font-mono">{loginCommand}</code></Trans>}
                         {!copied && <Copy size={10} />}
                       </button>
                     </Tooltip>
@@ -98,11 +101,11 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
               </div>
             ) : found ? (
               <span className="text-xs text-fg-muted">
-                {version ? `v${version}` : 'Installed'}
+                {version ? <Trans>v{version}</Trans> : <Trans>Installed</Trans>}
               </span>
             ) : (
               <div className="flex items-center gap-1">
-                <span className="text-xs text-fg-faint">Not installed</span>
+                <span className="text-xs text-fg-faint"><Trans>Not installed</Trans></span>
                 {installUrl && (
                   <>
                     <span className="text-xs text-fg-faint">-</span>
@@ -110,7 +113,7 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                       className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
                       onClick={() => window.electronAPI.shell.openExternal(installUrl)}
                     >
-                      Install
+                      <Trans>Install</Trans>
                       <ExternalLink size={10} />
                     </button>
                   </>
@@ -142,6 +145,7 @@ function DetectionRowSkeleton() {
 }
 
 export function WelcomeScreen() {
+  const { t } = useLingui();
   const { startAddProject } = useAddProject();
   const appVersion = useConfigStore((state) => state.appVersion);
   const agentList = useConfigStore((state) => state.agentList);
@@ -189,21 +193,28 @@ export function WelcomeScreen() {
   // pick "git 2.51.0" and "9 agents" out without reading a sentence.
   let readinessMessage: string | null = null;
   if (!detectionResolved) {
-    readinessMessage = 'Checking your setup';
+    readinessMessage = t`Checking your setup`;
   } else if (!gitReady && foundAgents.length === 0) {
-    readinessMessage = 'Install git and one agent CLI to run tasks.';
+    readinessMessage = t`Install git and one agent CLI to run tasks.`;
   } else if (!gitReady) {
-    readinessMessage = 'Install git to run tasks.';
+    readinessMessage = t`Install git to run tasks.`;
   } else if (foundAgents.length === 0) {
-    readinessMessage = 'Install one agent CLI to run tasks.';
+    readinessMessage = t`Install one agent CLI to run tasks.`;
   } else if (signedOutAgent) {
-    readinessMessage = `Sign in to ${signedOutAgent.displayName} to run tasks.`;
+    const signedOutAgentName = signedOutAgent.displayName;
+    readinessMessage = t`Sign in to ${signedOutAgentName} to run tasks.`;
   }
 
+  // The tool's own name and version, not prose.
   const gitFact = gitInfo?.version ? `Git ${gitInfo.version}` : 'Git';
-  const agentFact = foundAgents.length === 1
+  const foundAgentCount = foundAgents.length;
+  const agentFact = foundAgentCount === 1
     ? (foundAgents[0].version ? `${foundAgents[0].displayName} ${foundAgents[0].version}` : foundAgents[0].displayName)
-    : `${foundAgents.length} agents`;
+    // One agent reads as its name above, so this branch never shows one.
+    : plural(foundAgentCount, { one: '# agent', other: '# agents' });
+  const gitVersion = gitInfo?.version ?? '';
+  const minimumGitVersion = MINIMUM_GIT_VERSION_DISPLAY;
+  const agentCount = agentList.length;
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -227,6 +238,7 @@ export function WelcomeScreen() {
             3px nudge as the version pill sits it on the cap band. */}
         <div className="flex items-center justify-center gap-3 mb-1">
           <img src={brandLogoUrl} alt="" aria-hidden="true" draggable={false} className="block w-7 h-7 translate-y-[3px]" />
+          {/* i18n-ok: the product name alone */}
           <h1 className="text-4xl font-bold text-fg leading-none">Kangentic</h1>
           {/* Centered on the wordmark's CAP band rather than its line box: with
               `leading-none` the box includes descender space ("g"), so a plain
@@ -239,11 +251,11 @@ export function WelcomeScreen() {
               className="self-center translate-y-[3px] bg-surface-hover text-fg-muted font-medium"
               data-testid="welcome-app-version"
             >
-              v{appVersion}
+              <Trans>v{appVersion}</Trans>
             </Pill>
           )}
         </div>
-        <p className="text-lg text-fg-muted mb-0">Kanban for AI coding agents</p>
+        <p className="text-lg text-fg-muted mb-0"><Trans>Kanban for AI coding agents</Trans></p>
 
         {/* The action comes first: opening a project is the point of this screen.
             Setup status is supporting detail, so it sits below, behind a rule. */}
@@ -259,14 +271,14 @@ export function WelcomeScreen() {
             data-testid="welcome-open-project"
           >
             {detectionResolved ? <FolderOpen size={20} /> : <Loader2 size={20} className="animate-spin" />}
-            {detectionResolved ? 'Open a project' : 'Checking your setup'}
+            {detectionResolved ? <Trans>Open a project</Trans> : <Trans>Checking your setup</Trans>}
           </button>
           {/* Only the blocked case gets subtext. When ready, "Open a project" plus
               a folder icon already says it, and the native picker repeats the same
               sentence one click later. */}
           {detectionResolved && !readyToRun && (
             <p className="text-sm text-fg-faint mt-2">
-              You can look around now and install an agent later.
+              <Trans>You can look around now and install an agent later.</Trans>
             </p>
           )}
         </div>
@@ -307,20 +319,23 @@ export function WelcomeScreen() {
                 <span className="truncate">{readinessMessage}</span>
               ) : (
                 <span className="flex items-center gap-1.5 min-w-0">
-                  <span className="shrink-0">Found</span>
-                  <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium shrink-0">
-                    {gitFact}
-                  </Pill>
-                  <span className="shrink-0">and</span>
-                  <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium min-w-0">
-                    <span className="truncate">{agentFact}</span>
-                  </Pill>
+                  {/* One sentence, one message: the flex gap spaces its parts. */}
+                  <Trans>
+                    <span className="shrink-0">Found</span>
+                    <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium shrink-0">
+                      {gitFact}
+                    </Pill>
+                    <span className="shrink-0">and</span>
+                    <Pill size="xs" shape="square" className="bg-surface-hover text-fg font-medium min-w-0">
+                      <span className="truncate">{agentFact}</span>
+                    </Pill>
+                  </Trans>
                 </span>
               )}
             </span>
             {detectionResolved && (
               <span className="inline-flex items-center gap-1 text-xs text-fg-muted group-hover:text-fg transition-colors shrink-0">
-                {expanded ? 'Hide setup' : 'Show setup'}
+                {expanded ? <Trans>Hide setup</Trans> : <Trans>Show setup</Trans>}
                 <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
               </span>
             )}
@@ -338,8 +353,8 @@ export function WelcomeScreen() {
                   git - so it gets its own labelled band instead of being tiled in
                   among fourteen agents where it reads as just another one. */}
               <div className="flex items-center justify-between">
-                <div className="text-xs text-fg-faint uppercase tracking-wider">Core</div>
-                <Tooltip label="Check again for git and agent CLIs">
+                <div className="text-xs text-fg-faint uppercase tracking-wider"><Trans>Core</Trans></div>
+                <Tooltip label={t`Check again for git and agent CLIs`}>
                   <button
                     onClick={handleRefresh}
                     disabled={refreshing}
@@ -347,7 +362,7 @@ export function WelcomeScreen() {
                     data-testid="welcome-refresh"
                   >
                     <RefreshCw size={12} />
-                    Refresh
+                    <Trans>Refresh</Trans>
                   </button>
                 </Tooltip>
               </div>
@@ -368,11 +383,11 @@ export function WelcomeScreen() {
 
               {gitInfo?.found && !gitInfo.meetsMinimum && (
                 <p className="text-xs text-warning text-left">
-                  Git {gitInfo.version} is older than the recommended {MINIMUM_GIT_VERSION_DISPLAY} - worktrees may not work.
+                  <Trans>Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work.</Trans>
                 </p>
               )}
 
-              <div className="text-xs text-fg-faint uppercase tracking-wider pt-1">Agents</div>
+              <div className="text-xs text-fg-faint uppercase tracking-wider pt-1"><Trans>Agents</Trans></div>
               <div className="grid grid-cols-3 gap-2 text-left" data-testid="welcome-agent-grid">
                 {!agentListLoaded ? (
                   <>
@@ -417,7 +432,8 @@ export function WelcomeScreen() {
                   onClick={() => setShowAllAgents(true)}
                   className="text-xs text-accent-fg hover:underline cursor-pointer"
                 >
-                  Show all {agentList.length} agents
+                  {/* Shown only past the curated three, so never for one. */}
+                  <Plural value={agentCount} one="Show all # agent" other="Show all # agents" />
                 </button>
               )}
             </div>
@@ -426,7 +442,7 @@ export function WelcomeScreen() {
         </div>
 
         <div className="mt-8 border-t border-edge pt-5 text-left">
-          <div className="text-xs text-fg-faint uppercase tracking-wider mb-3">When you open a project</div>
+          <div className="text-xs text-fg-faint uppercase tracking-wider mb-3"><Trans>When you open a project</Trans></div>
           {/* All three headings describe what Kangentic does, in the same
               third-person voice, and each body states one checkable fact. */}
           <div className="space-y-4">
@@ -435,8 +451,8 @@ export function WelcomeScreen() {
                 <FileText size={18} />
               </div>
               <div>
-                <div className="text-fg text-sm font-medium">Reads your project's setup</div>
-                <div className="text-fg-faint text-sm">Agents run inside your repo, so they pick up the instructions and config already there</div>
+                <div className="text-fg text-sm font-medium"><Trans>Reads your project's setup</Trans></div>
+                <div className="text-fg-faint text-sm"><Trans>Agents run inside your repo, so they pick up the instructions and config already there</Trans></div>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -444,8 +460,8 @@ export function WelcomeScreen() {
                 <GitBranch size={18} />
               </div>
               <div>
-                <div className="text-fg text-sm font-medium">Isolates every task</div>
-                <div className="text-fg-faint text-sm">Each task runs on its own branch, so two agents never edit the same files</div>
+                <div className="text-fg text-sm font-medium"><Trans>Isolates every task</Trans></div>
+                <div className="text-fg-faint text-sm"><Trans>Each task runs on its own branch, so two agents never edit the same files</Trans></div>
               </div>
             </div>
             <div className="flex items-start gap-3">
@@ -453,8 +469,8 @@ export function WelcomeScreen() {
                 <Terminal size={18} />
               </div>
               <div>
-                <div className="text-fg text-sm font-medium">Runs real terminals</div>
-                <div className="text-fg-faint text-sm">Watch an agent work and type back to steer it</div>
+                <div className="text-fg text-sm font-medium"><Trans>Runs real terminals</Trans></div>
+                <div className="text-fg-faint text-sm"><Trans>Watch an agent work and type back to steer it</Trans></div>
               </div>
             </div>
           </div>
@@ -468,7 +484,7 @@ export function WelcomeScreen() {
               className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
               data-testid="welcome-setup-guide"
             >
-              Read the setup guide
+              <Trans>Read the setup guide</Trans>
               <ExternalLink size={12} />
             </button>
           </Tooltip>
@@ -479,7 +495,7 @@ export function WelcomeScreen() {
               className="inline-flex items-center gap-1 text-accent-fg underline underline-offset-2 hover:opacity-80 cursor-pointer"
               data-testid="welcome-pair-phone"
             >
-              Pair a phone
+              <Trans>Pair a phone</Trans>
               <ExternalLink size={12} />
             </button>
           </Tooltip>

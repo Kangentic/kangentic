@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Columns3, ListTodo, Plus, Workflow as WorkflowIcon } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { ActivityMark } from '../ActivityMark';
 import { CountBadge } from '../CountBadge';
 import { IconSlot } from '../IconSlot';
@@ -21,12 +23,8 @@ import {
   WORKFLOWS_TOOLBAR_COLLAPSE,
 } from './toolbar-collapse';
 
-/** "1 item", "21 items": the count a screen reader hears in place of a pill. */
-function countNoun(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
 export const ViewToggle = React.memo(function ViewToggle() {
+  const { t } = useLingui();
   const activeView = useBoardStore((state) => state.activeView);
   const setActiveView = useBoardStore((state) => state.setActiveView);
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
@@ -72,8 +70,26 @@ export const ViewToggle = React.memo(function ViewToggle() {
       ? state.summaries.filter((summary) => summary.workflow.state === 'running').length
       : 0
   ));
-  // "2 running", or empty while none runs. The tip and the spoken name both say it.
-  const runningWorkflowsLabel = runningWorkflowCount > 0 ? `${runningWorkflowCount} running` : '';
+  // "Workflows, 2 running" while any runs. The tip and the spoken name both say
+  // it, each as one whole message per shape (running implies a count above zero).
+  const workflowsTip = runningWorkflowCount > 0
+    ? plural(runningWorkflowCount, { one: 'Workflows, # running', other: 'Workflows, # running' })
+    : t`Workflows`;
+  let workflowsAriaLabel: string;
+  if (runningWorkflowCount > 0) {
+    workflowsAriaLabel = t`Workflows, ${plural(workflowCount, { one: '# workflow', other: '# workflows' })}, ${plural(runningWorkflowCount, { one: '# running', other: '# running' })}`;
+  } else if (workflowCount > 0) {
+    workflowsAriaLabel = plural(workflowCount, { one: 'Workflows, # workflow', other: 'Workflows, # workflows' });
+  } else {
+    workflowsAriaLabel = t`Workflows`;
+  }
+  // "Backlog, 21 items": the count a screen reader hears in place of the pill.
+  // Raw, as printed before: a `#` would group a count past 999 ("1,234").
+  const backlogItemCount = backlogItems.length;
+  const backlogItemCountText = String(backlogItemCount);
+  const backlogAriaLabel = backlogItemCount > 0
+    ? plural(backlogItemCount, { one: `Backlog, ${backlogItemCountText} item`, other: `Backlog, ${backlogItemCountText} items` })
+    : t`Backlog`;
   useEffect(() => {
     if (currentProjectId) void useWorkflowStore.getState().loadWorkflows();
   }, [currentProjectId]);
@@ -157,7 +173,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           with `Select`. See the token note in SegmentedControl. */}
       <SegmentedControl
         ground="raised"
-        ariaLabel="View"
+        ariaLabel={t`View`}
         testId="view-toggle-group"
         className="shrink-0"
         labelClassName={collapse.viewSwitcherLabel}
@@ -167,11 +183,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
         options={[
           {
             value: 'board' as const,
-            label: 'Board',
+            label: t`Board`,
             testId: 'view-toggle-board',
             // Columns-against-list is the least self-evident glyph pair on this
             // row, and at the last step it is all that is left of the switcher.
-            tip: 'Board',
+            tip: t`Board`,
             // The icon is the label's replacement, not an addition, so it carries
             // the inverse of the label's container query. Its `h-5` restores the
             // 20px content height the label's line box had, so the option keeps
@@ -181,13 +197,13 @@ export const ViewToggle = React.memo(function ViewToggle() {
           },
           {
             value: 'backlog' as const,
-            label: 'Backlog',
+            label: t`Backlog`,
             testId: 'view-toggle-backlog',
-            tip: 'Backlog',
+            tip: t`Backlog`,
             // The option's accessible name is set from `ariaLabel`, so the badge
             // below contributes nothing to it. Spell the count out here or it is
             // lost to a screen reader at every width, not just the collapsed one.
-            ariaLabel: backlogItems.length > 0 ? `Backlog, ${countNoun(backlogItems.length, 'item')}` : 'Backlog',
+            ariaLabel: backlogAriaLabel,
             icon: <span className={collapse.viewSwitcherIcon}><ListTodo size={16} /></span>,
             // The count stays through every step: it is the one thing the switcher
             // says that an icon cannot. Tinted from the option's own text tone, so
@@ -198,18 +214,16 @@ export const ViewToggle = React.memo(function ViewToggle() {
           },
           {
             value: 'workflows' as const,
-            label: 'Workflows',
+            label: t`Workflows`,
             testId: 'view-toggle-workflows',
             // The ring takes no pointer inside the slot below, so it cannot carry a
             // tip of its own, and the option's tip says what runs. The tip keeps the
             // tab's name, the SegmentedControl exception one-tooltip.md records. At
             // the icon-only steps it is the only label the option has left, as
             // Board's and Backlog's are.
-            tip: runningWorkflowsLabel ? `Workflows, ${runningWorkflowsLabel}` : 'Workflows',
+            tip: workflowsTip,
             // The count is spoken while the ring hides it from view.
-            ariaLabel: ['Workflows', workflowCount > 0 ? countNoun(workflowCount, 'workflow') : '', runningWorkflowsLabel]
-              .filter((part) => part !== '')
-              .join(', '),
+            ariaLabel: workflowsAriaLabel,
             icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
             // One slot for both branches: a running workflow swaps the pill for
             // the picker's Running ring at the sidebar's 16px, an element-type swap
@@ -222,7 +236,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
                   {runningWorkflowCount > 0
                     ? (
                       <span className="inline-flex text-active" data-testid="view-toggle-workflows-running">
-                        <ActivityMark mark="agent-working" size={16} aria-label="Running" />
+                        <ActivityMark mark="agent-working" size={16} aria-label={t({ message: 'Running', context: 'Workflow status' })} />
                       </span>
                     )
                     : <CountBadge count={workflowCount} variant="tinted" size="pill" testId="view-toggle-workflows-count" />}
@@ -253,7 +267,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           key="board-search"
           searchValue={boardSearchQuery}
           onSearchChange={setBoardSearchQuery}
-          searchPlaceholder="Search board..."
+          searchPlaceholder={t`Search board...`}
           searchInputRef={searchInputRef}
           searchTestId="board-search"
           searchClearTestId="board-search-clear"
@@ -273,7 +287,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           key="backlog-search"
           searchValue={backlogSearchQuery}
           onSearchChange={setBacklogSearchQuery}
-          searchPlaceholder="Search backlog..."
+          searchPlaceholder={t`Search backlog...`}
           searchTestId="backlog-search"
           searchClearTestId="backlog-search-clear"
           filterTestId="backlog-filter-btn"
@@ -298,31 +312,31 @@ export const ViewToggle = React.memo(function ViewToggle() {
           cluster to the right now. */}
       {activeView === 'board' ? (
         <div key="board-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <Tooltip label="Add column">
+          <Tooltip label={t`Add column`}>
             <button
               type="button"
               onClick={() => openBoardManager(null, true)}
-              aria-label="Add column"
+              aria-label={t`Add column`}
               className={`flex items-center gap-1.5 py-1.5 text-sm font-medium rounded-md text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors whitespace-nowrap ${collapse.primaryAction.button}`}
               data-testid="add-column-button"
             >
               <Plus size={16} className="shrink-0" />
-              <span className={collapse.primaryAction.label}>Add column</span>
+              <span className={collapse.primaryAction.label}><Trans>Add column</Trans></span>
             </button>
           </Tooltip>
         </div>
       ) : activeView === 'workflows' ? null : (
         <div key="backlog-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <Tooltip label="New Task">
+          <Tooltip label={t`New Task`}>
             <button
               type="button"
               onClick={openNewDialog}
-              aria-label="New Task"
+              aria-label={t`New Task`}
               className={`flex items-center gap-1.5 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors whitespace-nowrap ${collapse.primaryAction.button}`}
               data-testid="new-backlog-task-btn"
             >
               <Plus size={14} className="shrink-0" />
-              <span className={collapse.primaryAction.label}>New Task</span>
+              <span className={collapse.primaryAction.label}><Trans>New Task</Trans></span>
             </button>
           </Tooltip>
           <ImportPopover onOpenImportDialog={setImportSource} collapse={collapse.filterControl} />

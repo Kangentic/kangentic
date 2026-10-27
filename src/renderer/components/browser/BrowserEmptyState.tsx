@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Globe, ArrowRight } from 'lucide-react';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { normalizeUrl } from './BrowserEmptyState.utils';
 import { focusIsInTypingSurface } from '../../utils/terminal-arrival-focus';
+import { translateText } from '../../i18n/translate';
+import type { LocalizedText } from '../../../shared/i18n/text';
 import { Tooltip } from '../Tooltip';
 
 interface BrowserEmptyStateProps {
@@ -16,17 +20,22 @@ interface BrowserEmptyStateProps {
 interface QuickPick {
   label: string;
   url: string;
-  hint: string;
+  /** Framework names stay as written; only a hint with a word of prose is a message. */
+  hint: LocalizedText;
 }
 
 const QUICK_PICKS: QuickPick[] = [
   { label: 'localhost:3000', url: 'http://localhost:3000', hint: 'Next.js, Express, CRA' },
   { label: 'localhost:5173', url: 'http://localhost:5173', hint: 'Vite' },
   { label: 'localhost:4321', url: 'http://localhost:4321', hint: 'Astro' },
-  { label: 'localhost:8080', url: 'http://localhost:8080', hint: 'Webpack, generic' },
+  { label: 'localhost:8080', url: 'http://localhost:8080', hint: msg`Webpack, generic` },
 ];
 
+/** The WSL command the Windows hint names, kept out of the message so it is never translated. */
+const WSL_HOSTNAME_COMMAND = 'wsl hostname -I';
+
 export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
+  const { t } = useLingui();
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -44,12 +53,12 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
   const submit = useCallback((raw: string) => {
     const normalized = normalizeUrl(raw);
     if (!normalized) {
-      setError('Enter a valid http:// or https:// URL.');
+      setError(t`Enter a valid http:// or https:// URL.`);
       return;
     }
     setError(null);
     onSubmit(normalized);
-  }, [onSubmit]);
+  }, [onSubmit, t]);
 
   const handleSubmit = useCallback((event: React.FormEvent) => {
     event.preventDefault();
@@ -67,10 +76,12 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
         </div>
 
         <div className="flex flex-col items-center gap-1.5 text-center">
-          <h3 className="text-base font-semibold text-fg">Open a URL to preview</h3>
+          <h3 className="text-base font-semibold text-fg"><Trans>Open a URL to preview</Trans></h3>
           <p className="text-xs text-fg-muted leading-relaxed max-w-sm">
-            Local dev server, staging, production, or any http(s) page.
-            This task remembers where you were; other tasks keep their own.
+            <Trans>
+              Local dev server, staging, production, or any http(s) page.
+              This task remembers where you were; other tasks keep their own.
+            </Trans>
           </p>
         </div>
 
@@ -80,7 +91,7 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
             type="text"
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            placeholder="https://example.com or localhost:5173"
+            placeholder={t`https://example.com or localhost:5173`}
             spellCheck={false}
             className="flex-1 bg-surface-input text-fg text-sm px-3 py-2 rounded border border-edge-input focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-colors"
             data-testid="browser-empty-state-input"
@@ -90,7 +101,7 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-accent-on bg-accent-emphasis hover:bg-accent rounded transition-colors"
             data-testid="browser-empty-state-open"
           >
-            Open
+            <Trans context="Action">Open</Trans>
             <ArrowRight size={14} />
           </button>
         </form>
@@ -107,33 +118,38 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
          *  empty / frozen / lying values across browser builds. */}
         {window.electronAPI.platform === 'win32' && (
           <p className="text-[11px] text-fg-faint leading-relaxed self-start">
-            On Windows: if your dev server runs in WSL and `localhost` does not
-            connect, run <code className="px-1 py-0.5 rounded bg-surface-input text-[11px]">wsl hostname -I</code> and use that IP instead.
+            <Trans>
+              On Windows: if your dev server runs in WSL and `localhost` does not
+              connect, run <code className="px-1 py-0.5 rounded bg-surface-input text-[11px]">{WSL_HOSTNAME_COMMAND}</code> and use that IP instead.
+            </Trans>
           </p>
         )}
 
         <div className="flex flex-col items-stretch gap-2 w-full mt-2">
           <span className="text-[11px] uppercase tracking-wider text-fg-faint font-medium">
-            Quick picks
+            <Trans>Quick picks</Trans>
           </span>
           <div className="grid grid-cols-2 gap-1.5">
-            {QUICK_PICKS.map((pick) => (
-              <Tooltip key={pick.url} label={`Open ${pick.url}`}>
-                <button
-                  type="button"
-                  onClick={() => submit(pick.url)}
-                  className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
-                  data-testid={`browser-quick-pick-${pick.label}`}
-                >
-                  <span className="text-xs font-mono text-fg group-hover:text-fg">
-                    {pick.label}
-                  </span>
-                  <span className="text-[11px] text-fg-muted truncate w-full">
-                    {pick.hint}
-                  </span>
-                </button>
-              </Tooltip>
-            ))}
+            {QUICK_PICKS.map((pick) => {
+              const pickUrl = pick.url;
+              return (
+                <Tooltip key={pickUrl} label={t`Open ${pickUrl}`}>
+                  <button
+                    type="button"
+                    onClick={() => submit(pickUrl)}
+                    className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
+                    data-testid={`browser-quick-pick-${pick.label}`}
+                  >
+                    <span className="text-xs font-mono text-fg group-hover:text-fg">
+                      {pick.label}
+                    </span>
+                    <span className="text-[11px] text-fg-muted truncate w-full">
+                      {translateText(pick.hint)}
+                    </span>
+                  </button>
+                </Tooltip>
+              );
+            })}
           </div>
         </div>
       </div>

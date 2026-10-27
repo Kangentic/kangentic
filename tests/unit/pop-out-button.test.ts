@@ -14,10 +14,17 @@
  * `usePopOut` and `popOutInstanceKey` still run, so the key the button looks up is the real one.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement, type ReactElement } from 'react';
+import { renderToStaticMarkup as renderBareMarkup } from 'react-dom/server';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import { popOutInstanceKey } from '../../src/shared/pop-out';
 import { PopOutButton } from '../../src/renderer/pop-out/PopOutButton';
+
+/** A static render inside the I18nProvider the button's `useLingui` reads from, as in the app. */
+function renderToStaticMarkup(element: ReactElement): string {
+  return renderBareMarkup(createElement(I18nProvider, { i18n }, element));
+}
 
 // vi.mock and vi.hoisted run before the imports above, so PopOutButton sees the stand-in store.
 const openInstanceKeys = vi.hoisted(() => ({ current: {} as Record<string, true> }));

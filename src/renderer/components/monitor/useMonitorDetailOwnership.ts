@@ -24,6 +24,8 @@
  * dismiss, and the detached-window focused-session publisher.
  */
 
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { monitorWindowManager } from '../../window-manager';
 import { useDetailOwnershipSync } from '../../window-manager/bridge/useDetailOwnershipSync';
 import { monitorDetailAnchor, parseMonitorAnchor } from '../../window-manager/store/monitor-anchor';
@@ -91,7 +93,7 @@ export function useMonitorDetailOwnership(): void {
         sessionId: null,
         // Placeholder until the bundle resolves; the window's own header shows the
         // real title once it does.
-        title: 'Task',
+        title: i18n._(msg`Task`),
         initialEdit,
         // Terminal-hosting windows open FLAT, matching the board layer and the
         // Command Terminal.

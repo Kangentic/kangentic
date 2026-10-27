@@ -6,3 +6,48 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: ja\n"
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgctxt "Action"
+msgid "Clear"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Clear and start over"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Dictation is off in password fields"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Inserting..."
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Listening"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "No terminal or input focused"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Preparing model... {downloadPercent}%"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Release to insert"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Release to send"
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Sending..."
+msgstr ""
+
+#: src/renderer/components/dictation/LiveDictationChip.tsx
+msgid "Still sending the last one"
+msgstr ""

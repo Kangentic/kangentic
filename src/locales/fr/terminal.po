@@ -6,3 +6,282 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: fr\n"
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "{cachedTokenText} cached (system) · {conversationTokenText} conversation"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBarPopover.tsx
+msgid "{contextLabel} context window"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "{pct}% context"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "{remainingPercent}% remaining"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "{toolName} interrupted"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalPanel.tsx
+msgid "Activity"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Agent active time"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "All"
+msgstr ""
+
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgid "Board Profile - the per-column agent, model, and effort this task follows"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Click to change effort"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Click to change model"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalPanel.tsx
+msgid "Collapse terminal panel"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Compacting context..."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Config changed"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Context tokens used / total window size"
+msgstr ""
+
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgid "Custom"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgctxt "Default value"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/terminal/FileDropOverlay.tsx
+msgid "Drop files to insert path"
+msgstr ""
+
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgid "Each column's own settings"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Elapsed session time"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalPanel.tsx
+msgid "Expand terminal panel"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Idle (no activity detected)"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Idle (waiting for input)"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Input / output tokens"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalPanel.tsx
+msgid "Isolated session"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Model done"
+msgstr ""
+
+#: src/renderer/components/terminal/TerminalPanel.tsx
+msgid "No active sessions. Drag a task into a column that starts an agent."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "No activity yet for {filteredLabel}..."
+msgstr ""
+
+#: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+msgid "No tool calls yet"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Notice"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Plan approved automatically"
+msgstr ""
+
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgid "Profile - applies from the next column"
+msgstr ""
+
+#: src/renderer/components/terminal/ProfilePicker.tsx
+msgid "Profile unavailable"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Rate limits"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Resets {resetMoment}"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Resets in {duration}"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Resets now"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Resuming agent..."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Retrying"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Selecting tool..."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Service error"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Session API cost"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Session ended"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Session started"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Starting agent..."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Subagent"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Subagent done"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Task done"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Teammate idle"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Thinking..."
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "This agent does not support changing the effort level from Kangentic"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "This agent does not support changing the model from Kangentic"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Tool"
+msgstr ""
+
+#: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+msgid "Tool calls"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Tool calls across every run of this session"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Tool calls: {toolCallCountText}"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "Updated {timeAgo}"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBarPopover.tsx
+msgid "Use column default <0>({swimlaneDefaultText})</0>"
+msgstr ""
+
+#: src/renderer/components/terminal/ContextBar.tsx
+msgid "v{taskAgentVersionNumber}"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Waiting for agent activity..."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Waiting for input"
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Waiting for the agent to report. Showing the model this session was started with. Click to change."
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Waiting for the agent to report. Showing the model this session was started with. This agent does not support changing it from Kangentic."
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Waiting for the agent to report. Showing your configured default. Click to change."
+msgstr ""
+
+#: src/renderer/components/terminal/ModelEffortPicker.tsx
+msgid "Waiting for the agent to report. Showing your configured default. This agent does not support changing it from Kangentic."
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Worktree"
+msgstr ""
+
+#: src/renderer/components/terminal/ActivityLog.tsx
+msgid "Worktree removed"
+msgstr ""

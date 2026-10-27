@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Pill, TINTED_PILL_FILL, TINTED_PILL_EDGE } from './Pill';
 import { OverlayPopover } from './OverlayPopover';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -18,6 +19,7 @@ interface LabelInputProps {
  * with a suggestion dropdown for adding labels.
  */
 export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, testId }: LabelInputProps) {
+  const { t } = useLingui();
   const [labelInput, setLabelInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const labelInputRef = useRef<HTMLInputElement>(null);
@@ -123,7 +125,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
                 type="button"
                 onClick={() => removeLabel(label)}
                 className="ml-px flex items-center justify-center rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
-                aria-label={`Remove ${label}`}
+                aria-label={t`Remove ${label}`}
               >
                 <X size={12} />
               </button>
@@ -145,7 +147,7 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
             }
           }}
           onKeyDown={handleLabelKeyDown}
-          placeholder={labels.length === 0 ? 'Type to add...' : ''}
+          placeholder={labels.length === 0 ? t`Type to add...` : ''}
           // text-sm matches the Priority select beside it, so an empty Labels
           // field reads at the same size as its neighbour. The pills above stay
           // text-xs - they are pills, sized like every other pill in the app.

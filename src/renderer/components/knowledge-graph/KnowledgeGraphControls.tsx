@@ -33,6 +33,10 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Filter, Search, Shapes, SlidersHorizontal, X } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { translateText } from '../../i18n/translate';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { Select } from '../settings/shared';
 import { Tooltip } from '../Tooltip';
@@ -46,7 +50,6 @@ import type {
 import { CARD_CLASS, CARD_SURFACE_CLASS, GroupLabel, SectionHeader } from './panel-card';
 import { KnowledgeGraphIndexCard } from './KnowledgeGraphIndexCard';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
-import { translateText } from '../../i18n/translate';
 
 /**
  * How far back a conversation's last activity may be. Three choices, to line up
@@ -131,10 +134,15 @@ export interface FacetAvailability {
 export type KnowledgeGraphOutcome = KnowledgeGraphTaskOutcome;
 
 /** The time filter's segments, the full window as each one's name and tooltip. */
-const TIME_OPTIONS: ReadonlyArray<SegmentedControlOption<KnowledgeGraphTimeWindow>> = [
-  { value: 'any', label: 'Any', ariaLabel: 'Any time', tip: 'Any time', testId: 'knowledge-graph-filter-since-any' },
-  { value: '30d', label: '30 days', ariaLabel: 'Last 30 days', tip: 'Last 30 days', testId: 'knowledge-graph-filter-since-30d' },
-  { value: '90d', label: '90 days', ariaLabel: 'Last 90 days', tip: 'Last 90 days', testId: 'knowledge-graph-filter-since-90d' },
+const TIME_OPTIONS: ReadonlyArray<{
+  value: KnowledgeGraphTimeWindow;
+  label: MessageDescriptor;
+  fullName: MessageDescriptor;
+  testId: string;
+}> = [
+  { value: 'any', label: msg`Any`, fullName: msg`Any time`, testId: 'knowledge-graph-filter-since-any' },
+  { value: '30d', label: msg`30 days`, fullName: msg`Last 30 days`, testId: 'knowledge-graph-filter-since-30d' },
+  { value: '90d', label: msg`90 days`, fullName: msg`Last 90 days`, testId: 'knowledge-graph-filter-since-90d' },
 ];
 
 /** Display order, independent of whatever order the corpus happened to yield. */
@@ -143,7 +151,10 @@ export const OUTCOME_ORDER: ReadonlyArray<KnowledgeGraphOutcome> = ['done', 'act
 export const NO_FACETS_AVAILABLE: FacetAvailability = { since: false, outcomes: [], presentOutcomes: [] };
 
 /** A time window's tooltip when nothing on the map is older than the narrowest one. */
-const NO_OLDER_WORK_REASON = `Nothing on this map is older than ${NARROWEST_WINDOW_DAYS} days`;
+function noOlderWorkReason(): string {
+  const days = NARROWEST_WINDOW_DAYS;
+  return translateText(msg`Nothing on this map is older than ${days} days`);
+}
 
 /**
  * Every colour mode, in display order. What is OFFERED is filtered from this by
@@ -158,24 +169,24 @@ const NO_OLDER_WORK_REASON = `Nothing on this map is older than ${NARROWEST_WIND
  * assumed on the real 648-conversation corpus: length to duration 0.507, length
  * to cost 0.560, duration to cost 0.664.
  */
-const COLOR_OPTIONS: ReadonlyArray<{ value: KnowledgeGraphColorMode; label: string; hint: string }> = [
-  { value: 'cluster', label: 'Topic', hint: 'Color by the region of the map each conversation sits in' },
-  { value: 'recency', label: 'Recency', hint: 'Warm is recent, cool is old - shows where your attention has moved' },
-  { value: 'outcome', label: 'Status', hint: 'Green is done, amber is still open on the board, grey has no task' },
+const COLOR_OPTIONS: ReadonlyArray<{ value: KnowledgeGraphColorMode; label: MessageDescriptor; hint: MessageDescriptor }> = [
+  { value: 'cluster', label: msg`Topic`, hint: msg`Color by the region of the map each conversation sits in` },
+  { value: 'recency', label: msg`Recency`, hint: msg`Warm is recent, cool is old - shows where your attention has moved` },
+  { value: 'outcome', label: msg`Status`, hint: msg`Green is done, amber is still open on the board, grey has no task` },
   {
     value: 'size',
-    label: 'Length',
-    hint: 'How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one',
+    label: msg`Length`,
+    hint: msg`How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one`,
   },
   {
     value: 'duration',
-    label: 'Duration',
-    hint: 'How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one',
+    label: msg`Duration`,
+    hint: msg`How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one`,
   },
   {
     value: 'cost',
-    label: 'Cost',
-    hint: 'What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end',
+    label: msg`Cost`,
+    hint: msg`What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end`,
   },
 ];
 
@@ -183,16 +194,29 @@ const COLOR_OPTIONS: ReadonlyArray<{ value: KnowledgeGraphColorMode; label: stri
  *  can actually express while the copy stays in one place. */
 const GRANULARITY_OPTIONS: Record<
   KnowledgeGraphGranularity,
-  { value: KnowledgeGraphGranularity; label: string; tip: string }
+  { value: KnowledgeGraphGranularity; label: MessageDescriptor; tip: MessageDescriptor }
 > = {
-  coarse: { value: 'coarse', label: 'Coarse', tip: 'Fewer, broader regions' },
+  coarse: { value: 'coarse', label: msg`Coarse`, tip: msg`Fewer, broader regions` },
   balanced: {
     value: 'balanced',
-    label: 'Balanced',
-    tip: 'The default: regions of roughly 10 to 26 conversations',
+    label: msg`Balanced`,
+    tip: msg`The default: regions of roughly 10 to 26 conversations`,
   },
-  fine: { value: 'fine', label: 'Fine', tip: 'More, narrower regions' },
+  fine: { value: 'fine', label: msg`Fine`, tip: msg`More, narrower regions` },
 };
+
+/**
+ * Why a status segment is off, one sentence per status: there is no task of
+ * that status on the map, or every task has it.
+ */
+function outcomeDisabledReason(outcome: KnowledgeGraphOutcome, cause: 'absent' | 'everywhere'): string {
+  switch (outcome) {
+    case 'done':
+      return translateText(cause === 'absent' ? msg`No done tasks on this map` : msg`Every task on this map is done`);
+    case 'active':
+      return translateText(cause === 'absent' ? msg`No open tasks on this map` : msg`Every task on this map is open`);
+  }
+}
 
 /**
  * Regions above which the list gets a filter field.
@@ -270,8 +294,9 @@ function RegionRow({
   on: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label={on ? `Hide ${label}` : `Show ${label}`}>
+    <Tooltip label={on ? t`Hide ${label}` : t`Show ${label}`}>
       <button
         type="button"
         onClick={onToggle}
@@ -329,6 +354,7 @@ export function KnowledgeGraphControls({
   projectsPicker,
   onOpenSettings,
 }: KnowledgeGraphControlsProps) {
+  const { t } = useLingui();
   // Open by default: these three are controls the user acts on.
   const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [regionsCollapsed, setRegionsCollapsed] = useState(false);
@@ -336,6 +362,8 @@ export function KnowledgeGraphControls({
   const [regionQuery, setRegionQuery] = useState('');
 
   const shownRegionCount = regions.filter((region) => !facets.hiddenRegions.has(region.id)).length;
+  const regionCount = regions.length;
+  const colorHint = COLOR_OPTIONS.find((option) => option.value === colorMode)?.hint;
   const regionFilterable = regions.length >= REGION_FILTER_MIN;
   const listedRegions = useMemo(
     () => (regionFilterable && regionQuery.trim() !== ''
@@ -380,7 +408,7 @@ export function KnowledgeGraphControls({
       <div className={CARD_CLASS} data-testid="knowledge-graph-filter-card">
         <SectionHeader
           icon={<Filter size={13} aria-hidden />}
-          label="Filter"
+          label={t`Filter`}
           collapsed={filterCollapsed}
           onToggle={() => setFilterCollapsed((current) => !current)}
           testId="knowledge-graph-filter-toggle"
@@ -390,8 +418,8 @@ export function KnowledgeGraphControls({
           <div className="space-y-3 px-3 pb-3">
             {projectsPicker != null ? (
               <div>
-                <GroupLabel hint="Which projects the map shows and a question is asked across. Starts on the open project.">
-                  Projects
+                <GroupLabel hint={t`Which projects the map shows and a question is asked across. Starts on the open project.`}>
+                  {t`Projects`}
                 </GroupLabel>
                 {projectsPicker}
               </div>
@@ -408,14 +436,22 @@ export function KnowledgeGraphControls({
                 stays in place, disabled, and says why. */}
             <div className="space-y-1.5">
               <SegmentedControl
-                options={TIME_OPTIONS.map((option) => (
-                  option.value === 'any' || facetAvailability.since
-                    ? option
-                    : { ...option, disabledReason: NO_OLDER_WORK_REASON, disabled: true }
-                ))}
+                options={TIME_OPTIONS.map((option): SegmentedControlOption<KnowledgeGraphTimeWindow> => {
+                  const fullName = translateText(option.fullName);
+                  const shown = {
+                    value: option.value,
+                    label: translateText(option.label),
+                    ariaLabel: fullName,
+                    tip: fullName,
+                    testId: option.testId,
+                  };
+                  return option.value === 'any' || facetAvailability.since
+                    ? shown
+                    : { ...shown, disabledReason: noOlderWorkReason(), disabled: true };
+                })}
                 value={facets.since}
                 onChange={(since) => onFacetsChange({ ...facets, since })}
-                ariaLabel="Filter by when the conversation was last active"
+                ariaLabel={t`Filter by when the conversation was last active`}
                 testId="knowledge-graph-filter-since"
                 quiet
                 tight
@@ -424,14 +460,14 @@ export function KnowledgeGraphControls({
 
               <SegmentedControl
                 options={[
-                  { value: 'any' as const, label: 'Any', ariaLabel: 'Any status', testId: 'knowledge-graph-filter-outcome-any' },
+                  { value: 'any' as const, label: t`Any`, ariaLabel: t`Any status`, testId: 'knowledge-graph-filter-outcome-any' },
                   ...OUTCOME_ORDER.map((outcome) => {
                     const selectable = facetAvailability.outcomes.includes(outcome);
                     const present = facetAvailability.presentOutcomes.includes(outcome);
                     const label = translateText(TASK_OUTCOME_LABELS[outcome]);
                     let disabledReason: string | undefined;
-                    if (!present) disabledReason = `No ${label.toLowerCase()} tasks on this map`;
-                    else if (!selectable) disabledReason = `Every task on this map is ${label.toLowerCase()}`;
+                    if (!present) disabledReason = outcomeDisabledReason(outcome, 'absent');
+                    else if (!selectable) disabledReason = outcomeDisabledReason(outcome, 'everywhere');
                     return {
                       value: outcome,
                       label,
@@ -444,7 +480,7 @@ export function KnowledgeGraphControls({
                 ]}
                 value={facets.outcome}
                 onChange={(outcome) => onFacetsChange({ ...facets, outcome })}
-                ariaLabel="Filter by the task's status"
+                ariaLabel={t`Filter by the task's status`}
                 testId="knowledge-graph-filter-outcome"
                 quiet
                 tight
@@ -462,7 +498,7 @@ export function KnowledgeGraphControls({
         >
           <SectionHeader
             icon={<Shapes size={13} aria-hidden />}
-            label="Regions"
+            label={t`Regions`}
             collapsed={regionsCollapsed}
             onToggle={() => setRegionsCollapsed((current) => !current)}
             testId="knowledge-graph-regions-toggle"
@@ -475,14 +511,17 @@ export function KnowledgeGraphControls({
                   would repaint the identical picture. */}
               {showDetail ? (
                 <div className={`shrink-0 ${showRegionList ? 'mb-3' : ''}`}>
-                  <GroupLabel hint="How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.">
-                    Detail
+                  <GroupLabel hint={t`How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read.`}>
+                    {t`Detail`}
                   </GroupLabel>
                   <SegmentedControl
-                    options={availableGranularities.map((value) => GRANULARITY_OPTIONS[value])}
+                    options={availableGranularities.map((value) => {
+                      const option = GRANULARITY_OPTIONS[value];
+                      return { value: option.value, label: translateText(option.label), tip: translateText(option.tip) };
+                    })}
                     value={granularity}
                     onChange={onGranularityChange}
-                    ariaLabel="Region detail"
+                    ariaLabel={t`Region detail`}
                     testId="knowledge-graph-granularity"
                     fullWidth
                   />
@@ -496,7 +535,7 @@ export function KnowledgeGraphControls({
                       otherwise. */}
                   <div className="mb-1.5 flex shrink-0 items-center justify-between">
                     <span className="text-[11px] text-fg-muted">
-                      {shownRegionCount} of {regions.length} shown
+                      <Trans>{shownRegionCount} of {regionCount} shown</Trans>
                     </span>
                     <div className="flex items-center gap-1">
                       <button
@@ -506,7 +545,7 @@ export function KnowledgeGraphControls({
                         className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
                         data-testid="knowledge-graph-regions-all"
                       >
-                        All
+                        <Trans>All</Trans>
                       </button>
                       <button
                         type="button"
@@ -517,7 +556,7 @@ export function KnowledgeGraphControls({
                         className="rounded px-1.5 py-0.5 text-[11px] text-fg-muted hover:bg-surface-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default"
                         data-testid="knowledge-graph-regions-none"
                       >
-                        None
+                        <Trans>None</Trans>
                       </button>
                     </div>
                   </div>
@@ -536,8 +575,8 @@ export function KnowledgeGraphControls({
                       <input
                         value={regionQuery}
                         onChange={(event) => setRegionQuery(event.target.value)}
-                        placeholder="Find a region"
-                        aria-label="Find a region"
+                        placeholder={t`Find a region`}
+                        aria-label={t`Find a region`}
                         data-testid="knowledge-graph-region-filter"
                         className="w-full rounded border border-edge/60 bg-surface-control/60 py-1 pl-7 pr-6 text-[11px] text-fg placeholder:text-fg-muted outline-none focus:border-edge-input"
                       />
@@ -546,7 +585,7 @@ export function KnowledgeGraphControls({
                           type="button"
                           onClick={() => setRegionQuery('')}
                           className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
-                          aria-label="Clear region filter"
+                          aria-label={t`Clear region filter`}
                           data-testid="knowledge-graph-region-filter-clear"
                         >
                           <X size={12} />
@@ -565,7 +604,7 @@ export function KnowledgeGraphControls({
                         className="px-1.5 py-2 text-[11px] text-fg-muted"
                         data-testid="knowledge-graph-region-filter-empty"
                       >
-                        No region matches that.
+                        <Trans>No region matches that.</Trans>
                       </p>
                     ) : regionGroups.map((group, groupIndex) => (
                       // Keyed by position too: two projects can share a name.
@@ -601,7 +640,7 @@ export function KnowledgeGraphControls({
       <div className={CARD_CLASS}>
         <SectionHeader
           icon={<SlidersHorizontal size={13} aria-hidden />}
-          label="Display"
+          label={t`Display`}
           collapsed={displayCollapsed}
           onToggle={() => setDisplayCollapsed((current) => !current)}
           testId="knowledge-graph-controls-toggle"
@@ -610,15 +649,15 @@ export function KnowledgeGraphControls({
         {!displayCollapsed ? (
           <div className="space-y-3 px-3 pb-3">
             <div>
-              <GroupLabel hint={COLOR_OPTIONS.find((option) => option.value === colorMode)?.hint}>
-                Color by
+              <GroupLabel hint={colorHint === undefined ? undefined : translateText(colorHint)}>
+                {t`Color by`}
               </GroupLabel>
               {/* A Select, not a SegmentedControl: four labels overflowed the
                   panel at every width tried, cutting the last option in half. */}
               <Select
                 value={colorMode}
                 onChange={(event) => onColorModeChange(event.target.value as KnowledgeGraphColorMode)}
-                aria-label="Color conversations by"
+                aria-label={t`Color conversations by`}
                 data-testid="knowledge-graph-color-mode"
               >
                 {/* Only the modes this corpus can actually express. An option
@@ -626,25 +665,25 @@ export function KnowledgeGraphControls({
                 {COLOR_OPTIONS.filter(
                   (option) => availableColorModes.includes(option.value),
                 ).map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
+                  <option key={option.value} value={option.value}>{translateText(option.label)}</option>
                 ))}
               </Select>
             </div>
 
             <div>
-              <GroupLabel>Show</GroupLabel>
+              <GroupLabel>{t`Show`}</GroupLabel>
               <div className="space-y-1.5">
                 {/* "Regions", not "Labels": there are two kinds of label on this
                     map, and the generic word stopped saying which one this row
                     governs. */}
                 <SegmentedControl
                   options={[
-                    { value: 'on', label: 'Regions' },
-                    { value: 'off', label: 'Hidden' },
+                    { value: 'on', label: t`Regions` },
+                    { value: 'off', label: t`Hidden` },
                   ]}
                   value={showLabels ? 'on' : 'off'}
                   onChange={(value) => onShowLabelsChange(value === 'on')}
-                  ariaLabel="Region labels"
+                  ariaLabel={t`Region labels`}
                   testId="knowledge-graph-toggle-labels"
                   fullWidth
                 />
@@ -653,23 +692,23 @@ export function KnowledgeGraphControls({
                     not an opt-in they have to find. */}
                 <SegmentedControl
                   options={[
-                    { value: 'on', label: 'Titles' },
-                    { value: 'off', label: 'Hidden' },
+                    { value: 'on', label: t`Titles` },
+                    { value: 'off', label: t`Hidden` },
                   ]}
                   value={showTitles ? 'on' : 'off'}
                   onChange={(value) => onShowTitlesChange(value === 'on')}
-                  ariaLabel="Conversation titles"
+                  ariaLabel={t`Conversation titles`}
                   testId="knowledge-graph-toggle-titles"
                   fullWidth
                 />
                 <SegmentedControl
                   options={[
-                    { value: 'on', label: 'Links' },
-                    { value: 'off', label: 'Hidden' },
+                    { value: 'on', label: t`Links` },
+                    { value: 'off', label: t`Hidden` },
                   ]}
                   value={showEdges ? 'on' : 'off'}
                   onChange={(value) => onShowEdgesChange(value === 'on')}
-                  ariaLabel="Similarity links"
+                  ariaLabel={t`Similarity links`}
                   testId="knowledge-graph-toggle-edges"
                   fullWidth
                 />
