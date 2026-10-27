@@ -291,7 +291,7 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     });
 
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
-    await expect(page.getByText(/Showing latest \d+ commits/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/Showing latest \d+ commits?/)).toBeVisible({ timeout: 10000 });
 
     await closeChangesPanelAndDialog(dialog);
   });
