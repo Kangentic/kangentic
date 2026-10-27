@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { canColumnRun, canTaskRunAutomations } from '../../../shared/automation-manifest';
+import { englishText } from '../../../shared/i18n/english';
 import type { ColumnAutomation, Swimlane, Task, TaskMoveRecordOrigin } from '../../../shared/types';
 import type { IpcContext } from '../../ipc/ipc-context';
 import type { SessionResumedPayload, TurnEndedPayload } from '../../pty/session-manager';
@@ -540,7 +541,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
       || !canColumnRun(row.type, facts, 'turn_end').ok
       || runs.hasRunSince(row.id, task.id, visitStartedAt)) continue;
     if (!taskRunnability.ok) {
-      recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, taskRunnability.reason);
+      recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, englishText(taskRunnability.reason));
       continue;
     }
     const spent = frequencyLimitReason(row, runs, task.id);
@@ -728,7 +729,7 @@ async function runRows(
   // it. The engine's own gate covers a switch thrown during the check itself.
   const latestTaskRunnability = canTaskRunAutomations(repos.tasks.getById(task.id) ?? task);
   if (!latestTaskRunnability.ok) {
-    for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, latestTaskRunnability.reason);
+    for (const row of pending) recordSkipOncePerVisit(runs, row, task.id, visitStartedAt, englishText(latestTaskRunnability.reason));
     return none;
   }
 

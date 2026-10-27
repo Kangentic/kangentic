@@ -1,10 +1,12 @@
 import { LayoutGrid, RefreshCw } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardToggleRow, CardChoiceRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 
 export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   return (
     <div className="space-y-4">
@@ -13,16 +15,16 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
           chrome, and it belongs beside graphics acceleration. */}
       <SettingsCard
         icon={<LayoutGrid size={16} />}
-        label="Board layout"
-        description="Column width and which panels show around the board."
+        label={t`Board layout`}
+        description={t`Column width and which panels show around the board.`}
         searchIds={['columnWidth', 'terminalPanelVisible', 'statusBarVisible']}
       >
         <CardChoiceRow
           {...settingProps('columnWidth')}
           options={[
-            { value: 'narrow', label: 'Narrow' },
-            { value: 'default', label: 'Default' },
-            { value: 'wide', label: 'Wide' },
+            { value: 'narrow', label: t({ message: 'Narrow', context: 'column width' }) },
+            { value: 'default', label: t({ message: 'Default', context: 'column width' }) },
+            { value: 'wide', label: t({ message: 'Wide', context: 'column width' }) },
           ]}
           value={globalConfig.columnWidth}
           onChange={(value) => updateGlobal({ columnWidth: value })}
@@ -42,8 +44,8 @@ export function BoardTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       <SettingsCard
         icon={<RefreshCw size={16} />}
-        label="Config sync"
-        description="How changes to the shared board config are applied."
+        label={t`Config sync`}
+        description={t`How changes to the shared board config are applied.`}
         searchIds={['skipBoardConfigConfirm']}
       >
         <CardToggleRow

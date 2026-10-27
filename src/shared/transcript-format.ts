@@ -1,10 +1,18 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+import { englishText } from './i18n/english';
 import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype, TranscriptToolApproval } from './types';
 import { sanitizeTranscriptText } from './ansi-strip';
 import { parsePlanTool, type PlanTool } from './tool-diff';
 
 /** The tag a plan carries for who approved it: what the Plan card and a copied plan both say. */
 export function planApprovalLabel(approval: TranscriptToolApproval): string {
-  return approval === 'automatic' ? 'Approved automatically' : 'Approved by you';
+  return englishText(planApprovalMessage(approval));
+}
+
+/** The same label for the conversation viewer, which shows it in the session language. */
+export function planApprovalMessage(approval: TranscriptToolApproval): MessageDescriptor {
+  return approval === 'automatic' ? msg`Approved automatically` : msg`Approved by you`;
 }
 
 /**

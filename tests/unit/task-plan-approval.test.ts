@@ -14,6 +14,11 @@ import {
   taskPlanApprovalTip,
   type WorkflowPlanColumn,
 } from '../../src/shared/plan-approval';
+import { englishText } from '../../src/shared/i18n/english';
+
+/** The tips are messages; an English session shows these words. */
+const tipOf = (view: Parameters<typeof taskPlanApprovalTip>[0]) => englishText(taskPlanApprovalTip(view));
+const cannotApproveOf = (agentName: string) => englishText(agentCannotApprovePlans(agentName));
 
 function column(overrides: Partial<WorkflowPlanColumn> = {}): WorkflowPlanColumn {
   return { name: 'Planning', planApproval: 'automatic', agentCanApprove: true, agentName: 'Claude Code', ...overrides };
@@ -80,7 +85,7 @@ describe('a route mixing plan columns whose agents can and cannot approve plans'
   it('the tip and the sentence say that agent\'s plans still wait for the user', () => {
     const view = taskPlanApproval('automatic', mixedRoute, 'kangentic', false)!;
 
-    expect(taskPlanApprovalTip(view))
+    expect(tipOf(view))
       .toBe('Automatic, set for this task (kangentic\'s Replan column is Manual), but Codex CLI\'s plans still wait for you.');
     expect(taskPlanApprovalSentence(view))
       .toBe('Plan approval: Automatic, set for this task (its Replan column is Manual), but Codex CLI\'s plans still wait for you.');
@@ -91,7 +96,7 @@ describe('a route mixing plan columns whose agents can and cannot approve plans'
     const view = taskPlanApproval('automatic', capableRoute, 'kangentic', false)!;
 
     expect(view).toMatchObject({ value: 'automatic', canApprove: true, agentName: null, waitingAgentName: null });
-    expect(taskPlanApprovalTip(view)).toBe('Automatic, set for this task (kangentic\'s Planning column is Manual).');
+    expect(tipOf(view)).toBe('Automatic, set for this task (kangentic\'s Planning column is Manual).');
     expect(taskPlanApprovalSentence(view)).toBe('Plan approval: Automatic, set for this task (its Planning column is Manual).');
   });
 
@@ -100,11 +105,11 @@ describe('a route mixing plan columns whose agents can and cannot approve plans'
     const followsColumns = taskPlanApproval(null, mixedRoute, 'kangentic', false)!;
 
     expect(setManual).toMatchObject({ value: 'manual', set: 'manual' });
-    expect(taskPlanApprovalTip(setManual)).toBe('Manual, set for this task (kangentic\'s Replan column is Manual).');
+    expect(tipOf(setManual)).toBe('Manual, set for this task (kangentic\'s Replan column is Manual).');
     expect(taskPlanApprovalSentence(setManual)).toBe('Plan approval: Manual, set for this task (its Replan column is Manual).');
 
     expect(followsColumns).toMatchObject({ value: 'manual', set: null });
-    expect(taskPlanApprovalTip(followsColumns)).toBe('Manual, from kangentic\'s Replan column.');
+    expect(tipOf(followsColumns)).toBe('Manual, from kangentic\'s Replan column.');
     expect(taskPlanApprovalSentence(followsColumns)).toBe('Plan approval: Manual, from kangentic\'s Replan column.');
   });
 });
@@ -129,10 +134,10 @@ describe('the sentences', () => {
   const cannotApprove = taskPlanApproval(null, [column({ agentCanApprove: false, agentName: 'Codex CLI' })], 'kangentic', false)!;
 
   it('the inspector\'s tip names the column a task follows, or says it was set and what the column gives', () => {
-    expect(taskPlanApprovalTip(leftAlone)).toBe('Automatic, from kangentic\'s Planning column.');
-    expect(taskPlanApprovalTip(setManual)).toBe('Manual, set for this task (kangentic\'s Planning column is Automatic).');
-    expect(taskPlanApprovalTip(setAutomatic)).toBe('Automatic, set for this task (kangentic-mobile\'s Planning column is Manual).');
-    expect(taskPlanApprovalTip(cannotApprove)).toBe('Manual, because Kangentic can\'t approve Codex CLI\'s plans.');
+    expect(tipOf(leftAlone)).toBe('Automatic, from kangentic\'s Planning column.');
+    expect(tipOf(setManual)).toBe('Manual, set for this task (kangentic\'s Planning column is Automatic).');
+    expect(tipOf(setAutomatic)).toBe('Automatic, set for this task (kangentic-mobile\'s Planning column is Manual).');
+    expect(tipOf(cannotApprove)).toBe('Manual, because Kangentic can\'t approve Codex CLI\'s plans.');
   });
 
   it('kangentic_get_workflow says the value and where it comes from', () => {
@@ -150,6 +155,6 @@ describe('the sentences', () => {
   });
 
   it('the reason Automatic is off is one sentence for every surface that offers it', () => {
-    expect(agentCannotApprovePlans('Codex CLI')).toBe('Kangentic can\'t approve Codex CLI\'s plans, so they wait for you.');
+    expect(cannotApproveOf('Codex CLI')).toBe('Kangentic can\'t approve Codex CLI\'s plans, so they wait for you.');
   });
 });

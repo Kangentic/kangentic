@@ -1,4 +1,7 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Session, SwimlaneRole, Task } from './types';
+import { englishText } from './i18n/english';
 import { isLiveSessionStatus } from './session-liveness';
 
 /**
@@ -241,38 +244,46 @@ export function isPauseOffered(input: {
 
 const RESUME_BLOCK_REASONS: readonly ResumeBlockReason[] = ['todo', 'done', 'archived'];
 
+/** Each refusal's full sentence: where the task is, and the move that gets past it. */
+const RESUME_BLOCK_MESSAGES: Readonly<Record<ResumeBlockReason, MessageDescriptor>> = {
+  todo: msg`This task is in To Do. Move it to another column to start its agent.`,
+  done: msg`This task is complete. Move it out of Done to continue working on it.`,
+  archived: msg`This task is archived. Restore it to the board to continue working on it.`,
+};
+
+/** Each refusal as a toast body. */
+const RESUME_BLOCK_TOAST_BODIES: Readonly<Record<ResumeBlockReason, MessageDescriptor>> = {
+  todo: msg`The task is in To Do.`,
+  done: msg`The task is in Done.`,
+  archived: msg`The task is archived.`,
+};
+
 /**
  * User-facing copy for a refusal: where the task is, and the move that gets
  * past it. The main-process handler throws this string, so it is the phone's
  * error, and the card menu shows it as the disabled Resume row's tooltip. Both
  * are read on their own, with nothing else saying what to do, so each names
  * the move. A desktop toast reads the shorter `resumeBlockToastBody` instead.
+ *
+ * In English, because main throws it and the renderer matches it back
+ * (`resumeBlockReasonOfMessage`). The renderer shows `resumeBlockRefusal`.
  */
 export function resumeBlockMessage(reason: ResumeBlockReason): string {
-  switch (reason) {
-    case 'todo':
-      return 'This task is in To Do. Move it to another column to start its agent.';
-    case 'done':
-      return 'This task is complete. Move it out of Done to continue working on it.';
-    case 'archived':
-      return 'This task is archived. Restore it to the board to continue working on it.';
-  }
+  return englishText(RESUME_BLOCK_MESSAGES[reason]);
+}
+
+/** The same refusal as a message, for the card menu's tooltip in the session language. */
+export function resumeBlockRefusal(reason: ResumeBlockReason): MessageDescriptor {
+  return RESUME_BLOCK_MESSAGES[reason];
 }
 
 /**
  * The same refusal as a toast body: one sentence under the "Couldn't resume
  * session" title. The card the toast sits beside already shows the column, so
- * where the task is says enough there.
+ * where the task is says enough there. Resolve it where it shows.
  */
-export function resumeBlockToastBody(reason: ResumeBlockReason): string {
-  switch (reason) {
-    case 'todo':
-      return 'The task is in To Do.';
-    case 'done':
-      return 'The task is in Done.';
-    case 'archived':
-      return 'The task is archived.';
-  }
+export function resumeBlockToastBody(reason: ResumeBlockReason): MessageDescriptor {
+  return RESUME_BLOCK_TOAST_BODIES[reason];
 }
 
 /**

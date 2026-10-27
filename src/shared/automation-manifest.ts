@@ -13,8 +13,11 @@
  * a renderer-side map, the pattern `utils/swimlane-icons.tsx` already uses for
  * persisted column icons.
  */
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { NEVER_AUTO_SPAWN_ROLES } from './types';
 import type { AutoCommandMode, AutomationTrigger, AutomationType, SwimlaneRole, Task } from './types';
+import type { LocalizedText } from './i18n/text';
 
 /** A capability an automation needs from its column before it can run. */
 export type AutomationNeed = 'agent';
@@ -38,12 +41,24 @@ export const AUTOMATION_TRIGGER_FILE_KEYS = {
 /**
  * Each trigger's name as a person reads it: the Automations pane's group
  * headings, the edit dialog's Trigger, and the MCP listings. One table, so the
- * pane and an agent's listing never word a group two ways.
+ * pane and an agent's listing never word a group two ways. The renderer resolves
+ * it with `translateText`, an MCP listing with `englishText`.
  */
-export const AUTOMATION_TRIGGER_LABELS: Record<AutomationTrigger, string> = {
-  enter: 'On task enter',
-  turn_end: 'On agent turn end',
-  exit: 'On task exit',
+export const AUTOMATION_TRIGGER_LABELS: Record<AutomationTrigger, MessageDescriptor> = {
+  enter: msg`On task enter`,
+  turn_end: msg`On agent turn end`,
+  exit: msg`On task exit`,
+};
+
+/**
+ * The same trigger as words that follow a column's name ("Executing, on task
+ * enter"). Its own message rather than a lower-cased label, since a translation
+ * cannot be lower-cased into the middle of a sentence.
+ */
+export const AUTOMATION_TRIGGER_PHRASES: Record<AutomationTrigger, MessageDescriptor> = {
+  enter: msg`on task enter`,
+  turn_end: msg`on agent turn end`,
+  exit: msg`on task exit`,
 };
 
 /** Narrow a stored or received trigger string; anything else is not a trigger this build knows. */
@@ -75,7 +90,8 @@ export type AutomationFieldEscape = 'none' | 'shell' | 'json' | 'url';
 
 export interface AutomationFieldOption {
   value: string;
-  label: string;
+  /** A descriptor, or a plain string for a protocol token (the webhook's POST). */
+  label: LocalizedText;
   /** kebab-case lucide name, resolved by the renderer's icon map. */
   icon?: string;
   testId?: string;
@@ -83,10 +99,11 @@ export interface AutomationFieldOption {
 
 export interface AutomationField {
   key: string;
-  label: string;
+  label: MessageDescriptor;
   kind: AutomationFieldKind;
   escape: AutomationFieldEscape;
-  placeholder?: string;
+  /** A descriptor, or a plain string for an example value (a URL) that is not prose. */
+  placeholder?: LocalizedText;
   options?: readonly AutomationFieldOption[];
   templateVariables?: boolean;
   /**
@@ -95,7 +112,7 @@ export interface AutomationField {
    * only place that fact exists, and it changes what you type) and a webhook's
    * header format (a format contract).
    */
-  hint?: string;
+  hint?: MessageDescriptor;
   min?: number;
   max?: number;
   defaultValue?: string | number;
@@ -113,7 +130,7 @@ export interface AutomationField {
    * ("Give up after (minutes)") both reads worse and can be lost in a label
    * rewrite. Required on every `number` field by the reserved-keys test.
    */
-  unit?: string;
+  unit?: MessageDescriptor;
   /**
    * Declared, but not offered in the Edit automation dialog.
    *
@@ -132,7 +149,7 @@ export interface AutomationField {
    */
   optional?: boolean;
   /** A note behind an info icon beside the label, for a field whose effect is not obvious from its name. */
-  info?: string;
+  info?: MessageDescriptor;
   /**
    * A trigger where the field does nothing, and why. The Edit automation dialog
    * keeps the field in place there, disabled, with the reason on each option,
@@ -141,18 +158,18 @@ export interface AutomationField {
    * `automationFieldUnavailableReason`, never by the field's key. Send
    * message's Delivery is the one: at a turn end the turn is already over.
    */
-  unavailableOn?: { trigger: AutomationTrigger; reason: string };
+  unavailableOn?: { trigger: AutomationTrigger; reason: MessageDescriptor };
 }
 
 /** Why this field does nothing on this trigger (`AutomationField.unavailableOn`), or null where it applies. */
-export function automationFieldUnavailableReason(field: AutomationField, trigger: AutomationTrigger): string | null {
+export function automationFieldUnavailableReason(field: AutomationField, trigger: AutomationTrigger): MessageDescriptor | null {
   return field.unavailableOn?.trigger === trigger ? field.unavailableOn.reason : null;
 }
 
 export interface AutomationManifestEntry {
-  label: string;
+  label: MessageDescriptor;
   /** One line, under 110 characters, shown in the picker. Pinned by the parity test. */
-  description: string;
+  description: MessageDescriptor;
   icon: string;
   status: 'stable' | 'legacy';
   needs: readonly AutomationNeed[];
@@ -182,7 +199,7 @@ export interface AutomationManifestEntry {
    */
   triggers?: readonly AutomationTrigger[];
   /** Why the type is not offered on a trigger it leaves out of `triggers`. */
-  triggerUnavailableReason?: string;
+  triggerUnavailableReason?: MessageDescriptor;
   /**
    * A row of this type that runs ends its group: the task has left the column,
    * so the rows after it no longer apply. Move to column is the one.
@@ -229,14 +246,14 @@ export const EXIT_GROUP_BUDGET_MS = 60_000;
 export const DEFAULT_SCRIPT_TIMEOUT_MINUTES = 10;
 
 const AUTO_COMMAND_MODE_FIELD_OPTIONS: readonly AutomationFieldOption[] = [
-  { value: 'immediate' satisfies AutoCommandMode, label: 'Run immediately', icon: 'corner-down-left', testId: 'auto-command-mode-immediate' },
-  { value: 'deferred' satisfies AutoCommandMode, label: 'Wait for current turn', icon: 'clock', testId: 'auto-command-mode-deferred' },
+  { value: 'immediate' satisfies AutoCommandMode, label: msg`Run immediately`, icon: 'corner-down-left', testId: 'auto-command-mode-immediate' },
+  { value: 'deferred' satisfies AutoCommandMode, label: msg`Wait for current turn`, icon: 'clock', testId: 'auto-command-mode-deferred' },
 ];
 
 export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry> = {
   send_message: {
-    label: 'Send message to agent',
-    description: 'Sends a message to the agent working on the task.',
+    label: msg`Send message to agent`,
+    description: msg`Sends a message to the agent working on the task.`,
     icon: 'message-square',
     status: 'stable',
     needs: ['agent'],
@@ -245,31 +262,31 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     fields: [
       {
         key: 'message',
-        label: 'Message',
+        label: msg({ message: 'Message', context: 'automation field' }),
         kind: 'textarea',
         // Prose going to an agent, which is the one context where a raw value
         // is correct: the agent reads it as text, not as code.
         escape: 'none',
         templateVariables: true,
-        placeholder: 'Review the latest changes and fix any issues you find',
-        info: "Sent to the task's agent as if you typed it yourself.",
+        placeholder: msg`Review the latest changes and fix any issues you find`,
+        info: msg`Sent to the task's agent as if you typed it yourself.`,
       },
       {
         key: 'mode',
-        label: 'Delivery',
+        label: msg({ message: 'Delivery', context: 'automation field' }),
         kind: 'segmented',
         escape: 'none',
         options: AUTO_COMMAND_MODE_FIELD_OPTIONS,
         defaultValue: 'immediate',
-        info: 'Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends.',
-        unavailableOn: { trigger: 'turn_end', reason: 'At a turn end the turn is over, so it sends at once.' },
+        info: msg`Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends.`,
+        unavailableOn: { trigger: 'turn_end', reason: msg`At a turn end the turn is over, so it sends at once.` },
       },
     ],
   },
 
   run_script: {
-    label: 'Run script',
-    description: 'Runs a shell command and waits for it to finish.',
+    label: msg`Run script`,
+    description: msg`Runs a shell command and waits for it to finish.`,
     icon: 'square-terminal',
     status: 'stable',
     needs: [],
@@ -278,12 +295,12 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     fields: [
       {
         key: 'script',
-        label: 'Script',
+        label: msg({ message: 'Script', context: 'automation field' }),
         kind: 'textarea',
         escape: 'shell',
         templateVariables: true,
         rows: 3,
-        hint: "Runs in the task's worktree, or the project checkout when it has none.",
+        hint: msg`Runs in the task's worktree, or the project checkout when it has none.`,
       },
       {
         // Enforced, never offered. The bound has to exist: enter automations run
@@ -300,10 +317,10 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
         // seconds. A number nobody tunes, that lies on half the rows it appears
         // on, is worse than no number.
         key: 'timeoutMinutes',
-        label: 'Give up after',
+        label: msg`Give up after`,
         kind: 'number',
         escape: 'none',
-        unit: 'minutes',
+        unit: msg({ message: 'minutes', context: 'automation field unit' }),
         min: 1,
         max: 120,
         defaultValue: DEFAULT_SCRIPT_TIMEOUT_MINUTES,
@@ -313,18 +330,18 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
   },
 
   webhook: {
-    label: 'Call webhook',
-    description: 'Sends a request. Retries a network error, 408, 429 or 5xx.',
+    label: msg`Call webhook`,
+    description: msg`Sends a request. Retries a network error, 408, 429 or 5xx.`,
     icon: 'webhook',
     status: 'stable',
     needs: [],
     timeoutMs: 30_000,
     retry: { attempts: 3, on: 'network-or-retryable-status' },
     fields: [
-      { key: 'url', label: 'URL', kind: 'text', escape: 'url', templateVariables: true, placeholder: 'https://hooks.example.com/abc' },
+      { key: 'url', label: msg({ message: 'URL', context: 'automation field' }), kind: 'text', escape: 'url', templateVariables: true, placeholder: 'https://hooks.example.com/abc' },
       {
         key: 'method',
-        label: 'Method',
+        label: msg({ message: 'Method', context: 'automation field' }),
         kind: 'select',
         escape: 'none',
         defaultValue: 'POST',
@@ -336,26 +353,26 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
       },
       {
         key: 'body',
-        label: 'Body',
+        label: msg({ message: 'Body', context: 'automation field' }),
         kind: 'textarea',
         escape: 'json',
         templateVariables: true,
         rows: 3,
-        placeholder: 'Leave empty to send the default JSON payload',
+        placeholder: msg`Leave empty to send the default JSON payload`,
       },
       {
         key: 'headers',
-        label: 'Headers',
+        label: msg({ message: 'Headers', context: 'automation field' }),
         kind: 'headers',
         escape: 'none',
-        hint: 'One per line, as Name: Value.',
+        hint: msg`One per line, as Name: Value.`,
       },
     ],
   },
 
   notify: {
-    label: 'Notify me',
-    description: 'Shows a desktop notification. Clicking it opens the task.',
+    label: msg`Notify me`,
+    description: msg`Shows a desktop notification. Clicking it opens the task.`,
     icon: 'bell',
     status: 'stable',
     needs: [],
@@ -365,14 +382,14 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
       // {{title}}, not {{taskTitle}}: the latter belongs to the separate
       // Shortcut command system in `src/shared/template-vars.ts`, and is one of
       // that system's two name collisions with this one.
-      { key: 'title', label: 'Title', kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{title}}' },
-      { key: 'body', label: 'Body', kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{toColumn}}' },
+      { key: 'title', label: msg({ message: 'Title', context: 'automation field' }), kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{title}}' },
+      { key: 'body', label: msg({ message: 'Body', context: 'automation field' }), kind: 'text', escape: 'none', templateVariables: true, defaultValue: '{{toColumn}}' },
     ],
   },
 
   move_to_column: {
-    label: 'Move to column',
-    description: 'Moves the task to another column, with a message for the agent there.',
+    label: msg`Move to column`,
+    description: msg`Moves the task to another column, with a message for the agent there.`,
     // The Backlog's own Move to Board glyph.
     icon: 'square-arrow-right',
     status: 'stable',
@@ -388,41 +405,41 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
     // The hover tip on the dialog's disabled On task enter and On task exit,
     // so it stays one short line. The why (on enter or exit the task is
     // already moving) is on `triggers` above.
-    triggerUnavailableReason: 'Move to column runs only at a turn end.',
+    triggerUnavailableReason: msg`Move to column runs only at a turn end.`,
     endsGroup: true,
     fields: [
       {
         key: 'targetColumn',
-        label: 'Column',
+        label: msg({ message: 'Column', context: 'automation field' }),
         kind: 'column',
         escape: 'none',
         defaultValue: '',
-        info: "Next column is the first choice: the next column on the task's route, or on the board.",
+        info: msg`Next column is the first choice: the next column on the task's route, or on the board.`,
       },
       {
         key: 'message',
-        label: 'Message',
+        label: msg({ message: 'Message', context: 'automation field' }),
         kind: 'textarea',
         // Prose for the agent in the next column, often a whole review verdict
         // through `{{agentReply}}`. Delivered whole, line breaks kept.
         escape: 'none',
         templateVariables: true,
         optional: true,
-        info: 'Sent to the agent in that column once it is ready.',
+        info: msg`Sent to the agent in that column once it is ready.`,
       },
     ],
   },
 
   spawn_agent: {
-    label: 'Start agent',
-    description: "Legacy. The column's Start an agent here setting does this now.",
+    label: msg`Start agent`,
+    description: msg`Legacy. The column's Start an agent here setting does this now.`,
     icon: 'bot',
     status: 'legacy',
     needs: [],
     timeoutMs: null,
     retry: null,
     fields: [
-      { key: 'promptTemplate', label: 'Prompt', kind: 'textarea', escape: 'none', templateVariables: true, rows: 3 },
+      { key: 'promptTemplate', label: msg({ message: 'Prompt', context: 'automation field' }), kind: 'textarea', escape: 'none', templateVariables: true, rows: 3 },
     ],
   },
 };
@@ -440,7 +457,9 @@ export interface AutomationColumnFacts {
   reportsTurnEnd?: boolean;
 }
 
-export type AutomationRunnability = { ok: true } | { ok: false; reason: string };
+/** A refusal's reason is a descriptor: the renderer shows it with translateText, and
+ *  the engine stores it for kangentic_get_automation_runs with englishText. */
+export type AutomationRunnability = { ok: true } | { ok: false; reason: MessageDescriptor };
 
 /**
  * Can this column run this type on this trigger? Shared by the engine (which
@@ -457,10 +476,10 @@ export function canColumnRun(
   const group = canTriggerRun(column, trigger);
   if (!group.ok) return group;
   if (!isTypeOfferedOnTrigger(type, trigger)) {
-    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? 'Not offered on this trigger.' };
+    return { ok: false, reason: AUTOMATION_MANIFEST[type].triggerUnavailableReason ?? msg`Not offered on this trigger.` };
   }
   if (AUTOMATION_MANIFEST[type].needs.includes('agent') && !column.autoSpawn) {
-    return { ok: false, reason: 'Start an agent here is off.' };
+    return { ok: false, reason: msg`Start an agent here is off.` };
   }
   return { ok: true };
 }
@@ -493,30 +512,32 @@ export function canTriggerRun(column: AutomationColumnFacts, trigger: Automation
   // whoever adds it to come here and say so.
   const systemRole = column.role !== null && NEVER_AUTO_SPAWN_ROLES.has(column.role) ? column.role : null;
   if (trigger === 'enter' && systemRole !== null) {
-    return { ok: false, reason: 'Nothing runs when a task enters To Do or Done.' };
+    return { ok: false, reason: msg`Nothing runs when a task enters To Do or Done.` };
   }
   if (trigger === 'turn_end') {
     // No agent works in To Do or Done, and one that never starts here ends no
     // turn here. An agent that reports no turn end (only terminal silence)
     // cannot tell a finished turn from a quiet compile.
     if (systemRole !== null) {
-      return { ok: false, reason: `Nothing runs at a turn end in ${SYSTEM_COLUMN_LABELS[systemRole]}.` };
+      // The column's name stays English: seeded column names are persisted data.
+      const column = SYSTEM_COLUMN_LABELS[systemRole];
+      return { ok: false, reason: msg`Nothing runs at a turn end in ${{ column }}.` };
     }
     if (!column.autoSpawn) {
-      return { ok: false, reason: 'Start an agent here is off, so no agent ends a turn here.' };
+      return { ok: false, reason: msg`Start an agent here is off, so no agent ends a turn here.` };
     }
     if (column.reportsTurnEnd === false) {
-      return { ok: false, reason: "This column's agent can't report when it finishes a turn." };
+      return { ok: false, reason: msg`This column's agent can't report when it finishes a turn.` };
     }
   }
   return { ok: true };
 }
 
 /** The run log's reason for every row a task with automations disabled skips. */
-export const AUTOMATIONS_DISABLED_REASON = 'Automations are disabled for this task.';
+export const AUTOMATIONS_DISABLED_REASON = msg`Automations are disabled for this task.`;
 
 /** Why a workflow task cannot have its automations disabled: its workflow holds it instead. */
-export const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = 'This task is in a workflow. Pause the workflow to hold it.';
+export const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = msg`This task is in a workflow. Pause the workflow to hold it.`;
 
 /**
  * Can ANY column automation run for this task? The task-scoped half of "will
@@ -535,7 +556,7 @@ export function canTaskRunAutomations(task: Pick<Task, 'automations_disabled'>):
  * a workflow clears the flag. The card menu hides the row on a refusal; the
  * task update IPC and the MCP task tools refuse with it.
  */
-export function automationsSwitchRefusal(task: Pick<Task, 'workflow_id'>): string | null {
+export function automationsSwitchRefusal(task: Pick<Task, 'workflow_id'>): MessageDescriptor | null {
   return task.workflow_id ? AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL : null;
 }
 

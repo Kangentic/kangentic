@@ -20,6 +20,7 @@ import {
   summarizeTaskTable,
 } from '../../src/main/retrieval/answer-tasks';
 import type { KnowledgeGraphNode, KnowledgeGraphProjection } from '../../src/shared/types';
+import { englishText } from '../../src/shared/i18n/english';
 
 function node(overrides: Partial<KnowledgeGraphNode> & { docKey: string }): KnowledgeGraphNode {
   return {
@@ -101,6 +102,27 @@ describe('the prompt table is generated from the catalog', () => {
     // A count of zero was recorded, so it is a number and not a hole.
     expect(conversations.cell(recordedZero)).toBe('0');
     expect(conversations.display(recordedZero)).toBe('0');
+  });
+
+  it('shows a pull request as "PR 417 merged", the state translatable and an unknown one as stored', () => {
+    const pullRequest = KNOWLEDGE_GRAPH_TASK_FIELDS.find((field) => field.key === 'pr');
+    if (!pullRequest) throw new Error('the catalog has no pr field');
+    const displayOf = (prNumber: number | null, prState: string | null): string | null => {
+      const text = pullRequest.display({ prNumber, prState } as KnowledgeGraphTaskFacts);
+      return text === null ? null : englishText(text);
+    };
+
+    expect(displayOf(null, 'merged')).toBeNull();
+    expect(displayOf(417, null)).toBe('PR 417');
+    for (const state of ['open', 'draft', 'merged', 'closed']) {
+      expect(displayOf(417, state)).toBe(`PR 417 ${state}`);
+      // The display and the agent's cell read the same in English.
+      expect(displayOf(417, state)).toBe(pullRequest.cell({ prNumber: 417, prState: state } as KnowledgeGraphTaskFacts));
+    }
+    // A state outside the four the connectors normalize to prints as stored.
+    expect(displayOf(417, 'queued')).toBe('PR 417 queued');
+    // A PR number is an identifier, so no locale groups its digits.
+    expect(displayOf(1417, 'merged')).toBe('PR 1417 merged');
   });
 
   it('survives a facts object with holes in it', () => {

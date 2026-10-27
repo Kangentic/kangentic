@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react';
 import { AlertTriangle, CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDetail, WorkflowSummary } from '../../../shared/types';
-import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
+import { translateText } from '../../i18n/translate';
 import { ActivityMark } from '../ActivityMark';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
@@ -174,7 +175,7 @@ export function WorkflowHeader({
     );
   } else {
     const empty = (detail?.tasks.length ?? 0) === 0;
-    const reason = !hasWorkflow ? 'No workflow to start' : planHeld ? WORKFLOW_REFUSALS.agentWorking : empty ? 'This workflow has no tasks yet.' : null;
+    const reason = !hasWorkflow ? 'No workflow to start' : planHeld ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : empty ? 'This workflow has no tasks yet.' : null;
     lifecycle = (
       <Tooltip label={tipLabel({ disabled: reason !== null, disabledReason: reason, tip: 'Start this workflow' })}>
         <button

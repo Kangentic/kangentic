@@ -1,6 +1,7 @@
 import { useEffect, type CSSProperties, type ReactNode } from 'react';
 import { Activity, Brain, ChartColumn, FileDiff, GitBranch, Globe, Minus, Square, SquareTerminal, X } from 'lucide-react';
 import { POP_OUT_SURFACES } from '../../shared/pop-out';
+import { translateText } from '../i18n/translate';
 import type { PopOutKind } from '../../shared/pop-out';
 import { Tooltip } from '../components/Tooltip';
 import { escapeOwnedElsewhere } from '../utils/escape-ownership';
@@ -36,7 +37,7 @@ const SURFACE_ICONS: Record<PopOutKind, typeof ChartColumn> = {
 export function PopOutWindowFrame({ kind, title, documentTitle, children }: { kind: PopOutKind; title?: string; documentTitle?: string; children: ReactNode }) {
   const meta = POP_OUT_SURFACES[kind];
   const Icon = SURFACE_ICONS[kind];
-  const displayTitle = title ?? meta.title;
+  const displayTitle = title ?? translateText(meta.title);
   const osTitle = documentTitle ?? displayTitle;
 
   useEffect(() => {

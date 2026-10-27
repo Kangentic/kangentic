@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Eraser, Globe, Loader2, Trash2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow } from '../settings-card';
@@ -11,6 +12,7 @@ import { asSentence, describeIpcError } from '../../../lib/ipc-error';
 type ClearState = 'idle' | 'confirming' | 'clearing';
 
 export function BrowserTab({ config }: { config: AppConfig }) {
+  const { t } = useLingui();
   const updateProject = useScopedUpdate('project');
   const browserConfig = config.browser ?? {};
   const enabled = browserConfig.enabled !== false;
@@ -22,13 +24,13 @@ export function BrowserTab({ config }: { config: AppConfig }) {
     try {
       await window.electronAPI.browser.clearStorage();
       useToastStore.getState().addToast({
-        title: 'Browser data cleared',
-        message: 'Reload the browser pane to apply.',
+        title: t`Browser data cleared`,
+        message: t`Reload the browser pane to apply.`,
         variant: 'success',
       });
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't clear browser data",
+        title: t`Couldn't clear browser data`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -58,8 +60,9 @@ export function BrowserTab({ config }: { config: AppConfig }) {
                 // useBrowserUrl's `||` fallthrough treats it as "no default".
                 updateProject({ browser: { defaultUrl: nextDefaultUrl.trim() } });
               }}
+              // i18n-ok: an example URL
               placeholder="http://localhost:5173"
-              ariaLabel="Default browser pane URL"
+              ariaLabel={t`Default browser pane URL`}
               className="placeholder-fg-faint"
             />
           </CardRow>
@@ -71,8 +74,8 @@ export function BrowserTab({ config }: { config: AppConfig }) {
           pane turned off. */}
       <SettingsCard
         icon={<Eraser size={16} />}
-        label="Browser data"
-        description="Cookies and storage the embedded browser keeps."
+        label={t`Browser data`}
+        description={t`Cookies and storage the embedded browser keeps.`}
         searchIds={['browser.clearStorage']}
       >
         <CardRow {...settingProps('browser.clearStorage')}>
@@ -86,20 +89,20 @@ export function BrowserTab({ config }: { config: AppConfig }) {
             {clearState === 'clearing'
               ? <Loader2 size={14} className="animate-spin" />
               : <Trash2 size={14} />}
-            <span>{clearState === 'clearing' ? 'Clearing...' : 'Clear data'}</span>
+            <span>{clearState === 'clearing' ? t`Clearing...` : t`Clear data`}</span>
           </button>
         </CardRow>
       </SettingsCard>
 
       {clearState === 'confirming' && (
         <ConfirmDialog
-          title="Clear browser data?"
+          title={t`Clear browser data?`}
           variant="danger"
-          confirmLabel="Clear data"
+          confirmLabel={t`Clear data`}
           message={
             <>
-              <p>This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites.</p>
-              <p>Saved URLs (per-task overrides and the project default) are kept.</p>
+              <p><Trans>This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites.</Trans></p>
+              <p><Trans>Saved URLs (per-task overrides and the project default) are kept.</Trans></p>
             </>
           }
           onConfirm={() => { void handleClearConfirmed(); }}

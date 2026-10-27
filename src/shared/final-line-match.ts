@@ -34,14 +34,21 @@
  * (`scripts/eval-condition-check.mjs`) and the tests all match through this
  * one function, so they cannot disagree about what a line means.
  */
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 
-/** The Text match field's placeholder, and the line its wildcard examples are built on. */
+/**
+ * The Text match field's placeholder, and the line its wildcard examples are
+ * built on. English: it stands for a line the agent writes, and the examples
+ * are matched against it.
+ */
 export const TEXT_MATCH_PLACEHOLDER = 'Ready for review';
 
 /** One row of the field's wildcard tip: a pattern, what it means, and a line it matches. */
 export interface TextMatchWildcardExample {
   pattern: string;
-  rule: string;
+  /** What the pattern means. Resolve it where it shows. */
+  rule: MessageDescriptor;
   /** A line the pattern matches other than the placeholder itself, or null. */
   sample: string | null;
 }
@@ -52,17 +59,18 @@ export interface TextMatchWildcardExample {
  * can hold each pattern to its sample through the real matcher.
  */
 export const TEXT_MATCH_WILDCARD_EXAMPLES: readonly TextMatchWildcardExample[] = [
-  { pattern: TEXT_MATCH_PLACEHOLDER, rule: 'Exactly this line', sample: null },
-  { pattern: 'Ready for *', rule: 'Starts with it', sample: 'Ready for testing' },
-  { pattern: '* for review', rule: 'Ends with it', sample: 'The fix is ready for review' },
-  { pattern: '*review*', rule: 'Contains it', sample: 'Review passed' },
+  { pattern: TEXT_MATCH_PLACEHOLDER, rule: msg`Exactly this line`, sample: null },
+  { pattern: 'Ready for *', rule: msg`Starts with it`, sample: 'Ready for testing' },
+  { pattern: '* for review', rule: msg`Ends with it`, sample: 'The fix is ready for review' },
+  { pattern: '*review*', rule: msg`Contains it`, sample: 'Review passed' },
 ];
 
 /**
  * Why Text match is unavailable on enter and exit. One line: it is the hover
- * tip on the dialog's disabled option, and the MCP and file refusals reuse it.
+ * tip on the dialog's disabled option (`translateText`), and the MCP and file
+ * refusals reuse it in English (`englishText`).
  */
-export const TEXT_MATCH_UNAVAILABLE_REASON = "Text match reads the agent's last message, so it runs on agent turn end only.";
+export const TEXT_MATCH_UNAVAILABLE_REASON = msg`Text match reads the agent's last message, so it runs on agent turn end only.`;
 
 /** The reason when there is no line to read: no reply, or one with no words. */
 export const TEXT_MATCH_NO_REPLY_REASON = 'The turn ended without a message Kangentic could read.';

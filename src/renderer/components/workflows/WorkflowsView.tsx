@@ -3,7 +3,8 @@ import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/base.css';
 import { Plus } from 'lucide-react';
 import type { Task, WorkflowViewTask } from '../../../shared/types';
-import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
+import { translateText } from '../../i18n/translate';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -448,7 +449,7 @@ export function WorkflowsView() {
                 onMoveCards={moveCards}
                 onLink={link}
                 visibleKeys={visibleKeys}
-                addTaskRefusal={planHeld ? WORKFLOW_REFUSALS.agentWorking : null}
+                addTaskRefusal={planHeld ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : null}
                 onAddTask={() => setDialog({ kind: 'addTask' })}
                 onAutoLayout={() => { void setPositions(null); }}
                 onCardContextMenu={handleCardContextMenu}

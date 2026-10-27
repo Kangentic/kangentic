@@ -46,6 +46,7 @@ import type {
 import { CARD_CLASS, CARD_SURFACE_CLASS, GroupLabel, SectionHeader } from './panel-card';
 import { KnowledgeGraphIndexCard } from './KnowledgeGraphIndexCard';
 import { TASK_OUTCOME_LABELS, type KnowledgeGraphTaskOutcome } from '../../../shared/knowledge-graph-task-fields';
+import { translateText } from '../../i18n/translate';
 
 /**
  * How far back a conversation's last activity may be. Three choices, to line up
@@ -427,7 +428,7 @@ export function KnowledgeGraphControls({
                   ...OUTCOME_ORDER.map((outcome) => {
                     const selectable = facetAvailability.outcomes.includes(outcome);
                     const present = facetAvailability.presentOutcomes.includes(outcome);
-                    const label = TASK_OUTCOME_LABELS[outcome];
+                    const label = translateText(TASK_OUTCOME_LABELS[outcome]);
                     let disabledReason: string | undefined;
                     if (!present) disabledReason = `No ${label.toLowerCase()} tasks on this map`;
                     else if (!selectable) disabledReason = `Every task on this map is ${label.toLowerCase()}`;

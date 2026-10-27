@@ -16,6 +16,7 @@ import type {
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
+import { englishText } from '../../shared/i18n/english';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
 import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput } from '../automations/condition-check/condition-prompt';
@@ -259,7 +260,7 @@ export class TransitionEngine {
     // The task's own switch, read fresh rather than from the caller's object:
     // a turn end's object predates its paint wait and Condition check.
     const runnable = canTaskRunAutomations(this.taskRepo.getById(task.id) ?? task);
-    if (!runnable.ok) return this.recordTaskHeld(automations, task, column, runnable.reason, options.alreadyDelivered);
+    if (!runnable.ok) return this.recordTaskHeld(automations, task, column, englishText(runnable.reason), options.alreadyDelivered);
 
     return this.runAutomationGroup(automations, task, column, trigger, options);
   }

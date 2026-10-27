@@ -3,6 +3,9 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type D
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../../stores/board-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
@@ -30,33 +33,44 @@ function getSortableId(action: ShortcutEditState, index: number): string {
   return action.id ?? `__new_${index}`;
 }
 
-const PRESETS: { label: string; action: Omit<ShortcutConfig, 'id'>; platform?: string | string[]; category: string }[] = [
+type PresetCategory = 'editors' | 'git' | 'files-and-terminal';
+
+/** The Presets menu's category headers, translated where the menu renders. */
+const PRESET_CATEGORY_LABELS: Record<PresetCategory, MessageDescriptor> = {
+  editors: msg`Editors`,
+  git: msg`Git`,
+  'files-and-terminal': msg`Files & Terminal`,
+};
+
+// Each preset's `label` and `action.label` are app names, and `action.label` is
+// written into the user's config, so both stay English in every language.
+const PRESETS: { label: string; action: Omit<ShortcutConfig, 'id'>; platform?: string | string[]; category: PresetCategory }[] = [
   // Editors (cross-platform unless noted)
-  { label: 'VS Code', category: 'Editors', action: { label: 'VS Code', icon: 'code', command: 'code "{{cwd}}"', display: 'both' } },
-  { label: 'Cursor', category: 'Editors', action: { label: 'Cursor', icon: 'code', command: 'cursor "{{cwd}}"', display: 'both' } },
-  { label: 'Zed', category: 'Editors', action: { label: 'Zed', icon: 'code', command: 'zed "{{cwd}}"' }, platform: ['darwin', 'linux'] },
-  { label: 'Sublime Text', category: 'Editors', action: { label: 'Sublime Text', icon: 'code', command: 'subl "{{cwd}}"' } },
-  { label: 'WebStorm', category: 'Editors', action: { label: 'WebStorm', icon: 'code', command: 'webstorm "{{cwd}}"' } },
-  { label: 'IntelliJ IDEA', category: 'Editors', action: { label: 'IntelliJ IDEA', icon: 'code', command: 'idea "{{cwd}}"' } },
-  { label: 'Visual Studio', category: 'Editors', action: { label: 'Visual Studio', icon: 'code', command: 'for /f "usebackq tokens=*" %i in (`"C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -property productPath`) do start "" "%i" "{{cwd}}"', display: 'both' }, platform: 'win32' },
+  { label: 'VS Code', category: 'editors', action: { label: 'VS Code', icon: 'code', command: 'code "{{cwd}}"', display: 'both' } },
+  { label: 'Cursor', category: 'editors', action: { label: 'Cursor', icon: 'code', command: 'cursor "{{cwd}}"', display: 'both' } },
+  { label: 'Zed', category: 'editors', action: { label: 'Zed', icon: 'code', command: 'zed "{{cwd}}"' }, platform: ['darwin', 'linux'] },
+  { label: 'Sublime Text', category: 'editors', action: { label: 'Sublime Text', icon: 'code', command: 'subl "{{cwd}}"' } },
+  { label: 'WebStorm', category: 'editors', action: { label: 'WebStorm', icon: 'code', command: 'webstorm "{{cwd}}"' } },
+  { label: 'IntelliJ IDEA', category: 'editors', action: { label: 'IntelliJ IDEA', icon: 'code', command: 'idea "{{cwd}}"' } },
+  { label: 'Visual Studio', category: 'editors', action: { label: 'Visual Studio', icon: 'code', command: 'for /f "usebackq tokens=*" %i in (`"C:\\Program Files (x86)\\Microsoft Visual Studio\\Installer\\vswhere.exe" -latest -property productPath`) do start "" "%i" "{{cwd}}"', display: 'both' }, platform: 'win32' },
 
   // Git (cross-platform unless noted). GitHub Desktop carries no icon: lucide ships no brand
   // glyphs, so it takes the Zap default its old `github` name always fell back to.
-  { label: 'GitHub Desktop', category: 'Git', action: { label: 'GitHub Desktop', command: 'github "{{cwd}}"' }, platform: ['win32', 'darwin'] },
-  { label: 'Fork', category: 'Git', action: { label: 'Fork', icon: 'git-fork', command: 'fork open "{{cwd}}"' }, platform: 'win32' },
-  { label: 'Fork', category: 'Git', action: { label: 'Fork', icon: 'git-fork', command: 'open -a Fork "{{cwd}}"' }, platform: 'darwin' },
-  { label: 'GitKraken', category: 'Git', action: { label: 'GitKraken', icon: 'git-branch', command: 'gitkraken -p "{{cwd}}"' } },
-  { label: 'TortoiseGit Log', category: 'Git', action: { label: 'TortoiseGit Log', icon: 'git-branch', command: 'TortoiseGitProc /command:log /path:"{{cwd}}"' }, platform: 'win32' },
-  { label: 'TortoiseGit Commit', category: 'Git', action: { label: 'TortoiseGit Commit', icon: 'git-commit-horizontal', command: 'TortoiseGitProc /command:commit /path:"{{cwd}}"' }, platform: 'win32' },
+  { label: 'GitHub Desktop', category: 'git', action: { label: 'GitHub Desktop', command: 'github "{{cwd}}"' }, platform: ['win32', 'darwin'] },
+  { label: 'Fork', category: 'git', action: { label: 'Fork', icon: 'git-fork', command: 'fork open "{{cwd}}"' }, platform: 'win32' },
+  { label: 'Fork', category: 'git', action: { label: 'Fork', icon: 'git-fork', command: 'open -a Fork "{{cwd}}"' }, platform: 'darwin' },
+  { label: 'GitKraken', category: 'git', action: { label: 'GitKraken', icon: 'git-branch', command: 'gitkraken -p "{{cwd}}"' } },
+  { label: 'TortoiseGit Log', category: 'git', action: { label: 'TortoiseGit Log', icon: 'git-branch', command: 'TortoiseGitProc /command:log /path:"{{cwd}}"' }, platform: 'win32' },
+  { label: 'TortoiseGit Commit', category: 'git', action: { label: 'TortoiseGit Commit', icon: 'git-commit-horizontal', command: 'TortoiseGitProc /command:commit /path:"{{cwd}}"' }, platform: 'win32' },
 
   // Files & Terminal (platform-specific)
-  { label: 'File Explorer', category: 'Files & Terminal', action: { label: 'File Explorer', icon: 'folder-open', command: 'explorer "{{cwd}}"' }, platform: 'win32' },
-  { label: 'Finder', category: 'Files & Terminal', action: { label: 'Finder', icon: 'folder-open', command: 'open "{{cwd}}"' }, platform: 'darwin' },
-  { label: 'File Manager', category: 'Files & Terminal', action: { label: 'File Manager', icon: 'folder-open', command: 'xdg-open "{{cwd}}"' }, platform: 'linux' },
-  { label: 'Windows Terminal', category: 'Files & Terminal', action: { label: 'Windows Terminal', icon: 'terminal', command: 'wt -d "{{cwd}}"' }, platform: 'win32' },
-  { label: 'Terminal', category: 'Files & Terminal', action: { label: 'Terminal', icon: 'terminal', command: 'open -a Terminal "{{cwd}}"' }, platform: 'darwin' },
-  { label: 'iTerm2', category: 'Files & Terminal', action: { label: 'iTerm2', icon: 'terminal', command: 'open -a iTerm "{{cwd}}"' }, platform: 'darwin' },
-  { label: 'Alacritty', category: 'Files & Terminal', action: { label: 'Alacritty', icon: 'terminal', command: 'alacritty --working-directory "{{cwd}}"' } },
+  { label: 'File Explorer', category: 'files-and-terminal', action: { label: 'File Explorer', icon: 'folder-open', command: 'explorer "{{cwd}}"' }, platform: 'win32' },
+  { label: 'Finder', category: 'files-and-terminal', action: { label: 'Finder', icon: 'folder-open', command: 'open "{{cwd}}"' }, platform: 'darwin' },
+  { label: 'File Manager', category: 'files-and-terminal', action: { label: 'File Manager', icon: 'folder-open', command: 'xdg-open "{{cwd}}"' }, platform: 'linux' },
+  { label: 'Windows Terminal', category: 'files-and-terminal', action: { label: 'Windows Terminal', icon: 'terminal', command: 'wt -d "{{cwd}}"' }, platform: 'win32' },
+  { label: 'Terminal', category: 'files-and-terminal', action: { label: 'Terminal', icon: 'terminal', command: 'open -a Terminal "{{cwd}}"' }, platform: 'darwin' },
+  { label: 'iTerm2', category: 'files-and-terminal', action: { label: 'iTerm2', icon: 'terminal', command: 'open -a iTerm "{{cwd}}"' }, platform: 'darwin' },
+  { label: 'Alacritty', category: 'files-and-terminal', action: { label: 'Alacritty', icon: 'terminal', command: 'alacritty --working-directory "{{cwd}}"' } },
 ];
 
 function getFilteredPresets(): typeof PRESETS {
@@ -103,6 +117,7 @@ function SortableActionItem({
   onOpenIconPicker,
   onCloseIconPicker,
 }: SortableActionItemProps) {
+  const { t } = useLingui();
   const {
     attributes,
     listeners,
@@ -145,20 +160,22 @@ function SortableActionItem({
         </div>
         <ShortcutGlyph name={action.icon} size={16} className="text-fg-muted flex-shrink-0" />
         <span className="text-sm text-fg font-medium truncate flex-1">{action.label}</span>
-        <Tooltip label={action.source === 'team' ? 'Shared with team via kangentic.json' : 'Personal shortcut in kangentic.local.json'}>
+        <Tooltip label={action.source === 'team' ? t`Shared with team via kangentic.json` : t`Personal shortcut in kangentic.local.json`}>
           <span
             className={`text-[11px] font-medium px-1.5 py-0.5 rounded ${action.source === 'team' ? 'bg-accent/15 text-accent border border-accent/25' : 'bg-fg-disabled/15 text-fg-muted border border-fg-disabled/25'}`}
           >
-            {action.source === 'team' ? 'Team' : 'Personal'}
+            {action.source === 'team'
+              ? t({ message: 'Team', context: 'shortcut scope' })
+              : t({ message: 'Personal', context: 'shortcut scope' })}
           </span>
         </Tooltip>
         <Tooltip
           label={
             !action.display || action.display === 'menu'
-              ? 'Appears in the task detail kebab menu only'
+              ? t`Appears in the task detail kebab menu only`
               : action.display === 'both'
-                ? 'Appears in both the header bar and kebab menu'
-                : 'Appears in the task detail header bar only'
+                ? t`Appears in both the header bar and kebab menu`
+                : t`Appears in the task detail header bar only`
           }
         >
           <span
@@ -168,14 +185,18 @@ function SortableActionItem({
                 : 'bg-surface-hover/80 text-fg-faint border-edge-input/50'
             }`}
           >
-            {!action.display || action.display === 'menu' ? 'Menu' : action.display === 'both' ? 'Both' : 'Header'}
+            {!action.display || action.display === 'menu'
+              ? t({ message: 'Menu', context: 'shortcut display' })
+              : action.display === 'both'
+                ? t({ message: 'Both', context: 'shortcut display' })
+                : t({ message: 'Header', context: 'shortcut display' })}
           </span>
         </Tooltip>
-        <Tooltip label="Remove">
+        <Tooltip label={t`Remove`}>
           <button
             onClick={(event) => { event.stopPropagation(); onRemove(); }}
             className="p-1 text-fg-disabled hover:text-red-400 transition-colors"
-            aria-label="Remove"
+            aria-label={t`Remove`}
           >
             <Trash2 size={14} />
           </button>
@@ -188,7 +209,7 @@ function SortableActionItem({
           {/* Icon + Label on same row */}
           <div className="flex gap-3">
             <div className="flex-shrink-0">
-              <label className="text-xs text-fg-muted mb-1 block">Icon</label>
+              <label className="text-xs text-fg-muted mb-1 block"><Trans>Icon</Trans></label>
               <button
                 type="button"
                 onClick={onOpenIconPicker}
@@ -198,13 +219,14 @@ function SortableActionItem({
               >
                 <ShortcutGlyph name={action.icon} size={14} strokeWidth={1.75} className="text-fg-muted flex-shrink-0" />
                 <span className="text-xs text-fg-tertiary truncate">
+                  {/* i18n-ok: an icon's registry name */}
                   {action.icon ?? 'zap'}
                 </span>
                 <ChevronRight size={14} className="text-fg-faint group-hover:text-fg-muted flex-shrink-0 ml-auto" />
               </button>
             </div>
             <div className="flex-1 min-w-0">
-              <label className="text-xs text-fg-muted mb-1 block">Label</label>
+              <label className="text-xs text-fg-muted mb-1 block"><Trans context="noun">Label</Trans></label>
               <input
                 type="text"
                 value={action.label}
@@ -227,10 +249,11 @@ function SortableActionItem({
 
           <div>
             <div className="flex items-center gap-1.5 mb-1">
-              <label className="text-xs text-fg-muted">Command</label>
+              <label className="text-xs text-fg-muted"><Trans context="noun">Command</Trans></label>
               <div className="relative group/tip">
                 <Info size={12} className="text-fg-disabled cursor-help" />
                 <div className="absolute top-full left-0 mt-1.5 px-2.5 py-1.5 bg-surface-raised border border-edge-input rounded-md shadow-xl text-[11px] text-fg-tertiary whitespace-nowrap opacity-0 pointer-events-none group-hover/tip:opacity-100 transition-opacity z-50">
+                  {/* i18n-ok: template keywords */}
                   {'{{cwd}}'} {'{{branchName}}'} {'{{taskTitle}}'} {'{{projectPath}}'}
                 </div>
               </div>
@@ -240,6 +263,7 @@ function SortableActionItem({
               value={action.command}
               onChange={(event) => onUpdate({ command: event.target.value })}
               onBlur={onCommitEdit}
+              // i18n-ok: an example shell command
               placeholder='code "{{cwd}}"'
               className={`${INPUT_CLASS} font-mono text-xs placeholder-fg-faint`}
               data-testid="shortcut-command"
@@ -248,31 +272,31 @@ function SortableActionItem({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-fg-muted mb-1 block">Display</label>
+              <label className="text-xs text-fg-muted mb-1 block"><Trans context="noun">Display</Trans></label>
               <SegmentedControl<ShortcutDisplay>
                 options={[
-                  { value: 'both', label: 'Both', tip: 'In the task window header and its menu' },
-                  { value: 'header', label: 'Header', tip: 'In the task window header only' },
-                  { value: 'menu', label: 'Menu', tip: 'In the task window menu only' },
+                  { value: 'both', label: t({ message: 'Both', context: 'shortcut display' }), tip: t`In the task window header and its menu` },
+                  { value: 'header', label: t({ message: 'Header', context: 'shortcut display' }), tip: t`In the task window header only` },
+                  { value: 'menu', label: t({ message: 'Menu', context: 'shortcut display' }), tip: t`In the task window menu only` },
                 ]}
                 value={action.display ?? 'both'}
                 onChange={(display) => onUpdateAndSave({ display })}
-                ariaLabel="Display"
+                ariaLabel={t({ message: 'Display', context: 'noun' })}
                 testId="shortcut-display"
                 quiet
                 fullWidth
               />
             </div>
             <div>
-              <label className="text-xs text-fg-muted mb-1 block">Scope</label>
+              <label className="text-xs text-fg-muted mb-1 block"><Trans>Scope</Trans></label>
               <SegmentedControl
                 options={[
-                  { value: 'team', label: 'Team', tip: 'Shared with the team in kangentic.json' },
-                  { value: 'local', label: 'Personal', tip: 'Only yours, in kangentic.local.json' },
+                  { value: 'team', label: t({ message: 'Team', context: 'shortcut scope' }), tip: t`Shared with the team in kangentic.json` },
+                  { value: 'local', label: t({ message: 'Personal', context: 'shortcut scope' }), tip: t`Only yours, in kangentic.local.json` },
                 ]}
                 value={action.source}
                 onChange={(newSource) => onUpdateAndSave({ source: newSource })}
-                ariaLabel="Scope"
+                ariaLabel={t`Scope`}
                 testId="shortcut-scope"
                 quiet
                 fullWidth
@@ -288,6 +312,7 @@ function SortableActionItem({
 // --- Main tab component ---
 
 export function ShortcutsTab() {
+  const { t, i18n } = useLingui();
   const shortcuts = useBoardStore((state) => state.shortcuts);
   // A local editing copy of the store's shortcuts, re-copied whenever the store
   // array changes. Done during render against the array last copied (React's
@@ -356,7 +381,7 @@ export function ShortcutsTab() {
       }
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't save shortcuts",
+        title: t`Couldn't save shortcuts`,
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -365,7 +390,7 @@ export function ShortcutsTab() {
     // Reload directly instead of waiting for boardConfig:changed event
     // (which would trigger full column reconciliation unnecessarily)
     await useBoardStore.getState().loadShortcuts();
-  }, [shortcuts]);
+  }, [shortcuts, t]);
 
   const updateAndSave = useCallback((index: number, partial: Partial<ShortcutEditState>) => {
     const updated = localActions.map((action, mapIndex) =>
@@ -377,6 +402,7 @@ export function ShortcutsTab() {
 
   const addAction = useCallback((preset?: Omit<ShortcutConfig, 'id'>) => {
     const newAction: ShortcutEditState = {
+      // Stays English, like the presets' labels: it is written into the config.
       label: preset?.label ?? 'New Action',
       icon: preset?.icon ?? 'zap',
       command: preset?.command ?? '',
@@ -446,12 +472,12 @@ export function ShortcutsTab() {
     <div className="space-y-4">
       <SettingsCard
         icon={<Zap size={16} />}
-        label="Shortcuts"
-        description="Custom commands in the task window's header and menu."
+        label={t`Shortcuts`}
+        description={t`Custom commands in the task window's header and menu.`}
         searchIds={['shortcuts']}
       >
       {localActions.length === 0 && (
-        <CardTile className="text-sm text-fg-faint">No shortcuts configured. Add one below or choose a preset.</CardTile>
+        <CardTile className="text-sm text-fg-faint"><Trans>No shortcuts configured. Add one below or choose a preset.</Trans></CardTile>
       )}
 
       <DndContext key={hmrGeneration} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -494,7 +520,7 @@ export function ShortcutsTab() {
           data-testid="add-shortcut"
         >
           <Plus size={14} />
-          Add shortcut
+          <Trans>Add shortcut</Trans>
         </Pill>
 
         <div className="relative" ref={presetsRef}>
@@ -505,7 +531,7 @@ export function ShortcutsTab() {
             className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
             data-testid="shortcut-presets"
           >
-            Presets
+            <Trans>Presets</Trans>
             <ChevronDown size={12} />
           </Pill>
           <OverlayPopover
@@ -528,7 +554,7 @@ export function ShortcutsTab() {
                   <React.Fragment key={`${preset.label}-${preset.platform ?? 'all'}-${index}`}>
                     {showHeader && (
                       <div className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-fg-disabled ${index > 0 ? 'mt-1 border-t border-edge-input/50 pt-1.5' : ''}`}>
-                        {preset.category}
+                        {i18n._(PRESET_CATEGORY_LABELS[preset.category])}
                       </div>
                     )}
                     <button

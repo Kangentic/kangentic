@@ -1,4 +1,5 @@
 import { Bell, MessageSquare } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import type { AppConfig, NotificationConfig } from '../../../../shared/types';
 import { INPUT_CLASS, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardChoiceRow } from '../settings-card';
@@ -22,6 +23,7 @@ function NotifyChannelRow({ eventKey, config, searchId }: {
   config: NotificationConfig;
   searchId: string;
 }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   const value = notifyChannelValue(config.desktop[eventKey], config.toasts[eventKey]);
   const props = settingProps(searchId);
@@ -29,10 +31,10 @@ function NotifyChannelRow({ eventKey, config, searchId }: {
     <CardChoiceRow
       {...props}
       options={[
-        { value: 'off', label: 'Off', testId: `notify-channel-${eventKey}-off` },
-        { value: 'desktop', label: 'Desktop', testId: `notify-channel-${eventKey}-desktop` },
-        { value: 'toast', label: 'Toast', testId: `notify-channel-${eventKey}-toast` },
-        { value: 'both', label: 'Both', testId: `notify-channel-${eventKey}-both` },
+        { value: 'off', label: t({ message: 'Off', context: 'notification channel' }), testId: `notify-channel-${eventKey}-off` },
+        { value: 'desktop', label: t({ message: 'Desktop', context: 'notification channel' }), testId: `notify-channel-${eventKey}-desktop` },
+        { value: 'toast', label: t({ message: 'Toast', context: 'notification channel' }), testId: `notify-channel-${eventKey}-toast` },
+        { value: 'both', label: t({ message: 'Both', context: 'notification channel' }), testId: `notify-channel-${eventKey}-both` },
       ]}
       value={value}
       onChange={(selected) => {
@@ -51,13 +53,14 @@ function NotifyChannelRow({ eventKey, config, searchId }: {
 }
 
 export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   return (
     <div className="space-y-4">
       <SettingsCard
         icon={<Bell size={16} />}
-        label="Events"
-        description="Where each kind of alert shows up."
+        label={t`Events`}
+        description={t`Where each kind of alert shows up.`}
         searchIds={['notifications.onAgentIdle', 'notifications.onAgentCrash', 'notifications.onPlanComplete', 'notifications.onWorkflowComplete', 'notifications.onWorkflowStalled', 'notifications.onSpawnStalled']}
       >
         <NotifyChannelRow
@@ -94,8 +97,8 @@ export function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) 
 
       <SettingsCard
         icon={<MessageSquare size={16} />}
-        label="Toasts"
-        description="How long toasts stay up and how many stack at once."
+        label={t`Toasts`}
+        description={t`How long toasts stay up and how many stack at once.`}
         searchIds={['notifications.toasts.durationSeconds', 'notifications.toasts.maxCount']}
       >
         <CardRow {...settingProps('notifications.toasts.durationSeconds')}>

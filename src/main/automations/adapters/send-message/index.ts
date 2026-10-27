@@ -1,6 +1,7 @@
 import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { englishI18n } from '../../../../shared/i18n/english';
 import type { AutomationAdapter } from '../../shared/automation-adapter';
 
 /**
@@ -20,7 +21,8 @@ export const sendMessageAdapter: AutomationAdapter = {
   // Delegated so the row sentence has ONE definition: the renderer draws it
   // on every row in Board setup and cannot import this file.
   describe(config: AutomationConfig): string {
-    return describeAutomation('send_message', config);
+    // The run log's line, which an agent reads: English.
+    return describeAutomation('send_message', config, englishI18n);
   },
 
   /**

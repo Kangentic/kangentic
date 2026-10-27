@@ -38,7 +38,11 @@ import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repo
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { SENT_WITH_THE_MOVE } from '../../src/main/automations/automation-runner';
-import { AUTOMATIONS_DISABLED_REASON } from '../../src/shared/automation-manifest';
+import { AUTOMATIONS_DISABLED_REASON as AUTOMATIONS_DISABLED_REASON_DESCRIPTOR } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
+
+/** The English the engine stores and an agent reads; the constant is a descriptor. */
+const AUTOMATIONS_DISABLED_REASON = englishText(AUTOMATIONS_DISABLED_REASON_DESCRIPTOR);
 import type { AutomationTrigger, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 
 /** A run's start before every move a test writes, which are stamped now. */

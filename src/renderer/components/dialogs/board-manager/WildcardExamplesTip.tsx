@@ -2,6 +2,7 @@ import { Fragment, type ReactElement } from 'react';
 import { Info } from 'lucide-react';
 import { Tooltip } from '../../Tooltip';
 import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-match';
+import { translateText } from '../../../i18n/translate';
 
 /**
  * The info icon after the Text match hint, and the rich tip it opens: what `*`
@@ -47,7 +48,7 @@ function WildcardExamplesGrid(): ReactElement {
             {example.pattern}
           </code>
           <span className="text-xs text-fg-tertiary">
-            {example.rule}
+            {translateText(example.rule)}
             {example.sample !== null && <span className="text-tooltip-rich-muted">, as in {example.sample}</span>}
           </span>
         </Fragment>
@@ -58,7 +59,7 @@ function WildcardExamplesGrid(): ReactElement {
 
 /** The tip as plain text, for a screen reader. */
 function wildcardExamplesText(): string {
-  const rows = TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => `${example.pattern}: ${example.rule.toLowerCase()}`
+  const rows = TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => `${example.pattern}: ${translateText(example.rule).toLowerCase()}`
     + (example.sample !== null ? `, as in ${example.sample}` : ''));
   return `Wildcard examples. ${rows.join('. ')}.`;
 }

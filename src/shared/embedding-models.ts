@@ -1,3 +1,5 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ModelLicenseId } from './model-licenses';
 
 /**
@@ -51,11 +53,11 @@ export interface EmbeddingModelDef {
    *  installed user; a pin makes what ships what downloads. */
   revision: string;
   /**
-   * The Search quality control's label ('Best' | 'Light'), the same words
+   * The Search quality control's label (Best or Light), the same messages
    * dictation's Mode uses. The concrete model name + size live in the status
-   * row, not the control.
+   * row, not the control. Resolved where it shows (`translateText`).
    */
-  tierLabel: string;
+  tierLabel: MessageDescriptor;
   /** Plain model name for the status row (the row appends the size). */
   displayName: string;
   dimensions: number;
@@ -114,8 +116,6 @@ export interface EmbeddingModelDef {
    * vectors never share it (`syncVecTable`).
    */
   modelTag: string;
-  /** One-line tier blurb. */
-  blurb: string;
 }
 
 // bge-* v1.5 retrieval query instruction (documented on the model cards).
@@ -128,7 +128,7 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     tier: 'best',
     hfId: 'onnx-community/granite-embedding-english-r2-ONNX',
     revision: '2a49b9c076aa627b14bc528b36b67462808ccc23',
-    tierLabel: 'Best',
+    tierLabel: msg({ message: 'Best', context: 'quality preset' }),
     displayName: 'Granite English R2',
     dimensions: 768,
     dtype: 'q8',
@@ -141,7 +141,6 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     // genuine ones (bge-small at its 0.52: 13.7% and 79.0%).
     noiseFloor: 0.66,
     modelTag: 'granite-r2@q8-cls',
-    blurb: 'Most accurate, on prose and on code. 768-dim vectors.',
   },
   {
     id: 'bge-small',
@@ -150,7 +149,7 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     // Not pinned: it predates the October 2026 refresh, as the dictation
     // models on `main` do, and an installed copy already came from `main`.
     revision: 'main',
-    tierLabel: 'Light',
+    tierLabel: msg({ message: 'Light', context: 'quality preset' }),
     displayName: 'bge small',
     dimensions: 384,
     dtype: 'q8',
@@ -164,7 +163,6 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     noiseFloor: 0.52,
     // `-cls` suffix: bge now CLS-pools (was mean); the bump re-embeds stale indexes.
     modelTag: 'bge-small@q8-cls',
-    blurb: 'Smallest and fastest. Good for quick on-device recall.',
   },
 ];
 

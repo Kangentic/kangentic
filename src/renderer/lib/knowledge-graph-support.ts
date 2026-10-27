@@ -11,6 +11,7 @@
  */
 
 import { embeddingRuntimeGapName, isEmbeddingRuntimeSupported } from '../../shared/embedding-runtime';
+import { translateText } from '../i18n/translate';
 import type { AppConfig } from '../../shared/types';
 
 /** The tag the Knowledge Graph card, the map's stand-in card and the Index
@@ -29,5 +30,5 @@ export function knowledgeGraphOn(config: AppConfig['knowledgeGraph'] | undefined
 
 /** The sentence that says why it cannot run here. */
 export function knowledgeGraphUnsupportedLine(): string {
-  return `The local model does not run on ${embeddingRuntimeGapName(window.electronAPI.platform, window.electronAPI.arch)}.`;
+  return `The local model does not run on ${translateText(embeddingRuntimeGapName(window.electronAPI.platform, window.electronAPI.arch))}.`;
 }

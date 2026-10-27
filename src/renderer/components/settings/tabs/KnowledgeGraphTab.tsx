@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Database, RotateCcw, Brain } from 'lucide-react';
+import type { I18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard, CardChoiceRow, CardTile, CardStatusRow, CardSourceList, CardLinkRow, type CardSourceLineProps } from '../settings-card';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
@@ -18,6 +21,7 @@ import type {
   AppConfig, DeepPartial, KnowledgeGraphStatus, KnowledgeGraphAcceleration,
 } from '../../../../shared/types';
 import { asSentence, describeIpcError } from '../../../lib/ipc-error';
+import { translateText } from '../../../i18n/translate';
 
 /**
  * Settings > Knowledge Graph (tab id `knowledgeGraph`). GLOBAL/shared scope (below the
@@ -32,22 +36,25 @@ import { asSentence, describeIpcError } from '../../../lib/ipc-error';
 
 /** A platform-level note for the semantic layer (only when it cannot run
  *  here). The model card carries the ready/downloading state. */
-function semanticPlatformNote(status: KnowledgeGraphStatus | null): string | null {
+function semanticPlatformNote(status: KnowledgeGraphStatus | null, i18n: I18n): string | null {
   if (!status) return null;
   if (status.semantic === 'lexical') {
-    return status.vecError
-      ? `Vector search is unavailable - showing keyword matches. (${status.vecError})`
-      : 'Vector search is unavailable on this platform - showing keyword matches.';
+    const vecError = status.vecError;
+    return vecError
+      ? i18n._(msg`Vector search is unavailable - showing keyword matches. (${vecError})`)
+      : i18n._(msg`Vector search is unavailable on this platform - showing keyword matches.`);
   }
   if (status.semantic === 'error') {
-    return status.workerError
-      ? `The local model is unavailable - showing keyword matches. (${status.workerError})`
-      : 'The local model is unavailable - showing keyword matches.';
+    const workerError = status.workerError;
+    return workerError
+      ? i18n._(msg`The local model is unavailable - showing keyword matches. (${workerError})`)
+      : i18n._(msg`The local model is unavailable - showing keyword matches.`);
   }
   return null;
 }
 
 export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   // Default on when unset (matches DEFAULT_CONFIG.knowledgeGraph.indexingEnabled).
   const indexingEnabled = globalConfig.knowledgeGraph?.indexingEnabled ?? true;
@@ -131,7 +138,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
     };
   }, [indexingEnabled, semanticEnabled]);
 
-  const platformNote = semanticPlatformNote(status);
+  const platformNote = semanticPlatformNote(status, i18n);
   const model = semanticEnabled ? status?.model ?? null : null;
 
   // One Rebuild for every source in every project. It asks first only when it
@@ -164,7 +171,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
       // and says so rather than leaving a click that did nothing.
       .catch((error: unknown) => {
         useToastStore.getState().addToast({
-          title: "Rebuild didn't start",
+          title: t`Rebuild didn't start`,
           message: asSentence(describeIpcError(error)),
           variant: 'error',
         });
@@ -188,19 +195,19 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
   const summaries = settingProps('knowledgeGraph.taskSummaries');
   const code = settingProps('knowledgeGraph.sourceCode');
   const sourceLines: CardSourceLineProps[] = [
-    { label: 'Conversations', ...alwaysOnLine(status?.sources?.conversations, 'Conversations embedded'), testId: 'index-source-conversations' },
-    { label: 'Tasks', ...alwaysOnLine(status?.sources?.tasks, 'Tasks embedded'), testId: 'index-source-tasks' },
-    { label: 'Commits', ...alwaysOnLine(status?.sources?.commits, 'Commits indexed'), testId: 'index-source-commits' },
+    { label: t`Conversations`, ...alwaysOnLine(status?.sources?.conversations, t`Conversations embedded`), testId: 'index-source-conversations' },
+    { label: t`Tasks`, ...alwaysOnLine(status?.sources?.tasks, t`Tasks embedded`), testId: 'index-source-tasks' },
+    { label: t`Commits`, ...alwaysOnLine(status?.sources?.commits, t`Commits indexed`), testId: 'index-source-commits' },
     {
       label: summaries.label,
-      info: SUMMARIES_INFO,
+      info: translateText(SUMMARIES_INFO),
       ...summariesLine(summariesOn, status?.summaries, summariesRequirement),
       toggle: { checked: summariesOn, onChange: (value) => updateKnowledgeGraph({ taskSummaries: value }), testId: `setting-row-${summaries.searchId}` },
       testId: 'index-source-summaries',
     },
     {
       label: code.label,
-      info: CODE_INFO,
+      info: translateText(CODE_INFO),
       ...codeLine(status?.code, codeRequirement),
       toggle: { checked: codeOn, onChange: (value) => updateKnowledgeGraph({ sourceCode: value }), testId: `setting-row-${code.searchId}` },
       testId: 'index-source-code',
@@ -239,7 +246,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
           // further down the tab.
           checked={semanticReady}
           onChange={(value) => updateGlobal({ knowledgeGraph: value ? { enabled: true, indexingEnabled: true } : { enabled: false } })}
-          requirement={indexingEnabled ? undefined : 'Needs indexing'}
+          requirement={indexingEnabled ? undefined : t`Needs indexing`}
           testId="knowledge-graph-card"
         >
           {/* Gated on indexingEnabled too: with the index off the Knowledge
@@ -249,7 +256,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
               {/* The local model: it finds by meaning and draws the map. */}
               <CardChoiceRow
                 {...settingProps('knowledgeGraph.localModel')}
-                options={EMBEDDING_MODELS.map((option) => ({ value: option.id, label: option.tierLabel, testId: `embedding-model-${option.id}` }))}
+                options={EMBEDDING_MODELS.map((option) => ({ value: option.id, label: translateText(option.tierLabel), testId: `embedding-model-${option.id}` }))}
                 value={embeddingModelId}
                 onChange={(next: string) => updateGlobal({ knowledgeGraph: { localModel: next } })}
                 testId="embedding-model-choice"
@@ -258,7 +265,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
                   control that picks it, then the license it ships under. */}
               {model ? <EmbeddingModelStatus model={model} activeBackend={status?.activeBackend ?? null} /> : null}
               <CardLinkRow
-                label="License"
+                label={t`License`}
                 links={licenseLinks([embeddingModel.license])}
                 onOpen={(href) => void window.electronAPI.shell.openExternal(href)}
                 testId="embedding-model-license"
@@ -267,7 +274,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
               <CardChoiceRow
                 {...settingProps('knowledgeGraph.acceleration')}
                 options={[
-                  { value: 'auto', label: 'Auto', testId: 'knowledge-graph-acceleration-auto' },
+                  { value: 'auto', label: t({ message: 'Auto', context: 'acceleration' }), testId: 'knowledge-graph-acceleration-auto' },
                   { value: 'gpu', label: 'GPU', testId: 'knowledge-graph-acceleration-gpu' },
                   { value: 'cpu', label: 'CPU', testId: 'knowledge-graph-acceleration-cpu' },
                 ]}
@@ -287,7 +294,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
                   answer; an agent with no `answerFromContext` is not a choice,
                   it is a way to turn Ask off by accident. */}
               {answerCapableAgents.length === 0 ? (
-                <CardStatusRow label="Agent" value="Needs a supported agent" testId="knowledge-graph-no-agent" />
+                <CardStatusRow label={t`Agent`} value={t`Needs a supported agent`} testId="knowledge-graph-no-agent" />
               ) : (
                 <AnswerAgentRows
                   choice={agentChoice}
@@ -320,8 +327,8 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
             <CardSourceList lines={sourceLines} testId="index-sources" />
             <CardTile className="flex items-center justify-between gap-3" testId="knowledge-graph-rebuild-row">
               <div className="min-w-0">
-                <div className={SETTING_LABEL_CLASS}>Rebuild the index</div>
-                <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}>Reads every source again, in every project.</p>
+                <div className={SETTING_LABEL_CLASS}><Trans>Rebuild the index</Trans></div>
+                <p className={`${SETTING_DESCRIPTION_CLASS} mt-0.5`}><Trans>Reads every source again, in every project.</Trans></p>
               </div>
               <button
                 type="button"
@@ -331,7 +338,7 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
                 className="inline-flex flex-shrink-0 items-center gap-1.5 rounded-md border border-edge-input bg-surface-control px-2.5 py-1 text-xs font-medium text-fg-secondary transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-fg disabled:opacity-50"
               >
                 <RotateCcw size={13} className={rebuilding ? 'animate-spin' : undefined} />
-                {rebuilding ? 'Rebuilding...' : 'Rebuild'}
+                {rebuilding ? t`Rebuilding...` : t`Rebuild`}
               </button>
             </CardTile>
           </>
@@ -343,11 +350,12 @@ export function KnowledgeGraphTab({ globalConfig }: { globalConfig: AppConfig })
           testId="rebuild-confirm"
           // A rebuild, not a warning, so not the default warning triangle.
           icon={<RotateCcw size={16} className="text-accent-fg" />}
-          title="Rebuild everything?"
-          message={`Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. ${rebuildAsk === 1
-            ? 'The 1 summary written with an earlier model is rewritten'
-            : `The ${rebuildAsk.toLocaleString()} summaries written with an earlier model are rewritten`}, about ${rewriteCalls.toLocaleString()} ${rewriteCalls === 1 ? 'call' : 'calls'} in the background.`}
-          confirmLabel="Rebuild"
+          title={t`Rebuild everything?`}
+          message={t`Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. ${plural(rebuildAsk, {
+            one: 'The # summary written with an earlier model is rewritten',
+            other: 'The # summaries written with an earlier model are rewritten',
+          })}, about ${plural(rewriteCalls, { one: '# call', other: '# calls' })} in the background.`}
+          confirmLabel={t`Rebuild`}
           onConfirm={runRebuild}
           onCancel={() => setRebuildAsk(null)}
         />
@@ -364,12 +372,17 @@ type KnowledgeGraphPatch = NonNullable<DeepPartial<AppConfig>['knowledgeGraph']>
  * yet reads as Downloading at 0%, never as a separate waiting state.
  */
 function EmbeddingModelStatus({ model, activeBackend }: { model: NonNullable<KnowledgeGraphStatus['model']>; activeBackend: string | null }) {
+  const { t } = useLingui();
+  const displayName = model.displayName;
   if (model.state === 'ready') {
+    const approxSizeMb = model.approxSizeMb;
     return (
       <CardStatusRow
         // "Local model", never "Model": the agent's Model row sits below it.
-        label="Local model"
-        value={`${model.displayName}, ${model.approxSizeMb} MB${activeBackend ? `, ${activeBackend}` : ''}`}
+        label={t`Local model`}
+        value={activeBackend
+          ? t`${displayName}, ${approxSizeMb} MB, ${activeBackend}`
+          : t`${displayName}, ${approxSizeMb} MB`}
         tone="ready"
         testId="embedding-model-card"
         valueTestId="embedding-model-ready"
@@ -377,15 +390,15 @@ function EmbeddingModelStatus({ model, activeBackend }: { model: NonNullable<Kno
     );
   }
   if (model.state === 'error') {
-    return <CardStatusRow label="Download failed" value={model.displayName} tone="failure" testId="embedding-model-card" />;
+    return <CardStatusRow label={t`Download failed`} value={displayName} tone="failure" testId="embedding-model-card" />;
   }
   const percent = model.state === 'downloading' ? Math.min(100, Math.floor((model.progress ?? 0) * 100)) : 0;
   return (
     <CardStatusRow
-      label="Downloading"
-      value={`${percent}%, ${model.displayName}`}
+      label={t`Downloading`}
+      value={t`${percent}%, ${displayName}`}
       percent={percent}
-      progressLabel="Search model downloaded"
+      progressLabel={t`Search model downloaded`}
       testId="embedding-model-card"
     />
   );

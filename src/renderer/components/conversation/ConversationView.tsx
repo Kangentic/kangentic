@@ -47,7 +47,8 @@ import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow,
 import { FAR_FROM_BOTTOM_PX, isScrolledToBottom, logicalAtOffset, offsetAtLogical } from './scrollbar-math';
 import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
 import type { EdgeStatus } from './use-conversation-paging';
-import { planApprovalLabel, presentedPlan, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
+import { planApprovalMessage, presentedPlan, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
+import { translateText } from '../../i18n/translate';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
@@ -1251,7 +1252,7 @@ function PlanCard({ plan, result, expanded, onToggle }: {
         <span className="text-[13px] font-semibold text-fg">Plan</span>
         {result?.approval && (
           <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[11px] font-medium text-fg-secondary" data-testid="conversation-plan-approval">
-            {planApprovalLabel(result.approval)}
+            {translateText(planApprovalMessage(result.approval))}
           </span>
         )}
         {result?.ts !== undefined && <span className="ml-auto flex-shrink-0 text-fg-muted">{formatTime(result.ts)}</span>}

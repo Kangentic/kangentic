@@ -1,6 +1,7 @@
 import type { Swimlane, Task, Workflow, WorkflowBoardTask, WorkflowState, WorkflowSummary } from '../../shared/types';
-import { workflowMoveRefusal } from '../../shared/workflow-lock';
-import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { workflowMoveRefusalMessage } from '../../shared/workflow-lock';
+import { WORKFLOW_REFUSAL_MESSAGES, WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
+import { translateText } from '../i18n/translate';
 import { waitingLabel } from '../../shared/workflow-waiting';
 
 /**
@@ -94,7 +95,7 @@ export function boardMoveRefusal(
   target: Pick<Swimlane, 'id' | 'role'> | null | undefined,
 ): string | null {
   if (!workflow || !target) return null;
-  return workflowMoveRefusal({
+  const refusal = workflowMoveRefusalMessage({
     displayId: task.display_id,
     workflowTitle: workflow.title,
     workflowState: workflow.state,
@@ -105,6 +106,7 @@ export function boardMoveRefusal(
     moverIsTaskAgent: false,
     humanGateTargetId: workflow.humanGateTargetId,
   });
+  return refusal === null ? null : translateText(refusal);
 }
 
 /** Is this error text one of the lock's refusals for this task (rather than some other failure)? */
@@ -125,12 +127,13 @@ export function sendAwayRefusal(workflow: BoardWorkflow | null, task: Pick<Task,
   if (!workflow) return null;
   const label = `#${task.display_id}`;
   return workflow.state === 'running'
-    ? WORKFLOW_REFUSALS.locked(label, workflow.title)
-    : WORKFLOW_REFUSALS.removeFirst(label, workflow.title);
+    ? translateText(WORKFLOW_REFUSAL_MESSAGES.locked(label, workflow.title))
+    : translateText(WORKFLOW_REFUSAL_MESSAGES.removeFirst(label, workflow.title));
 }
 
 /** What a workflow task's footer says while it sits in To Do with no session. */
 export function boardWaiting(workflow: BoardWorkflow | null): { label: string; paused: boolean } | null {
   if (!workflow || workflow.state === 'draft' || workflow.state === 'done') return null;
-  return waitingLabel(workflow.waitingFor, workflow.state === 'paused');
+  const waiting = waitingLabel(workflow.waitingFor, workflow.state === 'paused');
+  return { label: translateText(waiting.label), paused: waiting.paused };
 }

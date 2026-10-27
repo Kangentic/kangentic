@@ -1,3 +1,5 @@
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { DictationConfig, DictationEngineTier } from './types';
 import { PARAKEET_V3_LANGUAGE_CODES } from './dictation-languages';
 
@@ -21,10 +23,11 @@ export type DictationMode = DictationPreset | 'custom';
 /** Best first, as the Mode control lists them. */
 export const DICTATION_PRESETS: readonly DictationPreset[] = ['accurate', 'balanced', 'fast'];
 
-export const DICTATION_PRESET_LABELS: Readonly<Record<DictationPreset, string>> = {
-  accurate: 'Best',
-  balanced: 'Balanced',
-  fast: 'Light',
+/** Resolved where they show (`translateText`). */
+export const DICTATION_PRESET_LABELS: Readonly<Record<DictationPreset, MessageDescriptor>> = {
+  accurate: msg({ message: 'Best', context: 'quality preset' }),
+  balanced: msg({ message: 'Balanced', context: 'quality preset' }),
+  fast: msg({ message: 'Light', context: 'quality preset' }),
 };
 
 /** Config sentinel for an empty model slot (no live preview, or no refinement). */

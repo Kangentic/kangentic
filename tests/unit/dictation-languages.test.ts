@@ -5,6 +5,7 @@ import {
   orderLanguages,
   languageLabel,
 } from '../../src/shared/dictation-languages';
+import { englishText } from '../../src/shared/i18n/english';
 
 describe('MULTILINGUAL_LANGUAGE_CODES', () => {
   it('is derived from DICTATION_LANGUAGES (every code appears in the language list)', () => {
@@ -51,7 +52,7 @@ describe('orderLanguages', () => {
     const ordered = orderLanguages(['en']);
     expect(ordered).toHaveLength(1);
     expect(ordered[0].code).toBe('en');
-    expect(ordered[0].label).toBe('English');
+    expect(englishText(ordered[0].label)).toBe('English');
   });
 
   it('returns an empty array when no input codes are in the canonical list', () => {
@@ -79,22 +80,22 @@ describe('orderLanguages', () => {
 
 describe('languageLabel', () => {
   it('returns the display label for a known code', () => {
-    expect(languageLabel('en')).toBe('English');
-    expect(languageLabel('fr')).toBe('French');
-    expect(languageLabel('de')).toBe('German');
-    expect(languageLabel('zh')).toBe('Chinese');
-    expect(languageLabel('ja')).toBe('Japanese');
+    expect(englishText(languageLabel('en'))).toBe('English');
+    expect(englishText(languageLabel('fr'))).toBe('French');
+    expect(englishText(languageLabel('de'))).toBe('German');
+    expect(englishText(languageLabel('zh'))).toBe('Chinese');
+    expect(englishText(languageLabel('ja'))).toBe('Japanese');
   });
 
   it('falls back to the raw code for an unknown code', () => {
     // A stale or unsupported code that is not in DICTATION_LANGUAGES should
     // surface the raw code string rather than undefined or an empty string.
-    expect(languageLabel('xyz')).toBe('xyz');
-    expect(languageLabel('tlh')).toBe('tlh');
+    expect(englishText(languageLabel('xyz'))).toBe('xyz');
+    expect(englishText(languageLabel('tlh'))).toBe('tlh');
   });
 
   it('is case-sensitive: a mis-cased code falls back to the raw code', () => {
     // The canonical codes are lower-case BCP-47. Upper-case 'EN' is not a match.
-    expect(languageLabel('EN')).toBe('EN');
+    expect(englishText(languageLabel('EN'))).toBe('EN');
   });
 });

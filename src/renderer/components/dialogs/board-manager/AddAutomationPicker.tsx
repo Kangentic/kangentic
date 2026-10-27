@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_PHRASES } from '../../../../shared/automation-manifest';
+import { translateText } from '../../../i18n/translate';
+import { i18n } from '@lingui/core';
 import { describeAutomationMarks } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { OverlayPopover } from '../../OverlayPopover';
@@ -89,7 +91,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
   const matches = (text: string): boolean => !needle || text.toLowerCase().includes(needle);
 
   const types = useMemo(
-    () => pickerTypes(props.column, props.trigger).filter((entry) => matches(AUTOMATION_MANIFEST[entry.type].label)),
+    () => pickerTypes(props.column, props.trigger).filter((entry) => matches(translateText(AUTOMATION_MANIFEST[entry.type].label))),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `matches` closes over `needle`, which is the real dependency
     [props.column, props.trigger, needle],
   );
@@ -155,9 +157,9 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
             >
               <AutomationIcon name={entry.icon} size={14} className="mt-0.5 shrink-0 text-fg-muted" />
               <span className="min-w-0">
-                <span className="block text-xs text-fg">{entry.label}</span>
+                <span className="block text-xs text-fg">{translateText(entry.label)}</span>
                 <span className="block text-[11px] text-fg-faint">
-                  {runnable.ok ? entry.description : runnable.reason}
+                  {translateText(runnable.ok ? entry.description : runnable.reason)}
                 </span>
               </span>
             </button>
@@ -192,11 +194,11 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
                     source row's own trigger decides them, as it does there. */}
                 <span data-testid="column-automation-picker-copy-title" className="flex items-center gap-1.5">
                   <span className="truncate text-xs text-fg">{draft.name}</span>
-                  <AutomationMarks marks={describeAutomationMarks(draft)} />
+                  <AutomationMarks marks={describeAutomationMarks(draft, i18n)} />
                 </span>
                 <span className="block truncate text-[11px] text-fg-faint">{describeDraft(draft)}</span>
                 <span className="block text-[11px] text-fg-muted">
-                  {column.name}, {AUTOMATION_TRIGGER_LABELS[draft.trigger].toLowerCase()}
+                  {column.name}, {translateText(AUTOMATION_TRIGGER_PHRASES[draft.trigger])}
                 </span>
               </span>
             </button>

@@ -1,5 +1,8 @@
 import { useId, useRef, useState } from 'react';
 import { RotateCcw, SquareTerminal } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig, ThemeMode, TerminalColorOverrides } from '../../../../shared/types';
 import { THEME_BACKGROUNDS, THEME_FOREGROUNDS, resolveTheme } from '../../../../shared/types';
 import { TERMINAL_DEFAULT_COLORS } from '../../../hooks/useTerminal';
@@ -48,10 +51,12 @@ export function presetsWithDefaultFirst(defaultColor: string, themeMatchColor: s
 /** A single terminal color slot: a swatch button that opens the shared color
  *  picker, showing the effective (override or default) color. */
 function ColorSwatchField({
-  colorKey, label, value, defaultColor, themeMatchColor, onChange,
+  colorKey, label, changeLabel, value, defaultColor, themeMatchColor, onChange,
 }: {
   colorKey: TerminalColorKey;
   label: string;
+  /** The swatch's tip and accessible name, a whole message per slot. */
+  changeLabel: string;
   value: string;
   defaultColor: string;
   themeMatchColor: string;
@@ -61,12 +66,12 @@ function ColorSwatchField({
   const buttonRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="flex flex-col items-center gap-1.5 w-16">
-      <Tooltip label={`Change ${label}`} enabled={!showPicker}>
+      <Tooltip label={changeLabel} enabled={!showPicker}>
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setShowPicker(!showPicker)}
-          aria-label={`Change ${label}`}
+          aria-label={changeLabel}
           data-testid={`terminal-color-swatch-${colorKey}`}
           className="w-8 h-8 rounded-md border border-edge-input hover:border-fg-muted hover:scale-105 transition-all shadow-sm"
           style={{ backgroundColor: value }}
@@ -157,17 +162,18 @@ function FontSizeField({ value, onCommit }: { value: number; onCommit: (fontSize
         // Shown only while the typed value is rejected, so a valid field keeps
         // the card's one-line height.
         <span id={rangeMessageId} data-testid="terminal-font-size-range" className="text-[11px] text-warning">
-          Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}.
+          <Trans>Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}.</Trans>
         </span>
       )}
     </>
   );
 }
 
-const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: string }[] = [
-  { key: 'background', label: 'Background' },
-  { key: 'foreground', label: 'Foreground' },
-  { key: 'cursor', label: 'Cursor' },
+/** The color slots, with labels translated where the row renders. */
+const TERMINAL_COLOR_FIELDS: { key: TerminalColorKey; label: MessageDescriptor; changeLabel: MessageDescriptor }[] = [
+  { key: 'background', label: msg`Background`, changeLabel: msg`Change background` },
+  { key: 'foreground', label: msg`Foreground`, changeLabel: msg`Change foreground` },
+  { key: 'cursor', label: msg`Cursor`, changeLabel: msg`Change cursor` },
 ];
 
 /**
@@ -187,6 +193,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
   shells: Array<{ name: string; path: string }>;
   fonts: string[];
 }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   // The theme-match swatch offers the RESOLVED committed theme (config-store.ts's
   // vocabulary: resolved is committed plus the OS side, shown adds a hover preview),
@@ -202,8 +209,8 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
     <div className="space-y-4">
       <SettingsCard
         icon={<SquareTerminal size={16} />}
-        label="Terminal"
-        description="The shell, font, cursor and colors every terminal uses."
+        label={t`Terminal`}
+        description={t`The shell, font, cursor and colors every terminal uses.`}
         searchIds={['terminal.shell', 'terminal.fontSize', 'terminal.fontFamily', 'terminal.cursorStyle', 'terminal.colors']}
       >
         <CardRow {...settingProps('terminal.shell')}>
@@ -211,7 +218,7 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
             value={globalConfig.terminal.shell || ''}
             onChange={(event) => updateGlobal({ terminal: { shell: event.target.value || null } })}
           >
-            <option value="">Auto-detect</option>
+            <option value="">{t`Auto-detect`}</option>
             {shells.map((shell) => (
               <option key={shell.path} value={shell.path}>{shell.name}</option>
             ))}
@@ -235,9 +242,9 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
         <CardChoiceRow
           {...settingProps('terminal.cursorStyle')}
           options={[
-            { value: 'block', label: 'Block' },
-            { value: 'underline', label: 'Underline' },
-            { value: 'bar', label: 'Bar' },
+            { value: 'block', label: t({ message: 'Block', context: 'cursor style' }) },
+            { value: 'underline', label: t({ message: 'Underline', context: 'cursor style' }) },
+            { value: 'bar', label: t({ message: 'Bar', context: 'cursor style' }) },
           ]}
           value={globalConfig.terminal.cursorStyle}
           onChange={(value) => updateGlobal({ terminal: { cursorStyle: value } })}
@@ -252,16 +259,17 @@ export function TerminalTab({ config, globalConfig, shells, fonts }: {
               className="text-fg-muted bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-secondary transition-colors"
               data-testid="terminal-colors-reset-all"
             >
-              <RotateCcw size={14} /> Reset to default
+              <RotateCcw size={14} /> <Trans>Reset to default</Trans>
             </Pill>
           }
         >
           <div className="flex flex-wrap gap-x-2 gap-y-3">
-            {TERMINAL_COLOR_FIELDS.map(({ key, label }) => (
+            {TERMINAL_COLOR_FIELDS.map(({ key, label, changeLabel }) => (
               <ColorSwatchField
                 key={key}
                 colorKey={key}
-                label={label}
+                label={i18n._(label)}
+                changeLabel={i18n._(changeLabel)}
                 value={terminalColors[key] || TERMINAL_DEFAULT_COLORS[key]}
                 defaultColor={TERMINAL_DEFAULT_COLORS[key]}
                 themeMatchColor={getThemeMatchColor(key, resolvedTheme)}

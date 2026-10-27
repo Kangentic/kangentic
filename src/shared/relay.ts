@@ -7,12 +7,21 @@
  * package's crypto (@noble/*) - see relay-address.ts's own header.
  */
 import { MAX_RELAY_ADDRESS_LENGTH, isSecureRelayAddress } from '@kangentic/protocol/pairing/relay-address';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { AppConfig } from './types';
 
 export const KANGENTIC_HOSTED_RELAY_URL = 'wss://relay.kangentic.com';
 export const LOCAL_DEV_RELAY_URL = 'ws://127.0.0.1:8080';
 
-export type RelayUrlValidation = { ok: true; normalized: string } | { ok: false; reason: string };
+/** A refusal's reason is a descriptor: the settings tab and main each resolve it in the session language. */
+export type RelayUrlValidation = { ok: true; normalized: string } | { ok: false; reason: MessageDescriptor };
+
+/** The byte cap, as a named placeholder so a translator sees {maxBytes}. */
+function relayAddressTooLong(): MessageDescriptor {
+  const maxBytes = MAX_RELAY_ADDRESS_LENGTH;
+  return msg`Relay address is too long (max ${{ maxBytes }} bytes).`;
+}
 
 /**
  * Mirrors the phone's pairing QR scanner exactly (see
@@ -26,28 +35,28 @@ export type RelayUrlValidation = { ok: true; normalized: string } | { ok: false;
  */
 export function validateRelayUrl(raw: string): RelayUrlValidation {
   if (raw.includes('\\')) {
-    return { ok: false, reason: 'Relay address cannot contain a backslash.' };
+    return { ok: false, reason: msg`Relay address cannot contain a backslash.` };
   }
   // Byte length, not character length, to agree with the protocol package's
   // own cap (packages/protocol/src/pairing/qr.ts encodes relayAddress with
   // the same TextEncoder byte count) - a multi-byte URL that passes a
   // character-length check can still overflow the QR payload.
   if (new TextEncoder().encode(raw).length > MAX_RELAY_ADDRESS_LENGTH) {
-    return { ok: false, reason: `Relay address is too long (max ${MAX_RELAY_ADDRESS_LENGTH} bytes).` };
+    return { ok: false, reason: relayAddressTooLong() };
   }
 
   let url: URL;
   try {
     url = new URL(raw.trim());
   } catch {
-    return { ok: false, reason: 'Enter a full relay URL, e.g. wss://relay.example.com.' };
+    return { ok: false, reason: msg`Enter a full relay URL, e.g. wss://relay.example.com.` };
   }
 
   if (url.hash) {
-    return { ok: false, reason: 'Relay address cannot include a #fragment; the pairing slot is carried in the query string.' };
+    return { ok: false, reason: msg`Relay address cannot include a #fragment; the pairing slot is carried in the query string.` };
   }
   if (url.username || url.password) {
-    return { ok: false, reason: 'Relay address cannot include a username or password.' };
+    return { ok: false, reason: msg`Relay address cannot include a username or password.` };
   }
 
   const normalized = url.href;
@@ -59,12 +68,12 @@ export function validateRelayUrl(raw: string): RelayUrlValidation {
   // this same check on every later resolveRelayUrl() - silently falling back
   // to the hosted relay with no error surfaced anywhere in the UI.
   if (new TextEncoder().encode(normalized).length > MAX_RELAY_ADDRESS_LENGTH) {
-    return { ok: false, reason: `Relay address is too long (max ${MAX_RELAY_ADDRESS_LENGTH} bytes).` };
+    return { ok: false, reason: relayAddressTooLong() };
   }
   if (!isSecureRelayAddress(normalized)) {
     return {
       ok: false,
-      reason: 'Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1].',
+      reason: msg`Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1].`,
     };
   }
 

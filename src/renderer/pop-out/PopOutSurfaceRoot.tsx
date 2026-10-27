@@ -5,6 +5,7 @@ import { usePopOutBootstrap } from './usePopOutBootstrap';
 import { PopOutWindowFrame } from './PopOutWindowFrame';
 import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, isProjectPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
+import { translateText } from '../i18n/translate';
 import './surfaces';
 import { ToastContainer } from '../components/layout/ToastContainer';
 
@@ -42,14 +43,14 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   // A project's surface titles by the project name its params carry, in the
   // header and the taskbar alike: the same value main gave the BrowserWindow.
   const projectTitle = isProjectPopOutKind(descriptor.kind)
-    ? resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params)
+    ? translateText(resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params))
     : null;
   return (
     <ErrorBoundary>
       <PopOutWindowFrame
         kind={descriptor.kind}
         title={fileParams ? `${fileParams.filePath} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}` : projectTitle ?? taskTitle ?? undefined}
-        documentTitle={fileParams ? resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params) : undefined}
+        documentTitle={fileParams ? translateText(resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params)) : undefined}
       >
         <surface.Root params={descriptor.params} />
       </PopOutWindowFrame>

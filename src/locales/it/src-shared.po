@@ -7,10 +7,1187 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: it\n"
 
+#: src/shared/workflow-refusals.ts
+msgid "{blockedLabel} already waits for {blockerLabel}."
+msgstr ""
+
+#: src/shared/workflow-waiting.ts
+msgid "{count, plural, one {Blocked by # task...} other {Blocked by # tasks...}}"
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} has passed {columnName}. Its plan approval can no longer change."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} has reached {columnName}. Only the columns after it can change."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} has started. Only a task in To Do can wait for another."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} has started. Removing the link changes nothing."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done and stays with its workflow."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Its plan approval can no longer change."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Removing the link changes nothing."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is done. Waiting for it changes nothing."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is in {workflowTitle}, which is paused. Resume the workflow to start its tasks again."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is locked while {workflowTitle} runs."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "{label} is not in a workflow. Its column's Plan approval decides; change that with kangentic_update_column."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "{method} to {host}"
+msgstr ""
+
+#: src/shared/knowledge-graph-task-fields.ts
+msgid "{state, select, open {PR {number} open} draft {PR {number} draft} merged {PR {number} merged} closed {PR {number} closed} other {PR {number} {state}}}"
+msgstr ""
+
+#: src/shared/plan-approval.ts
+msgid "{value, select, automatic {Automatic} other {Manual}}, from {boardName}'s {columnName} column."
+msgstr ""
+
+#: src/shared/plan-approval.ts
+msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}}), but {waitingAgentName}'s plans still wait for you."
+msgstr ""
+
+#: src/shared/plan-approval.ts
+msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "A task cannot wait for itself."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "A task visits at least one column."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "A workflow task's <workflow> block: its route, its neighbours, and how its turns are judged."
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Agent Monitor"
+msgstr ""
+
+#: src/shared/transcript-format.ts
+msgid "Approved automatically"
+msgstr ""
+
+#: src/shared/transcript-format.ts
+msgid "Approved by you"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Arabic"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "At a turn end the turn is over, so it sends at once."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Attached file paths, one per line (empty if none)."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Automations are disabled for this task."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "Available when the workflow agent finishes"
+msgstr ""
+
+#: src/shared/dictation-presets.ts
+msgctxt "quality preset"
+msgid "Balanced"
+msgstr ""
+
+#: src/shared/dictation-presets.ts
+#: src/shared/embedding-models.ts
+msgctxt "quality preset"
+msgid "Best"
+msgstr ""
+
+#: src/shared/workflow-waiting.ts
+msgid "Blocked by {blocker}..."
+msgstr ""
+
+#: src/shared/workflow-waiting.ts
+msgid "Blocked by a task..."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Body"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Bold"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Browser"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Call webhook"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Changes"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Chinese"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Close"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Close the open panel: the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Close window (click header)"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Collapse or expand the bottom terminal panel."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Column"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Command Terminal"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Command Terminal - {projectName}"
+msgstr ""
+
+#: src/shared/background-call-jobs.ts
+msgid "Condition checks"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Condition: only if {condition}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Condition: only if the last line reads \"{line}\"."
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Contains it"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Copy"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Copy selection"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Copy the selected diff text to the clipboard."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Copy the selected terminal text (Ctrl+Shift+C always copies). With no selection, Ctrl+C cancels the running command instead."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Delivery"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Delivery: waits for the current turn to end."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Dismiss dialog"
+msgstr ""
+
+#: src/shared/knowledge-graph-task-fields.ts
+msgctxt "task status"
+msgid "Done"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Draw / annotate"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Dutch"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Effective base branch: the task's override, else the project's configured default."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty for a task outside a workflow."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty for a workflow made from nothing."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty on task enter, and for an agent whose transcript Kangentic cannot read."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty until a PR is linked."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty until an agent reserves a port."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty until the task has a branch."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty until the task has a worktree."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Empty until the task is linked to a tracker issue."
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Ends with it"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "English"
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Enter a full relay URL, e.g. wss://relay.example.com."
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Exactly this line"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "File Diff"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Find in conversation"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Find on board"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Focus the board search, or open Quick Find if not on the board."
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "French"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "German"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Git branch name (empty if the task has none)."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Give up after"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Headers"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Hold to dictate; release to populate the focused terminal or text field."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Insert newline"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Inspect element"
+msgstr ""
+
+#: src/shared/embedding-runtime.ts
+msgid "Intel Macs"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Interrupt (cancel)"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Italian"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Italic"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Japanese"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Jump to the next change in the diff. Past a file's last change, continues into the next file."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Jump to the previous change in the diff. Before a file's first change, continues into the previous file."
+msgstr ""
+
+#: src/shared/plan-approval.ts
+msgid "Kangentic can't approve {agentName}'s plans, so they wait for you."
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Knowledge Graph"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Korean"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Leave empty to send the default JSON payload"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Legacy. The column's Start an agent here setting does this now."
+msgstr ""
+
+#: src/shared/dictation-presets.ts
+#: src/shared/embedding-models.ts
+msgctxt "quality preset"
+msgid "Light"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Link"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Main project checkout path. Always the base repo, even when the task has a worktree."
+msgstr ""
+
+#: src/shared/plan-approval.ts
+msgid "Manual, because Kangentic can't approve {agentName}'s plans."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Maximize"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), a create dialog (New Task / New Backlog Task), or the Edit Columns dialog."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Message"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Message: {message}"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Method"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field unit"
+msgid "minutes"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Move task left"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Move task right"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Move the open task one column left and keep its window open."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Move the open task one column right and keep its window open."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Move to column"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Move to column runs only at a turn end."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Moves the task to {column}"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Moves the task to another column, with a message for the agent there."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Moves the task to the next column"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "New task"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next change"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next changed file"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next column"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Next column is the first choice: the next column on the task's route, or on the board."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "No message yet."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "No script yet."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "No task it can wait for."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "No URL yet."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "No workflow \"{workflowSelector}\" in this project."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Not offered on this trigger."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Nothing runs at a turn end in {column}."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Nothing runs when a task enters To Do or Done."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Notifies \"{title}\""
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notify me"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "on agent turn end"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "On agent turn end"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "on task enter"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "On task enter"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "on task exit"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "On task exit"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "One per line, as Name: Value."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if {condition}"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if {condition}."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "only if the last line reads \"{line}\""
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Only if the last line reads \"{line}\"."
+msgstr ""
+
+#: src/shared/knowledge-graph-task-fields.ts
+msgctxt "task status"
+msgid "Open"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open in-viewer search inside the focused Conversation window."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open or close the command terminal overlay."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open or close the cross-project view of every running agent."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open or close the map of what the conversation index has learned."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open or close the settings panel."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open or close the usage statistics dashboard."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the cross-project Quick Find palette."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the New Task dialog on the board."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the Workflows view; pressed there, return to the view you came from."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open workflows"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgctxt "hotkey"
+msgid "Paste"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Paste as plain text"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Paste text or an image into the terminal (Ctrl+Shift+V also pastes)."
+msgstr ""
+
+#: src/shared/workflow-waiting.ts
+msgctxt "workflow state"
+msgid "Paused"
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "planApproval is set per task now. Put planApproval on each task entry."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "planApproval must be \"automatic\", \"manual\", or null."
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Polish"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Portuguese"
+msgstr ""
+
+#: src/shared/knowledge-graph-task-fields.ts
+msgid "PR {number}"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous change"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous changed file"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous column"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Prompt"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Pull request number as a string (empty if none)."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Pull request state: open, merged, closed or draft."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Pull request URL (empty if none)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Push-to-talk (hold)"
+msgstr ""
+
+#: src/shared/workflow-waiting.ts
+msgid "Queued..."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Quick Find"
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Relay address cannot contain a backslash."
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Relay address cannot include a #fragment; the pairing slot is carried in the query string."
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Relay address cannot include a username or password."
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Relay address is too long (max {maxBytes} bytes)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Reload page"
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "Remove {label} from {workflowTitle} first."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Reset zoom"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Review the latest changes and fix any issues you find"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Run immediately"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Run script"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Runs {script}"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Runs a shell command and waits for it to finish."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Runs in the task's worktree, or the project checkout when it has none."
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Russian"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Save board configuration"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Save edits"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Save the task edit form, the same as its Save button."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Script"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Select the next file in the Changes panel."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Select the previous file in the Changes panel."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Send message to agent"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Sends \"{message}\""
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Sends a message to the agent working on the task."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Sends a request. Retries a network error, 408, 429 or 5xx."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Sent to the agent in that column once it is ready."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Sent to the task's agent as if you typed it yourself."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the activity-engine debug overlay."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the browser pane inside the task detail dialog."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the changes (diff) panel inside the task detail dialog."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the description panel inside the task detail dialog."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Show or hide the project sidebar."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Shows a desktop notification."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Shows a desktop notification. Clicking it opens the task."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap window down"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap window left"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap window right"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Snap window up"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Spanish"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Start agent"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Start an agent here is off, so no agent ends a turn here."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Start an agent here is off."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Starts the agent with \"{prompt}\""
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "Starts the agent."
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Starts with it"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Switch board / backlog"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Task description with a \": \" prefix when non-empty (PTY-sanitized)."
+msgstr ""
+
+#: src/shared/background-call-jobs.ts
+msgid "Task summaries"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Task title (PTY-sanitized)."
+msgstr ""
+
 #: src/shared/task-template-vars.ts
 msgid "Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is '{{task_xml}}{{workflow_xml}}{{attachments}}'."
 msgstr ""
 
+#: src/shared/background-call-jobs.ts
+msgid "Task titles"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Task UUID."
+msgstr ""
+
+#: src/shared/background-call-jobs.ts
+msgid "Terminal names"
+msgstr ""
+
+#: src/shared/final-line-match.ts
+msgid "Text match reads the agent's last message, so it runs on agent turn end only."
+msgstr ""
+
+#: src/shared/workflow-refusals.ts
+msgid "That link closes a loop. A workflow's links cannot go in a circle."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The agent's reply at the end of its last turn in this column."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The column the task moved into."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The column the task moved out of."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The column this automation belongs to."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The linked tracker issue's key, such as a Jira key or a GitHub issue number."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The linked tracker issue's URL."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The project's name as it reads in the sidebar."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "The task is archived."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "The task is in Done."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "The task is in To Do."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The task's #N, the number people say out loud."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "The task's labels, comma-separated."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "This column's agent can't report when it finishes a turn."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "This task is archived. Restore it to the board to continue working on it."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "This task is complete. Move it out of Done to continue working on it."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "This task is in a workflow. Pause the workflow to hold it."
+msgstr ""
+
+#: src/shared/session-resume-eligibility.ts
+msgid "This task is in To Do. Move it to another column to start its agent."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "Title"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Agent Monitor"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle between the board and the backlog view."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Browser pane"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Changes panel"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle debug overlay"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle description peek"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Knowledge Graph"
+msgstr ""
+
 #: src/shared/keybindings.ts
 msgid "Toggle settings"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle sidebar"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle terminal panel"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Toggle Usage Stats"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Turkish"
+msgstr ""
+
+#: src/shared/dictation-languages.ts
+msgctxt "spoken language"
+msgid "Ukrainian"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgctxt "automation field"
+msgid "URL"
+msgstr ""
+
+#: src/shared/pop-out.ts
+msgid "Usage Statistics"
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Wait for current turn"
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "waits for the current turn to end"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "What the workflow was made from, in a <brief> block with the source task's number."
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "When this automation runs: enter, turn_end or exit."
+msgstr ""
+
+#: src/shared/automation-describe.ts
+msgid "with a message"
+msgstr ""
+
+#: src/shared/background-call-jobs.ts
+msgid "Workflow steps"
+msgstr ""
+
+#: src/shared/task-template-vars.ts
+msgid "Worktree directory path (empty if the task has none)."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Wrap the selected description text in a markdown link. Fixed."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Wrap the selected description text in bold markdown. Fixed."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Wrap the selected description text in italic markdown. Fixed."
+msgstr ""
+
+#: src/shared/relay.ts
+msgid "Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1]."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Zoom in"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Zoom out"
 msgstr ""

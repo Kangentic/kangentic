@@ -9,7 +9,10 @@
  * BrowserWindow) - this module concerns real second OS windows.
  */
 
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { IPC } from './ipc-channels';
+import type { LocalizedText } from './i18n/text';
 // Type-only, so the types.ts -> pop-out.ts import cycle stays erased at runtime.
 import type { GitDiffRange, GitDiffScope, GitDiffStatus } from './types';
 
@@ -183,8 +186,8 @@ export function parseProjectPopOutInstanceKey(key: string): { kind: PopOutKind; 
 export interface PopOutSurfaceMeta {
   kind: PopOutKind;
   scope: 'global' | 'task' | 'project';
-  /** OS window title. */
-  title: string;
+  /** OS window title. Each process resolves it with its own translator. */
+  title: MessageDescriptor;
   defaultBounds: { width: number; height: number };
   minSize: { width: number; height: number };
   /** Only 'browser' needs webviewTag: true. */
@@ -194,7 +197,7 @@ export interface PopOutSurfaceMeta {
   /** Per-instance OS/taskbar title derived from params, falling back to `title`.
    *  Read through `resolveSurfaceTitle` by BOTH processes (main at BrowserWindow
    *  creation, the renderer for document.title) so the two cannot drift. */
-  resolveTitle?: (params: PopOutParams) => string;
+  resolveTitle?: (params: PopOutParams) => LocalizedText;
   /** Cap on concurrently-open windows of this kind, enforced main-side in
    *  PopOutWindowManager.open() (which returns null at the cap - the only
    *  chokepoint that can see every window). Omitted = the existing surfaces'
@@ -210,7 +213,7 @@ export interface PopOutSurfaceMeta {
 
 /** The one place a surface's per-instance title is derived, shared by main and
  *  renderer so the OS title bar and document.title always agree. */
-export function resolveSurfaceTitle(meta: PopOutSurfaceMeta, params: PopOutParams): string {
+export function resolveSurfaceTitle(meta: PopOutSurfaceMeta, params: PopOutParams): LocalizedText {
   return meta.resolveTitle?.(params) ?? meta.title;
 }
 
@@ -221,6 +224,11 @@ export function formatTaskAnchor(taskDisplayId: number, taskTitle: string): stri
   return `#${taskDisplayId} ${taskTitle}`;
 }
 
+/** A changes-file window's title when its path has no file name. */
+const FILE_DIFF_TITLE = msg`File Diff`;
+/** A detached Command Terminal's title, named for its project. */
+const COMMAND_TERMINAL_TITLE = msg({ message: 'Command Terminal - {projectName}' });
+
 /**
  * Declarative metadata for every detachable surface, referenced by both processes.
  * Adding a surface here (plus a renderer registry entry + root component) is the whole
@@ -230,7 +238,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   stats: {
     kind: 'stats',
     scope: 'global',
-    title: 'Usage Statistics',
+    title: msg`Usage Statistics`,
     defaultBounds: { width: 1100, height: 800 },
     minSize: { width: 640, height: 480 },
     needsWebview: false,
@@ -247,7 +255,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   changes: {
     kind: 'changes',
     scope: 'task',
-    title: 'Changes',
+    title: msg`Changes`,
     defaultBounds: { width: 1000, height: 750 },
     minSize: { width: 560, height: 400 },
     needsWebview: false,
@@ -261,7 +269,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   'changes-file': {
     kind: 'changes-file',
     scope: 'task',
-    title: 'File Diff',
+    title: FILE_DIFF_TITLE,
     defaultBounds: { width: 900, height: 700 },
     minSize: { width: 480, height: 360 },
     needsWebview: false,
@@ -276,7 +284,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     // resolver narrows inside.
     resolveTitle: (params) => {
       const fileParams = params as PopOutChangesFileParams;
-      const fileName = fileParams.filePath.split('/').pop() ?? 'File Diff';
+      const fileName = fileParams.filePath.split('/').pop();
+      // No words of its own, so a plain string; only the fallback is a message.
+      if (fileName === undefined) return FILE_DIFF_TITLE;
       return `${fileName} - ${formatTaskAnchor(fileParams.taskDisplayId, fileParams.taskTitle)}`;
     },
     channels: [IPC.GIT_DIFF_CHANGED, IPC.CONFIG_CHANGED],
@@ -284,7 +294,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   browser: {
     kind: 'browser',
     scope: 'task',
-    title: 'Browser',
+    title: msg`Browser`,
     defaultBounds: { width: 1200, height: 800 },
     minSize: { width: 480, height: 360 },
     needsWebview: true,
@@ -293,7 +303,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   monitor: {
     kind: 'monitor',
     scope: 'global',
-    title: 'Agent Monitor',
+    title: msg`Agent Monitor`,
     defaultBounds: { width: 1100, height: 800 },
     // Floor is generous on width because the card grid's narrowest useful form is
     // still a full wide-row; below this the row's metadata line wraps badly.
@@ -349,7 +359,7 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   'knowledge-graph': {
     kind: 'knowledge-graph',
     scope: 'global',
-    title: 'Knowledge Graph',
+    title: msg`Knowledge Graph`,
     // Wider than tall: the surface is a canvas beside the answer rail, and the
     // map is far more readable with horizontal room than vertical.
     defaultBounds: { width: 1200, height: 820 },
@@ -376,14 +386,14 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
   'command-terminal': {
     kind: 'command-terminal',
     scope: 'project',
-    title: 'Command Terminal',
+    title: msg`Command Terminal`,
     defaultBounds: { width: 1180, height: 770 },
     // The app window's own floor: one terminal at the 650 x 200 pane floor fits
     // beside the 248px rail, and a window too small for the grid shows one
     // terminal expanded, as the panel does.
     minSize: { width: 900, height: 600 },
     needsWebview: false,
-    resolveTitle: (params) => `Command Terminal - ${(params as PopOutProjectParams).projectName}`,
+    resolveTitle: (params) => ({ ...COMMAND_TERMINAL_TITLE, values: { projectName: (params as PopOutProjectParams).projectName } }),
     channels: [
       // This window runs no App.tsx, so it keeps its own session replica live
       // from the same pushes the main window's App.tsx maps.

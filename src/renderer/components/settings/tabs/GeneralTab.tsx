@@ -1,4 +1,5 @@
 import { FolderInput, FolderOpen } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectRelocation } from '../../../hooks/useProjectRelocation';
 import { Tooltip } from '../../Tooltip';
@@ -13,6 +14,7 @@ import { useSettingsProject } from '../use-settings-project';
  * projects IPC surface) rather than the project's config overrides.
  */
 export function GeneralTab() {
+  const { t } = useLingui();
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
   // Settings can target a non-current project (the switcher, the sidebar gear).
   const project = useSettingsProject();
@@ -29,8 +31,8 @@ export function GeneralTab() {
       {project && (
         <SettingsCard
           icon={<FolderOpen size={16} />}
-          label="Project"
-          description="Where this project lives on disk."
+          label={t`Project`}
+          description={t`Where this project lives on disk.`}
           searchIds={['project.location']}
         >
           <CardRow {...settingProps('project.location')}>
@@ -55,7 +57,7 @@ export function GeneralTab() {
                 className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-edge-input text-fg-muted hover:text-fg hover:border-edge-hover transition-colors"
               >
                 <FolderInput size={14} />
-                <span>Move...</span>
+                <span><Trans>Move...</Trans></span>
               </button>
             </div>
           </CardRow>

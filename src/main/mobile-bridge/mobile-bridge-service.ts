@@ -19,6 +19,7 @@ import { isGenuineEncryptionAvailable } from '../boards/shared/auth';
 import { trackFeatureUsed } from '../analytics/usage';
 import { trackEvent } from '../analytics/analytics';
 import { validateRelayUrl } from '../../shared/relay';
+import { englishText } from '../../shared/i18n/english';
 import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
 import type { MobileBridgeStatus, MobileBridgeTransportState, MobileDeviceConnectionState } from '../../shared/types';
@@ -1105,7 +1106,8 @@ export class MobileBridgeService extends EventEmitter {
     // practice - it is insurance against minting a QR the phone will refuse,
     // not the primary validation path.
     const relayValidation = validateRelayUrl(this.config.relayUrl);
-    if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${relayValidation.reason}`);
+    // Thrown, so English, like the prefix it follows (`docs/architecture/i18n.md`).
+    if (!relayValidation.ok) throw new Error(`Cannot start pairing: ${englishText(relayValidation.reason)}`);
 
     const identity = await this.ensureIdentity();
     // The bridge can be disabled or shut down during that await. The checks at

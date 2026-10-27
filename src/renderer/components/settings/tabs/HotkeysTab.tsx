@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type React from 'react';
 import { AppWindow, Bug, FileDiff, Globe, Keyboard, Mic, PanelTop, RotateCcw, SquareTerminal } from 'lucide-react';
+import type { MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import {
   KEYBINDINGS,
@@ -23,18 +26,19 @@ type ProbeStatus = 'available' | 'taken' | 'unsupported';
 /**
  * Each hotkey group's card. Keyed by the group id, so a new `KeyGroup` fails to
  * compile until it has a card; the ids stay as they are, since the registry
- * groups by them.
+ * groups by them. The label and description are descriptors, translated where
+ * the card renders.
  */
 const HOTKEY_GROUP_CARDS = {
-  'General': { label: 'General', description: 'Hotkeys that work anywhere in the app.', icon: <Keyboard size={16} /> },
-  'Dictation': { label: 'Dictation', description: 'Push-to-talk and the other dictation keys.', icon: <Mic size={16} /> },
-  'Task Detail': { label: 'Task detail', description: 'Keys for an open task window.', icon: <PanelTop size={16} /> },
-  'Git Changes': { label: 'Git changes', description: 'Keys for the Changes panel and its diff.', icon: <FileDiff size={16} /> },
-  'Windows': { label: 'Windows', description: 'Moving between task windows and arranging them.', icon: <AppWindow size={16} /> },
-  'Browser': { label: 'Browser', description: "Keys for a task's Browser pane.", icon: <Globe size={16} /> },
-  'Terminal': { label: 'Terminal', description: 'Copy, paste and interrupt inside a terminal.', icon: <SquareTerminal size={16} /> },
-  'Developer': { label: 'Developer', description: 'Debug tools in development builds.', icon: <Bug size={16} /> },
-} satisfies Record<KeyGroup, { label: string; description: string; icon: React.ReactNode }>;
+  'General': { label: msg`General`, description: msg`Hotkeys that work anywhere in the app.`, icon: <Keyboard size={16} /> },
+  'Dictation': { label: msg`Dictation`, description: msg`Push-to-talk and the other dictation keys.`, icon: <Mic size={16} /> },
+  'Task Detail': { label: msg`Task detail`, description: msg`Keys for an open task window.`, icon: <PanelTop size={16} /> },
+  'Git Changes': { label: msg`Git changes`, description: msg`Keys for the Changes panel and its diff.`, icon: <FileDiff size={16} /> },
+  'Windows': { label: msg({ message: 'Windows', context: 'task windows' }), description: msg`Moving between task windows and arranging them.`, icon: <AppWindow size={16} /> },
+  'Browser': { label: msg`Browser`, description: msg`Keys for a task's Browser pane.`, icon: <Globe size={16} /> },
+  'Terminal': { label: msg`Terminal`, description: msg`Copy, paste and interrupt inside a terminal.`, icon: <SquareTerminal size={16} /> },
+  'Developer': { label: msg`Developer`, description: msg`Debug tools in development builds.`, icon: <Bug size={16} /> },
+} satisfies Record<KeyGroup, { label: MessageDescriptor; description: MessageDescriptor; icon: React.ReactNode }>;
 
 /**
  * Hotkeys settings tab: lists every keyboard hotkey grouped by area, lets the
@@ -43,6 +47,7 @@ const HOTKEY_GROUP_CARDS = {
  * config (`hotkeyOverrides`). devOnly bindings appear only in dev builds.
  */
 export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
+  const { t, i18n } = useLingui();
   const updateGlobal = useScopedUpdate('global');
   // useMemo so the empty-object fallback is stable; otherwise `?? {}` makes a
   // fresh object each render and destabilizes the hooks that depend on it.
@@ -134,8 +139,8 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
     <div className="space-y-4" data-testid="hotkeys-tab">
       <SettingsCard
         icon={<Keyboard size={16} />}
-        label="Hotkeys"
-        description="Rebind any hotkey. Conflicts and taken combos are flagged."
+        label={t`Hotkeys`}
+        description={t`Rebind any hotkey. Conflicts and taken combos are flagged.`}
         searchIds={['hotkeys']}
       >
         {/* One tile: the notice, Reset to default on its right edge, and the conflict
@@ -144,12 +149,12 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
         <OsHotkeyBanner
           status={conflictComboCount > 0 ? (
             <span className="inline-flex items-center gap-1.5 text-xs text-red-400" data-testid="hotkey-conflict-summary">
-              {conflictComboCount === 1 ? 'Conflict detected' : 'Conflicts detected'}
+              <Plural value={conflictComboCount} one="Conflict detected" other="Conflicts detected" />
               <CountBadge count={conflictComboCount} variant="tinted" size="pill" testId="hotkey-conflict-count" />
             </span>
           ) : undefined}
           action={(
-            <Tooltip label={customCount === 0 ? 'Every hotkey is at its default' : 'Restore every hotkey to its default'}>
+            <Tooltip label={customCount === 0 ? t`Every hotkey is at its default` : t`Restore every hotkey to its default`}>
               <Pill
                 size="md"
                 onClick={() => setShowResetAll(true)}
@@ -157,7 +162,7 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
                 className="text-fg-muted bg-surface-hover/50 enabled:hover:bg-surface-hover enabled:hover:text-fg-secondary disabled:opacity-40 disabled:cursor-default transition-colors"
                 data-testid="hotkeys-reset-all"
               >
-                <RotateCcw size={14} /> Reset to default
+                <RotateCcw size={14} /> <Trans>Reset to default</Trans>
               </Pill>
             </Tooltip>
           )}
@@ -168,8 +173,8 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
         <SettingsCard
           key={group}
           icon={HOTKEY_GROUP_CARDS[group].icon}
-          label={HOTKEY_GROUP_CARDS[group].label}
-          description={HOTKEY_GROUP_CARDS[group].description}
+          label={i18n._(HOTKEY_GROUP_CARDS[group].label)}
+          description={i18n._(HOTKEY_GROUP_CARDS[group].description)}
           searchIds={['hotkeys']}
           testId={`hotkey-group-${group}`}
         >
@@ -194,10 +199,10 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       {showResetAll && (
         <ConfirmDialog
-          title="Reset all hotkeys?"
+          title={t`Reset all hotkeys?`}
           variant="warning"
-          message="This restores every hotkey to its default. Your custom bindings will be removed."
-          confirmLabel="Reset all"
+          message={t`This restores every hotkey to its default. Your custom bindings will be removed.`}
+          confirmLabel={t`Reset all`}
           onConfirm={() => {
             updateGlobal({ hotkeyOverrides: {} });
             setShowResetAll(false);

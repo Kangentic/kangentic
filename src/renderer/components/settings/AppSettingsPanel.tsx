@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -126,6 +127,7 @@ export const GLOBAL_ONLY_TABS = APP_TABS.filter((tab) => tab.category === 'syste
  * registry and the active/search dispatcher.
  */
 export function SettingsContent({ activeTab, isSearching, searchQuery, matchingTabs, navigateToTab, shells, fonts }: SettingsContentProps) {
+  const { t } = useLingui();
   const globalConfig = useConfigStore((state) => state.globalConfig);
   const projectOverrides = useConfigStore((state) => state.projectOverrides);
   const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -169,7 +171,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       const lastAt = lastFailureToastByKeyRef.current.get(settingKey) ?? 0;
       if (Date.now() - lastAt < FAILED_WRITE_TOAST_COOLDOWN_MS) return;
       lastFailureToastByKeyRef.current.set(settingKey, Date.now());
-      useToastStore.getState().addToast({ title: 'Setting not saved', message, variant: 'error', durationMs: 12000 });
+      useToastStore.getState().addToast({ title: t`Setting not saved`, message, variant: 'error', durationMs: 12000 });
     };
 
     const write = scope === 'project' ? updateProjectOverride(partial, projectPath) : updateConfig(partial);
@@ -181,7 +183,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
         // did. On the first failure of an outage both can be up, and they read as one
         // cause and one consequence rather than as the same bug twice. "Its settings
         // file" covers the global config and a project's `.kangentic/config.json` alike.
-        reportFailure('Kangentic could not write its settings file.');
+        reportFailure(t`Kangentic could not write its settings file.`);
       },
       // A REJECTED write is a different failure from a write that degraded: the two
       // project-scoped channels throw for an unknown or unopened project. It used to
@@ -194,9 +196,9 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       // setting did not save"), which is identical either way; the clause only
       // explains it. Giving each branch its own timer would toast twice for one
       // setting that is failing for two reasons at once.
-      (error: unknown) => reportFailure(asSentence(describeIpcError(error, 'The change was not written.'))),
+      (error: unknown) => reportFailure(asSentence(describeIpcError(error, t`The change was not written.`))),
     );
-  }, [updateProjectOverride, updateConfig]);
+  }, [updateProjectOverride, updateConfig, t]);
 
   const renderTab = (tabId: string) => {
     switch (tabId) {

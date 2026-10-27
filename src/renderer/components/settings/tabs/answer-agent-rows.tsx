@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { CardRow } from '../settings-card';
 import { settingProps } from '../settings-registry';
 import { useConfigStore } from '../../../stores/config-store';
@@ -53,6 +54,7 @@ export interface AnswerAgentRowsProps {
  * nobody chose, and there is no project fallback.
  */
 export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, onChange, settingIds, testIdPrefix }: AnswerAgentRowsProps) {
+  const { t } = useLingui();
   // The chosen agent: the configured one when it is installed and capable (the
   // caller's `capableAgents`), so a choice the picker cannot offer reads as
   // unset. There is no project fallback.
@@ -90,7 +92,7 @@ export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, 
           // than carrying a flag the new agent will reject.
           onChange={(next) => onChange({ agent: next === '' ? null : next, model: null, effort: null })}
           options={capableAgents.map((agent) => ({ value: agent.name, label: agent.displayName }))}
-          placeholder="Choose an agent"
+          placeholder={t`Choose an agent`}
           placeholderVariant="muted"
           allowClear={false}
           testId={`${testIdPrefix}-agent`}
@@ -106,7 +108,7 @@ export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, 
             value={choice.model ?? ''}
             onChange={(next) => onChange({ model: next === '' ? null : next })}
             availableModels={models}
-            placeholder="Choose a model"
+            placeholder={t`Choose a model`}
             placeholderVariant="muted"
             testId={`${testIdPrefix}-model`}
             onOpen={() => useConfigStore.getState().rescanModels()}
@@ -125,7 +127,7 @@ export function AnswerAgentRows({ choice, capability = 'answer', capableAgents, 
             value={choice.effort ?? ''}
             onChange={(next) => onChange({ effort: next === '' ? null : next })}
             options={effortLevels.map((level) => ({ value: level, label: level }))}
-            placeholder={effortDefault ?? 'Agent default'}
+            placeholder={effortDefault ?? t`Agent default`}
             placeholderVariant={effortDefault ? 'resolved' : 'muted'}
             testId={`${testIdPrefix}-effort`}
           />

@@ -30,7 +30,8 @@ import {
   type WorkflowTaskInput,
   type WorkflowTaskRunSettings,
 } from '../../../shared/types';
-import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
+import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
+import { translateText } from '../../i18n/translate';
 import { isPermissionMode } from '../../../shared/workflow-run-settings';
 import { runSettingsFrom, showsPlannedTaskRows, type WorkflowTaskInitial } from './workflow-task-form';
 import { DescriptionEditor } from '../DescriptionEditor';
@@ -158,7 +159,7 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   // that changes its plan does (board 2c).
   const selectedWorkflowId = useWorkflowStore((s) => s.selectedWorkflowId);
   const workflowAgentWorking = useWorkflowAgentWorking(workflow ? selectedWorkflowId : null);
-  const heldReason = workflow && workflowAgentWorking ? WORKFLOW_REFUSALS.agentWorking : null;
+  const heldReason = workflow && workflowAgentWorking ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : null;
 
   // The Branch row: state, placeholder, hint, and the structural blockers,
   // shared with the task-detail edit form through one hook. The remote-agent

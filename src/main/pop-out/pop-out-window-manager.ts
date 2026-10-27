@@ -2,6 +2,7 @@ import { BrowserWindow, nativeImage, screen } from 'electron';
 import type { ConfigManager } from '../config/config-manager';
 import { resolveBackgroundColor, resolveIconPath, resolveRendererIndexPath, resolvePopOutBounds, savePopOutBounds } from '../window-utils';
 import { POP_OUT_SURFACES, POPOUT_ARG_PREFIX, popOutInstanceKey, resolveSurfaceTitle } from '../../shared/pop-out';
+import { translateText } from '../i18n/main-i18n';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutKind, PopOutParams, PopOutProjectParams, PopOutTaskParams } from '../../shared/pop-out';
 import { cascadePopOutPosition } from './cascade';
 import { trackFeatureUsed } from '../analytics/usage';
@@ -138,7 +139,9 @@ export class PopOutWindowManager {
       ...(savedBounds ?? meta.defaultBounds),
       minWidth: meta.minSize.width,
       minHeight: meta.minSize.height,
-      title: resolveSurfaceTitle(meta, params),
+      // The OS title, in the session language: main resolves it with its own
+      // translator, and the renderer gives document.title the same value.
+      title: translateText(resolveSurfaceTitle(meta, params)),
       backgroundColor: resolveBackgroundColor(),
       show: false,
       titleBarStyle: 'hidden',

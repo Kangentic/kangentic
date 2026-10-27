@@ -13,6 +13,7 @@ import {
   stableAutomationTypes,
 } from '../../src/shared/automation-manifest';
 import type { AutomationColumnFacts } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
 import type { AutomationType } from '../../src/shared/types';
 
 /**
@@ -91,9 +92,11 @@ describe('automation manifest entries', () => {
     for (const adapter of automationRegistry.stable()) {
       const entry = adapter.manifest;
       expect(entry.fields.length, `${adapter.id} declares no fields`).toBeGreaterThan(0);
-      expect(entry.description.length, `${adapter.id} description is too long`).toBeLessThan(110);
-      expect(entry.description.trim()).toBe(entry.description);
-      expect(entry.label.length).toBeGreaterThan(0);
+      // Descriptors: the picker shows their English in an English session.
+      const description = englishText(entry.description);
+      expect(description.length, `${adapter.id} description is too long`).toBeLessThan(110);
+      expect(description.trim()).toBe(description);
+      expect(englishText(entry.label).length).toBeGreaterThan(0);
       expect(entry.icon).toMatch(/^[a-z][a-z0-9-]*$/);
     }
   });
@@ -191,7 +194,7 @@ describe('canColumnRun', () => {
   it('refuses an agent-needing type when the column does not start an agent', () => {
     const blocked = canColumnRun('send_message', NO_AGENT_COLUMN, 'enter');
     expect(blocked.ok).toBe(false);
-    expect(blocked.ok === false && blocked.reason).toBe('Start an agent here is off.');
+    expect(blocked.ok === false && englishText(blocked.reason)).toBe('Start an agent here is off.');
 
     expect(canColumnRun('send_message', AGENT_COLUMN, 'enter').ok).toBe(true);
   });
@@ -211,7 +214,7 @@ describe('canColumnRun', () => {
 describe('canTriggerRun: why nothing runs at a turn end', () => {
   function reasonFor(column: AutomationColumnFacts): string | null {
     const result = canTriggerRun(column, 'turn_end');
-    return result.ok ? null : result.reason;
+    return result.ok ? null : englishText(result.reason);
   }
 
   it('names To Do and Done each by itself', () => {
@@ -235,7 +238,7 @@ describe('canTriggerRun: why nothing runs at a turn end', () => {
   it('refuses Move to column on enter and exit with its one-line reason', () => {
     for (const trigger of ['enter', 'exit'] as const) {
       const result = canColumnRun('move_to_column', AGENT_COLUMN, trigger);
-      expect(result.ok === false && result.reason, trigger).toBe('Move to column runs only at a turn end.');
+      expect(result.ok === false && englishText(result.reason), trigger).toBe('Move to column runs only at a turn end.');
     }
   });
 });

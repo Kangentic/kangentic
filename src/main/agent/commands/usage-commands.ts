@@ -1,5 +1,6 @@
 import type { UsageDashboardStats, UsageStatsScope, UsageTimePeriod } from '../../../shared/types';
 import { BACKGROUND_CALL_JOB_LABELS } from '../../../shared/background-call-jobs';
+import { englishText } from '../../../shared/i18n/english';
 import { usageStatsService } from '../../usage-stats/usage-stats-service';
 import { INDEX_RESTARTING } from '../../retrieval/retrieval-queries';
 import type { CommandHandler, CommandResponse } from './types';
@@ -100,7 +101,8 @@ function formatBackgroundLine(background: UsageDashboardStats['background']): st
   const jobsSentence = background.byJob
     .filter((job) => job.calls > 0)
     .map((job, index) => {
-      const label = BACKGROUND_CALL_JOB_LABELS[job.job];
+      // An agent reads this listing: English.
+      const label = englishText(BACKGROUND_CALL_JOB_LABELS[job.job]);
       const jobLabel = index === 0 ? label : label.charAt(0).toLowerCase() + label.slice(1);
       return `${jobLabel} ${formatTokens(job.calls)}${job.costUsd === null ? '' : ` ($${job.costUsd.toFixed(2)})`}`;
     })

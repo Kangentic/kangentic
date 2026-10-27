@@ -4,6 +4,8 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type C
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_LABELS, canTriggerRun } from '../../../../shared/automation-manifest';
+import { translateText } from '../../../i18n/translate';
+import { i18n } from '@lingui/core';
 import { describeAutomationMarks, describeAutomationSentence } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, Swimlane } from '../../../../shared/types';
 import { Tooltip } from '../../Tooltip';
@@ -294,11 +296,11 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
   const group = canTriggerRun(columnFacts({ ...props.column, reportsTurnEnd: props.reportsTurnEnd }), trigger);
   const blockedReason = group.ok
     ? null
-    : (trigger === 'enter' ? `Nothing runs when a task enters ${props.column.name}.` : group.reason);
+    : (trigger === 'enter' ? `Nothing runs when a task enters ${props.column.name}.` : translateText(group.reason));
 
   return (
     <section data-testid="column-automation-group" data-trigger={trigger}>
-      <GroupHeading label={AUTOMATION_TRIGGER_LABELS[trigger]} />
+      <GroupHeading label={translateText(AUTOMATION_TRIGGER_LABELS[trigger])} />
       {blockedReason !== null && rows.length === 0 ? (
         <p data-testid="column-automation-group-blocked" className="text-xs text-fg-faint py-1">
           {blockedReason}
@@ -356,8 +358,8 @@ function AutomationRow({
   const legacy = entry.status === 'legacy';
   // Each mark's tooltip leads with its editor card's name, so a first hover
   // names the concept: "Condition: only if the review is clean."
-  const marks = describeAutomationMarks(draft);
-  const sentence = describeAutomationSentence(draft.type, draft.config);
+  const marks = describeAutomationMarks(draft, i18n);
+  const sentence = describeAutomationSentence(draft.type, draft.config, i18n);
 
   // A row the column cannot run is shown OFF with its switch disabled, and the
   // draft keeps its stored `enabled`, so turning the setting back on restores it
@@ -551,7 +553,7 @@ function AutomationRow({
         <ToggleSwitch
           testId="column-automation-enabled"
           ariaLabel={`${draft.name} enabled`}
-          disabledReason={runnable.ok ? undefined : runnable.reason}
+          disabledReason={runnable.ok ? undefined : translateText(runnable.reason)}
           checked={switchedOn}
           disabled={readOnly || !runnable.ok}
           onChange={(next) => onToggle(draft, next)}

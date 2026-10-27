@@ -10,39 +10,6 @@
  * areas, so tasks emptying different areas edit lines git can merge.
  */
 export const I18N_UNCONVERTED_FILES: Record<string, readonly string[]> = {
-  // ── #915: Settings and shared lists ──
-
-  settings: [
-    'src/renderer/components/settings/keybindings/HotkeyRow.tsx',
-    'src/renderer/components/settings/keybindings/KeyCaptureInput.tsx',
-    'src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx',
-    'src/renderer/components/settings/settings-card.tsx',
-    'src/renderer/components/settings/shared.tsx',
-    'src/renderer/components/settings/tabs/AgentTab.tsx',
-    'src/renderer/components/settings/tabs/BehaviorTab.tsx',
-    'src/renderer/components/settings/tabs/BoardTab.tsx',
-    'src/renderer/components/settings/tabs/BrowserTab.tsx',
-    'src/renderer/components/settings/tabs/ChangesTab.tsx',
-    'src/renderer/components/settings/tabs/DeveloperTab.tsx',
-    'src/renderer/components/settings/tabs/DictationTab.tsx',
-    'src/renderer/components/settings/tabs/GeneralTab.tsx',
-    'src/renderer/components/settings/tabs/GitTab.tsx',
-    'src/renderer/components/settings/tabs/HotkeysTab.tsx',
-    'src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx',
-    'src/renderer/components/settings/tabs/McpServerTab.tsx',
-    'src/renderer/components/settings/tabs/MobileDevicesTab.tsx',
-    'src/renderer/components/settings/tabs/NotificationsTab.tsx',
-    'src/renderer/components/settings/tabs/PerformanceTab.tsx',
-    'src/renderer/components/settings/tabs/PrivacyTab.tsx',
-    'src/renderer/components/settings/tabs/ShortcutsTab.tsx',
-    'src/renderer/components/settings/tabs/TaskTab.tsx',
-    'src/renderer/components/settings/tabs/TerminalTab.tsx',
-    'src/renderer/components/settings/tabs/ThemeTab.tsx',
-    'src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx',
-    'src/renderer/components/settings/tabs/agent-execution-fields.tsx',
-    'src/renderer/components/settings/tabs/answer-agent-rows.tsx',
-  ],
-
   // ── #916: dialogs, task detail, backlog and workflows ──
 
   dialogs: [

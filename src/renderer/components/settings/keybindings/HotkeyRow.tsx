@@ -1,4 +1,5 @@
 import { AlertTriangle, Lock, RotateCcw } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { KeybindingDefinition } from '../../../../shared/keybindings';
 import { Pill } from '../../Pill';
 import { Tooltip } from '../../Tooltip';
@@ -42,6 +43,7 @@ export function HotkeyRow({
   onCommit,
   onReset,
 }: HotkeyRowProps) {
+  const { t } = useLingui();
   const readOnly = !definition.rebindable;
   const label = translateText(definition.label);
 
@@ -53,33 +55,33 @@ export function HotkeyRow({
               truncates instead. Only the state pills after them wrap. */}
           <span className="flex min-w-0 max-w-full items-center gap-1.5">
             <span className={`${SETTING_LABEL_CLASS} truncate`}>{label}</span>
-            {definition.description ? <InfoTip label={label} text={definition.description} /> : null}
+            {definition.description ? <InfoTip label={label} text={translateText(definition.description)} /> : null}
           </span>
           {conflict && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-conflict-${definition.id}`}>
-              <AlertTriangle size={11} /> Conflict
+              <AlertTriangle size={11} /> <Trans context="hotkey state">Conflict</Trans>
             </Pill>
           )}
           {!conflict && taken && (
             <Pill size="sm" className="bg-red-500/15 text-red-400" data-testid={`hotkey-taken-${definition.id}`}>
-              <AlertTriangle size={11} /> In use by another app
+              <AlertTriangle size={11} /> <Trans>In use by another app</Trans>
             </Pill>
           )}
           {!conflict && !taken && terminalWarn && (
             <Pill size="sm" className="bg-yellow-500/15 text-yellow-400">
-              Terminal may intercept
+              <Trans>Terminal may intercept</Trans>
             </Pill>
           )}
           {!conflict && !taken && !terminalWarn && isCustom && (
             <Pill size="sm" className="bg-accent/15 text-accent">
-              Custom
+              <Trans context="hotkey state">Custom</Trans>
             </Pill>
           )}
         </div>
       </div>
 
       {readOnly ? (
-        <Tooltip label="This hotkey is fixed and cannot be rebound">
+        <Tooltip label={t`This hotkey is fixed and cannot be rebound`}>
           <div className="flex items-center gap-2 flex-shrink-0">
             <KeyCombo combo={effective} />
             {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}
@@ -92,11 +94,11 @@ export function HotkeyRow({
       ) : (
         <div className="flex items-center gap-2 flex-shrink-0">
           <KeyCaptureInput combo={effective} onCommit={onCommit} />
-          <Tooltip label={tipLabel({ disabled: !isCustom, disabledReason: 'Already default', tip: 'Reset to default' })}>
+          <Tooltip label={tipLabel({ disabled: !isCustom, disabledReason: t`Already default`, tip: t`Reset to default` })}>
             <button
               onClick={onReset}
               disabled={!isCustom}
-              aria-label="Reset to default"
+              aria-label={t`Reset to default`}
               data-testid={`hotkey-reset-${definition.id}`}
               className="w-7 h-7 flex items-center justify-center rounded text-fg-faint hover:text-fg-secondary hover:bg-surface-hover disabled:opacity-30 disabled:cursor-default transition-colors"
             >

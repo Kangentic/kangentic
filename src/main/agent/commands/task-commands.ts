@@ -33,6 +33,7 @@ import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode } from '../../../shared/types';
 import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
+import { englishText } from '../../../shared/i18n/english';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -563,7 +564,7 @@ export const handleUpdateTask: CommandHandler = (
   // already the only state a workflow task can be in.
   if (newAutomationsDisabled === true) {
     const refusal = automationsSwitchRefusal(task);
-    if (refusal) return { success: false, error: `${refusal} The task was not updated.` };
+    if (refusal) return { success: false, error: `${englishText(refusal)} The task was not updated.` };
   }
   if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 

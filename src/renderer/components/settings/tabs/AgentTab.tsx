@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Check, CircleAlert, Copy, RefreshCw, SquareTerminal } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import type { AgentDetectionInfo, AgentPermissionEntry, AppConfig, PermissionMode } from '../../../../shared/types';
@@ -18,9 +19,9 @@ import { AgentExecutionFields } from './agent-execution-fields';
 import { AgentLaunchOptionFields } from './agent-launch-option-fields';
 
 /** "A", "A and B", "A, B and C". */
-function joinNames(names: string[]): string {
+function joinNames(names: string[], conjunction: string): string {
   if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `${names.slice(0, -1).join(', ')} ${conjunction} ${names[names.length - 1]}`;
 }
 
 export function AgentTab({ config, globalConfig, agentList }: {
@@ -28,6 +29,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
   globalConfig: AppConfig;
   agentList: AgentDetectionInfo[];
 }) {
+  const { t } = useLingui();
   const updateProject = useScopedUpdate('project');
   // The project the panel is editing (the switcher's pick), which is the one
   // `updateProject` writes to. Not `currentProject`, the board's project.
@@ -95,6 +97,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
     () => shownAgentList.filter((agent) => agent.supportsWslCli).map((agent) => agent.displayName),
     [shownAgentList],
   );
+  const wslAgentList = joinNames(wslCapableAgentNames, t({ message: 'and', context: 'between agent names' }));
 
   const {
     models: defaultModelOptions,
@@ -136,8 +139,8 @@ export function AgentTab({ config, globalConfig, agentList }: {
     <div className="space-y-4">
       <SettingsCard
         icon={<Bot size={16} />}
-        label="Project defaults"
-        description="The agent, model and permissions new sessions start with."
+        label={t`Project defaults`}
+        description={t`The agent, model and permissions new sessions start with.`}
         searchIds={['project.defaultAgent', 'project.defaultModel', 'project.defaultEffort', 'agent.permissionMode']}
       >
       <CardRow {...settingProps('project.defaultAgent')}>
@@ -160,7 +163,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
             value={project?.default_model ?? ''}
             onChange={handleDefaultModelChange}
             availableModels={defaultModelOptions}
-            placeholder="Agent default"
+            placeholder={t`Agent default`}
             placeholderVariant="muted"
             testId="project-default-model"
             onOpen={() => useConfigStore.getState().rescanModels()}
@@ -176,7 +179,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
             value={project?.default_effort ?? ''}
             onChange={handleDefaultEffortChange}
             options={defaultEffortOptions.map((level) => ({ value: level, label: level }))}
-            placeholder="Agent default"
+            placeholder={t`Agent default`}
             placeholderVariant="muted"
             testId="project-default-effort"
           />
@@ -195,43 +198,50 @@ export function AgentTab({ config, globalConfig, agentList }: {
 
       <SettingsCard
         icon={<SquareTerminal size={16} />}
-        label="Agent CLI"
-        description="Where the agent's command-line tool runs, and how it starts."
+        label={t`Agent CLI`}
+        description={t`Where the agent's command-line tool runs, and how it starts.`}
         searchIds={['agent.cliPaths', 'agent.executionMode', 'agent.executionServerUrl', 'agent.executionServerAuth', 'agent.executionWorkingDirectory', 'agent.launchOptions']}
       >
       {shownAgentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
         const loginCommand = agentLoginCommand(agent.name);
         const unauthenticated = agent.found && agent.authenticated === false;
+        const displayName = agent.displayName;
         return (
         <Fragment key={agent.name}>
           <CardRow
             {...settingProps('agent.cliPaths')}
-            label={`${agent.displayName} path`}
+            label={t`${displayName} path`}
             trailing={
               agent.unsupportedTarget ? (
                 // The status is the message; which agents do run from WSL is
                 // the reason, so it sits in the tip rather than a line under
                 // the field. An empty list holds the tip shut.
-                <Tooltip label={wslCapableAgentNames.length > 0 ? `Kangentic runs ${joinNames(wslCapableAgentNames)} from WSL.` : ''}>
+                <Tooltip label={wslCapableAgentNames.length > 0 ? t`Kangentic runs ${wslAgentList} from WSL.` : ''}>
                   <span className="text-xs flex items-center gap-1 text-attention" data-testid={`agent-cli-status-${agent.name}`}>
-                    <CircleAlert size={13} />No WSL support
+                    <CircleAlert size={13} /><Trans>No WSL support</Trans>
                   </span>
                 </Tooltip>
               ) : unauthenticated ? (
                 <span className="text-xs flex items-center gap-1 text-amber-400">
-                  <CircleAlert size={13} />Not signed in
+                  <CircleAlert size={13} /><Trans>Not signed in</Trans>
                 </span>
               ) : (
                 <span className="flex items-center gap-1.5" data-testid={`agent-cli-status-${agent.name}`}>
                   {agent.cliTarget && (
                     <span className="flex-shrink-0 rounded border border-edge px-1.5 text-[11px] leading-[18px] text-fg-muted">
-                      WSL: {agent.cliTarget.distro}
+                      <Trans>WSL: {agent.cliTarget.distro}</Trans>
                     </span>
                   )}
                   <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
-                    {agent.found
-                      ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
-                      : <><CircleAlert size={13} />Not found</>}
+                    {agent.found ? (
+                      <>
+                        <Check size={13} className="text-green-400" />
+                        {/* i18n-ok: a version number */}
+                        {agent.version ? `v${agent.version.replace(/^v/, '')}` : t`Detected`}
+                      </>
+                    ) : (
+                      <><CircleAlert size={13} /><Trans>Not found</Trans></>
+                    )}
                   </span>
                 </span>
               )
@@ -250,17 +260,17 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 type="text"
                 value={config.agent.cliPaths[agent.name] || ''}
                 onChange={(event) => updateProject({ agent: { cliPaths: { [agent.name]: event.target.value || null } } })}
-                placeholder={agent.found ? (agent.path ?? undefined) : 'Enter path manually'}
+                placeholder={agent.found ? (agent.path ?? undefined) : t`Enter path manually`}
                 className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
                 data-testid={`agent-cli-path-${agent.name}`}
               />
-              <Tooltip label={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}>
+              <Tooltip label={agent.found ? t`Re-detect agent` : t`${displayName} not found - click to re-detect`}>
                 <button
                   type="button"
                   onClick={handleRefreshAgents}
                   disabled={refreshing}
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors disabled:opacity-50"
-                  aria-label="Re-detect agent"
+                  aria-label={t`Re-detect agent`}
                 >
                   <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
                 </button>
@@ -273,16 +283,16 @@ export function AgentTab({ config, globalConfig, agentList }: {
             ) : null}
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
-                <span>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</span>
-                <Tooltip label={`Copy "${loginCommand}" to clipboard`}>
+                <span><Trans>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</Trans></span>
+                <Tooltip label={t`Copy "${loginCommand}" to clipboard`}>
                   <button
                     type="button"
                     onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
                     className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
-                    aria-label={`Copy "${loginCommand}" to clipboard`}
+                    aria-label={t`Copy "${loginCommand}" to clipboard`}
                     data-testid={`agent-tab-copy-login-${agent.name}`}
                   >
-                    <Copy size={11} />{copiedAgent === agent.name ? 'Copied!' : 'Copy'}
+                    <Copy size={11} />{copiedAgent === agent.name ? t`Copied!` : t({ message: 'Copy', context: 'verb' })}
                   </button>
                 </Tooltip>
               </div>

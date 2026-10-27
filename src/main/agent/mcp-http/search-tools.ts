@@ -26,6 +26,7 @@ import {
   type KnowledgeGraphTaskFacts,
   type KnowledgeGraphTaskFieldKey,
 } from '../../../shared/knowledge-graph-task-fields';
+import { englishText } from '../../../shared/i18n/english';
 
 /**
  * kangentic_search - the single unified retrieval tool for agents. Mirrors the
@@ -423,7 +424,9 @@ const FACT_FIELD = new Map(KNOWLEDGE_GRAPH_TASK_FIELDS.map((field) => [field.key
 export function factsInline(board: BoardTaskFacts): string {
   const facts: KnowledgeGraphTaskFacts = { ...board, region: null };
   const shown = (key: KnowledgeGraphTaskFieldKey, suffix = ''): string | null => {
-    const value = FACT_FIELD.get(key)?.display(facts);
+    // A status is a descriptor; an agent reads it in English.
+    const display = FACT_FIELD.get(key)?.display(facts);
+    const value = display == null ? null : englishText(display);
     return value ? `${value}${suffix}` : null;
   };
   const lines = [shown('lines_added'), shown('lines_removed')].filter((part): part is string => part !== null).join('/');

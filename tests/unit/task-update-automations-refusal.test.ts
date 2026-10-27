@@ -34,8 +34,14 @@
  * refused too much would break.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL } from '../../src/shared/automation-manifest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL as AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR } from '../../src/shared/automation-manifest';
+import { englishText } from '../../src/shared/i18n/english';
+import { translateText } from '../../src/renderer/i18n/translate';
+import { PSEUDO_MARKER, activatePseudoLocale, restoreEnglishLocale } from './helpers/pseudo-locale';
+
+/** The English the engine stores and an agent reads; the constant is a descriptor. */
+const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = englishText(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR);
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -215,6 +221,41 @@ describe('TASK_UPDATE automations switch', () => {
 
       expect(mockTaskUpdate).toHaveBeenCalledTimes(1);
       expect(mockTaskUpdate).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1', title: 'Renamed' }));
+    });
+  });
+
+  describe('under a session language that is not English', () => {
+    // The renderer shows this refusal as the raw error and matches it, as the MCP
+    // task tools return it, so what the handler throws stays English. The shipped
+    // catalogs are untranslated, so nothing else tells `englishText` from the UI's
+    // translator; this activates a pseudo language (helpers/pseudo-locale.ts).
+    //
+    // Red-green: throwing `i18n._(refusal)` instead of `englishText(refusal)` in
+    // task-crud.ts fails this test with the marker in the message, and leaves
+    // every other test in this file green.
+    const REFUSAL_ENGLISH = 'This task is in a workflow. Pause the workflow to hold it.';
+
+    beforeEach(async () => {
+      arrange(createExistingTask({ workflow_id: 'workflow-1' }));
+      await activatePseudoLocale();
+    });
+
+    afterEach(() => {
+      restoreEnglishLocale();
+    });
+
+    it('throws the refusal in English while the UI translates the same message', async () => {
+      // The catalog is live: the UI's translator returns the marked text.
+      expect(translateText(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR)).toBe(`${PSEUDO_MARKER}${REFUSAL_ENGLISH}`);
+
+      const thrown = await callUpdateHandler({ id: 'task-1', automations_disabled: true }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe(REFUSAL_ENGLISH);
+      expect(mockTaskUpdate).not.toHaveBeenCalled();
     });
   });
 
