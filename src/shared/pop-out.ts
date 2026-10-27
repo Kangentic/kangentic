@@ -123,8 +123,8 @@ export interface PopOutDescriptor<K extends PopOutKind = PopOutKind> {
   params: PopOutParamsByKind[K];
 }
 
-/** additionalArguments flag carrying the base64-encoded descriptor JSON. */
-export const POPOUT_ARG_PREFIX = '--kangentic-popout=';
+// Re-exported for main and tests. The preload imports it from `pop-out-arg`.
+export { POPOUT_ARG_PREFIX } from './pop-out-arg';
 
 /**
  * Stable identity for one pop-out window instance. Global surfaces (no task/project)

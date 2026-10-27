@@ -225,6 +225,35 @@ describe("main's esbuild bundle", () => {
   });
 });
 
+describe('the sandboxed preload', () => {
+  it('bundles nothing from Lingui, whose runtime macro hashes ids with node:crypto', async () => {
+    // A sandboxed preload can require only a few modules, and a missing one
+    // fails the whole script: window.electronAPI never exists and the app
+    // renders nothing. Only the E2E tier launches the real preload, so this
+    // is the fast check. The preload reads text only through shared modules
+    // that hold no msg descriptors (pop-out-arg, i18n/locales).
+    const result = await esbuild.build({
+      entryPoints: [path.join(REPO_ROOT, 'src/preload/preload.ts')],
+      bundle: true,
+      write: false,
+      metafile: true,
+      platform: 'node',
+      target: 'node24',
+      format: 'cjs',
+      conditions: ['require'],
+      external: ['electron'],
+      define: { __KANGENTIC_DEV__: 'false' },
+      logLevel: 'silent',
+    });
+    const reached = Object.keys(result.metafile.inputs).map(toPosix);
+    const lingui = reached.filter((input) => input.includes('node_modules/@lingui/'));
+    expect(
+      lingui,
+      'The preload imports a module that holds msg descriptors. Import the constant from a module with no Lingui import (see src/shared/pop-out-arg.ts).',
+    ).toEqual([]);
+  });
+});
+
 describe('translated catalogs', () => {
   it('every shipped language translates the first-launch suggestion strings', async () => {
     const languageCatalog = catalogs.find((catalog) => toPosix(catalog.path).endsWith('/language'));
