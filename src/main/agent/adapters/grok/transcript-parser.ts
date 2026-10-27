@@ -10,6 +10,7 @@ import { readJsonlWindow, streamJsonlRecords } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { grokChatHistoryPath, grokUpdatesJsonlPath } from './session-paths';
+import type { CliPlace } from '../../shared/cli-target';
 
 /** Grok uuids number lines (see below), so the tail, its notice and every page count them. */
 const UUIDS_NUMBER_LINES = true;
@@ -46,8 +47,9 @@ const UUIDS_NUMBER_LINES = true;
 export async function parseGrokTranscript(
   agentSessionId: string,
   cwd: string,
+  place: CliPlace | null = null,
 ): Promise<{ entries: TranscriptEntry[]; sourcePath: string | null }> {
-  const filePath = grokChatHistoryPath(cwd, agentSessionId);
+  const filePath = grokChatHistoryPath(cwd, agentSessionId, place);
   // Bounded tail read rather than a whole-file one, and `countOmittedLines`
   // because Grok's uuids embed the ABSOLUTE physical line index (see below).
   const window = await readJsonlWindow(filePath, {
@@ -164,9 +166,10 @@ function parseGrokRecord(uuid: string, line: string, parseTimeTs: number, entrie
 export async function grokTranscriptUsage(
   agentSessionId: string,
   cwd: string,
+  place: CliPlace | null = null,
 ): Promise<TranscriptUsage | null> {
   let latest: TranscriptUsage | null = null;
-  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, (update) => {
+  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, place, (update) => {
     if (update.sessionUpdate !== 'turn_completed') return;
     const usage = update.usage;
     if (!isRecord(usage)) return;
@@ -190,10 +193,11 @@ export async function grokTranscriptUsage(
 export async function grokTranscriptToolCounts(
   agentSessionId: string,
   cwd: string,
+  place: CliPlace | null = null,
 ): Promise<TranscriptToolCounts | null> {
   const seenIds = new Set<string>();
   const countsByTool = new Map<string, number>();
-  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, (update) => {
+  const readWholeFile = await forEachUpdateRecord(agentSessionId, cwd, place, (update) => {
     if (update.sessionUpdate !== 'tool_call') return;
     const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : null;
     if (toolCallId) {
@@ -237,9 +241,10 @@ export async function grokTranscriptToolCounts(
 async function forEachUpdateRecord(
   agentSessionId: string,
   cwd: string,
+  place: CliPlace | null,
   onUpdate: (update: Record<string, unknown>) => void,
 ): Promise<boolean> {
-  const filePath = grokUpdatesJsonlPath(cwd, agentSessionId);
+  const filePath = grokUpdatesJsonlPath(cwd, agentSessionId, place);
   return streamJsonlRecords(filePath, (raw) => {
     if (!isRecord(raw.params) || !isRecord(raw.params.update)) return;
     onUpdate(raw.params.update);

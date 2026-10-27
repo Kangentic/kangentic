@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV } from '../../shared/kangentic-mcp-server';
+import { WSL_MCP_REQUEST_HEAD, WSL_MCP_TOKEN_ENV } from '../../shared/wsl-hook-transport';
 
 /**
  * Kangentic MCP server wiring for Grok Build.
@@ -49,6 +51,26 @@ const MANAGED_BLOCK = [
   '',
 ].join('\n');
 
+/**
+ * The block for a Grok in a WSL distro on NAT networking, which cannot reach
+ * this machine's loopback: the WSL hook transport's stdio bridge. As static
+ * as the URL block, since grok expands `${VAR}` in `command`, `args` and `env`
+ * values too: the script, the URL and the token all come from the session's
+ * environment, the token handed to the bridge in its own `env`.
+ */
+const BRIDGE_BLOCK = [
+  BLOCK_BEGIN,
+  '[mcp_servers.kangentic]',
+  'command = "sh"',
+  `args = ["\${${KANGENTIC_MCP_BRIDGE_SCRIPT_ENV}}", "${WSL_MCP_REQUEST_HEAD}", "\${${KANGENTIC_MCP_URL_ENV}}"]`,
+  `env = { "${WSL_MCP_TOKEN_ENV}" = "\${${KANGENTIC_MCP_TOKEN_ENV}}" }`,
+  BLOCK_END,
+  '',
+].join('\n');
+
+/** Which block a folder gets: the URL one, or the stdio bridge for a distro on NAT networking. */
+export type GrokMcpBlockKind = 'url' | 'bridge';
+
 /** Exported for the command builder's git-exclude created-by-us check. */
 export function configTomlPath(directory: string): string {
   return path.join(directory, '.grok', 'config.toml');
@@ -77,7 +99,7 @@ function stripManagedBlock(content: string): string {
  * is untouched. Best-effort - a failure only costs MCP tools in the
  * session, never the spawn.
  */
-export function writeMcpConfig(directory: string): void {
+export function writeMcpConfig(directory: string, kind: GrokMcpBlockKind = 'url'): void {
   const filePath = configTomlPath(directory);
   try {
     let existing = '';
@@ -95,7 +117,7 @@ export function writeMcpConfig(directory: string): void {
     // because rename-replace already preserves the original on any failure
     // before the rename, and a per-spawn backup file would litter the
     // user's `.grok/` dir.
-    atomicWriteFileWithBackup(filePath, `${base}${separator}${MANAGED_BLOCK}`, {
+    atomicWriteFileWithBackup(filePath, `${base}${separator}${kind === 'bridge' ? BRIDGE_BLOCK : MANAGED_BLOCK}`, {
       backup: false,
       logTag: '[grok]',
     });

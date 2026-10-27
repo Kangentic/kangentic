@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
+import { answerHomeForPlace } from '../../shared/answer-run-directory';
 import { KANGENTIC_MCP_BRIDGE_SCRIPT_ENV, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { WSL_MCP_REQUEST_HEAD, WSL_MCP_TOKEN_ENV } from '../../shared/wsl-hook-transport';
 
@@ -67,18 +68,13 @@ async function writeIfChanged(filePath: string, content: string): Promise<void> 
 }
 
 /**
- * The folder an answer run starts in. A Cursor in a WSL distro gets a stable
- * sibling of the shared answer home, one per distro, so its entry (the
- * bridge, on NAT networking) and the URL entry of a Cursor on this machine
- * each keep a file of their own instead of overwriting one another between
- * runs. A sibling, not a folder inside, in case Cursor looks for a workspace's
- * `.cursor` folder above the one it starts in: the home's would name an
- * unreachable URL under the same server name. A WSL target exists only on
- * Windows, whose temp folder is the user's own.
+ * The folder an answer run starts in (`answerHomeForPlace`): for a Cursor in
+ * a WSL distro a stable sibling of the shared answer home, so its bridge
+ * entry and the URL entry of a Cursor on this machine never overwrite one
+ * another between runs.
  */
 export function cursorAnswerHome(answerHome: string, place: CliPlace | null): string {
-  if (!place) return answerHome;
-  return `${answerHome}-wsl-${place.distro.replace(/[^\w.-]/g, '_')}`;
+  return answerHomeForPlace(answerHome, place);
 }
 
 export async function writeCursorAnswerWorkspace(

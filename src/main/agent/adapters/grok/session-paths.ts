@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cliPathForTarget, hostPathForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
+import type { StoredCliTarget } from '../../../../shared/types';
 
 /**
  * Single source of truth for Grok Build's on-disk layout.
@@ -22,10 +24,18 @@ import path from 'node:path';
  * Because GrokAdapter declares `supportsCallerSessionId = true` (Kangentic
  * generates the UUID and passes `-s <uuid>` at spawn), every path here is a
  * deterministic construction - no filesystem scanning or capture race.
+ *
+ * A Grok installed in a WSL distro (`place`) keeps all of it in the distro,
+ * under the `GROK_HOME` its own shell sets, else the distro's `~/.grok`,
+ * keyed by the cwd it was given: the `/mnt` form of ours.
  */
 
 /** Grok's config/data root: `$GROK_HOME` when set, else `~/.grok`. Read per-call so tests can redirect it. */
-export function grokHomeDir(): string {
+export function grokHomeDir(place: CliPlace | null = null): string {
+  if (place) {
+    const distroOverride = place.facts.env.GROK_HOME?.trim();
+    return distroOverride?.startsWith('/') ? hostPathForTarget(distroOverride, place) : path.join(place.facts.homeUnc, '.grok');
+  }
   const override = process.env.GROK_HOME;
   if (override && override.trim().length > 0) return override;
   return path.join(os.homedir(), '.grok');
@@ -35,22 +45,23 @@ export function grokHomeDir(): string {
  * The per-cwd sessions directory key. Grok URL-encodes the raw absolute
  * cwd string (backslashes intact on Windows) with `encodeURIComponent`
  * semantics - verified byte-for-byte against a real session directory.
+ * For a Grok in a WSL distro, the cwd it saw (`/mnt/c/...`).
  */
-export function cwdToSessionsDirName(cwd: string): string {
-  return encodeURIComponent(cwd);
+export function cwdToSessionsDirName(cwd: string, place: CliPlace | null = null): string {
+  return encodeURIComponent(place ? cliPathForTarget(cwd, place) : cwd);
 }
 
 /** Absolute path to one session's directory. */
-export function grokSessionDir(cwd: string, agentSessionId: string): string {
-  return path.join(grokHomeDir(), 'sessions', cwdToSessionsDirName(cwd), agentSessionId);
+export function grokSessionDir(cwd: string, agentSessionId: string, place: CliPlace | null = null): string {
+  return path.join(grokHomeDir(place), 'sessions', cwdToSessionsDirName(cwd, place), agentSessionId);
 }
 
-export function grokUpdatesJsonlPath(cwd: string, agentSessionId: string): string {
-  return path.join(grokSessionDir(cwd, agentSessionId), 'updates.jsonl');
+export function grokUpdatesJsonlPath(cwd: string, agentSessionId: string, place: CliPlace | null = null): string {
+  return path.join(grokSessionDir(cwd, agentSessionId, place), 'updates.jsonl');
 }
 
-export function grokChatHistoryPath(cwd: string, agentSessionId: string): string {
-  return path.join(grokSessionDir(cwd, agentSessionId), 'chat_history.jsonl');
+export function grokChatHistoryPath(cwd: string, agentSessionId: string, place: CliPlace | null = null): string {
+  return path.join(grokSessionDir(cwd, agentSessionId, place), 'chat_history.jsonl');
 }
 
 /**
@@ -65,9 +76,12 @@ export function grokChatHistoryPath(cwd: string, agentSessionId: string): string
 export async function locateGrokUpdatesFile(options: {
   agentSessionId: string;
   cwd: string;
+  /** Where the CLI runs when it is not this machine (a WSL distro). */
+  cliTarget?: StoredCliTarget | null;
   maxAttempts?: number;
 }): Promise<string | null> {
-  const expected = grokUpdatesJsonlPath(options.cwd, options.agentSessionId);
+  const place = placeFromStored(options.cliTarget ?? null);
+  const expected = grokUpdatesJsonlPath(options.cwd, options.agentSessionId, place);
   const maxAttempts = options.maxAttempts ?? 120; // ~60s at 500ms cadence
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (fs.existsSync(expected)) return expected;
@@ -78,12 +92,12 @@ export async function locateGrokUpdatesFile(options: {
     // drive-letter casing difference on Windows). Checked every 10th
     // attempt to keep the common path cheap.
     if (attempt >= 10 && attempt % 10 === 0) {
-      const scanned = findSessionDirAcrossCwds(options.agentSessionId);
+      const scanned = findSessionDirAcrossCwds(options.agentSessionId, place);
       if (scanned) return scanned;
     }
     await sleep(500);
   }
-  return findSessionDirAcrossCwds(options.agentSessionId);
+  return findSessionDirAcrossCwds(options.agentSessionId, place);
 }
 
 /**
@@ -91,8 +105,8 @@ export async function locateGrokUpdatesFile(options: {
  * caller-owned session UUID. One readdir of the sessions root plus one
  * existsSync per cwd key - cheap, and unambiguous because the UUID is ours.
  */
-function findSessionDirAcrossCwds(agentSessionId: string): string | null {
-  const sessionsRoot = path.join(grokHomeDir(), 'sessions');
+function findSessionDirAcrossCwds(agentSessionId: string, place: CliPlace | null): string | null {
+  const sessionsRoot = path.join(grokHomeDir(place), 'sessions');
   let cwdKeys: string[];
   try {
     cwdKeys = fs.readdirSync(sessionsRoot);

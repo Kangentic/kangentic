@@ -1,9 +1,12 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
+import type { CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, mcpBridgeScriptEnv } from '../../shared/kangentic-mcp-server';
 import { writeHooksFile, KANGENTIC_EVENTS_PATH_ENV } from './hook-manager';
-import { writeMcpConfig, configTomlPath, KANGENTIC_MCP_URL_ENV, KANGENTIC_MCP_TOKEN_ENV } from './mcp-config';
+import { writeMcpConfig, configTomlPath, KANGENTIC_MCP_URL_ENV, KANGENTIC_MCP_TOKEN_ENV, type GrokMcpBlockKind } from './mcp-config';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -72,6 +75,13 @@ export interface GrokCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * A Grok installed in a WSL distro (`CommandOptions.cliTarget`): named by the
+   * path the distro sees, its hooks run the folder's copy of the WSL hook
+   * transport's script, and on NAT networking Kangentic's server is the
+   * transport's stdio bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /**
@@ -102,14 +112,17 @@ export class GrokCommandBuilder {
     // sit untracked in the worktree for the whole session, polluting git
     // status and riding along with any `git add -A` an agent runs.
     this.seedGitExcludes(options);
+    // A Grok in a WSL distro is started by the path the distro sees; the PTY's
+    // cwd reaches it as its `/mnt` path, which keys its session store.
+    const place = options.cliTarget ?? null;
     if (options.eventsOutputPath) {
-      writeHooksFile(options.cwd);
+      writeHooksFile(options.cwd, place ? { place, sessionDirectory: path.dirname(options.eventsOutputPath) } : null);
     }
     if (grokMcpWiringEnabled(options)) {
-      writeMcpConfig(options.cwd);
+      writeMcpConfig(options.cwd, this.mcpBlockKind(options));
     }
 
-    const parts: string[] = [quoteArg(options.grokPath, shell)];
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.grokPath, shell)];
     const isResume = Boolean(options.resume && options.sessionId);
 
     if (isResume) {
@@ -201,14 +214,37 @@ export class GrokCommandBuilder {
    */
   buildGrokEnv(options: GrokCommandOptions): Record<string, string> | null {
     const env: Record<string, string> = {};
-    if (options.eventsOutputPath) {
+    const place = options.cliTarget ?? null;
+    // A distro Grok's hooks publish through the transport, which finds its
+    // folder on its own, so the bridge's events path is not passed: it is a
+    // Windows path the distro could not open.
+    if (options.eventsOutputPath && !place) {
       env[KANGENTIC_EVENTS_PATH_ENV] = options.eventsOutputPath;
     }
     if (grokMcpWiringEnabled(options)) {
       env[KANGENTIC_MCP_URL_ENV] = options.mcpServerUrl;
       env[KANGENTIC_MCP_TOKEN_ENV] = options.mcpServerToken;
+      // The bridge block's script (read on NAT networking, unused on mirrored).
+      if (place && options.eventsOutputPath) Object.assign(env, mcpBridgeScriptEnv(path.dirname(options.eventsOutputPath), place));
     }
     return Object.keys(env).length > 0 ? env : null;
+  }
+
+  /**
+   * The `.grok/config.toml` block this session's Grok gets: the stdio bridge
+   * when `kangenticMcpServer` says so (a distro on NAT networking), prepared in
+   * the session's directory, whose relay the spawn attaches. Else the URL block.
+   */
+  private mcpBlockKind(options: GrokCommandOptions & { mcpServerUrl: string; mcpServerToken: string }): GrokMcpBlockKind {
+    const place = options.cliTarget ?? null;
+    if (!place || !options.eventsOutputPath) return 'url';
+    const server = kangenticMcpServer({
+      url: options.mcpServerUrl,
+      token: options.mcpServerToken,
+      place,
+      directory: path.dirname(options.eventsOutputPath),
+    });
+    return server.kind === 'stdio' ? 'bridge' : 'url';
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

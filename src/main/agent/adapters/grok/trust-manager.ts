@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createSerialLock, atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import { grokHomeDir } from './session-paths';
 
 /**
@@ -39,11 +40,21 @@ import { grokHomeDir } from './session-paths';
  *   decides it once, cascading to everything after. Kangentic never
  *   answers a trust question the user has not.
  * - An explicit ancestor `trusted = false` is always respected.
+ *
+ * A Grok installed in a WSL distro (`place`) keeps its store in the distro's
+ * Grok home, keyed by the folder as the distro sees it (`/mnt/c/...`), and
+ * compared as Linux compares paths: case included, nothing resolved.
  */
 const withTrustStoreLock = createSerialLock();
 
-export async function ensureWorktreeTrust(workingDirectory: string): Promise<void> {
-  return withTrustStoreLock(() => ensureWorktreeTrustSync(workingDirectory));
+export async function ensureWorktreeTrust(workingDirectory: string, place: CliPlace | null = null): Promise<void> {
+  return withTrustStoreLock(() => ensureWorktreeTrustSync(workingDirectory, place));
+}
+
+/** The key Grok records a folder under: its resolved path, the distro's view of it for a Grok in a WSL distro. */
+function trustKeyOf(folderPath: string, place: CliPlace | null): string {
+  const resolvedPath = path.resolve(folderPath);
+  return place ? cliPathForTarget(resolvedPath, place) : resolvedPath;
 }
 
 /**
@@ -55,16 +66,16 @@ export async function ensureWorktreeTrust(workingDirectory: string): Promise<voi
  * starts in. `--trust` was the other way to start the server, and it records
  * the run's folder permanently: a trust entry per question.
  */
-export async function ensureAnswerHomeTrust(answerHome: string): Promise<void> {
-  return withTrustStoreLock(() => ensureFolderTrustSync(path.resolve(answerHome)));
+export async function ensureAnswerHomeTrust(answerHome: string, place: CliPlace | null = null): Promise<void> {
+  return withTrustStoreLock(() => ensureFolderTrustSync(trustKeyOf(answerHome, place), place));
 }
 
-export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
-  return withTrustStoreLock(() => removeWorktreeTrustSync(worktreePath));
+export async function removeWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withTrustStoreLock(() => removeWorktreeTrustSync(worktreePath, place));
 }
 
-function trustStorePath(): string {
-  return path.join(grokHomeDir(), 'trusted_folders.toml');
+function trustStorePath(place: CliPlace | null): string {
+  return path.join(grokHomeDir(place), 'trusted_folders.toml');
 }
 
 /**
@@ -75,14 +86,16 @@ function trustStorePath(): string {
  * project opened as `/tmp/app` that Grok trusted as `/private/tmp/app`). Read
  * only; Kangentic never writes a decision for a folder that is not its own.
  */
-export function isFolderTrusted(workingDirectory: string): boolean {
+export function isFolderTrusted(workingDirectory: string, place: CliPlace | null = null): boolean {
   let content: string;
   try {
-    content = fs.readFileSync(trustStorePath(), 'utf-8');
+    content = fs.readFileSync(trustStorePath(place), 'utf-8');
   } catch {
     return false;
   }
   const entries = parseTrustEntries(content.split('\n'));
+  // A distro's Grok recorded the path it ran in, the distro's view of ours.
+  if (place) return decisionFor(entries, trustKeyOf(workingDirectory, place), place) === true;
   let realPath: string | null = null;
   try {
     realPath = fs.realpathSync.native(workingDirectory);
@@ -104,8 +117,11 @@ function projectRootForWorktree(resolvedPath: string): string | null {
  * Normalize for comparison: resolve, forward slashes, no trailing slash,
  * casefold on win32. Exported for `project-relocation.ts`, which compares
  * the same trust-store header paths (the Codex `config-toml.ts` precedent).
+ * A key in a WSL distro's store (`place`) is a Linux path as Grok wrote it:
+ * only a trailing slash is dropped.
  */
-export function normalizeForCompare(rawPath: string): string {
+export function normalizeForCompare(rawPath: string, place: CliPlace | null = null): string {
+  if (place) return rawPath.replace(/\/+$/, '');
   let normalized = path.resolve(rawPath).replace(/\\/g, '/');
   normalized = normalized.replace(/\/+$/, '');
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
@@ -147,13 +163,13 @@ function parseHeaderLine(line: string): string | null {
 }
 
 /** The decision covering `target`, honoring cascade (nearest decided ancestor wins). */
-function decisionFor(entries: TrustEntry[], target: string): boolean | null {
-  const normalizedTarget = normalizeForCompare(target);
+function decisionFor(entries: TrustEntry[], target: string, place: CliPlace | null = null): boolean | null {
+  const normalizedTarget = normalizeForCompare(target, place);
   let bestPathLength = -1;
   let bestDecision: boolean | null = null;
   for (const entry of entries) {
     if (entry.trusted === null) continue;
-    const normalizedEntry = normalizeForCompare(entry.folderPath);
+    const normalizedEntry = normalizeForCompare(entry.folderPath, place);
     const covers = normalizedTarget === normalizedEntry
       || normalizedTarget.startsWith(`${normalizedEntry}/`);
     if (covers && normalizedEntry.length > bestPathLength) {
@@ -164,18 +180,18 @@ function decisionFor(entries: TrustEntry[], target: string): boolean | null {
   return bestDecision;
 }
 
-function ensureWorktreeTrustSync(workingDirectory: string): void {
+function ensureWorktreeTrustSync(workingDirectory: string, place: CliPlace | null): void {
   const resolvedPath = path.resolve(workingDirectory);
   const projectRoot = projectRootForWorktree(resolvedPath);
   // Only a Kangentic worktree is ever pre-approved; a project root spawn
   // runs with whatever the user decided (or undecided = untrusted).
   if (!projectRoot) return;
-  ensureFolderTrustSync(resolvedPath);
+  ensureFolderTrustSync(trustKeyOf(resolvedPath, place), place);
 }
 
-/** Record trust for exactly `resolvedPath`, unless a decision already covers it. */
-function ensureFolderTrustSync(resolvedPath: string): void {
-  const storePath = trustStorePath();
+/** Record trust for exactly `resolvedPath` (a key in the store `place` names), unless a decision already covers it. */
+function ensureFolderTrustSync(resolvedPath: string, place: CliPlace | null): void {
+  const storePath = trustStorePath(place);
   let content: string;
   try {
     content = fs.readFileSync(storePath, 'utf-8');
@@ -186,7 +202,7 @@ function ensureFolderTrustSync(resolvedPath: string): void {
 
   // Cascade already answers for this path (a decided ancestor, or a prior
   // entry for the worktree itself, in either direction) - never overrule.
-  if (decisionFor(entries, resolvedPath) !== null) return;
+  if (decisionFor(entries, resolvedPath, place) !== null) return;
 
   // Single-quoted TOML literal keys cannot represent a path containing a
   // single quote; reserializing the user's file to switch quote styles is
@@ -207,9 +223,9 @@ function ensureFolderTrustSync(resolvedPath: string): void {
   }
 }
 
-function removeWorktreeTrustSync(worktreePath: string): void {
-  const storePath = trustStorePath();
-  const target = normalizeForCompare(worktreePath);
+function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  const storePath = trustStorePath(place);
+  const target = normalizeForCompare(place ? trustKeyOf(worktreePath, place) : worktreePath, place);
 
   let content: string;
   try {
@@ -225,7 +241,7 @@ function removeWorktreeTrustSync(worktreePath: string): void {
 
   while (index < lines.length) {
     const headerPath = parseHeaderLine(lines[index]);
-    if (!headerPath || normalizeForCompare(headerPath) !== target) {
+    if (!headerPath || normalizeForCompare(headerPath, place) !== target) {
       kept.push(lines[index]);
       index += 1;
       continue;

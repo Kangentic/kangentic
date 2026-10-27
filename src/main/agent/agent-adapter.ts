@@ -625,8 +625,10 @@ export interface AgentAdapter {
    * does not decide for the user (Grok reads a project's MCP servers only in a
    * folder the user trusted in Grok). A workflow's agent refuses to start with
    * this reason rather than start without the tools it saves its plan with.
+   * `place` is where the CLI runs when it is a WSL distro, whose own config
+   * decides it.
    */
-  kangenticMcpBlockedReason?(workingDirectory: string): string | null;
+  kangenticMcpBlockedReason?(workingDirectory: string, place?: CliPlace | null): string | null;
 
   /**
    * True when `buildCommand` honours `CommandOptions.readableDirectories`, so a

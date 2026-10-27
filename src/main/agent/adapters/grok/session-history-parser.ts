@@ -4,6 +4,7 @@ import {
   Activity,
   type SessionHistoryParseResult,
   type SessionUsage,
+  type StoredCliTarget,
 } from '../../../../shared/types';
 import { grokHomeDir, locateGrokUpdatesFile } from './session-paths';
 
@@ -56,6 +57,8 @@ export class GrokSessionHistoryParser {
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
+    /** Where the CLI runs when it is not this machine (a WSL distro). */
+    cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     return locateGrokUpdatesFile(options);
   }

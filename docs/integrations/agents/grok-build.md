@@ -148,6 +148,12 @@ grok [-s <uuid> | --resume <uuid>] --permission-mode <mode> [--allow "MCPTool(ka
 - Model and effort overrides pass straight through as `--model <slug>` and `--reasoning-effort <effort>` when set.
 - The interactive prompt is delivered after `--` (end-of-options), so prompt text starting with a dash can never be parsed as a CLI option regardless of shell quoting. Non-interactive spawns (`nonInteractive` transition actions) use `-p "<prompt>" --output-format plain` instead, which prints one turn and exits. A resume passes no prompt at all.
 
+## WSL
+
+A Grok installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Grok's Linux path in a `wsl -d <distro>` shell, and the PTY's cwd reaches it as its `/mnt` path, which is what keys its session store. Both per-folder files stay static. `.grok/hooks/kangentic.json` calls the folder's copy of the WSL hook transport's script, `<cwd>/.kangentic/grok-wsl-hook.sh`, with the same events and directives, since a distro may have no node. The copy finds the session's own folder through `KANGENTIC_WSL_HOOK_DIR`, which Grok's hooks inherit as they inherit `KANGENTIC_EVENTS_PATH`, and the session no longer passes that Windows events path. On mirrored networking the `.grok/config.toml` block is the URL one. On NAT networking it is the transport's stdio bridge: `command = "sh"`, `args` naming `${KANGENTIC_MCP_BRIDGE_SCRIPT}`, `mcp` and `${KANGENTIC_MCP_URL}`, and the token in `env` as `${KANGENTIC_MCP_TOKEN}`. Grok's MCP docs say it expands those references in `command`, `args` and `env` as in `url`.
+
+The session store, the trust store and the models cache are the distro's (its own `GROK_HOME`, else the distro's `~/.grok`). The store is keyed by `encodeURIComponent` of the `/mnt` cwd, and trust by the `/mnt` path with Linux case, nothing resolved. A removed worktree's trust entry goes from the distro's store while the distro runs. The trust check a workflow agent makes before it starts (`kangenticMcpBlockedReason`) reads the same store. The sign-in probe runs `grok models` in the distro. A Knowledge Graph answer starts in `<home>-wsl-<distro>` beside the shared answer home (`answerHomeForPlace`), trusted once in the distro's store, so its block never overwrites the one a Grok on this machine reads. `--help` and a title summary run through `wsl.exe`. Not yet run against a Grok installed in a distro.
+
 ## Permission Modes
 
 `--permission-mode` accepts Kangentic's `PermissionMode` names verbatim (verified in

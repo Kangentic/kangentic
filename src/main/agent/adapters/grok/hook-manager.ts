@@ -12,7 +12,12 @@ import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { extractTool, extractToolId, extractDetail } from '../../shared/directive-builders';
 import { setTypeWhenDetailContains } from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives } from '../../shared/background-command-hooks';
+import type { CliPlace } from '../../shared/cli-target';
+import { copyWslHookScriptInto, prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
+
+/** The workspace copy of the WSL hook transport's script a Grok in a WSL distro runs its hooks with. */
+export const GROK_WSL_HOOK_COPY_NAME = 'grok-wsl-hook.sh';
 
 /**
  * Grok's background commands (task #859), from a headless 1.0.0 run against a
@@ -142,13 +147,19 @@ function commandEntry(command: string): GrokHookEntry {
 
 /**
  * Build the full Kangentic hook object for grok. Exported for tests; the
- * production entry point is `writeHooksFile`.
+ * production entry point is `writeHooksFile`. `eventCommand`, for a Grok
+ * installed in a WSL distro, builds each command in place of the node bridge
+ * with the same event types and directives.
  */
-export function buildGrokHooks(eventBridge: string): Record<string, GrokHookEntry[]> {
+export function buildGrokHooks(
+  eventBridge: string,
+  eventCommand?: (eventType: string, ...directives: string[]) => string,
+): Record<string, GrokHookEntry[]> {
   const H = GrokHookEvent;
   const E = EventType;
-  const bridge = (eventType: string, ...directives: string[]): string =>
-    buildBridgeCommand(GROK_HOOK_SHELL, eventBridge, EVENTS_PATH_FROM_ENVIRONMENT, eventType, ...directives);
+  const bridge = (eventType: string, ...directives: string[]): string => (eventCommand
+    ? eventCommand(eventType, ...directives)
+    : buildBridgeCommand(GROK_HOOK_SHELL, eventBridge, EVENTS_PATH_FROM_ENVIRONMENT, eventType, ...directives));
 
   return {
     [H.PreToolUse]: [commandEntry(bridge(E.ToolStart,
@@ -210,12 +221,25 @@ function hooksFilePath(directory: string): string {
  * non-git directory never load). Every Kangentic spawn cwd is a git root
  * (the project itself, or a worktree, which is its own git root), so
  * writing at `cwd` IS writing at the discovered root.
+ *
+ * A Grok installed in a WSL distro (`wsl`) may have no node, so its hooks
+ * call the folder's copy of the WSL hook transport's script with the same
+ * events and directives: the file is per folder, and the copy finds each
+ * session's own folder through `KANGENTIC_WSL_HOOK_DIR`, which grok's hooks
+ * inherit as they inherit `KANGENTIC_EVENTS_PATH`. Grok passes a hook its
+ * payload on stdin, which the script's `event` mode reads.
  */
-export function writeHooksFile(directory: string): void {
+export function writeHooksFile(directory: string, wsl: { place: CliPlace; sessionDirectory: string } | null = null): void {
   const filePath = hooksFilePath(directory);
   try {
     const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-    const content = { hooks: buildGrokHooks(eventBridge) };
+    let eventCommand: ((eventType: string, ...directives: string[]) => string) | undefined;
+    if (wsl) {
+      const sessionHooks = prepareWslHookTransport(wsl.sessionDirectory);
+      const folderHooks = { ...sessionHooks, script: copyWslHookScriptInto(directory, GROK_WSL_HOOK_COPY_NAME) };
+      eventCommand = (eventType, ...directives) => wslHookEventCommand(folderHooks, wsl.place, eventType, ...directives);
+    }
+    const content = { hooks: buildGrokHooks(eventBridge, eventCommand) };
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
   } catch (error) {
