@@ -5,8 +5,33 @@ import {
   buildTaskXml,
   buildHandoffXml,
   buildWorkflowXml,
+  mapHandoffSessionPath,
 } from '../../src/main/agent/shared/prompt-xml';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../src/shared/background-shell-hold';
+import { toWslPath } from '../../src/shared/paths';
+
+describe('mapHandoffSessionPath', () => {
+  // A receiving CLI in a WSL distro opens the prior session's file by the
+  // path the distro sees. Red-green: dropping the unescape double-escapes the
+  // ampersand; mapping anything but the element changes the surrounding text.
+  it('rewrites only the session history path, escaped as before', () => {
+    const xml = buildHandoffXml({
+      sourceDisplayName: 'Claude Code',
+      sessionFilePath: 'C:\\Users\\dev\\R&D\\.claude\\projects\\p\\abc.jsonl',
+      targetHasMcpAccess: false,
+    });
+    const mapped = mapHandoffSessionPath(xml, toWslPath);
+    expect(mapped).toContain('<session_history_path>/mnt/c/Users/dev/R&amp;D/.claude/projects/p/abc.jsonl</session_history_path>');
+    expect(mapped.replace(/<session_history_path>.*<\/session_history_path>/, '')).toBe(
+      xml.replace(/<session_history_path>.*<\/session_history_path>/, ''),
+    );
+  });
+
+  it('leaves a handoff with no session file alone', () => {
+    const xml = buildHandoffXml({ sourceDisplayName: 'Codex CLI', sessionFilePath: null, targetHasMcpAccess: true });
+    expect(mapHandoffSessionPath(xml, toWslPath)).toBe(xml);
+  });
+});
 
 describe('buildWorkflowXml background command line', () => {
   const WORKFLOW = { title: 'Usage budgets', route: ['Executing', 'Done'], waitsFor: [], blocks: [] };
