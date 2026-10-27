@@ -19,8 +19,11 @@ import {
   type AppLocale,
 } from '../../shared/i18n/locales';
 import { englishI18n } from '../../shared/i18n/english';
+import { guardPlaceholderBackslashes } from '../../shared/i18n/placeholder-backslash-guard';
 import { resolveText, type LocalizedText, type TextValues } from '../../shared/i18n/text';
 
+// A path or reason placed in a message keeps its backslashes (see the guard).
+guardPlaceholderBackslashes(i18n);
 // A descriptor the compiled catalog lacks (a dev session before `lingui compile`)
 // falls back to its own English, which needs compiling to fill placeholders.
 i18n.setMessagesCompiler(compileMessage);
