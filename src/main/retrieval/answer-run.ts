@@ -76,7 +76,12 @@ export async function resolveAnswerRun(
   const agentName = resolveAnswerAgent({ agents, configured: configuredAgent })?.name ?? '';
   const adapter = agentRegistry.get(agentName);
   if (!adapter?.answerFromContext) return { ok: false, failure: { ok: false, reason: `unknown agent: ${agentName}` } };
-  const info = await adapter.detect(config.agent.cliPaths[agentName] ?? null);
+  // CLI paths are per project (Settings > Agent), so the run uses the home
+  // project's own, a CLI in a WSL distro included. The global value is only
+  // what a project with no path of its own was seeded from.
+  const homeProjectPath = context.projectRepo.getById(homeProjectId)?.path;
+  const cliPaths = homeProjectPath ? context.configManager.getEffectiveConfig(homeProjectPath).agent.cliPaths : config.agent.cliPaths;
+  const info = await adapter.detect(cliPaths[agentName] ?? null);
   if (!info.found || !info.path) return { ok: false, failure: { ok: false, reason: `${adapter.displayName} CLI not found` } };
 
   // Effort only for a run that passes it on: the user's level, else the

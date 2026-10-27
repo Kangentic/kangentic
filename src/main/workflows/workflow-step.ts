@@ -134,7 +134,7 @@ export async function runWorkflowStep(
   const { task, column } = subject;
   const repos = getProjectRepos(context, payload.projectId);
   const route = describeStepRoute(repos.swimlanes.list(), task, column.id);
-  const deps = conditionCheckDeps(context);
+  const deps = conditionCheckDeps(context, context.projectRepo.getById(payload.projectId)?.path ?? null);
   const call: ConditionCheckCall = { projectId: payload.projectId, taskId: task.id, swimlaneId: column.id, job: 'workflow_step' };
   const ask = (rows: ConditionPromptRow[]): ConditionPromptInput => ({
     task: { title: task.title, description: task.description, labels: task.labels, prUrl: task.pr_url, prState: task.pr_state, prMergeReadiness: task.pr_merge_readiness },

@@ -144,17 +144,17 @@ export function createTransitionEngine(
     automations,
     automationRuns,
     {
-      checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context), input, limits, call),
+      checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context, projectPath), input, limits, call),
       recapSources: createExpiredRecapSources(projectId),
       onConversationExpired: (notice) => notifyConversationExpired(context, notice),
     },
   );
 }
 
-/** What a Condition check reads from the app: the config and the agent
- *  registry, and where it records its call. */
-export function conditionCheckDeps(context: IpcContext): ConditionCheckDeps {
-  return { ...automationAgentDeps(context), recordCall: backgroundCallSink(context) };
+/** What a Condition check reads from the app: the config (the CLI path the
+ *  task's project sets), the agent registry, and where it records its call. */
+export function conditionCheckDeps(context: IpcContext, projectPath: string | null): ConditionCheckDeps {
+  return { ...automationAgentDeps(context, projectPath), recordCall: backgroundCallSink(context) };
 }
 
 export interface AgentSpawnOptions {

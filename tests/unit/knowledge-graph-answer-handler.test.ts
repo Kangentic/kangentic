@@ -306,10 +306,23 @@ let knowledgeGraphConfig: Record<string, unknown> = {};
  * server is listening, which is what decides whether the agent is handed the
  * search tool or answers from what it was given.
  */
+/** The CLI paths the home project ('/repo') sets for itself, per test. */
+let homeProjectCliPaths: Record<string, string | null> = {};
+
 function makeContext(defaultAgent: string | null = 'claude', mcpServerUp = true) {
+  const projects = [{ id: 'project-1', default_agent: defaultAgent, path: '/repo' }];
   return {
-    configManager: { load: vi.fn(() => ({ agent: { cliPaths: {} }, knowledgeGraph: knowledgeGraphConfig })) },
-    projectRepo: { list: vi.fn(() => [{ id: 'project-1', default_agent: defaultAgent, path: '/repo' }]) },
+    configManager: {
+      load: vi.fn(() => ({ agent: { cliPaths: {} }, knowledgeGraph: knowledgeGraphConfig })),
+      getEffectiveConfig: vi.fn((projectPath?: string) => ({
+        agent: { cliPaths: projectPath === '/repo' ? homeProjectCliPaths : {} },
+        knowledgeGraph: knowledgeGraphConfig,
+      })),
+    },
+    projectRepo: {
+      list: vi.fn(() => projects),
+      getById: vi.fn((projectId: string) => projects.find((project) => project.id === projectId)),
+    },
     currentProjectId: 'project-1',
     currentProjectPath: '/repo',
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
@@ -1027,6 +1040,31 @@ describe('the Ask handler', () => {
     if (result.ok) return;
     expect(result.reason).toBe('Claude Code CLI not found');
     expect(relatedSpy).not.toHaveBeenCalled();
+  });
+
+  // Red-green: before, the run detected with the GLOBAL path, which a CLI path
+  // set in Settings > Agent (per project) never reaches, so a Claude installed
+  // in a WSL distro answered from the Windows install, or not at all.
+  it('detects the CLI at the path the home project sets, not the global one', async () => {
+    const distroPath = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude';
+    const detectedWith: Array<string | null | undefined> = [];
+    mockAdapters = [{
+      ...claudeAdapter(vi.fn(async () => 'answered')),
+      detect: async (override?: string | null) => {
+        detectedWith.push(override);
+        return { found: true, path: distroPath, version: '1' };
+      },
+    }];
+    homeProjectCliPaths = { claude: distroPath };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the context is a narrow test double
+      registerSearchHandlers(makeContext() as any);
+      expect((await ask('anything')).ok).toBe(true);
+      expect(detectedWith).toContain(distroPath);
+      expect(detectedWith).not.toContain(null);
+    } finally {
+      homeProjectCliPaths = {};
+    }
   });
 
   it('turns a thrown CLI failure into a reason rather than an exception', async () => {

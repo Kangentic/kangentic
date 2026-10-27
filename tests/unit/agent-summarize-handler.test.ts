@@ -129,28 +129,33 @@ function makeContext(overrides?: {
   currentProjectId?: string | null;
   currentProjectPath?: string | null;
   projects?: Array<{ id: string; default_agent: string | null; path: string }>;
+  /** The CLI paths each project sets for itself, by project path. */
+  projectCliPaths?: Record<string, Record<string, string>>;
 }) {
   const rateLimit = overrides?.rateLimit ?? 60;
   const projects = overrides?.projects ?? [];
   const automation = overrides?.automation ?? { agent: 'claude', model: 'claude-haiku-5-5', effort: null };
+  const globalConfig = () => ({
+    agent: {
+      cliPaths: {} as Record<string, string>,
+      maxConcurrentSessions: 5,
+      idleTimeoutMinutes: 30,
+      permissionMode: 'default',
+    },
+    terminal: { shell: null },
+    mcpServer: { enabled: false },
+    autoNameRateLimitPerHour: rateLimit,
+    automation,
+  });
   return {
     configManager: {
-      load: vi.fn(() => ({
-        agent: {
-          cliPaths: {},
-          maxConcurrentSessions: 5,
-          idleTimeoutMinutes: 30,
-          permissionMode: 'default',
-        },
-        terminal: { shell: null },
-        mcpServer: { enabled: false },
-        autoNameRateLimitPerHour: rateLimit,
-        automation,
-      })),
-      getEffectiveConfig: vi.fn(() => ({
-        agent: { cliPaths: {}, maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
-        terminal: { shell: null },
-      })),
+      load: vi.fn(globalConfig),
+      // The global config with the project's own overrides merged over it, as
+      // the real one does.
+      getEffectiveConfig: vi.fn((projectPath?: string) => {
+        const config = globalConfig();
+        return { ...config, agent: { ...config.agent, cliPaths: (projectPath && overrides?.projectCliPaths?.[projectPath]) || {} } };
+      }),
       save: vi.fn(),
       saveProjectOverrides: vi.fn(),
       loadProjectOverrides: vi.fn(() => null),
@@ -241,6 +246,28 @@ describe('AGENT_SUMMARIZE IPC handler', () => {
     // No effort chosen: the adapter's recommended level, since the CLI lists it.
     expect(options.effort).toBe('low');
     expect(typeof options.runDirectory).toBe('string');
+  });
+
+  // Red-green: before, naming detected with the GLOBAL path, which a CLI path
+  // set in Settings > Agent (per project) never reaches.
+  it('detects the CLI at the path the request\'s project sets, not the global one', async () => {
+    const distroPath = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude';
+    const detectedWith: Array<string | null | undefined> = [];
+    mockRegistryAdapters = [makeAdapter({
+      name: 'claude',
+      summarize: vi.fn(async () => 'Named'),
+      detect: vi.fn(async (override?: string | null) => {
+        detectedWith.push(override);
+        return { found: true, path: override ?? '/usr/bin/claude', version: '1' };
+      }),
+    })];
+    register(makeContext({
+      projects: [{ id: 'proj-1', default_agent: 'claude', path: '/repo' }],
+      projectCliPaths: { '/repo': { claude: distroPath } },
+    }));
+
+    expect(await invokeSummarize({ prompt: 'tests are failing', projectId: 'proj-1' })).toEqual({ ok: true, title: 'Named' });
+    expect(detectedWith).toEqual([distroPath]);
   });
 
   describe('background-call ledger', () => {

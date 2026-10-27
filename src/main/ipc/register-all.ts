@@ -307,7 +307,11 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // The Automation agent names them, as it names tasks.
   const commandTerminalNamer = new CommandTerminalNamer({
     sessionManager,
-    resolveNamingAgent: () => resolveAutomationAgent(automationAgentDeps(requireContext()), 'naming'),
+    resolveNamingAgent: (projectId) => {
+      const context = requireContext();
+      const projectPath = projectId ? context.projectRepo.getById(projectId)?.path ?? null : null;
+      return resolveAutomationAgent(automationAgentDeps(context, projectPath), 'naming');
+    },
     readRateLimit: () => requireContext().configManager.load().autoNameRateLimitPerHour ?? 60,
     recordCall: (projectId, call) => backgroundCallSink(requireContext())(projectId, call),
   });

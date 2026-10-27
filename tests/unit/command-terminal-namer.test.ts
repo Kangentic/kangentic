@@ -100,6 +100,8 @@ describe('CommandTerminalNamer', () => {
     expect(options).toMatchObject({ model: 'claude-haiku-5-5', effort: 'low' });
     expect(typeof options.runDirectory).toBe('string');
     expect(sessionManager.setCommandTerminalLabel).toHaveBeenCalledWith('term-1', 'Audit Unused Feature Flags');
+    // Resolved for the terminal's own project, whose CLI path the agent runs.
+    expect(resolveNamingAgent).toHaveBeenCalledWith('proj-1');
   });
 
   it('only the first prompt counts: a later one never renames it', async () => {

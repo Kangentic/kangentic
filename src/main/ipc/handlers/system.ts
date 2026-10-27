@@ -418,7 +418,8 @@ export function registerSystemHandlers(context: IpcContext): void {
 
         const config = context.configManager.load();
         // Resolved BEFORE the rate limit, so a refusal spends no slot.
-        const resolved = await resolveAutomationAgent(automationAgentDeps(context), 'naming');
+        const projectPath = input.projectId ? context.projectRepo.getById(input.projectId)?.path ?? null : context.currentProjectPath;
+        const resolved = await resolveAutomationAgent(automationAgentDeps(context, projectPath), 'naming');
         if (!resolved.ok) return { ok: false, reason: resolved.reason };
 
         // The sliding-window rate limit, shared with main's Command Terminal
