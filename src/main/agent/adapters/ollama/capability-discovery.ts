@@ -10,6 +10,7 @@
  */
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
+import { execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -18,9 +19,15 @@ const LIST_TIMEOUT_MS = 5000;
 /**
  * Run `<cliPath> list` and capture stdout.
  * On Windows, use a shell invocation (handles `.cmd` / `.exe` shims); on
- * Unix, use direct execFile.
+ * Unix, use direct execFile. An Ollama installed in a WSL distro is asked
+ * there, so it lists the models of the distro's own daemon.
  */
 async function readModelListOutput(cliPath: string): Promise<string> {
+  const target = await resolveCliTarget(cliPath, true);
+  if (target) {
+    const { stdout } = await execCliForTarget(target, ['list'], { timeout: LIST_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    return stdout;
+  }
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} list`, {
       timeout: LIST_TIMEOUT_MS,

@@ -7,7 +7,9 @@
  *
  * The run is caught where every runner starts its process (the pty host's
  * `spawnOffMainCli`), so the check holds whatever runner an adapter uses, and
- * the start throws so nothing runs. `process.platform` is faked as win32 and
+ * the start throws so nothing runs. Capability discovery's one-shot probes
+ * (`--help`, a model list) go through the off-main exec drop-in, which is
+ * caught the same way: whatever it runs for a distro path is `wsl.exe`. `process.platform` is faked as win32 and
  * the distro's facts are a fixture, so this runs on every OS.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -16,6 +18,21 @@ import os from 'node:os';
 import path from 'node:path';
 
 const started = vi.hoisted(() => [] as Array<{ command: string; args: string[] }>);
+const executed = vi.hoisted(() => [] as string[]);
+vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
+  return {
+    ...actual,
+    execAsync: async (command: string) => {
+      executed.push(command);
+      throw new Error('stopped at the start, as the test intends');
+    },
+    execFileAsync: async (file: string, args: readonly string[] = []) => {
+      executed.push([file, ...args].join(' '));
+      throw new Error('stopped at the start, as the test intends');
+    },
+  };
+});
 vi.mock('../../src/main/utility-process/off-main-cli', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-cli')>();
   return {
@@ -43,6 +60,7 @@ const temporaryDirectories: string[] = [];
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   started.length = 0;
+  executed.length = 0;
 });
 
 afterEach(() => {
@@ -72,8 +90,19 @@ describe('headless runs of agents that run from a WSL distro', () => {
       it(`${adapter.name}: an answer starts the CLI inside the distro`, async () => {
         const cwd = fs.mkdtempSync(path.join(os.tmpdir(), `kangentic-wsl-answer-${adapter.name}-`));
         temporaryDirectories.push(cwd);
-        await expect(adapter.answerFromContext!('What changed?', uncCliPath, cwd, null)).rejects.toThrow();
+        // A model, since some agents refuse an answer without one (Ollama).
+        await expect(adapter.answerFromContext!('What changed?', uncCliPath, cwd, 'test-model')).rejects.toThrow();
         expectStartedInDistro(linuxCliPath);
+      });
+    }
+
+    if (adapter.discoverCapabilities) {
+      it(`${adapter.name}: capability discovery runs nothing but wsl.exe, and never the share path`, async () => {
+        await adapter.discoverCapabilities!(uncCliPath).catch(() => undefined);
+        for (const command of executed) {
+          expect(command, command).not.toContain('wsl.localhost');
+          expect(command.split(' ')[0].endsWith('wsl.exe'), command).toBe(true);
+        }
       });
     }
 
