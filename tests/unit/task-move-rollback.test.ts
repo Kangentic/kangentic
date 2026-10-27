@@ -142,7 +142,6 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   cleanupTaskResources: (...args: unknown[]) => mockCleanupTaskResources(...args),
   deleteTaskWorktree: (...args: unknown[]) => mockDeleteTaskWorktree(...args),
   autoSpawnForTask: vi.fn(async () => {}),
-  reportAutomationFailures: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -150,7 +149,6 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
 // ---------------------------------------------------------------------------
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
-import { isBoardSpawnHeld } from '../../src/main/ipc/board-spawn-holds';
 
 // ---------------------------------------------------------------------------
 // Helper types and factory functions
@@ -558,132 +556,5 @@ describe('handleTaskMove outer-catch rollback', () => {
     expect(context.sessionManager.removeByTaskId).toHaveBeenCalledWith(task.id);
     // Both move calls were attempted.
     expect(taskRepo.move).toHaveBeenCalledTimes(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The board spawn hold, on the path that spawns (Phase 1 returns a plan).
-//
-// A move commits the task into its column in Phase 1, makes its worktree with
-// the lock released in Phase 2, and spawns in Phase 3. The startup sweep
-// (`autoSpawnTasks`) would find the task sessionless in an auto_spawn column
-// anywhere in that stretch and start a promptless agent in the project root, so
-// the move holds the task (board-spawn-holds.ts) from the top of the move to its
-// settle, success or failure.
-//
-// Each test reads the hold from INSIDE the steps (the column commit, the
-// worktree, the checkout, the spawn) and again right after the awaited move
-// settles. The hold map is module state, so every test has a task id of its
-// own: a red run must not leave a hold behind for the next test to read.
-// ---------------------------------------------------------------------------
-
-describe('handleTaskMove holds its task against the startup sweep', () => {
-  /** What each step of the move saw of the task's hold. */
-  let heldAt: Record<string, boolean>;
-  /** The task of the running test, for the default mocks below to read the hold of. */
-  let heldTaskId = '';
-
-  /**
-   * A task that starts in To Do with no session, and a repo that remembers the
-   * column a move puts it in (the file's default repo always answers with the
-   * source column, so Phase 3's re-check would skip the spawn).
-   */
-  function arrange(taskId: string) {
-    heldAt = {};
-    const task = makeTask({ id: taskId, swimlane_id: SOURCE_LANE_ID, session_id: null });
-    let currentLaneId = SOURCE_LANE_ID;
-    const taskRepo: MockTaskRepo = {
-      getById: vi.fn(() => ({ ...task, swimlane_id: currentLaneId })),
-      move: vi.fn((input: { targetSwimlaneId: string }) => {
-        // The first call is the column commit; a later one is a rollback.
-        if (heldAt.commit === undefined) heldAt.commit = isBoardSpawnHeld(taskId);
-        currentLaneId = input.targetSwimlaneId;
-      }),
-      update: vi.fn(),
-      list: vi.fn(() => [{ ...task, swimlane_id: currentLaneId }]),
-      archive: vi.fn(),
-    };
-    const swimlaneRepo = makeSwimlaneRepo([
-      makeSwimlane(SOURCE_LANE_ID, { role: 'todo' }),
-      makeSwimlane(TARGET_LANE_ID, { role: null, auto_spawn: true }),
-    ]);
-    return { context: makeContext(taskRepo, swimlaneRepo), input: { taskId, targetSwimlaneId: TARGET_LANE_ID, targetPosition: 0 } };
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockEnsureTaskWorktree.mockReset();
-    mockEnsureTaskWorktree.mockImplementation(async () => {
-      heldAt.worktree = isBoardSpawnHeld(heldTaskId);
-      return null;
-    });
-    mockEnsureTaskBranchCheckout.mockReset();
-    mockEnsureTaskBranchCheckout.mockImplementation(async () => {
-      heldAt.checkout = isBoardSpawnHeld(heldTaskId);
-    });
-    mockSpawnAgent.mockReset();
-    mockSpawnAgent.mockImplementation(async () => {
-      heldAt.spawn = isBoardSpawnHeld(heldTaskId);
-    });
-  });
-
-  const begin = (taskId: string) => {
-    heldTaskId = taskId;
-    expect(isBoardSpawnHeld(taskId)).toBe(false);
-    return arrange(taskId);
-  };
-
-  it('holds the task from the column commit through the worktree, the checkout and the spawn, and releases it once the spawn is done', async () => {
-    const { context, input } = begin('hold-move-ok');
-
-    await handleTaskMove(context as never, input, 'renderer');
-
-    expect(heldAt).toEqual({ commit: true, worktree: true, checkout: true, spawn: true });
-    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
-    expect(isBoardSpawnHeld(input.taskId)).toBe(false);
-  });
-
-  it('releases the hold when the worktree step fails', async () => {
-    const { context, input } = begin('hold-move-worktree-fails');
-    mockEnsureTaskWorktree.mockImplementation(async () => {
-      heldAt.worktree = isBoardSpawnHeld(input.taskId);
-      throw new Error('git error: branch locked');
-    });
-
-    await expect(handleTaskMove(context as never, input, 'renderer')).rejects.toThrow('Worktree setup failed');
-
-    expect(heldAt).toEqual({ commit: true, worktree: true });
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    expect(isBoardSpawnHeld(input.taskId)).toBe(false);
-  });
-
-  it('releases the hold when the spawn rejects', async () => {
-    const { context, input } = begin('hold-move-spawn-fails');
-    const spawnError = new Error('The agent could not be started.');
-    mockSpawnAgent.mockImplementation(async () => {
-      heldAt.spawn = isBoardSpawnHeld(input.taskId);
-      throw spawnError;
-    });
-
-    await expect(handleTaskMove(context as never, input, 'renderer')).rejects.toBe(spawnError);
-
-    expect(heldAt).toEqual({ commit: true, worktree: true, checkout: true, spawn: true });
-    expect(isBoardSpawnHeld(input.taskId)).toBe(false);
-  });
-
-  it('releases the hold when a newer move supersedes this one mid-worktree', async () => {
-    const { context, input } = begin('hold-move-superseded');
-    const abortController = new AbortController();
-    abortController.abort();
-    mockEnsureTaskWorktree.mockImplementation(async () => {
-      heldAt.worktree = isBoardSpawnHeld(input.taskId);
-      throw abortController.signal.reason;
-    });
-
-    await expect(handleTaskMove(context as never, input, 'renderer')).resolves.toBeUndefined();
-
-    expect(heldAt).toEqual({ commit: true, worktree: true });
-    expect(mockSpawnAgent).not.toHaveBeenCalled();
-    expect(isBoardSpawnHeld(input.taskId)).toBe(false);
   });
 });

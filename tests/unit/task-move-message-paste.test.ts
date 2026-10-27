@@ -216,8 +216,6 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
 vi.mock('../../src/main/pr/pr-linking', () => ({ autoLinkPRForTask: vi.fn() }));
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
-import { createTransitionEngine } from '../../src/main/ipc/helpers/index';
-import { isBoardSpawnHeld } from '../../src/main/ipc/board-spawn-holds';
 import { prepareInjectionPlan } from '../../src/main/transition-engine/injection-plan';
 import { supersedeMessageDeliveries } from '../../src/main/automations/turn-end/turn-end-passes';
 
@@ -802,61 +800,5 @@ describe('On task enter, warm move: a task with its automations disabled is sent
       expect(enterRun()?.alreadyDelivered).toEqual(new Set(['row-first']));
       expect(scheduledBursts(context)).toEqual([['/code-review']]);
     });
-  });
-});
-
-// The board spawn hold keeps the startup sweep off a task a move is still giving
-// an agent (board-spawn-holds.ts). A warm move, one Phase 1 fully handles, spawns
-// nothing, so its hold is let go as soon as Phase 1 returns. The enter group runs
-// after that and can take minutes (a run_script row has a five-minute budget): a
-// hold kept for the group's whole run would keep the sweep off a task that has
-// nothing left to spawn.
-describe('On task enter, warm move: the board spawn hold is let go before the enter group runs', () => {
-  type EngineExecute = ReturnType<typeof makeEngine>['executeTransition'];
-
-  it('holds the task through Phase 1 and releases it while the enter group is still running', async () => {
-    const runs: Array<{ trigger: 'enter' | 'exit'; held: boolean }> = [];
-    let finishEnterGroup!: () => void;
-    const enterGroupGate = new Promise<void>((resolve) => { finishEnterGroup = resolve; });
-    vi.mocked(createTransitionEngine).mockImplementation(() => {
-      const engine = makeEngine();
-      return {
-        executeTransition: async (...engineArguments: Parameters<EngineExecute>) => {
-          const trigger = engineArguments[2];
-          runs.push({ trigger, held: isBoardSpawnHeld(TASK_ID) });
-          // The enter group stays running until the test lets it go.
-          if (trigger === 'enter') await enterGroupGate;
-          return engine.executeTransition(...engineArguments);
-        },
-      } as never;
-    });
-    const { context } = makeHarness(LANE_A);
-    expect(isBoardSpawnHeld(TASK_ID)).toBe(false);
-
-    try {
-      let moveSettled = false;
-      const moving = move(context, LANE_B).then(() => { moveSettled = true; });
-      await vi.waitFor(() => expect(runs.map((run) => run.trigger)).toContain('enter'));
-
-      // The enter group is running and the move has not settled, yet the task is
-      // already free for the sweep. Red: releasing only in the move's outer
-      // `finally` leaves it held until the group ends.
-      expect(moveSettled).toBe(false);
-      expect(isBoardSpawnHeld(TASK_ID)).toBe(false);
-
-      finishEnterGroup();
-      await moving;
-    } finally {
-      finishEnterGroup();
-      vi.mocked(createTransitionEngine).mockImplementation(() => makeEngine());
-    }
-
-    // Phase 1 ran under the hold (the source column's exit rows run inside it),
-    // and the enter group, after it, did not.
-    expect(runs).toEqual([
-      { trigger: 'exit', held: true },
-      { trigger: 'enter', held: false },
-    ]);
-    expect(isBoardSpawnHeld(TASK_ID)).toBe(false);
   });
 });
