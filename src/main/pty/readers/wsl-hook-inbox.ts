@@ -7,12 +7,15 @@ import { planApprovalAnswer } from '../../agent/plan-approval-bridge';
 import { backgroundShellHintReply } from '../../agent/background-shell-hint-bridge';
 import { planApprovalDecisionPath } from '../../agent/shared/plan-approval-hook';
 import {
+  WSL_MCP_REQUEST_HEAD,
   parseWslHookRecord,
   wslHookPaths,
   wslHookRecordTime,
   type WslHookPaths,
+  type WslHookRecord,
   type WslHookReplyKind,
 } from '../../agent/shared/wsl-hook-transport';
+import { relayMcpMessage, type McpRelayInput } from './wsl-mcp-relay';
 
 /**
  * Kangentic's half of the WSL hook transport (`wsl-hook-transport.ts`): reads
@@ -26,6 +29,9 @@ import {
  *   file first, then the answer (`planApprovalAnswer`); the background shell
  *   hint answers alone (`backgroundShellHintReply`). An answer of nothing is an
  *   empty response, which ends the hook's wait at once.
+ * - Each MCP message from the stdio bridge is relayed to Kangentic's loopback
+ *   MCP server (`relayMcpMessage`), each on its own: a tool call can run for
+ *   minutes, and the hooks' answers and the events must not wait behind it.
  *
  * Watched through the `signal` file every published call writes a byte to (a
  * file watch, not a folder watch, which on Windows spins once its folder is
@@ -37,6 +43,8 @@ export interface WslHookInboxOptions {
   eventsOutputPath: string;
   /** Lines were appended to the events file. */
   onAppended: () => void;
+  /** Relays one MCP message; `relayMcpMessage` unless a test replaces it. */
+  relayMcp?: (input: McpRelayInput) => Promise<string>;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -59,6 +67,10 @@ export class WslHookInbox {
   private drainAgain = false;
   /** Bumped by the synchronous exit drain, which supersedes a drain in flight. */
   private generation = 0;
+  /** MCP requests being relayed, by file name, so a drain meanwhile never sends one twice. */
+  private readonly relaysInFlight = new Set<string>();
+  /** Ends the relays still running when the session ends. */
+  private readonly relayAbort = new AbortController();
 
   constructor(private readonly options: WslHookInboxOptions) {
     this.paths = wslHookPaths(options.sessionDirectory);
@@ -82,6 +94,7 @@ export class WslHookInbox {
 
   close(): void {
     this.closed = true;
+    this.relayAbort.abort();
     this.watcher?.close();
     this.watcher = null;
   }
@@ -145,7 +158,8 @@ export class WslHookInbox {
       fsPromises.readdir(this.paths.inbox).catch(() => []),
       fsPromises.readdir(this.paths.requests).catch(() => []),
     ]);
-    return publishedNames(events, '.rec').length > 0 || publishedNames(requests, '.req').length > 0;
+    return publishedNames(events, '.rec').length > 0
+      || publishedNames(requests, '.req').some((name) => !this.relaysInFlight.has(name));
   }
 
   private async ingestEvents(): Promise<void> {
@@ -214,26 +228,54 @@ export class WslHookInbox {
     const names = publishedNames(await fsPromises.readdir(this.paths.requests).catch(() => []), '.req');
     for (const name of names) {
       if (this.closed) return;
+      if (this.relaysInFlight.has(name)) continue;
       const file = path.join(this.paths.requests, name);
       const content = await fsPromises.readFile(file, 'utf-8').catch(() => null);
       if (content === null) continue;
-      const reply = await this.answer(name, content);
-      if (this.closed) return;
-      const responseName = name.replace(/\.req$/, '.res');
-      const temporary = path.join(this.paths.responses, `.${responseName}.tmp`);
-      try {
-        await fsPromises.writeFile(temporary, reply);
-        await fsPromises.rename(temporary, path.join(this.paths.responses, responseName));
-      } catch (error) {
-        this.logError('reply', error instanceof Error ? error.message : String(error));
+      const record = parseWslHookRecord(content);
+      if (record?.head === WSL_MCP_REQUEST_HEAD) {
+        this.relaysInFlight.add(name);
+        void this.relay(name, file, record);
+        continue;
       }
+      const reply = await this.answer(name, record);
+      if (this.closed) return;
+      await this.writeResponse(name, reply, 'reply');
       await fsPromises.rm(file, { force: true }).catch(() => undefined);
     }
   }
 
+  /** Relay one MCP message and leave its answer for the bridge. Never throws. */
+  private async relay(name: string, file: string, record: WslHookRecord): Promise<void> {
+    try {
+      const answer = await (this.options.relayMcp ?? relayMcpMessage)({
+        argument: record.argument,
+        body: record.stdin,
+        signal: this.relayAbort.signal,
+      });
+      if (!this.closed) await this.writeResponse(name, answer, 'mcp');
+    } catch (error) {
+      this.logError('mcp', error instanceof Error ? error.message : String(error));
+    } finally {
+      await fsPromises.rm(file, { force: true }).catch(() => undefined);
+      this.relaysInFlight.delete(name);
+    }
+  }
+
+  /** Publish a request's answer under the name the hook waits for, by a rename. */
+  private async writeResponse(requestName: string, text: string, subject: string): Promise<void> {
+    const responseName = requestName.replace(/\.req$/, '.res');
+    const temporary = path.join(this.paths.responses, `.${responseName}.tmp`);
+    try {
+      await fsPromises.writeFile(temporary, text);
+      await fsPromises.rename(temporary, path.join(this.paths.responses, responseName));
+    } catch (error) {
+      this.logError(subject, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   /** The text the hook prints for one request: an answer, or nothing. */
-  private async answer(name: string, content: string): Promise<string> {
-    const record = parseWslHookRecord(content);
+  private async answer(name: string, record: WslHookRecord | null): Promise<string> {
     if (!record) {
       this.logError('reply', `not a hook request: ${name}`);
       return '';

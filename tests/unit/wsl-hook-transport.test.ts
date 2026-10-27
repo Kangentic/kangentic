@@ -8,7 +8,7 @@
  * against each other, not against a copy. They need `sh`, which CI's Linux and
  * macOS runners have; a Windows machine without Git Bash skips them, saying so.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,9 +21,13 @@ import {
   wslHookPaths,
   wslHookRecordTime,
   wslHookReplyCommand,
+  wslMcpServerLaunch,
+  wslReachesLoopback,
   wslStatusLineCommand,
 } from '../../src/main/agent/shared/wsl-hook-transport';
 import { WslHookInbox } from '../../src/main/pty/readers/wsl-hook-inbox';
+import type { McpRelayInput } from '../../src/main/pty/readers/wsl-mcp-relay';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 import { extractTool, extractToolId } from '../../src/main/agent/shared/directive-builders';
 
 /** The directives a tool_start hook carries, from the real builders. */
@@ -31,12 +35,12 @@ function buildToolStartDirectives(): string[] {
   return [extractTool('tool_name'), extractToolId(['tool_use_id'])];
 }
 
-const PLACE = {
-  kind: 'wsl' as const,
+const PLACE: CliPlace = {
+  kind: 'wsl',
   distro: 'Ubuntu',
   facts: {
     distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
-    uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as const,
+    uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'nat',
   },
 };
 
@@ -133,6 +137,83 @@ describe('hook commands', () => {
   it('points the status line at the status file the distro sees', () => {
     expect(wslStatusLineCommand(paths, PLACE, `${sessionDirectory}\\status.json`))
       .toBe('sh "/mnt/c/Users/dev/proj/.kangentic/sessions/s1/wsl-hooks/wsl-hook.sh" status "/mnt/c/Users/dev/proj/.kangentic/sessions/s1/status.json"');
+  });
+
+  it('starts the MCP bridge as sh with the script, the mode and the URL, and no token', () => {
+    expect(wslMcpServerLaunch(paths, PLACE, 'http://127.0.0.1:4100/mcp/project-1/session-1')).toEqual({
+      command: 'sh',
+      args: ['/mnt/c/Users/dev/proj/.kangentic/sessions/s1/wsl-hooks/wsl-hook.sh', 'mcp', 'http://127.0.0.1:4100/mcp/project-1/session-1'],
+    });
+  });
+
+  it('dials the MCP URL itself only on mirrored networking, where loopback is the host\'s', () => {
+    expect(wslReachesLoopback({ ...PLACE, facts: { ...PLACE.facts, networkingMode: 'mirrored' } })).toBe(true);
+    expect(wslReachesLoopback(PLACE)).toBe(false);
+    expect(wslReachesLoopback({ ...PLACE, facts: { ...PLACE.facts, networkingMode: 'unknown' } })).toBe(false);
+  });
+});
+
+describe('the inbox relays MCP messages', () => {
+  // A tool call can run for minutes, so each message is relayed on its own:
+  // the hooks' answers and the events never wait behind one. Red-green:
+  // awaiting the relay in the drain loop holds the hint's answer until the
+  // relay returns, and dropping the in-flight set relays a message twice.
+  function writeRequest(directory: string, name: string, head: string, argument: string, body: string): void {
+    fs.writeFileSync(path.join(directory, `${name}.req`), `K1\n${head}\n${argument}\n${body}`);
+  }
+
+  it('relays each message once with its token, URL and body, and answers the hooks meanwhile', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    let releaseRelay: (answer: string) => void = () => undefined;
+    const relayMcp = vi.fn((_input: McpRelayInput) => new Promise<string>((resolve) => { releaseRelay = resolve; }));
+    const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined, relayMcp });
+    openInboxes.push(inbox);
+
+    writeRequest(paths.requests, '1767225600000000001-7', 'mcp', 'secret-token http://127.0.0.1:4100/mcp/p/s', '{"jsonrpc":"2.0","id":3,"method":"tools/call"}');
+    const hintSpec = Buffer.from(JSON.stringify({ toolField: 'tool_name', tools: ['NoSuchTool'], inputField: 'tool_input', commandField: 'command', responseField: 'tool_response', idFields: ['id'], optOutFlag: '--x', reply: { x: 1 } })).toString('base64');
+    writeRequest(paths.requests, '1767225600000000002-8', 'background-shell-hint', hintSpec, '{"tool_name":"Read"}');
+    inbox.start();
+
+    // The hint is answered while the MCP message is still being relayed.
+    await waitFor(() => (fs.existsSync(path.join(paths.responses, '1767225600000000002-8.res')) ? true : null));
+    expect(fs.existsSync(path.join(paths.responses, '1767225600000000001-7.res'))).toBe(false);
+    fs.writeFileSync(paths.signal, 'xx');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(relayMcp).toHaveBeenCalledTimes(1);
+    expect(relayMcp.mock.calls[0][0]).toMatchObject({
+      argument: 'secret-token http://127.0.0.1:4100/mcp/p/s',
+      body: '{"jsonrpc":"2.0","id":3,"method":"tools/call"}',
+    });
+
+    releaseRelay('{"jsonrpc":"2.0","id":3,"result":{}}\n');
+    const answer = await waitFor(() => {
+      try { return fs.readFileSync(path.join(paths.responses, '1767225600000000001-7.res'), 'utf-8'); } catch { return null; }
+    });
+    expect(answer).toBe('{"jsonrpc":"2.0","id":3,"result":{}}\n');
+    await waitFor(() => (fs.readdirSync(paths.requests).length === 0 ? true : null));
+  });
+
+  it('ends a relay still running when the session ends', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    let relaySignal: AbortSignal | undefined;
+    const relayMcp = vi.fn((input: McpRelayInput) => {
+      relaySignal = input.signal;
+      return new Promise<string>(() => undefined);
+    });
+    const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined, relayMcp });
+    writeRequest(paths.requests, '1767225600000000001-7', 'mcp', 'token http://127.0.0.1:4100/mcp/p', '{"jsonrpc":"2.0","id":1,"method":"tools/list"}');
+    inbox.start();
+    await waitFor(() => (relayMcp.mock.calls.length > 0 ? true : null));
+
+    inbox.close();
+
+    expect(relaySignal?.aborted).toBe(true);
   });
 });
 
@@ -278,6 +359,42 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     const lines = await waitFor(() => { const read = readEventLines(eventsPath); return read.length > 0 ? read : null; });
     expect((JSON.parse(lines[0]) as { type: string }).type).toBe('prompt');
     expect(fs.readdirSync(workspace)).toEqual(['codex-wsl-hook.sh']);
+  });
+
+  // The bridge a distro CLI starts as its stdio MCP server. Red-green: a pipe
+  // into publish (`printf | publish`) loses the name the wait loop needs, and
+  // the script prints nothing; an unquoted expansion of the line mangles the
+  // `$`, the backslash or the backtick.
+  it('serves MCP over stdio: a line in, the relay\'s answer out, nothing for a notification', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    const relayed: McpRelayInput[] = [];
+    const relayMcp = vi.fn(async (input: McpRelayInput) => {
+      relayed.push(input);
+      const message = JSON.parse(input.body) as { id?: number };
+      return message.id === undefined ? '' : `${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { echoed: input.body.trimEnd() } })}\n`;
+    });
+    const inbox = new WslHookInbox({ sessionDirectory, eventsOutputPath: eventsPath, onAppended: () => undefined, relayMcp });
+    openInboxes.push(inbox);
+    inbox.start();
+
+    const awkward = JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { text: 'cost $HOME \\ `uname` "quoted"' } });
+    const input = [
+      JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
+      JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      awkward,
+    ].join('\n') + '\n';
+    const result = await runScript(sessionDirectory, ['mcp', 'http://127.0.0.1:4100/mcp/p/s'], input, { env: { KANGENTIC_MCP_TOKEN: 'secret-token' } });
+
+    const answers = result.stdout.split('\n').filter((line) => line.length > 0).map((line) => JSON.parse(line) as { id: number; result: { echoed: string } });
+    expect(answers.map((answer) => answer.id)).toEqual([1, 2]);
+    expect(answers[1].result.echoed).toBe(awkward);
+    expect(relayed.map((entry) => entry.argument)).toEqual(Array(3).fill('secret-token http://127.0.0.1:4100/mcp/p/s'));
+    // Byte for byte, with the line break the here-document ends it with.
+    expect(relayed[2].body).toBe(`${awkward}\n`);
+    expect(fs.readdirSync(paths.responses)).toEqual([]);
   });
 
   it('drains what is still waiting synchronously, for the exit flush', async () => {

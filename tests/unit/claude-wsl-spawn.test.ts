@@ -102,6 +102,41 @@ describe('a Claude installed in a WSL distro: the command', () => {
   });
 });
 
+describe('a Claude installed in a WSL distro: Kangentic\'s MCP server', () => {
+  // On WSL's default NAT network the distro cannot reach this machine's
+  // loopback, so Claude starts the transport's stdio bridge, with the token in
+  // the server's environment. Mirrored networking shares loopback, so the URL
+  // works as it does here. Red-green: writing the HTTP entry for every target
+  // fails the first case; writing the bridge whatever the networking fails the
+  // second.
+  function mcpEntry(sessionId: string): Record<string, unknown> {
+    const config = JSON.parse(fs.readFileSync(path.join(sessionDirectory(sessionId), 'mcp.json'), 'utf-8')) as { mcpServers: Record<string, Record<string, unknown>> };
+    return config.mcpServers.kangentic;
+  }
+
+  it('starts the stdio bridge on NAT networking, with the token in its environment, never its arguments', () => {
+    buildForDistro('wsl-mcp-nat');
+
+    expect(mcpEntry('wsl-mcp-nat')).toEqual({
+      type: 'stdio',
+      command: 'sh',
+      args: [cliPathForTarget(wslHookPaths(sessionDirectory('wsl-mcp-nat')).script, target), 'mcp', 'http://127.0.0.1:4000/mcp/project-1'],
+      env: { KANGENTIC_MCP_TOKEN: 'token' },
+    });
+  });
+
+  it('dials the URL itself on mirrored networking', () => {
+    target = { ...target, facts: { ...target.facts, networkingMode: 'mirrored' } };
+    buildForDistro('wsl-mcp-mirrored');
+
+    expect(mcpEntry('wsl-mcp-mirrored')).toEqual({
+      type: 'http',
+      url: 'http://127.0.0.1:4000/mcp/project-1',
+      headers: { 'X-Kangentic-Token': 'token' },
+    });
+  });
+});
+
 describe('a Claude installed in a WSL distro: its settings', () => {
   // Red-green: building the node bridge commands for a target fails the hook
   // and status assertions; not preparing the transport fails the folder one.
