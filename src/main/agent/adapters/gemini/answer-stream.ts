@@ -11,7 +11,7 @@
  */
 
 import * as fs from 'node:fs';
-import * as os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import * as path from 'node:path';
 import type { AnswerStreamEvent } from '../../shared/cli-answer';
 
@@ -90,7 +90,7 @@ function registryKey(value: string): string {
  * `~/.gemini/projects.json`, else its folder name. Best effort.
  */
 export async function removeGeminiChat(cwd: string, sessionId: string): Promise<void> {
-  const geminiHome = path.join(os.homedir(), '.gemini');
+  const geminiHome = geminiHomeDir();
   let slug = path.basename(cwd);
   try {
     const registry = JSON.parse(await fs.promises.readFile(path.join(geminiHome, 'projects.json'), 'utf-8')) as { projects?: Record<string, string> };

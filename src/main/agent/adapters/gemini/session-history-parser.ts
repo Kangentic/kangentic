@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import path from 'node:path';
 import {
   type SessionHistoryParseResult,
@@ -77,7 +77,7 @@ export class GeminiSessionHistoryParser {
     const startTimeCeilMs = spawnedAtMs + 30_000;
 
     const projectDirName = computeGeminiProjectDirName(options.cwd);
-    const directory = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
+    const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
     // `.jsonl?` matches BOTH generations. Gemini 0.37 wrote one JSON object per
     // `.json` file; current builds write append-only `.jsonl`. An anchored
     // `\.json$` silently matched nothing on every recent install, which broke
@@ -128,7 +128,7 @@ export class GeminiSessionHistoryParser {
     const { agentSessionId, cwd } = options;
 
     const projectDirName = computeGeminiProjectDirName(cwd);
-    const directory = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
+    const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
 
     // Gemini 0.37 embeds only the FIRST 8 CHARS of the session UUID
     // in the filename, e.g. `session-2026-04-09T19-18-08889b8d.json`

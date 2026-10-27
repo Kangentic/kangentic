@@ -9,6 +9,7 @@ sources:
   - resource: src/main/agent/adapters/gemini/command-builder.ts
   - resource: src/main/agent/adapters/gemini/hook-manager.ts
   - resource: src/main/agent/adapters/gemini/trust-manager.ts
+  - resource: src/main/agent/adapters/gemini/gemini-home.ts
   - resource: src/main/agent/shared/shared-folder-holds.ts
 ---
 # Gemini CLI
@@ -85,6 +86,8 @@ Because the file is shared, concurrent Gemini sessions in the same folder are se
 The merged settings carry an `mcpServers.kangentic` entry using the Gemini-family `httpUrl` key (not the Anthropic/fastmcp `url` used by Claude and Kimi), with `httpUrl` `${KANGENTIC_MCP_URL}` and `headers` `X-Kangentic-Token: ${KANGENTIC_MCP_TOKEN}`. Both values come from the session environment through `buildEnv` (task #859; Gemini expands `$NAME` and `${NAME}` in every settings string), so the file holds no URL and no token, and the entry is per-session. This is the same shape the Qwen fork writes. User-defined `mcpServers` are preserved, and `removeHooks` strips only our entry.
 
 The settings write is gated on hooks **or** MCP, so an MCP-only spawn (no events pipeline) still produces the file.
+
+Every `~/.gemini` path on this page is Gemini's user directory, `<GEMINI_CLI_HOME>/.gemini` when that variable is set (`geminiHomeDir`, `gemini-home.ts`), the folder Gemini's configuration docs say it creates there. The trust write and removal, the chats, the model scan, the answer chat cleanup and the relocation pass all use it, so trust lands where Gemini reads it. Only an absolute value is taken: a relative one would resolve against the CLI's own working directory, which a global reader does not have.
 
 Two things make this work that are easy to miss:
 
