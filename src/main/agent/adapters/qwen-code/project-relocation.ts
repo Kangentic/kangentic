@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { resolveForwardSlash, replacePathPrefix } from '../../../../shared/paths';
 import {
@@ -11,6 +10,7 @@ import {
 } from '../../shared/relocation-utils';
 import { qwenProjectSlug } from './session-history-parser';
 import { withQwenTrustLock } from './trust-manager';
+import { qwenHomeDir } from './qwen-home';
 
 /**
  * Migrate Qwen Code's per-project data when a Kangentic project is relocated.
@@ -50,7 +50,7 @@ function migrateQwenProjectDataSync(oldProjectPath: string, newProjectPath: stri
   rewriteTrustedFolders(oldResolved, newResolved);
 }
 
-const qwenDir = (): string => path.join(os.homedir(), '.qwen');
+const qwenDir = (): string => qwenHomeDir();
 const trustedFoldersPath = (): string => path.join(qwenDir(), 'trustedFolders.json');
 
 /**

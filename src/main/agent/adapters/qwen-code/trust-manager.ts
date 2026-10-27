@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { resolveForwardSlash, isSamePath } from '../../../../shared/paths';
 import { createSerialLock, atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { qwenHomeDir } from './qwen-home';
 
 // Module-level promise chain serializing all ~/.qwen/trustedFolders.json
 // access. Prevents concurrent read-modify-write races when multiple tasks
@@ -15,7 +15,7 @@ export const withQwenTrustLock = createSerialLock();
 /** The only trust level Kangentic ever writes, and so the only one it removes. */
 const KANGENTIC_TRUST_LEVEL = 'TRUST_FOLDER';
 
-const qwenDir = (): string => path.join(os.homedir(), '.qwen');
+const qwenDir = (): string => qwenHomeDir();
 const settingsPath = (): string => path.join(qwenDir(), 'settings.json');
 const trustedFoldersPath = (): string => path.join(qwenDir(), 'trustedFolders.json');
 
