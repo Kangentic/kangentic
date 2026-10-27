@@ -546,6 +546,10 @@ msgstr ""
 msgid "Couldn't promote tasks"
 msgstr ""
 
+#: src/renderer/App.tsx
+msgid "Couldn't reach the MCP server"
+msgstr ""
+
 #: src/renderer/hooks/useAddProject.ts
 msgid "Couldn't read that folder"
 msgstr ""
@@ -1004,6 +1008,10 @@ msgstr ""
 
 #: src/renderer/components/PrLink.tsx
 msgid "Open PR in browser"
+msgstr ""
+
+#: src/renderer/App.tsx
+msgid "Open settings"
 msgstr ""
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
