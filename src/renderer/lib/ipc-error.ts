@@ -34,6 +34,16 @@ export function describeIpcError(error: unknown, fallback = 'Unknown error'): st
 const LOWERCASE_FIRST_WORD = /^[a-z]+(?=[\s,:;]|$)/;
 
 /**
+ * Error text in sentence case, and otherwise exactly as written: a leading
+ * lowercase word gets its capital, and a path, a file name or a word already
+ * capitalized stays as it is. No stop is added, so the text still matches the
+ * error a search would find.
+ */
+export function capitalizeFirstWord(text: string): string {
+  return text.replace(LOWERCASE_FIRST_WORD, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+}
+
+/**
  * A reason as a toast body: one sentence that starts with a capital and ends in
  * a stop. Error text arrives in every shape (git's `fatal: ...`, a message with
  * no period, one that already ends in `?`), and a toast body reads as a
@@ -42,6 +52,6 @@ const LOWERCASE_FIRST_WORD = /^[a-z]+(?=[\s,:;]|$)/;
 export function asSentence(reason: string | null | undefined, fallback = 'No reason was given.'): string {
   const trimmed = (reason ?? '').trim();
   if (!trimmed) return fallback;
-  const capitalized = trimmed.replace(LOWERCASE_FIRST_WORD, (word) => word.charAt(0).toUpperCase() + word.slice(1));
+  const capitalized = capitalizeFirstWord(trimmed);
   return /[.!?]$/.test(capitalized) ? capitalized : `${capitalized}.`;
 }

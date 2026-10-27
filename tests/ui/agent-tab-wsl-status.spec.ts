@@ -1,7 +1,8 @@
 /**
  * The Agent tab's CLI path status for a WSL path (#286, design 1B):
  *   - a CLI found inside a distro shows a "WSL: <distro>" tag before its version;
- *   - a probe that failed shows "Not found" and the error it hit, word for word;
+ *   - a probe that failed shows "Not found" and the error it hit, in its own
+ *     words, in sentence case, in a square pill like the row's tags;
  *   - an agent that does not run from WSL shows "No WSL support" and one line
  *     naming the agents that do, read from the list's own flags.
  *
@@ -88,6 +89,20 @@ test.describe('AgentTab - CLI path status for a WSL path', () => {
     const detail = page.getByTestId('agent-cli-detail-claude');
     await expect(detail).toHaveText("/usr/bin/env: 'node': No such file or directory");
     await expect(detail).toHaveCSS('user-select', 'text');
+  });
+
+  // Red-green: the loose lowercase line it replaced reads "the file does not
+  // exist on disk" with no border, and fails both assertions.
+  test('a probe error reads in sentence case, in a square pill like the row\'s tags', async () => {
+    let page: Page;
+    ({ browser, page } = await launchWithOverrides({
+      claude: { found: false, path: 'C:\\Tools\\claude.exe', version: null, detectionError: 'the file does not exist on disk' },
+    }));
+    await openAgentTab(page, 'wsl-status-sentence-case');
+
+    const detail = page.getByTestId('agent-cli-detail-claude');
+    await expect(detail).toHaveText('The file does not exist on disk');
+    await expect(detail).toHaveCSS('border-top-style', 'solid');
   });
 
   test('an agent without WSL support says so and names the agents that run from WSL', async () => {

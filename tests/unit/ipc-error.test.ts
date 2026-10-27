@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { asSentence, describeIpcError } from '../../src/renderer/lib/ipc-error';
+import { asSentence, capitalizeFirstWord, describeIpcError } from '../../src/renderer/lib/ipc-error';
+
+describe('capitalizeFirstWord', () => {
+  it('capitalizes a leading lowercase word and changes nothing else, adding no stop', () => {
+    expect(capitalizeFirstWord('the file does not exist on disk')).toBe('The file does not exist on disk');
+    expect(capitalizeFirstWord('fetch failed: connect ECONNREFUSED 127.0.0.1:4100')).toBe('Fetch failed: connect ECONNREFUSED 127.0.0.1:4100');
+  });
+
+  it('leaves a path, a file name or an already capitalized word as written', () => {
+    expect(capitalizeFirstWord("/usr/bin/env: 'node': No such file or directory")).toBe("/usr/bin/env: 'node': No such file or directory");
+    expect(capitalizeFirstWord('kangentic.json is missing')).toBe('kangentic.json is missing');
+    expect(capitalizeFirstWord('From Ubuntu: HTTP 401')).toBe('From Ubuntu: HTTP 401');
+  });
+});
 
 /**
  * Observed live in a preview before this existed, on the branch-checkout guard:

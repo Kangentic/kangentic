@@ -10,6 +10,7 @@ import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
+import { capitalizeFirstWord } from '../../lib/ipc-error';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
 export { SettingsPanelProvider, useScopedUpdate } from './setting-scope';
@@ -386,6 +387,27 @@ export function ToggleSwitch({
  * labels at identical weight, with no hierarchy between them.
  */
 export const INPUT_CLASS = 'bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg-tertiary w-full focus:outline-none focus:border-accent';
+
+/**
+ * The error a check or probe hit, under the row that ran it: the same square pill
+ * as a row's tags (a CLI path's "WSL: Ubuntu"), neutral, in sentence case. The
+ * row's own status already says it failed, so this reads as what was reported,
+ * not as a form's validation message. The words are the error's own and stay
+ * selectable, so they can be pasted into a search. Not `Pill`, which is
+ * `select-none` and one line.
+ */
+export function ReportedError({ error, testId }: { error: string; testId: string }) {
+  return (
+    <div className="mt-1 flex">
+      <span
+        className="select-text rounded border border-edge px-2 py-px text-xs leading-[18px] text-fg-muted [overflow-wrap:anywhere]"
+        data-testid={testId}
+      >
+        {capitalizeFirstWord(error)}
+      </span>
+    </div>
+  );
+}
 
 export interface SettingTextInputProps {
   /** The persisted value. Flows into the draft whenever the field is not focused. */
