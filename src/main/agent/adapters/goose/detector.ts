@@ -34,6 +34,8 @@ export class GooseDetector extends AgentDetector {
       binaryName: 'goose',
       fallbackPaths: standardUnixFallbackPaths('goose'),
       parseVersion: parseGooseVersion,
+      // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+      supportsWslCli: true,
     });
   }
 }

@@ -7,12 +7,17 @@
  * - run the CLI by the path the distro sees, never the `\\wsl.localhost` share;
  * - carry no Windows drive path a Linux CLI cannot open;
  * - keep the MCP token out of argv, as on this machine;
- * - prepare the WSL hook transport in the session's folder, whose signal file
- *   the session's relay watches: the stdio MCP bridge and the hooks both
- *   publish there, and without it every `kangentic_*` call waits out the CLI's
- *   own timeout.
+ * - prepare the WSL hook transport in the session's folder whenever anything it
+ *   wrote names the transport's script: the stdio MCP bridge and the hooks both
+ *   publish there, and without its signal file every `kangentic_*` call waits
+ *   out the CLI's own timeout;
+ * - never hand the CLI the loopback MCP URL except as the bridge's argument:
+ *   the distro's 127.0.0.1 is its own on NAT networking.
  *
- * Paths are built from the OS temp folder, so the checks hold on Linux CI too.
+ * What it wrote is the command plus every file under the fixture's folder,
+ * which is also the distro home the fixture names, so a config written to the
+ * CLI's home is read too. Paths are built from the OS temp folder, so the
+ * checks hold on Linux CI too.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -23,7 +28,19 @@ import { wslHookPaths } from '../../src/main/agent/shared/wsl-hook-transport';
 import type { CliTarget } from '../../src/main/agent/shared/cli-target';
 
 const TOKEN = 'kangentic-parity-token-0123456789abcdef';
+const MCP_URL = 'http://127.0.0.1:4100/mcp/project-1/parity-session';
 const temporaryDirectories: string[] = [];
+
+/** Every text file under `directory`, by path. */
+function writtenFiles(directory: string): Array<{ path: string; text: string }> {
+  const files: Array<{ path: string; text: string }> = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile()) continue;
+    const filePath = path.join(entry.parentPath, entry.name);
+    files.push({ path: filePath, text: fs.readFileSync(filePath, 'utf-8') });
+  }
+  return files;
+}
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
@@ -67,7 +84,7 @@ describe('agents that run from a WSL distro', () => {
         statusOutputPath: path.join(sessionDirectory, 'status.json'),
         eventsOutputPath: path.join(sessionDirectory, 'events.jsonl'),
         mcpServerEnabled: true,
-        mcpServerUrl: 'http://127.0.0.1:4100/mcp/project-1/parity-session',
+        mcpServerUrl: MCP_URL,
         mcpServerToken: TOKEN,
         ptySessionId: 'parity-session',
         cliTarget: target,
@@ -79,7 +96,15 @@ describe('agents that run from a WSL distro', () => {
       // A backslash alone is fine: POSIX quoting writes `'\''` for a quote.
       expect(command).not.toMatch(/[A-Za-z]:\\/);
       expect(command).not.toContain(TOKEN);
-      expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
+
+      const written = [{ path: 'the command', text: command }, ...writtenFiles(project)];
+      if (written.some((entry) => entry.text.includes('wsl-hook.sh'))) {
+        expect(fs.existsSync(wslHookPaths(sessionDirectory).signal)).toBe(true);
+      }
+      for (const entry of written) {
+        if (!entry.text.includes(MCP_URL)) continue;
+        expect(entry.text, `${entry.path} hands over the loopback MCP URL without the bridge`).toContain('wsl-hook.sh');
+      }
     });
   }
 });

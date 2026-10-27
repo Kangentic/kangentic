@@ -1,6 +1,7 @@
 import { GooseDetector } from './detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { resolveCliTarget } from '../../shared/cli-target';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
@@ -87,6 +88,11 @@ export class GooseAdapter implements AgentAdapter {
   // with `-r -n <id>`. The engine stores the id it generates and passes it back
   // on resume (transition-engine.ts).
   readonly supportsCallerSessionId = true;
+  // A Goose installed in a WSL distro runs there. Goose wires no hooks, reads
+  // no transcript and is handed no MCP server, so the CLI's own path, its
+  // `GOOSE_MODE` (which crosses into the distro with the adapter's other
+  // variables) and the answer run's target are all it needs.
+  readonly supportsWslCli = true;
   // Goose maps each entry to a `GOOSE_MODE` value in buildEnv (not a CLI flag),
   // via GOOSE_MODE_BY_PERMISSION above. Three entries, one per distinct Goose
   // mode Kangentic can reach: `chat`, `smart_approve`, `auto`. `acceptEdits` is
@@ -122,7 +128,9 @@ export class GooseAdapter implements AgentAdapter {
     // prompt, then stay interactive so the user can continue the session. A
     // promptless spawn (an ordinary resume, or a plain terminal) opens a bare
     // interactive `goose session`.
-    const parts: string[] = [quoteArg(options.agentPath, shell)];
+    // A Goose in a WSL distro is started by the path the distro sees; the PTY's
+    // cwd reaches it as its `/mnt` path.
+    const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.agentPath, shell)];
     parts.push(options.prompt ? 'run' : 'session');
 
     // Resume a prior session by its caller-supplied name. The id is the same
@@ -256,6 +264,8 @@ export class GooseAdapter implements AgentAdapter {
   ): Promise<string> {
     return runCliPrintAnswer({
       cliPath,
+      // A Goose installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error.
       args: ['run', '-i', '-', '--no-session', '-q', ...(model ? ['--model', model] : [])],
