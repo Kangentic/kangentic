@@ -408,6 +408,15 @@ export function scoreRecords({ records, verdicts, arms, sample, locales }) {
   };
 }
 
+/**
+ * results.json as written: indented, with each array of numbers or strings on
+ * one line, so a string's five scores stay one line instead of seven.
+ */
+export function formatResults(results) {
+  const indented = JSON.stringify(results, null, 1);
+  return `${indented.replace(/\[\s*([^[\]{}]*?)\s*\]/g, (match, inner) => `[${inner.split(/\s*,\s*/).join(', ')}]`)}\n`;
+}
+
 function printTable(results) {
   const rows = results.arms.map((result) => `| ${result.arm} | ${result.role} | ${result.overall.firstTryPass} | ${result.overall.finalPass} | ${result.overall.worstLocaleFinalPass} | ${result.overall.judgeMean} | ${result.overall.criticalRate} | ${result.overall.wallSeconds} | ${result.overall.vramPeakMiB ?? ''} |`);
   console.log('| Arm | Role | First-try pass | Final pass | Worst locale | Judge mean | Critical rate | Wall seconds | Peak VRAM MiB |');
@@ -425,7 +434,7 @@ async function score(options) {
   const results = scoreRecords({ records, verdicts, arms: config.arms, sample: loadSample(), locales });
   printTable(results);
   if (options.write) {
-    fs.writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 1)}\n`);
+    fs.writeFileSync(RESULTS_PATH, formatResults(results));
     console.log(`[bake-off] ${RESULTS_PATH}`);
   }
 }
