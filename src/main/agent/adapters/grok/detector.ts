@@ -38,6 +38,7 @@ export class GrokDetector extends AgentDetector {
         path.join(os.homedir(), '.grok', 'bin', process.platform === 'win32' ? 'grok.exe' : 'grok'),
       ],
       parseVersion: parseGrokVersion,
+      supportsWslCli: true,
     });
   }
 }

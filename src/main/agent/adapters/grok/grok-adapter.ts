@@ -23,6 +23,9 @@ import {
   ANSWER_STREAM_OUTPUT_BUDGET,
 } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
+import { answerHomeForPlace, withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -86,6 +89,8 @@ export class GrokAdapter implements AgentAdapter {
   // `kill_command_or_subagent` stops it (GROK_BACKGROUND_COMMAND_SPEC, measured
   // on 1.0.0). Grok's PostToolUse cannot add context, so there is no hint.
   readonly backgroundCommands = { source: 'hooks', launchHint: false } as const;
+  /** A Grok installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   // `chat_history.jsonl` records carry no timestamps, so every entry is stamped with parse time.
   readonly transcriptHasTimestamps = false;
   /**
@@ -127,10 +132,11 @@ export class GrokAdapter implements AgentAdapter {
    * Pre-approve folder trust for Kangentic worktrees so project hooks and
    * the MCP block load without the user re-answering per task. Grok trust
    * cascades from the project root, so this is a no-op in the common
-   * steady state; see trust-manager.ts for the full policy.
+   * steady state; see trust-manager.ts for the full policy. A Grok in a WSL
+   * distro is trusted in the distro's store.
    */
-  async ensureTrust(workingDirectory: string): Promise<void> {
-    await ensureWorktreeTrust(workingDirectory);
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
+    await ensureWorktreeTrust(workingDirectory, place ?? null);
   }
 
   /**
@@ -138,8 +144,8 @@ export class GrokAdapter implements AgentAdapter {
    * `ensureTrust` decides that only for a Kangentic worktree. In a project root
    * the user has not trusted, the session would start without Kangentic's tools.
    */
-  kangenticMcpBlockedReason(workingDirectory: string): string | null {
-    if (isFolderTrusted(workingDirectory)) return null;
+  kangenticMcpBlockedReason(workingDirectory: string, place?: CliPlace | null): string | null {
+    if (isFolderTrusted(workingDirectory, place ?? null)) return null;
     return `${this.displayName} loads Kangentic's tools only in a folder you trusted in it. Trust ${path.resolve(workingDirectory)} in grok, then close Settings to retry.`;
   }
 
@@ -238,8 +244,8 @@ export class GrokAdapter implements AgentAdapter {
    * store would falsely skip the migration and `--resume` would start
    * empty.
    */
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    const expectedPath = grokUpdatesJsonlPath(cwd, agentSessionId);
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    const expectedPath = grokUpdatesJsonlPath(cwd, agentSessionId, place ?? null);
     try {
       fs.accessSync(expectedPath);
       return expectedPath;
@@ -248,13 +254,18 @@ export class GrokAdapter implements AgentAdapter {
     }
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    return parseGrokTranscript(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    return parseGrokTranscript(agentSessionId, cwd, place ?? null);
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    return readGrokTranscriptPage(agentSessionId, grokChatHistoryPath(cwd, agentSessionId), request);
+  readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    return readGrokTranscriptPage(agentSessionId, grokChatHistoryPath(cwd, agentSessionId, place ?? null), request);
   }
 
   /**
@@ -266,18 +277,20 @@ export class GrokAdapter implements AgentAdapter {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptUsage | null> {
     if (!input.agentSessionId || !input.cwd) return null;
-    return grokTranscriptUsage(input.agentSessionId, input.cwd);
+    return grokTranscriptUsage(input.agentSessionId, input.cwd, input.place ?? null);
   }
 
   async transcriptToolCounts(input: {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
     if (!input.agentSessionId || !input.cwd) return null;
-    return grokTranscriptToolCounts(input.agentSessionId, input.cwd);
+    return grokTranscriptToolCounts(input.agentSessionId, input.cwd, input.place ?? null);
   }
 
   getSubmissionVerifier(contextType: SubmissionContextType): SubmissionVerifier | null {
@@ -349,11 +362,15 @@ export class GrokAdapter implements AgentAdapter {
    * from local state (no network round-trip observed; the model list comes
    * from grok's cache). Note grok currently serves a free tier without
    * login, so `false` here means "not signed in", not "unusable". It asks
-   * the CLI the project detected, not the one on PATH.
+   * the CLI the project detected, not the one on PATH, and a Grok in a WSL
+   * distro in the distro.
    */
   async probeAuth(cliPath: string): Promise<boolean | null> {
     try {
-      const output = process.platform === 'win32'
+      const target = await resolveCliTarget(cliPath, true);
+      const output = target
+        ? (await execCliForTarget(target, ['models'], { timeout: 5000 })).stdout
+        : process.platform === 'win32'
         ? (await execAsync(`${quoteCmdExecutable(cliPath)} models`, { timeout: 5000, windowsHide: true })).stdout
         : (await execFileAsync(cliPath, ['models'], { timeout: 5000 })).stdout;
       return !/not authenticated/i.test(output);
@@ -389,6 +406,8 @@ export class GrokAdapter implements AgentAdapter {
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
+      // A Grok installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
@@ -437,6 +456,11 @@ export class GrokAdapter implements AgentAdapter {
    * after it (Grok has no no-persistence flag); only the one this run created,
    * named by the stream's init line.
    *
+   * A Grok installed in a WSL distro runs there, from its own answer home
+   * (`answerHomeForPlace`), trusted in the distro's store, and on NAT
+   * networking reaches the search tool through the bridge block, whose relay
+   * lives as long as this one call.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -448,11 +472,47 @@ export class GrokAdapter implements AgentAdapter {
     options?: AnswerFromContextOptions,
   ): Promise<string> {
     const retrieval = options?.retrieval;
-    const onEvent = options?.onEvent;
-    if (retrieval) {
-      await ensureAnswerHomeTrust(cwd);
-      writeMcpConfig(cwd);
+    const cliTarget = await resolveCliTarget(cliPath, true);
+    const answerHome = answerHomeForPlace(cwd, cliTarget);
+    if (!retrieval) {
+      if (cliTarget) await fs.promises.mkdir(answerHome, { recursive: true });
+      return this.runAnswer({ prompt, cliPath, cliTarget, cwd: answerHome, model, options, env: null });
     }
+    // Only a bridge writes into the directory: a CLI that dials the URL needs
+    // none, so a run on this machine without one is not given one.
+    const inRunDirectory = <T>(work: (directory: string) => Promise<T>): Promise<T> =>
+      options?.runDirectory || !cliTarget ? work(options?.runDirectory ?? answerHome) : withAnswerRunDirectory(work);
+    return inRunDirectory(async (runDirectory) => {
+      const server = kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: runDirectory });
+      await ensureAnswerHomeTrust(answerHome, cliTarget);
+      writeMcpConfig(answerHome, server.kind === 'stdio' ? 'bridge' : 'url');
+      const env = {
+        [KANGENTIC_MCP_URL_ENV]: retrieval.url,
+        [KANGENTIC_MCP_TOKEN_ENV]: retrieval.token,
+        ...(server.kind === 'stdio' && cliTarget ? mcpBridgeScriptEnv(runDirectory, cliTarget) : {}),
+      };
+      const stopRelay = startRunMcpRelay(runDirectory, server);
+      try {
+        return await this.runAnswer({ prompt, cliPath, cliTarget, cwd: answerHome, model, options, env });
+      } finally {
+        stopRelay();
+      }
+    });
+  }
+
+  /** One headless answer run, and the removal of the session it leaves. */
+  private async runAnswer(input: {
+    prompt: string;
+    cliPath: string;
+    cliTarget: CliTarget | null;
+    cwd: string;
+    model: string | null | undefined;
+    options: AnswerFromContextOptions | undefined;
+    /** The search server's variables, or null for a run without search. */
+    env: Record<string, string> | null;
+  }): Promise<string> {
+    const { prompt, cliPath, cliTarget, cwd, model, options } = input;
+    const onEvent = options?.onEvent;
     let sessionId: string | null = null;
     const reduce = createAnswerStreamReducer();
     const onChunk = forwardStreamLines((line) => {
@@ -462,6 +522,7 @@ export class GrokAdapter implements AgentAdapter {
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model and effort flags are OMITTED when none is chosen: passing an
         // empty value is an error.
         args: [
@@ -484,23 +545,21 @@ export class GrokAdapter implements AgentAdapter {
         extractRaw: extractLastTurnAnswer,
         outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
         onChunk,
-        ...(retrieval
-          ? { env: { [KANGENTIC_MCP_URL_ENV]: retrieval.url, [KANGENTIC_MCP_TOKEN_ENV]: retrieval.token } }
-          : {}),
+        ...(input.env ? { env: input.env } : {}),
       });
     } finally {
       // The id comes off the CLI's own output and becomes a path segment of a
       // recursive delete, so only a plain id is trusted: `..` would name the
       // sessions folder itself.
       if (sessionId && /^[\w-]+$/.test(sessionId)) {
-        await fs.promises.rm(grokSessionDir(cwd, sessionId), { recursive: true, force: true }).catch(() => undefined);
+        await fs.promises.rm(grokSessionDir(cwd, sessionId, cliTarget), { recursive: true, force: true }).catch(() => undefined);
       }
     }
   }
 
-  /** Drop the per-worktree trust entry when Kangentic deletes the worktree. */
-  async onWorktreeRemoved(worktreePath: string): Promise<void> {
-    await removeWorktreeTrust(worktreePath);
+  /** Drop the per-worktree trust entry when Kangentic deletes the worktree, in the distro's store for `place`. */
+  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
+    await removeWorktreeTrust(worktreePath, place ?? null);
   }
 
   /** Rename the encoded per-cwd session store and rewrite trust paths. */

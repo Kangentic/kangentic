@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import { grokHomeDir } from './session-paths';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 
@@ -46,13 +47,19 @@ export async function discoverGrokCapabilities(
     return discoveryMemo.capabilities;
   }
 
-  const fromCache = readModelsCache();
+  // A Grok installed in a WSL distro keeps its models cache in the distro's
+  // Grok home and answers --help there. A distro whose facts cannot be read
+  // cannot be asked either.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  if (target === undefined) return {};
+
+  const fromCache = readModelsCache(target);
   if (fromCache) {
     discoveryMemo = { cliPath, capabilities: fromCache };
     return fromCache;
   }
 
-  const fromHelp = await readHelpCapabilities(cliPath);
+  const fromHelp = await readHelpCapabilities(cliPath, target);
   discoveryMemo = { cliPath, capabilities: fromHelp };
   return fromHelp;
 }
@@ -62,8 +69,8 @@ export function clearGrokCapabilityMemo(): void {
   discoveryMemo = null;
 }
 
-function readModelsCache(): AgentCapabilities | null {
-  const cachePath = path.join(grokHomeDir(), 'models_cache.json');
+function readModelsCache(place: CliPlace | null): AgentCapabilities | null {
+  const cachePath = path.join(grokHomeDir(place), 'models_cache.json');
   let parsed: unknown;
   try {
     parsed = JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
@@ -104,10 +111,12 @@ function readModelsCache(): AgentCapabilities | null {
   };
 }
 
-async function readHelpCapabilities(cliPath: string): Promise<AgentCapabilities> {
+async function readHelpCapabilities(cliPath: string, target: CliTarget | null): Promise<AgentCapabilities> {
   let helpText: string;
   try {
-    if (process.platform === 'win32') {
+    if (target) {
+      helpText = (await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 })).stdout;
+    } else if (process.platform === 'win32') {
       const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
         timeout: HELP_TIMEOUT_MS,
         windowsHide: true,

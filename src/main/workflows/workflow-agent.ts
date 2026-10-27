@@ -594,7 +594,7 @@ async function startWorkflowAgent(
   }
   // An agent whose CLI would start here without Kangentic's tools could not save
   // a plan; it says why, and the user's fix is retried on the next Settings close.
-  const mcpBlocked = adapter.kangenticMcpBlockedReason?.(projectRoot) ?? null;
+  const mcpBlocked = adapter.kangenticMcpBlockedReason?.(projectRoot, cliTarget) ?? null;
   if (mcpBlocked) return unavailable(mcpBlocked);
 
   const resume = workflow.agent_session_id !== null && workflow.agent_name === agentName;

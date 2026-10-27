@@ -24,6 +24,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import type { CliPlace } from './cli-target';
 
 /** The prefix every answer run directory carries under `os.tmpdir()`. */
 export const ANSWER_RUN_DIRECTORY_PREFIX = 'kangentic-answer-';
@@ -48,6 +49,22 @@ function currentUserId(): number | null {
 export function answerHomeDirectory(root: string = os.tmpdir()): string {
   const userId = currentUserId();
   return path.join(root, userId === null ? ANSWER_HOME_DIRECTORY_NAME : `${ANSWER_HOME_DIRECTORY_NAME}-${userId}`);
+}
+
+/**
+ * The folder an answer run starts in for a CLI in `place`. A CLI in a WSL
+ * distro gets a stable sibling of the shared answer home, one per distro, for
+ * a CLI that reads a workspace config from the folder it starts in (Cursor's
+ * `.cursor/mcp.json`, Grok's `.grok/config.toml`) and a server entry that
+ * differs by place (the stdio bridge on NAT networking): each place keeps a
+ * file of its own instead of the two overwriting one another between runs. A
+ * sibling, not a folder inside, in case a CLI looks for that config above the
+ * folder it starts in. A WSL place exists only on Windows, whose temp folder
+ * is the user's own, so the sibling needs no owner check. Create it before use.
+ */
+export function answerHomeForPlace(answerHome: string, place: CliPlace | null): string {
+  if (!place) return answerHome;
+  return `${answerHome}-wsl-${place.distro.replace(/[^\w.-]/g, '_')}`;
 }
 
 /** A private home used instead of a fixed one someone else controls, one per launch. */

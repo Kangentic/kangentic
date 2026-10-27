@@ -64,8 +64,8 @@ export function extractGrokUserTurn(line: string): UserTurnRecord | null {
  */
 export function createGrokCommandInjectionVerifier(): SubmissionVerifier {
   return createSubmittedTextSubmissionVerifier({
-    resolvePath: (agentSessionId, cwd) => {
-      const filePath = grokChatHistoryPath(cwd, agentSessionId);
+    resolvePath: (agentSessionId, cwd, place) => {
+      const filePath = grokChatHistoryPath(cwd, agentSessionId, place);
       try {
         return fs.existsSync(filePath) ? filePath : null;
       } catch {
