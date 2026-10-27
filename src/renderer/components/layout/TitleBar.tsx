@@ -1,5 +1,7 @@
 import React from 'react';
 import { Brain, ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -32,6 +34,7 @@ export function TitleBar({
   onOpenSearch,
   commandBarOpen,
 }: TitleBarProps) {
+  const { t } = useLingui();
   const currentProject = useProjectStore((s) => s.currentProject);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
@@ -92,6 +95,7 @@ export function TitleBar({
   );
 
   const isWorktree = currentProject?.path ? isWorktreePath(currentProject.path) : false;
+  const pendingVersion = pendingUpdate?.version ?? '';
 
   const handleGearClick = () => {
     if (settingsOpen) {
@@ -116,6 +120,7 @@ export function TitleBar({
       {/* Branding -- logo + app name */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <BrandMark className="w-5 h-5 text-fg-secondary" />
+        {/* i18n-ok: the product name alone */}
         <span className="text-sm font-semibold text-fg-secondary">
           Kangentic
           {/*
@@ -126,7 +131,7 @@ export function TitleBar({
             same gate the preview pill below uses, so nothing ships in a packaged build. A
             preview window is a dev window, so it gets this too, on top of its pill.
           */}
-          {__KANGENTIC_DEV__ && <span data-testid="titlebar-dev-badge">{' (dev)'}</span>}
+          {__KANGENTIC_DEV__ && <span data-testid="titlebar-dev-badge">{' '}<Trans>(dev)</Trans></span>}
         </span>
         {/*
           Dev-only (preview): the original task's `#<id> - <title>` label after the
@@ -176,7 +181,7 @@ export function TitleBar({
               </span>
             </Tooltip>
             {isWorktree && (
-              <span className="text-xs text-amber-500/70 flex-shrink-0">(worktree)</span>
+              <span className="text-xs text-amber-500/70 flex-shrink-0"><Trans>(worktree)</Trans></span>
             )}
           </div>
         )}
@@ -188,13 +193,13 @@ export function TitleBar({
             panel's own rail. */}
         {currentProject && onQuickSession && (
           <Tooltip
-            label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
+            label={commandBarOpen ? t`Hide Command Terminal` : t`Command Terminal`}
             keys={commandBarOpen ? undefined : 'commandBar.toggle'}
           >
             <button
               onClick={onQuickSession}
               className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
+              aria-label={commandBarOpen ? t`Hide Command Terminal` : t`Command Terminal`}
               data-testid="quick-session-button"
             >
               {/* The activity color lives IN the glyph (stroke color = aggregate
@@ -218,7 +223,7 @@ export function TitleBar({
             machine-global: it spans every registered project and is useful with no
             project open at all. */}
         <Tooltip
-          label={monitorPopOut.isOpen ? 'Focus agent monitor window' : 'Agent Monitor'}
+          label={monitorPopOut.isOpen ? t`Focus agent monitor window` : t`Agent Monitor`}
           keys={monitorPopOut.isOpen ? undefined : 'monitor.toggle'}
         >
           <button
@@ -226,7 +231,7 @@ export function TitleBar({
             className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
               monitorOpen || monitorPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
             }`}
-            aria-label="Agent Monitor"
+            aria-label={t`Agent Monitor`}
             data-testid="agent-monitor-button"
           >
             <SquareActivity size={20} />
@@ -237,7 +242,7 @@ export function TitleBar({
             is fixed by whatever comes AFTER it: appending here instead would
             shift Quick Find, settings, and the OS window controls. */}
         <Tooltip
-          label={knowledgeGraphPopOut.isOpen ? 'Focus Knowledge Graph window' : 'Knowledge Graph'}
+          label={knowledgeGraphPopOut.isOpen ? t`Focus Knowledge Graph window` : t`Knowledge Graph`}
           keys={knowledgeGraphPopOut.isOpen ? undefined : 'knowledgeGraph.toggle'}
         >
           <button
@@ -246,14 +251,14 @@ export function TitleBar({
             className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
               knowledgeGraphOpen || knowledgeGraphPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
             }`}
-            aria-label="Knowledge Graph"
+            aria-label={t`Knowledge Graph`}
             data-testid="knowledge-graph-button"
           >
             <Brain size={20} />
           </button>
         </Tooltip>
         <Tooltip
-          label={statsPopOut.isOpen ? 'Focus usage stats window' : 'Usage Stats'}
+          label={statsPopOut.isOpen ? t`Focus usage stats window` : t`Usage Stats`}
           keys={statsPopOut.isOpen ? undefined : 'stats.toggle'}
         >
           <button
@@ -262,7 +267,7 @@ export function TitleBar({
             className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
               statsOpen || statsPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
             }`}
-            aria-label="Usage Stats"
+            aria-label={t`Usage Stats`}
             data-testid="usage-stats-button"
           >
             <ChartColumn size={20} />
@@ -274,11 +279,11 @@ export function TitleBar({
             and stats buttons (both surfaces over running work) stay adjacent to
             each other. */}
         {onOpenSearch && (
-          <Tooltip label="Quick Find" keys="search.togglePalette">
+          <Tooltip label={t`Quick Find`} keys="search.togglePalette">
             <button
               onClick={onOpenSearch}
               className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-              aria-label="Quick Find"
+              aria-label={t`Quick Find`}
               // testid kept as "open-search" for selector stability; UI label is "Quick Find"
               data-testid="open-search-button"
             >
@@ -304,8 +309,8 @@ export function TitleBar({
             tone can say "something is unread", it cannot say how many. Ship
             the badge and tone the glyph too, muted at zero. */}
         <Tooltip
-          label="Announcements"
-          detail={unreadAnnouncements > 0 ? `${unreadAnnouncements} unread` : undefined}
+          label={t`Announcements`}
+          detail={unreadAnnouncements > 0 ? plural(unreadAnnouncements, { one: '# unread', other: '# unread' }) : undefined}
         >
           <button
             onClick={() => (announcementsOpen ? closeAnnouncements() : openAnnouncements())}
@@ -316,7 +321,7 @@ export function TitleBar({
                   ? 'text-attention hover:text-fg'
                   : 'text-fg-muted hover:text-fg'
             }`}
-            aria-label="Announcements"
+            aria-label={t`Announcements`}
             data-testid="announcements-button"
           >
             <Megaphone size={20} />
@@ -346,24 +351,24 @@ export function TitleBar({
             left by one slot. That is the accepted price of the grouping, and it
             is a once-per-release event. */}
         {pendingUpdate && (
-          <Tooltip label={`Version ${pendingUpdate.version} is ready to install`}>
+          <Tooltip label={t`Version ${pendingVersion} is ready to install`}>
             <button
               onClick={openUpdateModal}
               className="p-1.5 hover:bg-surface-hover rounded text-attention transition-colors"
-              aria-label="Update available"
+              aria-label={t`Update available`}
               data-testid="update-available-button"
             >
               <CloudDownload size={20} />
             </button>
           </Tooltip>
         )}
-        <Tooltip label="Settings" keys="settings.toggle">
+        <Tooltip label={t`Settings`} keys="settings.toggle">
           <button
             onClick={handleGearClick}
             className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
               settingsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
             }`}
-            aria-label="Settings"
+            aria-label={t`Settings`}
             data-testid="settings-button"
           >
             <Settings size={20} />
@@ -374,29 +379,29 @@ export function TitleBar({
           // the wrapper exists only to give the cluster one selector.
           <div className="contents" data-testid="window-controls">
             <div className="w-px h-4 bg-edge mx-1" />
-            <Tooltip label="Minimize">
+            <Tooltip label={t`Minimize`}>
               <button
                 onClick={() => window.electronAPI.window.minimize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Minimize"
+                aria-label={t`Minimize`}
               >
                 <Minus size={16} />
               </button>
             </Tooltip>
-            <Tooltip label="Maximize">
+            <Tooltip label={t`Maximize`}>
               <button
                 onClick={() => window.electronAPI.window.maximize()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Maximize"
+                aria-label={t`Maximize`}
               >
                 <Square size={14} />
               </button>
             </Tooltip>
-            <Tooltip label="Close">
+            <Tooltip label={t`Close`}>
               <button
                 onClick={() => window.electronAPI.window.close()}
                 className="p-1.5 hover:bg-red-600 rounded text-fg-muted hover:text-white transition-colors"
-                aria-label="Close"
+                aria-label={t`Close`}
               >
                 <X size={16} />
               </button>

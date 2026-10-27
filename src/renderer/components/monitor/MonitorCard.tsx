@@ -1,5 +1,8 @@
 import React, { useCallback } from 'react';
 import { CirclePause, Check, GitBranch } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { AppConfig, MonitorSessionRow } from '../../../shared/types';
@@ -10,10 +13,10 @@ import { ElapsedTime } from '../terminal/ElapsedTime';
 import { ContextUsageFooter } from '../board/ContextUsageFooter';
 import { CardStrip, cardStripBleedClass } from '../board/CardStrip';
 import {
-  AUTOMATIONS_DISABLED_LABEL,
-  AUTOMATIONS_DISABLED_TIP,
   AutomationsDisabledCardStrip,
   AutomationsDisabledGlyph,
+  automationsDisabledLabel,
+  automationsDisabledTip,
 } from '../board/AutomationsDisabledStrip';
 import {
   BrowserAliveGlobe,
@@ -103,7 +106,7 @@ function stateGlyphContent(
   if (bucket === 'needs-you' || bucket === 'working') {
     const needsYou = bucket === 'needs-you';
     const mark = monitorActivityMark(row, needsYou);
-    const name = reasonText !== '' ? reasonText : (needsYou ? 'Needs you' : 'Working');
+    const name = reasonText !== '' ? reasonText : (needsYou ? i18n._(msg`Needs you`) : i18n._(msg`Working`));
     // ONE render site with a computed `mark`, never a conditional pair of
     // siblings: React reconciles siblings positionally, so an idle/working flip
     // would unmount one and mount the other, restarting the march from zero
@@ -116,10 +119,13 @@ function stateGlyphContent(
     };
   }
   if (bucket === 'finished') {
-    return { glyph: <Check size={14} className="text-fg-disabled" aria-label="Finished" />, name: 'Finished' };
+    const finishedName = i18n._(msg`Finished`);
+    return { glyph: <Check size={14} className="text-fg-disabled" aria-label={finishedName} />, name: finishedName };
   }
   if (variant === 'card') return null;
-  const name = row.status === 'queued' ? 'Waiting to start' : 'Paused';
+  const name = row.status === 'queued'
+    ? i18n._(msg`Waiting to start`)
+    : i18n._(msg({ message: 'Paused', context: 'Agent status' }));
   return { glyph: <CirclePause size={14} className="text-fg-faint" aria-label={name} />, name };
 }
 
@@ -310,10 +316,10 @@ function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
   const shell = 'shrink-0 flex items-center px-2.5 border-l border-edge bg-surface/30 text-xs text-fg-muted whitespace-nowrap';
   if (row.automationsDisabled) {
     return (
-      <Tooltip label={AUTOMATIONS_DISABLED_TIP}>
+      <Tooltip label={automationsDisabledTip()}>
         <span className={`${shell} gap-[5px]`} data-testid="monitor-row-automations-disabled">
           <AutomationsDisabledGlyph />
-          <span>{AUTOMATIONS_DISABLED_LABEL}</span>
+          <span>{automationsDisabledLabel()}</span>
         </span>
       </Tooltip>
     );
@@ -340,11 +346,13 @@ function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
  * 11px time centered beside 12px text rode visibly above it.
  */
 function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: MonitorCardProps) {
+  const { t } = useLingui();
   const activityLine = formatMonitorStatus(row);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
+  const taskTitle = row.taskTitle;
   return (
-    <Tooltip label={`Open ${row.taskTitle}`}>
+    <Tooltip label={t`Open ${taskTitle}`}>
       <div
         role="button"
         tabIndex={0}
@@ -420,7 +428,9 @@ function MonitorFullCard({
   onOpen,
   onContextMenu,
 }: MonitorCardProps) {
+  const { t } = useLingui();
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
+  const taskTitle = row.taskTitle;
 
   // The slot's content follows the Task tab's Card Preview, exactly as the board
   // card's does. The trail lives in the session store (main pushes it on change;
@@ -447,7 +457,7 @@ function MonitorFullCard({
   const footerDivider = !(slotKind === 'trail' && row.labels.length === 0);
 
   return (
-    <Tooltip label={`Open ${row.taskTitle}`}>
+    <Tooltip label={t`Open ${taskTitle}`}>
       <div
         role="button"
         tabIndex={0}

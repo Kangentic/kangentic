@@ -15,6 +15,7 @@
 
 import { useEffect, useState } from 'react';
 import { History, ChevronDown, ChevronRight } from 'lucide-react';
+import { Plural, useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import type { KnowledgeGraphQueryHit } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
@@ -29,6 +30,7 @@ export interface TaskPriorWorkProps {
 const DEFAULT_EXPANDED = false;
 
 export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
+  const { t } = useLingui();
   // Each result is stored WITH the task it was fetched for, so a task change
   // shows nothing until its own result lands, with no reset to schedule. A
   // result for a task the user has since left is simply never read.
@@ -68,7 +70,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         {expanded ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
         <History size={13} aria-hidden />
         <span className="font-medium">
-          {hits.length} earlier {hits.length === 1 ? 'conversation' : 'conversations'} about this
+          <Plural value={hits.length} one="# earlier conversation about this" other="# earlier conversations about this" />
         </span>
       </button>
 
@@ -76,7 +78,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         <ul className="px-1.5 pb-1.5">
           {hits.map((hit) => (
             <li key={hit.sessionId}>
-              <Tooltip label="Open this conversation">
+              <Tooltip label={t`Open this conversation`}>
                 <button
                   type="button"
                   onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
@@ -89,7 +91,7 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
                       the snippet is just an arbitrary chunk - in practice often
                       raw tool-call JSON, which reads as noise and buries the one
                       line that is actually useful. */}
-                  <div className="text-xs text-fg truncate">{hit.taskTitle ?? 'Untitled conversation'}</div>
+                  <div className="text-xs text-fg truncate">{hit.taskTitle ?? t`Untitled conversation`}</div>
                 </button>
               </Tooltip>
             </li>

@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
-import { hasJsxOptOutMarker } from './helpers/opt-out-marker';
+import { hasJsxOptOutMarker, hasOptOutMarker } from './helpers/opt-out-marker';
 import { I18N_UNCONVERTED_FILES } from './helpers/i18n-unconverted-files';
+import { I18N_UNCONVERTED_TOAST_FILES } from './helpers/i18n-unconverted-toast-files';
 
 // Guards `.claude/rules/i18n.md`: user-facing text in the renderer goes through Lingui, so a
 // translation can reach it. Hard-coded English shows in every language.
@@ -25,7 +26,14 @@ import { I18N_UNCONVERTED_FILES } from './helpers/i18n-unconverted-files';
 // name, a shell command) carries `{/* i18n-ok: <reason> */}` on its line or above its element,
 // read through tests/unit/helpers/opt-out-marker.ts. `components/debug/` is dev-only and exempt.
 //
-// The scan parses the TSX AST, as native-title.test.ts does.
+// A second scan covers what the first cannot see: a toast's text, which sits in the object literal
+// handed to `addToast(...)` or `updateToast(id, ...)`, often in a `.ts` file. A literal `title`,
+// `message` or `action.label` is hard-coded. Files still waiting for extraction are listed in
+// helpers/i18n-unconverted-toast-files.ts, which only shrinks too; `// i18n-ok: <reason>` on the
+// field's line or in the comment block above it marks text that stays. A toast raised through an
+// alias (`const toast = store.addToast; toast({...})`) is out of its reach.
+//
+// The scans parse the TSX AST, as native-title.test.ts does.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const RENDERER_ROOT = path.join(REPO_ROOT, 'src/renderer');
@@ -45,18 +53,81 @@ const HAS_LETTER = /\p{L}/u;
 
 interface HardcodedTextSite {
   line: number;
-  kind: 'jsx-text' | 'jsx-expression' | 'prop' | 'module-scope-t';
+  kind: 'jsx-text' | 'jsx-expression' | 'prop' | 'module-scope-t' | 'toast';
   text: string;
 }
 
-function collectTsxFiles(directory: string): string[] {
+function collectSourceFiles(directory: string, pattern: RegExp): string[] {
   const found: string[] = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) found.push(...collectTsxFiles(fullPath));
-    else if (entry.name.endsWith('.tsx')) found.push(fullPath);
+    if (entry.isDirectory()) found.push(...collectSourceFiles(fullPath, pattern));
+    else if (pattern.test(entry.name)) found.push(fullPath);
   }
   return found;
+}
+
+function collectTsxFiles(directory: string): string[] {
+  return collectSourceFiles(directory, /\.tsx$/);
+}
+
+/** The toast-store calls, and which argument carries the toast's text. */
+const TOAST_CALL_ARGUMENT = new Map([['addToast', 0], ['updateToast', 1]]);
+const TOAST_TEXT_FIELDS = new Set(['title', 'message']);
+
+function calleeName(expression: ts.Expression): string | undefined {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return undefined;
+}
+
+function assignedName(property: ts.ObjectLiteralElementLike): string | undefined {
+  if (!ts.isPropertyAssignment(property)) return undefined;
+  const name = property.name;
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
+}
+
+/** Every literal title, body or button label handed to the toast store in one file's source. */
+function scanToastSource(fileLabel: string, source: string): HardcodedTextSite[] {
+  const scriptKind = fileLabel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(fileLabel, source, ts.ScriptTarget.Latest, true, scriptKind);
+  const lines = source.split('\n');
+  const sites: HardcodedTextSite[] = [];
+
+  const checkInitializer = (property: ts.PropertyAssignment) => {
+    const prose = literalTexts(property.initializer).find((text) => HAS_LETTER.test(text));
+    if (prose === undefined) return;
+    const line = sourceFile.getLineAndCharacterOfPosition(property.getStart(sourceFile)).line;
+    if (hasOptOutMarker(lines, line, MARKER)) return;
+    sites.push({ line: line + 1, kind: 'toast', text: prose.trim().replace(/\s+/g, ' ').slice(0, 60) });
+  };
+
+  const checkToastFields = (fields: ts.ObjectLiteralExpression) => {
+    for (const property of fields.properties) {
+      const name = assignedName(property);
+      if (!name || !ts.isPropertyAssignment(property)) continue;
+      if (TOAST_TEXT_FIELDS.has(name)) checkInitializer(property);
+      else if (name === 'action' && ts.isObjectLiteralExpression(property.initializer)) {
+        for (const actionProperty of property.initializer.properties) {
+          if (assignedName(actionProperty) === 'label' && ts.isPropertyAssignment(actionProperty)) {
+            checkInitializer(actionProperty);
+          }
+        }
+      }
+    }
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression);
+      const argumentIndex = name === undefined ? undefined : TOAST_CALL_ARGUMENT.get(name);
+      const fields = argumentIndex === undefined ? undefined : node.arguments[argumentIndex];
+      if (fields && ts.isObjectLiteralExpression(fields)) checkToastFields(fields);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return sites;
 }
 
 /** Every literal string an expression can evaluate to, through conditionals and fallbacks. */
@@ -225,6 +296,71 @@ describe('hard-coded UI text in the renderer', () => {
     const misfiled = Object.entries(I18N_UNCONVERTED_FILES).flatMap(([area, files]) =>
       files.filter((file) => catalogAreaOf(file) !== area).map((file) => `${file} is under ${area}, its catalog is ${catalogAreaOf(file)}`));
     expect(misfiled).toEqual([]);
+  });
+});
+
+const toastScannedFiles = collectSourceFiles(RENDERER_ROOT, /\.tsx?$/)
+  .map((filePath) => ({ file: relativePosix(filePath), filePath }))
+  .filter(({ file }) => !file.startsWith(EXEMPT_DIRECTORY) && !file.endsWith('.d.ts'));
+const toastSitesByFile = new Map(
+  toastScannedFiles.map(({ file, filePath }) => [file, scanToastSource(file, fs.readFileSync(filePath, 'utf8'))] as const),
+);
+const toastAllowlisted = new Set(Object.values(I18N_UNCONVERTED_TOAST_FILES).flat());
+
+describe('literal toast text in the renderer', () => {
+  it('scans the renderer, its .ts modules included, and finds the toast calls', () => {
+    expect(toastScannedFiles.length).toBeGreaterThan(scannedFiles.length);
+    // Not vacuous: the toast store's own callers are where the text used to be literal.
+    const callers = toastScannedFiles.filter(({ filePath }) => /\b(?:addToast|updateToast)\(/.test(fs.readFileSync(filePath, 'utf8')));
+    expect(callers.length).toBeGreaterThan(40);
+  });
+
+  it('has none outside the files still waiting for extraction', () => {
+    const offenders = [...toastSitesByFile.entries()]
+      .filter(([file, sites]) => sites.length > 0 && !toastAllowlisted.has(file))
+      .flatMap(([file, sites]) => sites.map((site) => `${file}:${site.line} ${site.kind} "${site.text}"`));
+    expect(
+      offenders,
+      'Put a toast\'s title, body and button label through Lingui: `t` in a component, '
+      + '`i18n._(msg...)` in a .ts module (see .claude/rules/i18n.md). Text main wrote, such as '
+      + '`asSentence(describeIpcError(error))`, is not a literal and needs nothing.',
+    ).toEqual([]);
+  });
+
+  it('lists only files that still raise literal toast text, so the list only shrinks', () => {
+    const missing = [...toastAllowlisted].filter((file) => !toastSitesByFile.has(file));
+    expect(missing, 'Listed files that no longer exist: remove them from helpers/i18n-unconverted-toast-files.ts').toEqual([]);
+    const converted = [...toastAllowlisted].filter((file) => (toastSitesByFile.get(file) ?? []).length === 0);
+    expect(converted, 'These files are converted: remove them from helpers/i18n-unconverted-toast-files.ts').toEqual([]);
+  });
+
+  it('files each listed file under its own catalog area', () => {
+    const misfiled = Object.entries(I18N_UNCONVERTED_TOAST_FILES).flatMap(([area, files]) =>
+      files.filter((file) => catalogAreaOf(file) !== area).map((file) => `${file} is under ${area}, its catalog is ${catalogAreaOf(file)}`));
+    expect(misfiled).toEqual([]);
+  });
+});
+
+describe('literal toast text detector (fixtures)', () => {
+  const kinds = (source: string, file = 'fixture.ts') => scanToastSource(file, source).map((site) => site.text);
+
+  it('flags a literal title, body or button label, through a store read and in updateToast', () => {
+    expect(kinds("useToastStore.getState().addToast({ title: 'Saved', message: 'The task moved.' });"))
+      .toEqual(['Saved', 'The task moved.']);
+    expect(kinds("addToast({ title: ok ? 'Agent resumed' : 'Agent started', message: body });")).toEqual(['Agent resumed']);
+    expect(kinds("store.updateToast(id, { title: `${count} agents paused` });")).toEqual(['agents paused']);
+    expect(kinds("addToast({ title: t, message: m, persistent: true, action: { label: 'Review', icon: 'review' } });"))
+      .toEqual(['Review']);
+    expect(kinds("export function A() { addToast({ title: 'Saved', message: m }); return null; }", 'fixture.tsx')).toEqual(['Saved']);
+  });
+
+  it('leaves translated text, main\'s reasons, placeholders only and marked fields alone', () => {
+    expect(kinds('addToast({ title: i18n._(msg`Saved`), message: asSentence(describeIpcError(error)) });')).toEqual([]);
+    expect(kinds('addToast({ title: t`Saved`, message: `${taskTitle}: ${reason}` });')).toEqual([]);
+    expect(kinds("addToast({\n  // i18n-ok: the product name\n  title: 'Kangentic',\n  message: m,\n});")).toEqual([]);
+    expect(kinds("dismissToast('Saved');")).toEqual([]);
+    // A marker needs its reason.
+    expect(kinds("addToast({\n  // i18n-ok:\n  title: 'Kangentic',\n  message: m,\n});")).toEqual(['Kangentic']);
   });
 });
 

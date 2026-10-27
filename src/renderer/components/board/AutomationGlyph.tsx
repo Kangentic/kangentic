@@ -1,11 +1,61 @@
 import { useMemo } from 'react';
 import { Columns3Cog } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { selectAutomationCounts } from '../../stores/board-store/automations-slice';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
+
+/**
+ * "3 automations run here: 2 on enter, 1 on exit". One whole message per set of
+ * moments that has a count, so a translation never joins pieces of a sentence,
+ * and each one a plural on the total, so "runs" agrees with it. Only a moment
+ * with a count is named, as before.
+ */
+function automationsRunSentence(total: number, enterCount: number, turnEndCount: number, exitCount: number): string {
+  if (enterCount > 0 && turnEndCount > 0 && exitCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${enterCount} on enter, ${turnEndCount} at a turn end, ${exitCount} on exit`,
+      other: `# automations run here: ${enterCount} on enter, ${turnEndCount} at a turn end, ${exitCount} on exit`,
+    });
+  }
+  if (enterCount > 0 && turnEndCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${enterCount} on enter, ${turnEndCount} at a turn end`,
+      other: `# automations run here: ${enterCount} on enter, ${turnEndCount} at a turn end`,
+    });
+  }
+  if (enterCount > 0 && exitCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${enterCount} on enter, ${exitCount} on exit`,
+      other: `# automations run here: ${enterCount} on enter, ${exitCount} on exit`,
+    });
+  }
+  if (turnEndCount > 0 && exitCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${turnEndCount} at a turn end, ${exitCount} on exit`,
+      other: `# automations run here: ${turnEndCount} at a turn end, ${exitCount} on exit`,
+    });
+  }
+  if (enterCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${enterCount} on enter`,
+      other: `# automations run here: ${enterCount} on enter`,
+    });
+  }
+  if (turnEndCount > 0) {
+    return plural(total, {
+      one: `# automation runs here: ${turnEndCount} at a turn end`,
+      other: `# automations run here: ${turnEndCount} at a turn end`,
+    });
+  }
+  return plural(total, {
+    one: `# automation runs here: ${exitCount} on exit`,
+    other: `# automations run here: ${exitCount} on exit`,
+  });
+}
 
 /**
  * The column header's automation mark: `Columns3Cog`, a column with a cog, and
@@ -45,12 +95,8 @@ export function AutomationGlyph({ swimlaneId }: { swimlaneId: string }) {
   const total = counts.enter + counts.turn_end + counts.exit;
   if (total === 0) return null;
 
-  const parts: string[] = [];
-  if (counts.enter > 0) parts.push(`${counts.enter} on enter`);
-  if (counts.turn_end > 0) parts.push(`${counts.turn_end} at a turn end`);
-  if (counts.exit > 0) parts.push(`${counts.exit} on exit`);
   // Both halves agree with the count: one automation RUNS, several RUN.
-  const sentence = `${total} automation${total > 1 ? 's run' : ' runs'} here: ${parts.join(', ')}`;
+  const sentence = automationsRunSentence(total, counts.enter, counts.turn_end, counts.exit);
 
   // The sentence is the glyph's name as well as its tip, so a screen reader hears it once.
   return (

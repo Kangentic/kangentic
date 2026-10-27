@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type ReactNode } from 'react';
 import { MoreHorizontal, Check } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
 import { OverlayPopover } from './OverlayPopover';
 import { Tooltip } from './Tooltip';
@@ -30,7 +31,9 @@ const DEFAULT_TRIGGER_CLASS = 'p-1.5 text-fg-faint hover:text-fg-tertiary hover:
  * smart popover positioning. Used by TaskDetailHeader, CommandBarOverlay, and
  * the Changes diff toolbar's view-options menu.
  */
-export function KebabMenu({ children, icon, label = 'Actions', triggerClassName, triggerTestId, menuTestId }: KebabMenuProps) {
+export function KebabMenu({ children, icon, label: labelProp, triggerClassName, triggerTestId, menuTestId }: KebabMenuProps) {
+  const { t } = useLingui();
+  const label = labelProp ?? t`Actions`;
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);

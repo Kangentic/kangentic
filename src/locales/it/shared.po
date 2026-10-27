@@ -6,3 +6,55 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: it\n"
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "{waitedCalls, plural, one {How long each tool ran. Leaves out the # call that waited for your answer or approval.} other {How long each tool ran. Leaves out the # calls that waited for your answer or approval.}}"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Average run time of the calls Time counts."
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Avg"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Calls"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Cost"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted."
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Failed"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "How long each tool ran."
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "In"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Out"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Time"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Tokens"
+msgstr ""
+
+#: src/renderer/components/shared/ByToolTable.tsx
+msgid "Tool"
+msgstr ""

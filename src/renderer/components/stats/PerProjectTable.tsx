@@ -1,4 +1,7 @@
 import { useMemo } from 'react';
+import type { I18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { DataTable, type DataTableColumn } from '../DataTable';
 import type { ProjectUsageSummary } from '../../../shared/types';
 import { formatTokenCount } from '../../utils/format-tokens';
@@ -50,146 +53,160 @@ function ShareCell({ share }: { share: number }) {
   );
 }
 
-const COST_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
-  {
-    key: 'metricValue',
-    label: 'Cost',
-    align: 'right',
-    headerTip: 'API-equivalent cost as reported by agents (subscription sessions may report $0)',
-    sortValue: (row) => row.costUsd,
-    render: (row) => <span className="tabular-nums">{formatCost(row.costUsd)}</span>,
-  },
-  {
-    key: 'metricShare',
-    label: 'Cost Share',
-    align: 'right',
-    headerTip: "This project's share of the total cost across all projects in the range",
-    sortValue: (row) => row.costShare,
-    render: (row) => <ShareCell share={row.costShare} />,
-  },
-];
+type ProjectColumn = DataTableColumn<ProjectComparisonRow, ProjectColumnKey>;
 
-const TOKEN_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
-  {
-    key: 'metricValue',
-    label: 'Cache Read',
-    align: 'right',
-    headerTip: 'Tokens served from the prompt cache, counted apart from Tokens In',
-    sortValue: (row) => row.cacheReadTokens,
-    render: (row) => <span className="tabular-nums">{formatTokenCount(row.cacheReadTokens)}</span>,
-  },
-  {
-    key: 'metricShare',
-    label: 'Token Share',
-    align: 'right',
-    headerTip: 'Share of fresh input plus output across all projects in the range',
-    sortValue: (row) => row.tokenShare,
-    render: (row) => <ShareCell share={row.tokenShare} />,
-  },
-];
+function costColumns(i18n: I18n): ProjectColumn[] {
+  return [
+    {
+      key: 'metricValue',
+      label: i18n._(msg`Cost`),
+      align: 'right',
+      headerTip: i18n._(msg`API-equivalent cost as reported by agents (subscription sessions may report $0)`),
+      sortValue: (row) => row.costUsd,
+      render: (row) => <span className="tabular-nums">{formatCost(row.costUsd)}</span>,
+    },
+    {
+      key: 'metricShare',
+      label: i18n._(msg`Cost Share`),
+      align: 'right',
+      headerTip: i18n._(msg`This project's share of the total cost across all projects in the range`),
+      sortValue: (row) => row.costShare,
+      render: (row) => <ShareCell share={row.costShare} />,
+    },
+  ];
+}
 
-const LEADING_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
-  {
-    key: 'project',
-    label: 'Project',
-    headerTip: 'Registered project - click a row to view that project in the dashboard',
-    sortValue: (row) => row.projectName.toLowerCase(),
-    render: (row) => <span className="text-fg-secondary">{row.projectName}</span>,
-  },
-  {
-    key: 'tokensIn',
-    label: 'Tokens In',
-    align: 'right',
-    headerTip: 'Fresh input tokens across the turns in this range (cache reads counted separately)',
-    sortValue: (row) => row.inputTokens,
-    render: (row) => <span className="tabular-nums">{formatTokenCount(row.inputTokens)}</span>,
-  },
-  {
-    key: 'tokensOut',
-    label: 'Tokens Out',
-    align: 'right',
-    headerTip: 'Output tokens across the turns in this range',
-    sortValue: (row) => row.outputTokens,
-    render: (row) => <span className="tabular-nums">{formatTokenCount(row.outputTokens)}</span>,
-  },
-];
+function tokenColumns(i18n: I18n): ProjectColumn[] {
+  return [
+    {
+      key: 'metricValue',
+      label: i18n._(msg`Cache Read`),
+      align: 'right',
+      headerTip: i18n._(msg`Tokens served from the prompt cache, counted apart from Tokens In`),
+      sortValue: (row) => row.cacheReadTokens,
+      render: (row) => <span className="tabular-nums">{formatTokenCount(row.cacheReadTokens)}</span>,
+    },
+    {
+      key: 'metricShare',
+      label: i18n._(msg`Token Share`),
+      align: 'right',
+      headerTip: i18n._(msg`Share of fresh input plus output across all projects in the range`),
+      sortValue: (row) => row.tokenShare,
+      render: (row) => <ShareCell share={row.tokenShare} />,
+    },
+  ];
+}
 
-const TRAILING_COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
-  {
-    key: 'lines',
-    label: 'Lines',
-    align: 'right',
-    headerTip: 'Lines added / removed by agent sessions (git diff vs the base branch)',
-    sortValue: (row) => row.linesAdded + row.linesRemoved,
-    render: (row) => (
-      <span className="tabular-nums">
-        <span className="text-green-400/70">{`+${formatTokenCount(row.linesAdded)}`}</span>
-        {' / '}
-        <span className="text-red-400/70">{`-${formatTokenCount(row.linesRemoved)}`}</span>
-      </span>
-    ),
-  },
-  {
-    key: 'files',
-    label: 'Files',
-    align: 'right',
-    headerTip: 'Files changed by agent sessions (git diff vs the base branch)',
-    sortValue: (row) => row.filesChanged,
-    render: (row) => <span className="tabular-nums">{formatTokenCount(row.filesChanged)}</span>,
-  },
-  {
-    key: 'toolCalls',
-    label: 'Tool Calls',
-    align: 'right',
-    headerTip: 'Total tool calls across sessions in the range',
-    sortValue: (row) => row.toolCallCount,
-    render: (row) => <span className="tabular-nums">{formatTokenCount(row.toolCallCount)}</span>,
-  },
-  {
-    key: 'avgActive',
-    label: 'Avg Active',
-    align: 'right',
-    headerTip: 'Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts.',
-    sortValue: (row) => row.avgActiveMs ?? -1,
-    render: (row) => (
-      <span className="tabular-nums">{row.avgActiveMs !== null ? formatDuration(row.avgActiveMs) : '-'}</span>
-    ),
-  },
-  {
-    key: 'topAgent',
-    label: 'Top Agent',
-    align: 'right',
-    headerTip: 'Agent with the most tokens in this project over the range',
-    sortValue: (row) => (row.topAgent !== null ? agentShortName(row.topAgent) : ''),
-    render: (row) => (
-      <span className="text-fg-secondary">{row.topAgent !== null ? agentShortName(row.topAgent) : '-'}</span>
-    ),
-  },
-  {
-    key: 'lastActive',
-    label: 'Last Active',
-    align: 'right',
-    headerTip: 'Most recent session start in the range',
-    sortValue: (row) => row.lastActiveMs ?? 0,
-    render: (row) => (
-      <span className="text-fg-muted">{row.lastActiveMs !== null ? formatRelativeTime(row.lastActiveMs) : '-'}</span>
-    ),
-  },
-  {
-    key: 'sessions',
-    label: 'Sessions',
-    align: 'right',
-    headerTip: 'Finalized sessions in the range',
-    sortValue: (row) => row.sessionCount,
-    render: (row) => <span className="tabular-nums">{row.sessionCount.toLocaleString()}</span>,
-  },
-];
+function leadingColumns(i18n: I18n): ProjectColumn[] {
+  return [
+    {
+      key: 'project',
+      label: i18n._(msg`Project`),
+      headerTip: i18n._(msg`Registered project - click a row to view that project in the dashboard`),
+      sortValue: (row) => row.projectName.toLowerCase(),
+      render: (row) => <span className="text-fg-secondary">{row.projectName}</span>,
+    },
+    {
+      key: 'tokensIn',
+      label: i18n._(msg`Tokens In`),
+      align: 'right',
+      headerTip: i18n._(msg`Fresh input tokens across the turns in this range (cache reads counted separately)`),
+      sortValue: (row) => row.inputTokens,
+      render: (row) => <span className="tabular-nums">{formatTokenCount(row.inputTokens)}</span>,
+    },
+    {
+      key: 'tokensOut',
+      label: i18n._(msg`Tokens Out`),
+      align: 'right',
+      headerTip: i18n._(msg`Output tokens across the turns in this range`),
+      sortValue: (row) => row.outputTokens,
+      render: (row) => <span className="tabular-nums">{formatTokenCount(row.outputTokens)}</span>,
+    },
+  ];
+}
 
-/** The table's columns for one view of the Cost/Tokens toggle. */
-const COLUMNS_BY_METRIC: Record<UsageMetricMode, DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[]> = {
-  cost: [...LEADING_COLUMNS, ...COST_COLUMNS, ...TRAILING_COLUMNS],
-  tokens: [...LEADING_COLUMNS, ...TOKEN_COLUMNS, ...TRAILING_COLUMNS],
-};
+function trailingColumns(i18n: I18n): ProjectColumn[] {
+  return [
+    {
+      key: 'lines',
+      label: i18n._(msg`Lines`),
+      align: 'right',
+      headerTip: i18n._(msg`Lines added / removed by agent sessions (git diff vs the base branch)`),
+      sortValue: (row) => row.linesAdded + row.linesRemoved,
+      render: (row) => (
+        <span className="tabular-nums">
+          <span className="text-green-400/70">{`+${formatTokenCount(row.linesAdded)}`}</span>
+          {' / '}
+          <span className="text-red-400/70">{`-${formatTokenCount(row.linesRemoved)}`}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'files',
+      label: i18n._(msg`Files`),
+      align: 'right',
+      headerTip: i18n._(msg`Files changed by agent sessions (git diff vs the base branch)`),
+      sortValue: (row) => row.filesChanged,
+      render: (row) => <span className="tabular-nums">{formatTokenCount(row.filesChanged)}</span>,
+    },
+    {
+      key: 'toolCalls',
+      label: i18n._(msg`Tool Calls`),
+      align: 'right',
+      headerTip: i18n._(msg`Total tool calls across sessions in the range`),
+      sortValue: (row) => row.toolCallCount,
+      render: (row) => <span className="tabular-nums">{formatTokenCount(row.toolCallCount)}</span>,
+    },
+    {
+      key: 'avgActive',
+      label: i18n._(msg`Avg Active`),
+      align: 'right',
+      headerTip: i18n._(msg`Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts.`),
+      sortValue: (row) => row.avgActiveMs ?? -1,
+      render: (row) => (
+        <span className="tabular-nums">{row.avgActiveMs !== null ? formatDuration(row.avgActiveMs) : '-'}</span>
+      ),
+    },
+    {
+      key: 'topAgent',
+      label: i18n._(msg`Top Agent`),
+      align: 'right',
+      headerTip: i18n._(msg`Agent with the most tokens in this project over the range`),
+      sortValue: (row) => (row.topAgent !== null ? agentShortName(row.topAgent) : ''),
+      render: (row) => (
+        <span className="text-fg-secondary">{row.topAgent !== null ? agentShortName(row.topAgent) : '-'}</span>
+      ),
+    },
+    {
+      key: 'lastActive',
+      label: i18n._(msg`Last Active`),
+      align: 'right',
+      headerTip: i18n._(msg`Most recent session start in the range`),
+      sortValue: (row) => row.lastActiveMs ?? 0,
+      render: (row) => (
+        <span className="text-fg-muted">{row.lastActiveMs !== null ? formatRelativeTime(row.lastActiveMs) : '-'}</span>
+      ),
+    },
+    {
+      key: 'sessions',
+      label: i18n._(msg`Sessions`),
+      align: 'right',
+      headerTip: i18n._(msg`Finalized sessions in the range`),
+      sortValue: (row) => row.sessionCount,
+      render: (row) => <span className="tabular-nums">{row.sessionCount.toLocaleString()}</span>,
+    },
+  ];
+}
+
+/** The table's columns for each view of the Cost/Tokens toggle, in the session's language. */
+function buildColumnsByMetric(i18n: I18n): Record<UsageMetricMode, ProjectColumn[]> {
+  const leading = leadingColumns(i18n);
+  const trailing = trailingColumns(i18n);
+  return {
+    cost: [...leading, ...costColumns(i18n), ...trailing],
+    tokens: [...leading, ...tokenColumns(i18n), ...trailing],
+  };
+}
 
 /** Per-project comparison table for the All-Projects scope, sortable on every
  *  column. Ratios (cost share, token share, avg active) derive here from the
@@ -210,6 +227,8 @@ export function PerProjectTable({
   metric: UsageMetricMode;
   onProjectClick?: (projectId: string) => void;
 }) {
+  const { t, i18n } = useLingui();
+  const columnsByMetric = useMemo(() => buildColumnsByMetric(i18n), [i18n]);
   const rows = useMemo<ProjectComparisonRow[]>(() => {
     const totalCost = projects.reduce((sum, project) => sum + project.costUsd, 0);
     const totalTokens = projects.reduce((sum, project) => sum + project.inputTokens + project.outputTokens, 0);
@@ -244,7 +263,7 @@ export function PerProjectTable({
   return (
     <div className="bg-surface-raised border border-edge rounded-lg p-2" data-testid="per-project-table">
       <DataTable
-        columns={COLUMNS_BY_METRIC[metric]}
+        columns={columnsByMetric[metric]}
         data={rows}
         rowKey={(row) => row.projectId}
         onRowClick={onProjectClick ? (row) => onProjectClick(row.projectId) : undefined}
@@ -252,7 +271,7 @@ export function PerProjectTable({
         // Tokens view, through the one stable key.
         defaultSortKey="metricShare"
         defaultSortDirection="desc"
-        emptyMessage="No project usage recorded yet"
+        emptyMessage={t`No project usage recorded yet`}
         rowTestId="per-project-row"
       />
     </div>

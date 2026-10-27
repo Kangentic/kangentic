@@ -1,4 +1,6 @@
 import { useCallback } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Project } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
@@ -33,9 +35,9 @@ export function useAddProject() {
 
   const startAddProject = useCallback(async () => {
     const selectedPath = await window.electronAPI.dialog.selectFolder({
-      title: 'Choose a project folder',
-      buttonLabel: 'Choose folder',
-      message: 'Pick the folder that holds your code.',
+      title: i18n._(msg`Choose a project folder`),
+      buttonLabel: i18n._(msg`Choose folder`),
+      message: i18n._(msg`Pick the folder that holds your code.`),
     });
     if (!selectedPath) return;
 
@@ -47,7 +49,7 @@ export function useAddProject() {
       probe = await probePath(selectedPath);
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't read that folder",
+        title: i18n._(msg`Couldn't read that folder`),
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -63,8 +65,8 @@ export function useAddProject() {
 
     if (!probe.exists || !probe.isDirectory) {
       useToastStore.getState().addToast({
-        title: "Couldn't open that folder",
-        message: 'It may have been moved or renamed.',
+        title: i18n._(msg`Couldn't open that folder`),
+        message: i18n._(msg`It may have been moved or renamed.`),
         variant: 'error',
       });
       return;
@@ -76,6 +78,7 @@ export function useAddProject() {
     try {
       git = await ensureGit(selectedPath);
     } catch {
+      // Never shown: only `ok` and `created` reach the toasts below.
       git = { ok: false, created: false, error: 'Unknown error' };
     }
 
@@ -84,7 +87,7 @@ export function useAddProject() {
       added = await openProjectByPath(selectedPath, { name: probe.suggestedName });
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't add project",
+        title: i18n._(msg`Couldn't add project`),
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -100,8 +103,8 @@ export function useAddProject() {
     // than over the folder picker they have already moved on from.
     if (!git.ok) {
       useToastStore.getState().addToast({
-        title: 'Git setup failed',
-        message: 'Tasks will share one working tree in this folder.',
+        title: i18n._(msg`Git setup failed`),
+        message: i18n._(msg`Tasks will share one working tree in this folder.`),
         variant: 'warning',
       });
       return;
@@ -110,8 +113,8 @@ export function useAddProject() {
     // so once, here, rather than letting the first task move be where they find out.
     if (git.created) {
       useToastStore.getState().addToast({
-        title: 'Started a git repo',
-        message: 'Make a first commit so each task gets its own worktree.',
+        title: i18n._(msg`Started a git repo`),
+        message: i18n._(msg`Make a first commit so each task gets its own worktree.`),
         variant: 'info',
       });
     }

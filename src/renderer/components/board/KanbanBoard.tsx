@@ -9,6 +9,7 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { AlertTriangle, X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Swimlane, type SwimlaneProps } from './Swimlane';
 import { DoneSwimlane } from './DoneSwimlane';
 import { TaskCard } from './TaskCard';
@@ -225,6 +226,7 @@ function FlyingCard() {
 
 /** Warning banner shown when kangentic.json has validation errors. */
 function ConfigWarningBanner() {
+  const { t } = useLingui();
   const configWarnings = useBoardStore((s) => s.configWarnings);
   const dismissConfigWarnings = useBoardStore((s) => s.dismissConfigWarnings);
 
@@ -238,7 +240,7 @@ function ConfigWarningBanner() {
         type="button"
         onClick={dismissConfigWarnings}
         className="flex-shrink-0 p-0.5 hover:text-amber-300 transition-colors"
-        aria-label="Dismiss warning"
+        aria-label={t`Dismiss warning`}
       >
         <X size={14} />
       </button>

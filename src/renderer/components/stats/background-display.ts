@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import type { BackgroundCallTotals, BackgroundModelCount } from '../../../shared/types';
 import { baseModelLabel, parseModelId } from '../../../shared/model-id';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
@@ -31,9 +33,9 @@ export function backgroundMetricText(totals: BackgroundCallTotals, metric: Usage
  *  the same), or "<Agent> default" when the CLI reported none and none was
  *  asked for. */
 export function backgroundModelLabel(model: BackgroundModelCount): string {
-  return model.modelId === null
-    ? `${agentShortName(model.agent)} default`
-    : baseModelLabel(null, parseModelId(model.modelId).baseId);
+  if (model.modelId !== null) return baseModelLabel(null, parseModelId(model.modelId).baseId);
+  const agentName = agentShortName(model.agent);
+  return i18n._(msg`${{ agentName }} default`);
 }
 
 /** Every model a set of calls ran on, most calls first, without repeats. */
@@ -43,7 +45,11 @@ export function backgroundModelLine(models: readonly BackgroundModelCount[]): st
 
 /** "N calls", singular at 1, with count separators. */
 export function formatCallCount(calls: number): string {
-  return `${calls.toLocaleString()} ${calls === 1 ? 'call' : 'calls'}`;
+  const callCount = calls.toLocaleString();
+  return i18n._(msg`${plural({ calls }, {
+    one: msg`${{ callCount }} call`,
+    other: msg`${{ callCount }} calls`,
+  })}`);
 }
 
 /** Average wall time per call: tenths of a second under a minute (a check
@@ -61,24 +67,39 @@ export function formatAverageCallTime(durationMs: number, calls: number): string
  * value line stays one figure.
  */
 export function backgroundCallsTitle(totals: BackgroundCallTotals, models: readonly BackgroundModelCount[]): string {
-  if (totals.calls === 0) return 'No calls in this range';
+  if (totals.calls === 0) return i18n._(msg`No calls in this range`);
+  // Each part is one whole sentence, so a translation never joins pieces of one.
+  const calls = totals.calls;
+  const callCount = calls.toLocaleString();
+  const failedCount = totals.failedCalls.toLocaleString();
   const parts = [
     totals.failedCalls > 0
-      ? `${formatCallCount(totals.calls)}, ${totals.failedCalls.toLocaleString()} failed or timed out (still paid for).`
-      : `${formatCallCount(totals.calls)}.`,
+      ? i18n._(msg`${plural({ calls }, {
+          one: msg`${{ callCount }} call, ${{ failedCount }} failed or timed out (still paid for).`,
+          other: msg`${{ callCount }} calls, ${{ failedCount }} failed or timed out (still paid for).`,
+        })}`)
+      : i18n._(msg`${plural({ calls }, {
+          one: msg`${{ callCount }} call.`,
+          other: msg`${{ callCount }} calls.`,
+        })}`),
   ];
   if (totals.reportedCalls === 0) {
     const agents = [...new Set(models.map((model) => agentShortName(model.agent)))].join(', ');
-    parts.push(`${agents || 'The agent'} reported no usage for these calls, so their tokens and cost are not known.`);
+    parts.push(agents
+      ? i18n._(msg`${{ agents }} reported no usage for these calls, so their tokens and cost are not known.`)
+      : i18n._(msg`The agent reported no usage for these calls, so their tokens and cost are not known.`));
   } else {
     if (totals.reportedCalls < totals.calls) {
-      parts.push(`Usage reported for ${totals.reportedCalls.toLocaleString()} of them.`);
+      const reportedCount = totals.reportedCalls.toLocaleString();
+      parts.push(i18n._(msg`Usage reported for ${{ reportedCount }} of them.`));
     }
-    parts.push(
-      `${formatTokenCount(totals.inputTokens)} fresh input, ${formatTokenCount(totals.outputTokens)} output, `
-      + `${formatTokenCount(totals.cacheCreationInputTokens)} cache write, ${formatTokenCount(totals.cacheReadInputTokens)} cache read.`,
-    );
+    const freshInput = formatTokenCount(totals.inputTokens);
+    const output = formatTokenCount(totals.outputTokens);
+    const cacheWrite = formatTokenCount(totals.cacheCreationInputTokens);
+    const cacheRead = formatTokenCount(totals.cacheReadInputTokens);
+    parts.push(i18n._(msg`${{ freshInput }} fresh input, ${{ output }} output, ${{ cacheWrite }} cache write, ${{ cacheRead }} cache read.`));
   }
-  parts.push(`Average ${formatAverageCallTime(totals.durationMs, totals.calls)} per call.`);
+  const averageTime = formatAverageCallTime(totals.durationMs, totals.calls);
+  parts.push(i18n._(msg`Average ${{ averageTime }} per call.`));
   return parts.join(' ');
 }

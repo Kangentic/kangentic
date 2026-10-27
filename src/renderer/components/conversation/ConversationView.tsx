@@ -32,6 +32,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check, Archive, FileText, Loader2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -721,7 +724,7 @@ export function ConversationView({
           data-testid="conversation-degraded-banner"
         >
           <MessageSquareWarning size={14} className="flex-shrink-0" />
-          <span>Original transcript file is gone - showing indexed text.</span>
+          <span><Trans>Original transcript file is gone - showing indexed text.</Trans></span>
         </div>
       )}
       {!degraded && archivedAgentName && (
@@ -732,13 +735,13 @@ export function ConversationView({
           data-testid="conversation-archive-banner"
         >
           <Archive size={14} className="flex-shrink-0" />
-          <span>{archivedAgentName} deleted the original file. Showing Kangentic&apos;s saved copy.</span>
+          <span><Trans>{archivedAgentName} deleted the original file. Showing Kangentic's saved copy.</Trans></span>
         </div>
       )}
       <ConversationSearchBar ref={searchBarRef} rows={rows} onNavigate={navigateToUuidFromSearch} placeholder={searchPlaceholder} />
       {rows.length === 0 ? (
         <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-fg-muted">
-          This conversation has no messages yet.
+          <Trans>This conversation has no messages yet.</Trans>
         </div>
       ) : (
         <div className="relative flex-1 min-h-0">
@@ -858,10 +861,11 @@ function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
   onRetry: (edge: 'top' | 'bottom') => void;
   onJumpToStart?: () => void;
 }) {
+  const { t } = useLingui();
   const failed = status === 'error';
   let label: string;
-  if (edge === 'top') label = failed ? "Couldn't load earlier messages" : 'Loading earlier messages';
-  else label = failed ? "Couldn't load later messages" : 'Loading later messages';
+  if (edge === 'top') label = failed ? t`Couldn't load earlier messages` : t`Loading earlier messages`;
+  else label = failed ? t`Couldn't load later messages` : t`Loading later messages`;
   return (
     <div
       className="absolute left-0 flex w-full items-center justify-center gap-2 text-xs text-fg-muted"
@@ -878,7 +882,7 @@ function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
           className="text-accent hover:underline"
           data-testid={`conversation-edge-${edge}-retry`}
         >
-          Retry
+          <Trans context="Action">Retry</Trans>
         </button>
       )}
       {!failed && onJumpToStart && (
@@ -888,7 +892,7 @@ function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
           className="text-accent hover:underline"
           data-testid="conversation-edge-jump-to-start"
         >
-          Jump to start
+          <Trans>Jump to start</Trans>
         </button>
       )}
     </div>
@@ -898,13 +902,13 @@ function EdgeRow({ edge, status, top, onRetry, onJumpToStart }: {
 function emptyReasonText(reason: TranscriptUnavailableReason | undefined): string {
   switch (reason) {
     case 'unsupported_agent':
-      return "Structured transcripts aren't available for this agent.";
+      return i18n._(msg`Structured transcripts aren't available for this agent.`);
     case 'no_agent_session_id':
-      return "This session's history hasn't been written yet.";
+      return i18n._(msg`This session's history hasn't been written yet.`);
     case 'file_missing':
-      return 'The transcript file no longer exists.';
+      return i18n._(msg`The transcript file no longer exists.`);
     default:
-      return 'No conversation is available for this session.';
+      return i18n._(msg`No conversation is available for this session.`);
   }
 }
 
@@ -1040,13 +1044,14 @@ function MessageCopiedCheckIcon({ size }: { size?: number }) {
  *  colors/contrast as the title-bar action buttons instead of a bespoke,
  *  fainter treatment. */
 function CopyIconButton({ text }: { text: string }) {
+  const { t } = useLingui();
   const { copied, handleCopy } = useCopyFeedback(text);
   return (
     <HeaderActionButton
       icon={copied ? MessageCopiedCheckIcon : Copy}
       onClick={handleCopy}
       size="small"
-      tip="Copy message"
+      tip={t`Copy message`}
       testId="conversation-message-copy"
       // HeaderActionButton's rest background (bg-surface-hover/50) barely
       // differs from a message row's own background (bg-surface-hover/30),
@@ -1059,11 +1064,12 @@ function CopyIconButton({ text }: { text: string }) {
 }
 
 function UserRow({ text, ts }: { text: string; ts: number }) {
+  const { t } = useLingui();
   const clean = sanitizeTranscriptText(text);
   return (
     <div data-testid="conversation-row-user">
       <MessageHeader
-        badge={<RoleBadge icon={<User size={12} />} label="You" tone="accent" />}
+        badge={<RoleBadge icon={<User size={12} />} label={t`You`} tone="accent" />}
         ts={ts}
         copyText={clean}
       />
@@ -1081,18 +1087,20 @@ function SystemRow({
   subtype: TranscriptSystemSubtype;
   text: string;
 }) {
+  const { t } = useLingui();
   const clean = sanitizeTranscriptText(text).trim();
+  const commandText = clean;
   const label =
     subtype === 'compaction'
-      ? 'Conversation compacted'
+      ? t`Conversation compacted`
       : subtype === 'command'
-        ? `[command] ${clean}`
+        ? t`[command] ${commandText}`
         // session_boundary and truncated both carry ready-to-display text (e.g.
         // "New session - Claude Code (isolated: Executing)"), unlike the
         // other subtypes whose text is raw payload behind a canned label.
         : subtype === 'session_boundary' || subtype === 'truncated'
           ? clean
-          : 'Command output';
+          : t`Command output`;
   return (
     <div className="flex items-center gap-3 py-1 text-fg-disabled" data-testid="conversation-row-system">
       <div className="flex-1 h-px bg-edge/50" />
@@ -1137,6 +1145,7 @@ interface AssistantRowProps {
 }
 
 function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expandedKeys, toggleExpanded }: AssistantRowProps) {
+  const { t } = useLingui();
   // The copy button needs this turn's full markdown, but serializing every
   // block (plus its tool results) is not free - memoize it so it is built once
   // per turn, not eagerly on every render.
@@ -1147,7 +1156,7 @@ function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expa
   return (
     <div data-testid="conversation-row-assistant">
       <MessageHeader
-        badge={<RoleBadge icon={<Bot size={12} />} label={agentName || 'Agent'} model={model} />}
+        badge={<RoleBadge icon={<Bot size={12} />} label={agentName || t`Agent`} model={model} />}
         ts={ts}
         copyText={copyText}
       />
@@ -1216,7 +1225,7 @@ function ThinkingBlock({ text, expanded, onToggle }: { text: string; expanded: b
         data-testid="conversation-thinking-toggle"
       >
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        Thinking
+        <Trans>Thinking</Trans>
       </button>
       {expanded && (
         <div className="mt-1 text-xs text-fg-muted whitespace-pre-wrap font-mono">
@@ -1249,7 +1258,7 @@ function PlanCard({ plan, result, expanded, onToggle }: {
       >
         {expanded ? <ChevronDown size={13} className="flex-shrink-0 text-fg-muted" /> : <ChevronRight size={13} className="flex-shrink-0 text-fg-muted" />}
         <FileText size={13} className="flex-shrink-0 text-fg-muted" />
-        <span className="text-[13px] font-semibold text-fg">Plan</span>
+        <span className="text-[13px] font-semibold text-fg"><Trans>Plan</Trans></span>
         {result?.approval && (
           <span className="rounded-full bg-surface-raised px-1.5 py-0.5 text-[11px] font-medium text-fg-secondary" data-testid="conversation-plan-approval">
             {translateText(planApprovalMessage(result.approval))}
@@ -1282,6 +1291,7 @@ function ToolCallCard({ name, input, result, expanded, onToggle }: ToolCallCardP
   const stats = useMemo(() => (fileEdit ? diffStats(fileEdit.hunks) : null), [fileEdit]);
   const summary = fileEdit ? basename(fileEdit.filePath) : summarizeInput(input);
   const resultContent = result ? sanitizeTranscriptText(result.content) : '';
+  const resultLength = resultContent.length;
   const isClamped = resultContent.length > RESULT_CLAMP_CHARS;
   const shownResult = isClamped && !showFullResult ? resultContent.slice(0, RESULT_CLAMP_CHARS) : resultContent;
 
@@ -1307,7 +1317,7 @@ function ToolCallCard({ name, input, result, expanded, onToggle }: ToolCallCardP
           <span className="ml-auto flex flex-shrink-0 items-center gap-2 text-[11px] font-mono">
             {stats && stats.added > 0 && <span className="text-green-400">+{stats.added}</span>}
             {stats && stats.removed > 0 && <span className="text-red-400">-{stats.removed}</span>}
-            {result?.isError && <span className="text-red-400">error</span>}
+            {result?.isError && <span className="text-red-400"><Trans>error</Trans></span>}
           </span>
         )}
       </button>
@@ -1317,7 +1327,7 @@ function ToolCallCard({ name, input, result, expanded, onToggle }: ToolCallCardP
             <DiffView fileEdit={fileEdit} />
           ) : (
             <div>
-              <div className="text-[11px] uppercase tracking-wider text-fg-disabled mb-0.5">Input</div>
+              <div className="text-[11px] uppercase tracking-wider text-fg-disabled mb-0.5"><Trans>Input</Trans></div>
               <pre className="text-xs text-fg-muted whitespace-pre-wrap break-words bg-surface-inset/40 rounded p-2 overflow-x-auto">
                 {prettyJson(input)}
               </pre>
@@ -1329,7 +1339,7 @@ function ToolCallCard({ name, input, result, expanded, onToggle }: ToolCallCardP
           {result && (!fileEdit || result.isError) && (
             <div>
               <div className={`text-[11px] uppercase tracking-wider mb-0.5 ${result.isError ? 'text-red-400' : 'text-fg-disabled'}`}>
-                {result.isError ? 'Error' : 'Result'}
+                {result.isError ? <Trans>Error</Trans> : <Trans>Result</Trans>}
               </div>
               <pre
                 className={`text-xs whitespace-pre-wrap break-words rounded p-2 overflow-x-auto ${
@@ -1345,7 +1355,9 @@ function ToolCallCard({ name, input, result, expanded, onToggle }: ToolCallCardP
                   className="mt-1 text-[11px] text-accent hover:underline"
                   data-testid="conversation-tool-show-all"
                 >
-                  {showFullResult ? 'Show less' : `Show all (${resultContent.length.toLocaleString()} chars)`}
+                  {showFullResult
+                    ? <Trans>Show less</Trans>
+                    : <Plural value={resultLength} one="Show all (# char)" other="Show all (# chars)" />}
                 </button>
               )}
             </div>
@@ -1401,13 +1413,14 @@ function OrphanToolResultRow({
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
 }) {
+  const { t } = useLingui();
   const key = `orphan:${entry.uuid}`;
   const expanded = expandedKeys.has(key);
   const content = sanitizeTranscriptText(entry.content);
   return (
     <div data-testid="conversation-row-tool-result">
       <MessageHeader
-        badge={<RoleBadge icon={<Terminal size={12} />} label="Tool result" />}
+        badge={<RoleBadge icon={<Terminal size={12} />} label={t`Tool result`} />}
         ts={entry.ts}
         copyText={content}
       />

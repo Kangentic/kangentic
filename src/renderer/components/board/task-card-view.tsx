@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Loader2, CirclePause, Paperclip, Globe } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { useSessionStore } from '../../stores/session-store';
@@ -290,10 +291,11 @@ function DisplayIdBadge({ task, view, hidden }: { task: Task; view: TaskCardView
  * where the kebab's "Close browser" is. Shared with the Agent Monitor's card.
  */
 export function BrowserAliveGlobe({ testId }: { testId: string }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label="Browser running for the agent. Close it from the task menu to free memory.">
+    <Tooltip label={t`Browser running for the agent. Close it from the task menu to free memory.`}>
       <span className="text-active shrink-0 flex" data-testid={testId}>
-        <Globe size={12} aria-label="Browser running" />
+        <Globe size={12} aria-label={t`Browser running`} />
       </span>
     </Tooltip>
   );
@@ -313,7 +315,7 @@ export function PendingFooter({ state, divider, testId }: { state: PendingFooter
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
         <CirclePause size={12} className="shrink-0" />
-        Paused
+        <Trans context="Agent status">Paused</Trans>
       </CardStatusBar>
     );
   }
@@ -321,14 +323,14 @@ export function PendingFooter({ state, divider, testId }: { state: PendingFooter
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
         <Loader2 size={12} className="animate-spin shrink-0" />
-        Queued...
+        <Trans>Queued...</Trans>
       </CardStatusBar>
     );
   }
   return (
     <CardStatusBar testId={testId ?? 'usage-bar'} divider={divider}>
       <Loader2 size={12} className="animate-spin shrink-0" />
-      <span className="truncate">{state === 'resuming' ? 'Resuming agent...' : 'Starting agent...'}</span>
+      <span className="truncate">{state === 'resuming' ? <Trans>Resuming agent...</Trans> : <Trans>Starting agent...</Trans>}</span>
     </CardStatusBar>
   );
 }
@@ -400,6 +402,7 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter }:
 }
 
 function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
+  const { t } = useLingui();
   const { displayState, isIdle, isThinking, activityReason, shownTrail, trailMode } = view;
   const isCompactDensity = density === 'compact';
   // The description slot's clamp per density. Compact used to print no excerpt
@@ -431,7 +434,9 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
               mark={isThinking ? 'agent-working' : 'agent-idle'}
               size={16}
               className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
-              aria-label={reasonText !== '' ? reasonText : isThinking ? 'Thinking' : 'Idle'}
+              aria-label={reasonText !== ''
+                ? reasonText
+                : isThinking ? t({ message: 'Thinking', context: 'Agent status' }) : t({ message: 'Idle', context: 'Agent status' })}
             />
           </Tooltip>
         )}

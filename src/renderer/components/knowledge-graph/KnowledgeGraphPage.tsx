@@ -17,6 +17,7 @@
 
 import { useEffect } from 'react';
 import { Brain, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
@@ -30,6 +31,7 @@ import { KnowledgeGraphDetailLayer } from './KnowledgeGraphDetailLayer';
 import { openAnswerAgentSettings, openKnowledgeGraphSettings } from './open-knowledge-graph-settings';
 
 export function KnowledgeGraphPage() {
+  const { t } = useLingui();
   const close = useKnowledgeGraphStore((state) => state.close);
   const statusBarVisible = useConfigStore((state) => state.config.statusBarVisible !== false);
 
@@ -70,12 +72,12 @@ export function KnowledgeGraphPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <Tooltip label="Close Knowledge Graph" keys="dialog.dismiss">
+            <Tooltip label={t`Close Knowledge Graph`} keys="dialog.dismiss">
               <button
                 type="button"
                 onClick={() => overlay.requestClose()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Close Knowledge Graph"
+                aria-label={t`Close Knowledge Graph`}
                 data-testid="knowledge-graph-close"
               >
                 <X size={16} />
@@ -90,7 +92,7 @@ export function KnowledgeGraphPage() {
           {/* No project name beside the title: the Filter card's Projects row
               always shows and names the scope, so a second label only
               repeated it. */}
-          <h1 className="text-sm font-semibold text-fg">Knowledge Graph</h1>
+          <h1 className="text-sm font-semibold text-fg"><Trans>Knowledge Graph</Trans></h1>
         </DetachableSurfaceHeader>
 
         <LazyKnowledgeGraph

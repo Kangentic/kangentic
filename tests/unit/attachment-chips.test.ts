@@ -11,6 +11,8 @@
 import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import { AttachmentChips } from '../../src/renderer/components/browser/AttachmentChips';
 import type { BrowserPickedElement } from '../../src/shared/types';
 
@@ -35,13 +37,14 @@ function render(
   strokeCount: number,
   pickedElement: BrowserPickedElement | null,
 ): string {
+  // Inside the I18nProvider the chips' `<Trans>` and `useLingui` read from, as in the app.
   return renderToStaticMarkup(
-    createElement(AttachmentChips, {
+    createElement(I18nProvider, { i18n }, createElement(AttachmentChips, {
       strokeCount,
       pickedElement,
       onClearStrokes: noop,
       onClearPicked: noop,
-    }),
+    })),
   );
 }
 

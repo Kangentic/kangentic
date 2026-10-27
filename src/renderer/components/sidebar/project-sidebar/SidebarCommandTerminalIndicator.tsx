@@ -1,4 +1,6 @@
 import React from 'react';
+import { plural } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { CommandTerminalIcon } from '../../command-bar/CommandTerminalIcon';
 import { Tooltip } from '../../Tooltip';
 import type { CommandTerminalTone } from '../../../stores/session-store/transient-session-slice';
@@ -12,18 +14,19 @@ export interface SidebarCommandTerminalIndicatorProps {
 }
 
 function labelFor(count: number, tone: CommandTerminalTone): string {
-  const noun = count === 1 ? 'Command Terminal' : 'Command Terminals';
   // Presentational tone, already bucketed upstream by the shared classifiers.
   // Mind the last branch: it is reached for `rest`, NOT for the `idle` tone.
   // "Idle" is this app's word for "needs you" (see `requiresUserInteraction`),
   // so a merely-resting terminal must not borrow it - saying "(idle)" here would
   // read, in both the tooltip and the accessible name, as the opposite state.
-  const state = tone === 'thinking' // activity-state-ok: presentational tone, not an ActivityState
-    ? 'working'
-    : tone === 'idle' // activity-state-ok: presentational tone, not an ActivityState
-      ? 'needs you'
-      : 'resting';
-  return `${count} ${noun} running (${state})`;
+  // One whole sentence per tone, so the count agrees with its words in every language.
+  if (tone === 'thinking') { // activity-state-ok: presentational tone, not an ActivityState
+    return plural(count, { one: '# Command Terminal running (working)', other: '# Command Terminals running (working)' });
+  }
+  if (tone === 'idle') { // activity-state-ok: presentational tone, not an ActivityState
+    return plural(count, { one: '# Command Terminal running (needs you)', other: '# Command Terminals running (needs you)' });
+  }
+  return plural(count, { one: '# Command Terminal running (resting)', other: '# Command Terminals running (resting)' });
 }
 
 /**
@@ -50,6 +53,7 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
   tone,
   onOpen,
 }: SidebarCommandTerminalIndicatorProps) {
+  const { t } = useLingui();
   if (count === 0) return null;
 
   const label = labelFor(count, tone);
@@ -64,7 +68,7 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
       : 'text-fg-muted';
 
   return (
-    <Tooltip label={label} detail="Click to open">
+    <Tooltip label={label} detail={t`Click to open`}>
       <button
         type="button"
         // The row is a dnd-kit sortable with a 5px pointer activation constraint and
@@ -75,7 +79,7 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
           onOpen(projectId);
         }}
         className={`flex-shrink-0 flex items-center gap-1 rounded px-0.5 text-[11px] tabular-nums outline-none transition-colors hover:bg-surface-hover/60 ${toneClass}`}
-        aria-label={`${projectName}: ${label}`}
+        aria-label={t`${projectName}: ${label}`}
         data-testid={`project-terminals-${projectId}`}
         data-activity={tone}
         data-count={count}

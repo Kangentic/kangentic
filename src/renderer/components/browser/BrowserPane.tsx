@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, CircleStop, Crosshair, Eraser, Loader2, Monitor, Pencil, Pin, RotateCcw, Send, Undo2, ZoomIn, ZoomOut } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 import { closeBrowserForTask } from './close-browser';
 import { useDrawingOverlay } from './useDrawingOverlay';
 import { compositeCapture } from './captureComposite';
@@ -432,19 +435,19 @@ function BrowserPaneActive({
     try {
       parsed = new URL(candidate);
     } catch {
-      setError(`Invalid URL: ${target}`);
+      setError(i18n._(msg`Invalid URL: ${target}`));
       return;
     }
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      setError('Only http:// and https:// URLs are allowed.');
+      setError(i18n._(msg`Only http:// and https:// URLs are allowed.`));
       return;
     }
     setError(null);
-    const final = parsed.toString();
+    const finalUrl = parsed.toString();
     // Drive navigation through the webview's own loadURL to keep its history
     // intact across multi-step Back/Forward.
-    webviewRef.current?.loadURL(final).catch(() => {
-      setError(`Failed to load: ${final}`);
+    webviewRef.current?.loadURL(finalUrl).catch(() => {
+      setError(i18n._(msg`Failed to load: ${finalUrl}`));
     });
   }, []);
 
@@ -462,13 +465,13 @@ function BrowserPaneActive({
     try {
       await saveForProject(target);
       useToastStore.getState().addToast({
-        title: 'Default URL saved',
-        message: 'The browser pane opens it for this project.',
+        title: i18n._(msg`Default URL saved`),
+        message: i18n._(msg`The browser pane opens it for this project.`),
         variant: 'success',
       });
     } catch (caught) {
       useToastStore.getState().addToast({
-        title: "Couldn't save URL",
+        title: i18n._(msg`Couldn't save URL`),
         message: asSentence(describeIpcError(caught)),
         variant: 'error',
       });
@@ -520,7 +523,7 @@ function BrowserPaneActive({
       // Surface paste/submit failures via toast as well, since the inline
       // error is easy to miss next to the URL bar.
       useToastStore.getState().addToast({
-        title: "Couldn't send to agent",
+        title: i18n._(msg`Couldn't send to agent`),
         message: asSentence(message),
         variant: 'error',
         durationMs: 6000,
@@ -547,7 +550,7 @@ function BrowserPaneActive({
         noteInputRef.current?.focus();
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Inspect failed');
+      setError(caught instanceof Error ? caught.message : i18n._(msg`Inspect failed`));
     } finally {
       setInspectActive(false);
     }
@@ -766,6 +769,16 @@ function BrowserPaneActive({
   const atMinZoom = zoomFactor <= MIN_ZOOM + 1e-6;
   const atMaxZoom = zoomFactor >= MAX_ZOOM - 1e-6;
   const nothingDrawn = strokes.length === 0;
+  // Named for the messages that carry them. The pane's text resolves through
+  // `i18n._` rather than `useLingui()`: a hook added here changes this
+  // component's Fast Refresh signature, and a remount destroys the guest.
+  const zoomPercent = Math.round(zoomFactor * 100);
+  const viewportWidth = viewportOverride?.measured.width ?? 0;
+  const viewportHeight = viewportOverride?.measured.height ?? 0;
+  const nothingDrawnReason = i18n._(msg`Nothing drawn yet`);
+  const ctrlScrollDetail = i18n._(msg`Or Ctrl+scroll wheel`);
+  const reloadLabel = i18n._(msg({ message: 'Reload', context: 'Action' }));
+  const projectDefaultLabel = i18n._(msg`This URL is the project default`);
 
   return (
     <div
@@ -836,50 +849,50 @@ function BrowserPaneActive({
             both. The pop-out's OS close button already unmounts the pane, which
             unregisters the guest properly. */}
         {!window.electronAPI.popOut?.descriptor && (
-        <Tooltip label="Close the browser and free its memory. Show reopens the page.">
+        <Tooltip label={i18n._(msg`Close the browser and free its memory. Show reopens the page.`)}>
           <button
             type="button"
             onClick={handleCloseBrowser}
             className="flex items-center gap-1.5 px-2 py-1 rounded border border-red-400/30 bg-red-400/10 text-xs text-red-300 hover:bg-red-400/20 hover:text-red-200 transition-colors flex-shrink-0 whitespace-nowrap"
-            aria-label="Close browser"
+            aria-label={i18n._(msg`Close browser`)}
             data-testid="browser-close"
           >
             <CircleStop size={18} />
-            Close browser
+            <Trans>Close browser</Trans>
           </button>
         </Tooltip>
         )}
         {!window.electronAPI.popOut?.descriptor && (
           <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
         )}
-        <Tooltip label={tipLabel({ disabled: !canGoBack, disabledReason: 'No earlier page', tip: 'Back' })}>
+        <Tooltip label={tipLabel({ disabled: !canGoBack, disabledReason: i18n._(msg`No earlier page`), tip: i18n._(msg`Back`) })}>
           <button
             type="button"
             onClick={() => webviewRef.current?.goBack()}
             disabled={!canGoBack}
             className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-            aria-label="Back"
+            aria-label={i18n._(msg`Back`)}
           >
             <ArrowLeft size={14} />
           </button>
         </Tooltip>
-        <Tooltip label={tipLabel({ disabled: !canGoForward, disabledReason: 'No forward page', tip: 'Forward' })}>
+        <Tooltip label={tipLabel({ disabled: !canGoForward, disabledReason: i18n._(msg`No forward page`), tip: i18n._(msg`Forward`) })}>
           <button
             type="button"
             onClick={() => webviewRef.current?.goForward()}
             disabled={!canGoForward}
             className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-            aria-label="Forward"
+            aria-label={i18n._(msg`Forward`)}
           >
             <ArrowRight size={14} />
           </button>
         </Tooltip>
-        <Tooltip label="Reload" keys="browser.reload">
+        <Tooltip label={reloadLabel} keys="browser.reload">
           <button
             type="button"
             onClick={() => webviewRef.current?.reload()}
             className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover rounded transition-colors"
-            aria-label="Reload"
+            aria-label={reloadLabel}
           >
             <RotateCcw size={14} />
           </button>
@@ -895,6 +908,7 @@ function BrowserPaneActive({
           type="text"
           value={urlInput}
           onChange={(event) => setUrlInput(event.target.value)}
+          // i18n-ok: an example URL, which reads the same in every language.
           placeholder="https://example.com"
           className="flex-1 bg-surface-input text-fg text-xs px-2 py-1 rounded border border-edge-input focus:outline-none focus:border-accent min-w-0"
           spellCheck={false}
@@ -904,8 +918,8 @@ function BrowserPaneActive({
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
         <Tooltip
           label={matchesProjectDefault
-            ? 'This URL is the project default'
-            : 'Save as project default for all tasks'}
+            ? projectDefaultLabel
+            : i18n._(msg`Save as project default for all tasks`)}
         >
           <button
             type="button"
@@ -917,8 +931,8 @@ function BrowserPaneActive({
                 : 'bg-surface-input border-edge-input text-fg-muted hover:text-fg hover:bg-surface-hover hover:border-accent/50'
             }`}
             aria-label={matchesProjectDefault
-              ? 'This URL is the project default'
-              : 'Save as project default'}
+              ? projectDefaultLabel
+              : i18n._(msg`Save as project default`)}
             data-testid="browser-pin-project"
           >
             {pinning
@@ -975,28 +989,28 @@ function BrowserPaneActive({
               className="flex items-stretch h-7 bg-surface-input border border-edge-input rounded overflow-hidden flex-shrink-0"
               data-testid="browser-viewport-chip"
             >
-              <Tooltip label={`An agent set this page to render at ${viewportOverride.measured.width} x ${viewportOverride.measured.height} CSS pixels. Reset to use the pane's own size again.`}>
+              <Tooltip label={i18n._(msg`An agent set this page to render at ${viewportWidth} x ${viewportHeight} CSS pixels. Reset to use the pane's own size again.`)}>
                 <span className="flex items-center gap-1 px-2 text-[11px] text-accent whitespace-nowrap tabular-nums">
                   <Monitor size={11} />
-                  {viewportOverride.measured.width} x {viewportOverride.measured.height}
+                  <Trans>{viewportWidth} x {viewportHeight}</Trans>
                   {/* The scale, only when there is one. A fitted pane renders the
                       layout smaller than life, and that is the fact the zoom pill
                       would have carried; a real window resize is 1:1 and the
                       suffix would be noise. */}
                   {Math.abs(zoomFactor - 1) > 0.005 && (
-                    <span className="text-accent/70">at {Math.round(zoomFactor * 100)}%</span>
+                    <span className="text-accent/70"><Trans>at {zoomPercent}%</Trans></span>
                   )}
                 </span>
               </Tooltip>
-              <Tooltip label="Reset this page to the pane's own size">
+              <Tooltip label={i18n._(msg`Reset this page to the pane's own size`)}>
                 <button
                   type="button"
                   onClick={handleClearViewport}
                   className="px-2 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors border-l border-edge-input"
-                  aria-label="Reset viewport"
+                  aria-label={i18n._(msg`Reset viewport`)}
                   data-testid="browser-viewport-reset"
                 >
-                  Reset
+                  <Trans context="Action">Reset</Trans>
                 </button>
               </Tooltip>
             </div>
@@ -1024,43 +1038,43 @@ function BrowserPaneActive({
           data-testid="browser-zoom-pill"
         >
           <Tooltip
-            label={tipLabel({ disabled: atMinZoom, disabledReason: 'Already at the smallest zoom', tip: 'Zoom out' })}
+            label={tipLabel({ disabled: atMinZoom, disabledReason: i18n._(msg`Already at the smallest zoom`), tip: i18n._(msg`Zoom out`) })}
             keys={atMinZoom ? undefined : 'browser.zoomOut'}
-            detail={atMinZoom ? undefined : 'Or Ctrl+scroll wheel'}
+            detail={atMinZoom ? undefined : ctrlScrollDetail}
           >
             <button
               type="button"
               onClick={zoomOut}
               disabled={atMinZoom}
               className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-              aria-label="Zoom out"
+              aria-label={i18n._(msg`Zoom out`)}
               data-testid="browser-zoom-out"
             >
               <ZoomOut size={14} />
             </button>
           </Tooltip>
-          <Tooltip label="Reset zoom to 100%" keys="browser.zoomReset">
+          <Tooltip label={i18n._(msg`Reset zoom to 100%`)} keys="browser.zoomReset">
             <button
               type="button"
               onClick={resetZoom}
               className="px-1.5 py-1 text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors tabular-nums min-w-[3.25rem]"
-              aria-label={`Reset zoom (current ${Math.round(zoomFactor * 100)}%)`}
+              aria-label={i18n._(msg`Reset zoom (current ${zoomPercent}%)`)}
               data-testid="browser-zoom-reset"
             >
-              {Math.round(zoomFactor * 100)}%
+              {zoomPercent}%
             </button>
           </Tooltip>
           <Tooltip
-            label={tipLabel({ disabled: atMaxZoom, disabledReason: 'Already at the largest zoom', tip: 'Zoom in' })}
+            label={tipLabel({ disabled: atMaxZoom, disabledReason: i18n._(msg`Already at the largest zoom`), tip: i18n._(msg`Zoom in`) })}
             keys={atMaxZoom ? undefined : 'browser.zoomIn'}
-            detail={atMaxZoom ? undefined : 'Or Ctrl+scroll wheel'}
+            detail={atMaxZoom ? undefined : ctrlScrollDetail}
           >
             <button
               type="button"
               onClick={zoomIn}
               disabled={atMaxZoom}
               className="p-1.5 text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-default"
-              aria-label="Zoom in"
+              aria-label={i18n._(msg`Zoom in`)}
               data-testid="browser-zoom-in"
             >
               <ZoomIn size={14} />
@@ -1074,7 +1088,7 @@ function BrowserPaneActive({
         {!window.electronAPI.popOut?.descriptor && projectId && (
           <>
             <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-            <PopOutButton kind="browser" params={{ taskId, projectId }} label="Open in new window" />
+            <PopOutButton kind="browser" params={{ taskId, projectId }} label={i18n._(msg`Open in new window`)} />
           </>
         )}
       </form>
@@ -1244,7 +1258,7 @@ function BrowserPaneActive({
           <div className="absolute inset-0 bg-[rgb(113_113_122/0.26)]" />
           <span className="absolute left-2 bottom-2 flex items-center gap-1.5 rounded bg-[rgb(9_11_18/0.82)] px-2 py-1 text-[11px] text-fg">
             <span className={`h-1.5 w-1.5 rounded-full bg-active ${agentDriving ? 'kng-drive-pulse' : ''}`} />
-            Agent is driving
+            <Trans>Agent is driving</Trans>
           </span>
         </div>
       </div>
@@ -1259,7 +1273,7 @@ function BrowserPaneActive({
       {/* Toolbar: capture zone (left) | flex spacer | compose zone (right) */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-t border-edge flex-shrink-0">
         {/* Capture zone: Draw + its stroke sub-actions, then Inspect. */}
-        <Tooltip label="Toggle draw mode" keys="browser.draw">
+        <Tooltip label={i18n._(msg`Toggle draw mode`)} keys="browser.draw">
           <button
             type="button"
             onClick={() => {
@@ -1279,10 +1293,10 @@ function BrowserPaneActive({
             data-testid="browser-draw-toggle"
           >
             <Pencil size={12} />
-            Draw
+            <Trans>Draw</Trans>
           </button>
         </Tooltip>
-        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Undo last stroke' })}>
+        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: nothingDrawnReason, tip: i18n._(msg`Undo last stroke`) })}>
           <button
             type="button"
             onClick={undo}
@@ -1290,10 +1304,10 @@ function BrowserPaneActive({
             className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <Undo2 size={12} />
-            Undo
+            <Trans>Undo</Trans>
           </button>
         </Tooltip>
-        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: 'Nothing drawn yet', tip: 'Clear all strokes' })}>
+        <Tooltip label={tipLabel({ disabled: nothingDrawn, disabledReason: nothingDrawnReason, tip: i18n._(msg`Clear all strokes`) })}>
           <button
             type="button"
             onClick={clear}
@@ -1301,11 +1315,11 @@ function BrowserPaneActive({
             className="flex items-center gap-1 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
           >
             <Eraser size={12} />
-            Clear
+            <Trans context="Action">Clear</Trans>
           </button>
         </Tooltip>
         <div className="w-px h-4 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
-        <Tooltip label="Click elements to capture their identity" keys="browser.inspect" detail="Esc stops inspecting">
+        <Tooltip label={i18n._(msg`Click elements to capture their identity`)} keys="browser.inspect" detail={i18n._(msg`Esc stops inspecting`)}>
           <button
             type="button"
             onClick={() => void startInspect()}
@@ -1317,7 +1331,7 @@ function BrowserPaneActive({
             data-testid="browser-inspect-toggle"
           >
             <Crosshair size={12} />
-            Inspect
+            <Trans>Inspect</Trans>
           </button>
         </Tooltip>
 
@@ -1342,7 +1356,7 @@ function BrowserPaneActive({
           spellCheck={true}
           data-testid="browser-note-input"
         />
-        <Tooltip label="Send to agent" detail="Enter in the note also sends">
+        <Tooltip label={i18n._(msg`Send to agent`)} detail={i18n._(msg`Enter in the note also sends`)}>
           <button
             type="button"
             onClick={handleSend}
@@ -1351,7 +1365,7 @@ function BrowserPaneActive({
             data-testid="browser-send"
           >
             {sending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            Send
+            <Trans>Send</Trans>
           </button>
         </Tooltip>
       </div>
@@ -1373,9 +1387,9 @@ function BrowserPaneActive({
  * concrete example of a useful note.
  */
 function notePlaceholder(strokeCount: number, pickedCount: number): string {
-  if (pickedCount > 0 && strokeCount > 0) return 'e.g. "Explain what I marked"';
-  if (pickedCount > 0) return 'e.g. "Why is this misaligned?"';
-  if (strokeCount > 0) return 'e.g. "Match the circled spacing"';
-  return 'What should the agent do with this?';
+  if (pickedCount > 0 && strokeCount > 0) return i18n._(msg`e.g. "Explain what I marked"`);
+  if (pickedCount > 0) return i18n._(msg`e.g. "Why is this misaligned?"`);
+  if (strokeCount > 0) return i18n._(msg`e.g. "Match the circled spacing"`);
+  return i18n._(msg`What should the agent do with this?`);
 }
 

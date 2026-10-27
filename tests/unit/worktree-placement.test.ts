@@ -9,7 +9,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ReactNode } from 'react';
+import { createElement, type ReactNode } from 'react';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import {
   computeBranchHint,
   describeWorktreeBlocker,
@@ -18,8 +20,9 @@ import {
   type WorktreeBlocker,
 } from '../../src/renderer/utils/worktree-placement';
 
+/** The hint's text as the app draws it: inside the I18nProvider its `<Trans>` reads from. */
 function text(node: ReactNode): string {
-  return renderToStaticMarkup(node as never).replace(/<[^>]+>/g, '');
+  return renderToStaticMarkup(createElement(I18nProvider, { i18n }, node)).replace(/<[^>]+>/g, '');
 }
 
 function hintInput(overrides: Partial<BranchHintInput> = {}): BranchHintInput {

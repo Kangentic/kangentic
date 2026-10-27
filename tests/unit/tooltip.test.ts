@@ -24,6 +24,8 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { createElement, type ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 import { installTabFocusTracker } from '../../src/renderer/utils/tab-focus';
 import {
   TOOLTIP_WARM_MS,
@@ -825,18 +827,23 @@ describe('ButtonGroup icon tip', () => {
   });
 });
 
+/** A static render inside the I18nProvider the badge's `useLingui` reads from, as in the app. */
+function renderIsolatedMarkup(element: ReactElement): string {
+  return renderToStaticMarkup(createElement(I18nProvider, { i18n }, element));
+}
+
 describe('IsolatedBadge tip', () => {
   const TIP_TEXT = 'Its own context, separate from the main conversation';
 
   it('is a span that describes itself with its tip', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedBadge));
+    const markup = renderIsolatedMarkup(createElement(IsolatedBadge));
     expect(markup.startsWith('<span')).toBe(true);
     expect(markup).toContain('>Isolated</span>');
     expect(rootDescription(markup)).toBe(TIP_TEXT);
   });
 
   it('merges a passed className onto its own classes', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedBadge, { className: 'ml-2 extra-class' }));
+    const markup = renderIsolatedMarkup(createElement(IsolatedBadge, { className: 'ml-2 extra-class' }));
     const classes = /\sclass="([^"]*)"/.exec(rootTag(markup))?.[1] ?? '';
     expect(classes).toContain('inline-flex');
     expect(classes).toContain('text-accent-fg');
@@ -847,14 +854,14 @@ describe('IsolatedBadge tip', () => {
   it('carries no native title, so only the Tooltip explains it', () => {
     // The badge takes the span's attributes (minus title) and spreads them, so the testid lands on the root.
     const passedProps = { 'data-testid': 'isolated-badge' };
-    const markup = renderToStaticMarkup(createElement(IsolatedBadge, passedProps));
+    const markup = renderIsolatedMarkup(createElement(IsolatedBadge, passedProps));
     expect(rootTag(markup)).not.toMatch(/\stitle=/);
     expect(rootTag(markup)).toContain('data-testid="isolated-badge"');
     expect(rootDescription(markup)).toBe(TIP_TEXT);
   });
 
   it('leads the word with the Split icon, which the word already explains', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedBadge));
+    const markup = renderIsolatedMarkup(createElement(IsolatedBadge));
     expect(markup).toMatch(/<svg[^>]*lucide-split[^>]*>.*<\/svg>Isolated<\/span>$/);
     expect(markup).toMatch(/<svg[^>]*aria-hidden="true"/);
   });
@@ -862,7 +869,7 @@ describe('IsolatedBadge tip', () => {
 
 describe('IsolatedIcon', () => {
   it('leading a word, it is a bare muted svg with no name and no tip', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 12 }));
+    const markup = renderIsolatedMarkup(createElement(IsolatedIcon, { size: 12 }));
     expect(markup.startsWith('<svg')).toBe(true);
     expect(rootTag(markup)).toContain('aria-hidden="true"');
     expect(rootTag(markup)).toContain('text-fg-muted');
@@ -870,7 +877,7 @@ describe('IsolatedIcon', () => {
   });
 
   it('explained, it names itself for a reader who cannot see it', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 13, explained: true }));
+    const markup = renderIsolatedMarkup(createElement(IsolatedIcon, { size: 13, explained: true }));
     expect(markup.startsWith('<span')).toBe(true);
     expect(rootTag(markup)).toContain('role="img"');
     expect(rootTag(markup)).toContain('aria-label="Isolated session"');
@@ -878,7 +885,7 @@ describe('IsolatedIcon', () => {
   });
 
   it('takes the tone of the text around it with inheritTone', () => {
-    const markup = renderToStaticMarkup(createElement(IsolatedIcon, { size: 11, explained: true, inheritTone: true }));
+    const markup = renderIsolatedMarkup(createElement(IsolatedIcon, { size: 11, explained: true, inheritTone: true }));
     expect(rootTag(markup)).not.toContain('text-fg-muted');
   });
 });

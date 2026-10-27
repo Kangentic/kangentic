@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
 import type { UsageMetricMode } from '../../stores/usage-dashboard-store';
@@ -35,6 +36,7 @@ interface BreakdownCardProps {
  * A model that is 6% of tokens and 13% of spend moves up the Cost view's list.
  */
 export function BreakdownCard({ title, slices, costKnown, loading, testId, metric, animate = true }: BreakdownCardProps) {
+  const { t } = useLingui();
   const byCost = metric === 'cost' && costKnown;
   const sliceMetricValue = (slice: DonutSlice) => (byCost ? slice.costUsd : slice.value);
   const metricFormatter = byCost ? formatCost : formatTokenCount;
@@ -66,10 +68,13 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
     (metricTotal > 0 ? Math.round((sliceMetricValue(slice) / metricTotal) * 100) : 0);
   // The row's tooltip: the shown metric, then the other one ("Opus 5: $43.26,
   // 111.2M tokens"). Cost is named only where it is known.
-  const tokensText = (slice: DonutSlice) => `${formatTokenCount(slice.value)} tokens`;
-  const rowTip = (slice: DonutSlice) => (byCost
-    ? `${slice.label}: ${formatCost(slice.costUsd)}, ${tokensText(slice)}`
-    : costKnown ? `${slice.label}: ${tokensText(slice)}, ${formatCost(slice.costUsd)}` : `${slice.label}: ${tokensText(slice)}`);
+  const rowTip = (slice: DonutSlice) => {
+    const sliceLabel = slice.label;
+    const tokenCount = formatTokenCount(slice.value);
+    const cost = formatCost(slice.costUsd);
+    if (byCost) return t`${sliceLabel}: ${cost}, ${tokenCount} tokens`;
+    return costKnown ? t`${sliceLabel}: ${tokenCount} tokens, ${cost}` : t`${sliceLabel}: ${tokenCount} tokens`;
+  };
 
   return (
     <ChartCard
@@ -88,7 +93,7 @@ export function BreakdownCard({ title, slices, costKnown, loading, testId, metri
             centerValue={leader && metricTotal > 0 ? `${Math.round((leader.value / metricTotal) * 100)}%` : '-'}
             centerLabel={leader?.label ?? ''}
             valueFormatter={metricFormatter}
-            valueLabel={byCost ? 'cost' : 'tokens'}
+            valueLabel={byCost ? t`cost` : t`tokens`}
             ariaLabel={`${title}: ${listSlices.map((slice) => `${slice.label} ${metricFormatter(sliceMetricValue(slice))}`).join(', ')}`}
             highlightedSliceId={hoveredSliceId}
             onSliceHover={setHoveredSliceId}

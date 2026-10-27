@@ -33,6 +33,8 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import React from 'react';
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { Trans } from '@lingui/react';
 import { PanelErrorBoundary } from '../../src/renderer/components/PanelErrorBoundary';
 import { ErrorBoundary } from '../../src/renderer/components/ErrorBoundary';
 import { isTerminalFocused, syncFocusedTerminals } from '../../src/renderer/utils/focused-terminals';
@@ -55,6 +57,9 @@ function collectText(node: unknown): string {
   if (node === null || node === undefined || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
   if (Array.isArray(node)) return node.map(collectText).join('');
+  // A `<Trans>` element carries its message as a descriptor, not as children:
+  // read it the way the element renders it, through the active catalog.
+  if (isElementLike(node) && node.type === Trans) return i18n._(node.props as unknown as MessageDescriptor);
   if (isElementLike(node)) return collectText(node.props.children);
   return '';
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { Trans } from '@lingui/react/macro';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -624,7 +625,7 @@ export function AppLayout() {
           ) : (
             <div className="flex-1 flex items-center justify-center text-fg-faint">
               <div className="text-center">
-                <div className="text-lg">Select a project from the sidebar</div>
+                <div className="text-lg"><Trans>Select a project from the sidebar</Trans></div>
               </div>
             </div>
           )}

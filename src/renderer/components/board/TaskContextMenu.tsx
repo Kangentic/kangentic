@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Trash2, Inbox, Pencil, Archive, Copy, GitCompare, Workflow as WorkflowIcon, Ban, Columns3Cog, CirclePause, CirclePlay } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 import type { SessionToggleRow } from '../../utils/session-toggle';
@@ -94,7 +95,9 @@ export function TaskContextMenu({
    */
   sessionToggle?: SessionToggleRow & { onToggle: () => void };
 }) {
+  const { t } = useLingui();
   const menuRef = useRef<HTMLDivElement>(null);
+  const displayId = task.display_id;
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -151,15 +154,17 @@ export function TaskContextMenu({
       <button
         type="button"
         onClick={() => {
+          // The copied text stays English: it is pasted as an identifier (into an
+          // agent prompt, a commit, a chat), not read as UI.
           navigator.clipboard.writeText(`Task #${task.display_id}`);
-          useToastStore.getState().addToast({ title: 'Task ID copied', message: `#${task.display_id}`, variant: 'info' });
+          useToastStore.getState().addToast({ title: t`Task ID copied`, message: `#${task.display_id}`, variant: 'info' });
           onClose();
         }}
         className="w-full px-3 py-1.5 text-sm font-mono text-fg-faint hover:text-fg-secondary transition-colors flex items-center gap-2 cursor-pointer"
         data-testid="context-copy-task-id"
       >
         <Copy size={14} />
-        Task #{task.display_id}
+        <Trans>Task #{displayId}</Trans>
       </button>
       <div className="border-t border-edge my-1" />
       <button
@@ -169,7 +174,7 @@ export function TaskContextMenu({
         data-testid="context-edit-task"
       >
         <Pencil size={14} className="text-fg-faint" />
-        Edit
+        <Trans>Edit</Trans>
       </button>
 
       {task.worktree_path && (
@@ -180,7 +185,7 @@ export function TaskContextMenu({
           data-testid="context-show-changes"
         >
           <GitCompare size={14} className="text-fg-faint" />
-          Show changes
+          <Trans>Show changes</Trans>
         </button>
       )}
 
@@ -197,7 +202,7 @@ export function TaskContextMenu({
             {sessionToggle.direction === 'pause'
               ? <CirclePause size={14} className="text-fg-faint" />
               : <CirclePlay size={14} className="text-fg-faint" />}
-            {sessionToggle.direction === 'pause' ? 'Pause session' : 'Resume session'}
+            {sessionToggle.direction === 'pause' ? <Trans>Pause session</Trans> : <Trans>Resume session</Trans>}
           </button>
         </Tooltip>
       )}
@@ -213,7 +218,7 @@ export function TaskContextMenu({
           {task.automations_disabled
             ? <Columns3Cog size={14} className="text-fg-faint" />
             : <Ban size={14} className="text-fg-faint" />}
-          {task.automations_disabled ? 'Enable automations' : 'Disable automations'}
+          {task.automations_disabled ? <Trans>Enable automations</Trans> : <Trans>Disable automations</Trans>}
         </button>
       )}
 
@@ -227,7 +232,7 @@ export function TaskContextMenu({
           data-testid="context-new-workflow"
         >
           <WorkflowIcon size={14} className="text-fg-faint" />
-          New workflow
+          <Trans>New workflow</Trans>
         </button>
       )}
 
@@ -235,7 +240,7 @@ export function TaskContextMenu({
         <>
           <div className="border-t border-edge my-1" />
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-            Move to
+            <Trans>Move to</Trans>
           </div>
           {moveTargets.map((lane) => {
             const refusal = moveRefusal?.(lane.id) ?? null;
@@ -271,7 +276,7 @@ export function TaskContextMenu({
           data-testid="context-send-to-backlog"
         >
           <Inbox size={14} className="text-fg-faint" />
-          Backlog
+          <Trans context="Action">Backlog</Trans>
         </button>
       </Tooltip>
       <Tooltip label={sendAwayRefusal ?? ''}>
@@ -283,7 +288,7 @@ export function TaskContextMenu({
           data-testid="context-archive-task"
         >
           <Archive size={14} className="text-fg-faint" />
-          Archive
+          <Trans>Archive</Trans>
         </button>
       </Tooltip>
 
@@ -294,7 +299,7 @@ export function TaskContextMenu({
         data-testid="context-delete-task"
       >
         <Trash2 size={14} />
-        Delete
+        <Trans>Delete</Trans>
       </button>
     </div>
   );

@@ -14,6 +14,8 @@
  * the transcript in BOTH layers at once.
  */
 
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { knowledgeGraphWindowManager } from '../../window-manager';
 
 /**
@@ -69,7 +71,7 @@ export function openKnowledgeGraphConversation(
     kind: 'conversation',
     anchor: sessionId,
     sessionId,
-    title: 'Conversation',
+    title: i18n._(msg`Conversation`),
     ...(turnUuid ? { scrollToTurnUuid: turnUuid } : {}),
     ...(conversationProjectId && conversationProjectId !== projectId ? { projectId: conversationProjectId } : {}),
   });

@@ -15,6 +15,8 @@
  */
 
 import { useEffect } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../stores/toast-store';
 
 export function useBrowserDownloadToast(): void {
@@ -27,14 +29,14 @@ export function useBrowserDownloadToast(): void {
         // Named rather than generic: an interrupted download leaves a partial
         // file behind, and the user needs to know which one.
         addToast({
-          title: "Download didn't finish",
+          title: i18n._(msg`Download didn't finish`),
           message: download.fileName,
           variant: 'warning',
         });
         return;
       }
       addToast({
-        title: 'Downloaded',
+        title: i18n._(msg`Downloaded`),
         message: download.fileName,
         variant: 'success',
         onOpen: () => { void window.electronAPI.shell.showItemInFolder(download.filePath); },

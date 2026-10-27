@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Search, X, Loader2, Archive, MessageSquare, Terminal, History, Sparkles, Brain, CornerDownLeft } from 'lucide-react';
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -31,15 +34,16 @@ interface SearchPaletteProps {
  *  shown exactly once even if there are zero hits in that group. */
 const KIND_ORDER: SearchHitKind[] = ['project', 'task', 'backlog', 'conversation', 'session_event'];
 
-const KIND_LABEL: Record<SearchHitKind, string> = {
-  project: 'Projects',
-  task: 'Tasks',
-  backlog: 'Backlog',
-  conversation: 'Conversations',
-  session_event: 'Session events',
+const KIND_LABEL: Record<SearchHitKind, MessageDescriptor> = {
+  project: msg`Projects`,
+  task: msg`Tasks`,
+  backlog: msg`Backlog`,
+  conversation: msg`Conversations`,
+  session_event: msg`Session events`,
 };
 
 export function SearchPalette({ onClose }: SearchPaletteProps) {
+  const { t } = useLingui();
   const { requestClose, backdropClassName, contentClassName, onAnimationEnd } = useOverlayPhase(
     onClose,
     { variant: 'command-bar', skipEnterOnHmr: true },
@@ -110,10 +114,10 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
       .catch((error) => {
         if (seq !== requestSeq.current) return;
         const message = error instanceof Error ? error.message : String(error);
-        useToastStore.getState().addToast({ title: 'Search failed', message: asSentence(message), variant: 'error' });
+        useToastStore.getState().addToast({ title: t`Search failed`, message: asSentence(message), variant: 'error' });
         setSearch({ key: searchKey, hits: [] });
       });
-  }, [searchKey, debouncedTrimmed, scope, currentProjectId]);
+  }, [searchKey, debouncedTrimmed, scope, currentProjectId, t]);
 
   const grouped = useMemo(() => {
     const buckets: Partial<Record<SearchHitKind, SearchHit[]>> = {};
@@ -121,11 +125,11 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
       (buckets[hit.kind] ??= []).push(hit);
     }
     const flat: SearchHit[] = [];
-    const headings: { index: number; label: string; count: number }[] = [];
+    const headings: GroupHeading[] = [];
     for (const kind of KIND_ORDER) {
       const bucket = buckets[kind];
       if (!bucket || bucket.length === 0) continue;
-      headings.push({ index: flat.length, label: KIND_LABEL[kind], count: bucket.length });
+      headings.push({ index: flat.length, kind, count: bucket.length });
       flat.push(...bucket);
     }
     return { flat, headings };
@@ -318,7 +322,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tasks, backlog, conversations, session events, projects..."
+              placeholder={t`Search tasks, backlog, conversations, session events, projects...`}
               className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-muted outline-none"
             />
             {/* Corner spinner only while results are already on screen (a
@@ -332,7 +336,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               type="button"
               onClick={requestClose}
               className="p-1 text-fg-muted hover:text-fg transition-colors rounded hover:bg-surface-hover/60"
-              aria-label="Close search"
+              aria-label={t`Close search`}
               data-testid="search-palette-close"
             >
               <X size={14} />
@@ -346,7 +350,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               <ul className="py-1" data-testid="search-palette-results">
                 {grouped.headings.map((heading) => (
                   <RenderGroup
-                    key={heading.label}
+                    key={heading.kind}
                     heading={heading}
                     flat={grouped.flat}
                     selectedIndex={selectedIndex}
@@ -361,11 +365,13 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
                 data-testid="search-searching"
               >
                 <Loader2 size={14} className="animate-spin flex-shrink-0" />
-                Searching...
+                <Trans>Searching...</Trans>
               </div>
             ) : (
               <div className="px-4 py-6 text-sm text-fg-muted text-center" data-testid="search-no-matches">
-                No keyword matches in {scope === 'all' ? 'any project' : 'this project'}.
+                {scope === 'all'
+                  ? <Trans>No keyword matches in any project.</Trans>
+                  : <Trans>No keyword matches in this project.</Trans>}
               </div>
             )}
             {hasQuery ? (
@@ -411,11 +417,12 @@ function AskRow({ question, rowIndex, isSelected, onHover, onClick }: AskRowProp
     >
       <Brain size={16} className="flex-shrink-0 text-accent" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate text-sm text-fg">
-        Ask the Knowledge Graph: <span className="text-fg-secondary">{`"${question}"`}</span>
+        <Trans>Ask the Knowledge Graph: <span className="text-fg-secondary">&quot;{question}&quot;</span></Trans>
       </span>
       {isSelected ? (
         <span className="flex flex-shrink-0 items-center gap-1 text-xs text-fg-muted">
           <CornerDownLeft size={12} aria-hidden="true" />
+          {/* i18n-ok: names the Enter key beside its glyph, as a key cap does */}
           Enter
         </span>
       ) : null}
@@ -423,8 +430,14 @@ function AskRow({ question, rowIndex, isSelected, onHover, onClick }: AskRowProp
   );
 }
 
+interface GroupHeading {
+  index: number;
+  kind: SearchHitKind;
+  count: number;
+}
+
 interface RenderGroupProps {
-  heading: { index: number; label: string; count: number };
+  heading: GroupHeading;
   flat: SearchHit[];
   selectedIndex: number;
   onHover: (index: number) => void;
@@ -441,7 +454,7 @@ function RenderGroup({ heading, flat, selectedIndex, onHover, onActivate }: Rend
   return (
     <>
       <li className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-fg-disabled">
-        {heading.label}
+        {i18n._(KIND_LABEL[heading.kind])}
         <span className="ml-2 text-fg-disabled normal-case font-normal">{heading.count}</span>
       </li>
       {rows.map(({ hit, flatIndex }) => (
@@ -464,10 +477,11 @@ interface ScopeToggleProps {
 }
 
 function ScopeToggle({ scope, onChange }: ScopeToggleProps) {
+  const { t } = useLingui();
   return (
     <div className="flex items-center gap-0.5 rounded-md bg-surface-hover/50 p-0.5 flex-shrink-0">
-      <ScopeButton label="This project" active={scope === 'current'} onClick={() => onChange('current')} />
-      <ScopeButton label="All projects" active={scope === 'all'} onClick={() => onChange('all')} />
+      <ScopeButton label={t`This project`} active={scope === 'current'} onClick={() => onChange('current')} />
+      <ScopeButton label={t`All projects`} active={scope === 'all'} onClick={() => onChange('all')} />
     </div>
   );
 }
@@ -490,9 +504,9 @@ function ScopeButton({ label, active, onClick }: { label: string; active: boolea
 function EmptyState() {
   return (
     <div className="px-4 py-8 text-sm text-fg-muted text-center space-y-1">
-      <div>Search across tasks, backlog, conversations, session events, and projects.</div>
+      <div><Trans>Search across tasks, backlog, conversations, session events, and projects.</Trans></div>
       <div className="text-xs text-fg-disabled">
-        Type to find by title, description, or tool call.
+        <Trans>Type to find by title, description, or tool call.</Trans>
       </div>
     </div>
   );
@@ -544,22 +558,27 @@ function ResultRow({ hit, rowIndex, isSelected, onHover, onClick }: ResultRowPro
   );
 }
 
-/** Map a conversation chunk's dominant role to a short row badge. */
-function turnKindLabel(turnKind: string): string {
+/**
+ * Map a conversation chunk's dominant role to a short row badge, or null for
+ * the agent speaking ('assistant' and 'mixed'), which the snippet's
+ * "Assistant:" prefix already says, so only the non-obvious roles (You / Tool /
+ * System) get one. Decided on the role, never on the translated word.
+ */
+function turnKindBadge(turnKind: string): string | null {
   switch (turnKind) {
     case 'user':
-      return 'You';
+      return i18n._(msg`You`);
     case 'tool_result':
-      return 'Tool';
+      return i18n._(msg`Tool`);
     case 'system':
-      return 'System';
-    // 'assistant' and 'mixed' both read as the agent speaking.
+      return i18n._(msg`System`);
     default:
-      return 'Agent';
+      return null;
   }
 }
 
 function ResultRowHeader({ hit }: { hit: SearchHit }) {
+  const { t } = useLingui();
   switch (hit.kind) {
     case 'task':
       return (
@@ -570,7 +589,7 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           <span className="text-fg truncate">{hit.taskTitle}</span>
           {hit.archived ? (
             <span className="ml-1 inline-flex items-center gap-1 text-[11px] text-fg-disabled">
-              <Archive size={10} /> archived
+              <Archive size={10} /> <Trans>archived</Trans>
             </span>
           ) : null}
         </div>
@@ -580,7 +599,7 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
         <div className="flex items-center gap-2 text-xs">
           <span className="text-fg-muted">{hit.projectName}</span>
           <span className="text-fg-disabled">/</span>
-          <span className="text-fg-disabled">Backlog</span>
+          <span className="text-fg-disabled"><Trans>Backlog</Trans></span>
           <span className="text-fg truncate">{hit.backlogTitle}</span>
         </div>
       );
@@ -596,7 +615,9 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
         </div>
       );
     case 'conversation': {
-      const turnLabel = turnKindLabel(hit.turnKind);
+      const turnBadge = turnKindBadge(hit.turnKind);
+      // Shown only above one, so the singular form never reads in English.
+      const matchCount = hit.matchCount;
       return (
         <div className="flex items-center gap-2 text-xs">
           <MessageSquare size={12} className="flex-shrink-0 text-fg-muted" />
@@ -604,10 +625,10 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           {/* Matched by meaning, not keywords: a pure-semantic hit carries no
               highlighted term in its snippet, so flag why it surfaced. */}
           {hit.matchKind === 'semantic' && (
-            <Tooltip label="Matched by meaning">
+            <Tooltip label={t`Matched by meaning`}>
               <span
                 className="flex-shrink-0 inline-flex text-accent"
-                aria-label="Matched by meaning"
+                aria-label={t`Matched by meaning`}
               >
                 <Sparkles size={12} />
               </span>
@@ -616,39 +637,37 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           {/* The agent name (e.g. "Claude Code") is intentionally omitted: the
               task title already identifies the conversation and the agent is
               visible the moment it opens, so it would only add row noise. */}
-          {/* Who spoke in the matched turn. 'Agent' is redundant with the
-              snippet's "Assistant:" prefix, so only surface the non-obvious
-              roles (You / Tool / System). */}
-          {turnLabel !== 'Agent' && (
+          {/* Who spoke in the matched turn, for the non-obvious roles only. */}
+          {turnBadge !== null && (
             <span className="ml-1 flex-shrink-0 text-[11px] text-fg-muted bg-surface-hover/60 rounded px-1.5 py-0.5">
-              {turnLabel}
+              {turnBadge}
             </span>
           )}
           {/* Results are collapsed to one row per conversation; show how many
               turns matched when there is more than one. */}
           {hit.matchCount > 1 && (
             <span className="flex-shrink-0 text-[11px] text-fg-muted whitespace-nowrap">
-              {hit.matchCount} matches
+              <Plural value={matchCount} one="# match" other="# matches" />
             </span>
           )}
           {/* What selecting this hit opens: the live terminal if the session's
               agent is still active (and a task row exists to open), otherwise the
               read-only conversation history. Mirrors the routing in `activate`. */}
           {hit.sessionActive && hit.taskId !== null ? (
-            <Tooltip label="Opens the active terminal">
+            <Tooltip label={t`Opens the active terminal`}>
               <span
                 className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] rounded px-1.5 py-0.5"
                 style={{ color: 'var(--kng-active)', backgroundColor: 'color-mix(in srgb, var(--kng-active) 14%, transparent)' }}
               >
-                <Terminal size={10} /> Terminal
+                <Terminal size={10} /> <Trans>Terminal</Trans>
               </span>
             </Tooltip>
           ) : (
-            <Tooltip label="Opens the conversation history">
+            <Tooltip label={t`Opens the conversation history`}>
               <span
                 className="ml-1 flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-secondary bg-surface-hover rounded px-1.5 py-0.5"
               >
-                <History size={10} /> History
+                <History size={10} /> <Trans>History</Trans>
               </span>
             </Tooltip>
           )}

@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { FolderPlus, FolderTree } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 
 export interface SidebarBackgroundMenuProps {
   position: { x: number; y: number };
@@ -72,7 +73,7 @@ export function SidebarBackgroundMenu({
         data-testid="sidebar-background-add-project"
       >
         <FolderPlus size={14} className="text-fg-faint" />
-        Add project
+        <Trans>Add project</Trans>
       </button>
       <button
         type="button"
@@ -83,7 +84,7 @@ export function SidebarBackgroundMenu({
         data-testid="sidebar-background-new-group"
       >
         <FolderTree size={14} className="text-fg-faint" />
-        New group
+        <Trans>New group</Trans>
       </button>
     </div>
   );

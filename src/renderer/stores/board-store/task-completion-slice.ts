@@ -1,4 +1,6 @@
 import { type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
@@ -86,8 +88,8 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
           set({ recentlyArchivedId: taskId });
         }
         useToastStore.getState().addToast({
-          title: 'Task completed',
-          message: `"${taskTitle}" is archived.`,
+          title: i18n._(msg`Task completed`),
+          message: i18n._(msg`"${{ taskTitle }}" is archived.`),
           variant: 'success',
           onOpen: projectId !== null ? () => openTaskFromNotification(projectId, taskId) : undefined,
         });
@@ -99,7 +101,7 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
       // Safety net: moveTask returns { ok: false } rather than throwing for IPC
       // failures, but guard an unexpected throw so the gate still cleans up below.
       useToastStore.getState().addToast({
-        title: "Couldn't complete task",
+        title: i18n._(msg`Couldn't complete task`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });

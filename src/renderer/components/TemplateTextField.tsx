@@ -30,6 +30,7 @@
  * They keep the picker button they already have.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { plural } from '@lingui/core/macro';
 import { templateVarsFor } from '../../shared/task-template-vars';
 import type { TaskTemplateContextName, TaskTemplateVarInfo } from '../../shared/task-template-vars';
 import {
@@ -436,9 +437,7 @@ export function TemplateTextField({
         // through literally by every interpolator, so nothing breaks, it just
         // does not substitute.
         <span data-testid={`${testId}-unknown`} className="text-[11px] text-warning">
-          {unknown.length === 1
-            ? `Unknown variable: ${unknown[0].variable}. It will be sent as written.`
-            : `Unknown variables: ${unknown.map((segment) => segment.variable).join(', ')}. They will be sent as written.`}
+          {unknownVariablesNotice(unknown.length, unknown.map((segment) => segment.variable).join(', '))}
         </span>
       )}
     </div>
@@ -446,3 +445,11 @@ export function TemplateTextField({
 }
 
 export type TemplateTextFieldInsert = (chip: string) => void;
+
+/** The line under the field naming each unknown variable, as one plural message. */
+function unknownVariablesNotice(count: number, variableNames: string): string {
+  return plural(count, {
+    one: `Unknown variable: ${variableNames}. It will be sent as written.`,
+    other: `Unknown variables: ${variableNames}. They will be sent as written.`,
+  });
+}

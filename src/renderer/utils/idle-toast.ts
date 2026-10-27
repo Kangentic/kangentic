@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ActivityState } from '../../shared/types';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { ToastVariant } from '../stores/toast-store';
@@ -83,15 +85,22 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
   // short session id the way the crash toast does, and let the caller leave the
   // card with nothing to open, since there is no row to open.
   // Quotes go around a real title only, matching the crash toast: a bare session
-  // id fragment in quotes reads like a name the user should recognize.
-  const label = taskTitle !== undefined ? `"${taskTitle}"` : sessionIdShort;
+  // id fragment in quotes reads like a name the user should recognize. Each
+  // shape is its own message, so the quotes sit inside the sentence a
+  // translator sees.
 
   // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
   const needsPermission = state === 'permission';
 
   const hasTask = taskTitle !== undefined;
   if (needsPermission) {
-    return { title: 'Needs permission', message: `${label} is asking to run a tool.`, variant: 'warning', hasTask };
+    const message = taskTitle !== undefined
+      ? i18n._(msg`"${{ taskTitle }}" is asking to run a tool.`)
+      : i18n._(msg`${{ sessionIdShort }} is asking to run a tool.`);
+    return { title: i18n._(msg`Needs permission`), message, variant: 'warning', hasTask };
   }
-  return { title: 'Agent finished', message: `${label} is waiting on you.`, variant: 'info', hasTask };
+  const message = taskTitle !== undefined
+    ? i18n._(msg`"${{ taskTitle }}" is waiting on you.`)
+    : i18n._(msg`${{ sessionIdShort }} is waiting on you.`);
+  return { title: i18n._(msg`Agent finished`), message, variant: 'info', hasTask };
 }

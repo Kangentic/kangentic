@@ -1,5 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { FolderTree, Folder, Pencil, FolderOpen, Settings, Trash2 } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import type { Project, ProjectGroup } from '../../../../shared/types';
 
 export interface ProjectContextMenuProps {
@@ -75,7 +76,7 @@ export function ProjectContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left"
       >
         <Pencil size={14} className="text-fg-faint" />
-        Rename
+        <Trans>Rename</Trans>
       </button>
       <button
         onClick={() => {
@@ -85,7 +86,7 @@ export function ProjectContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left"
       >
         <FolderOpen size={14} className="text-fg-faint" />
-        Open in Explorer
+        <Trans>Open in Explorer</Trans>
       </button>
       <button
         onClick={() => {
@@ -95,7 +96,7 @@ export function ProjectContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left"
       >
         <Settings size={14} className="text-fg-faint" />
-        Project Settings
+        <Trans>Project Settings</Trans>
       </button>
 
       <div className="border-t border-edge my-1" />
@@ -108,7 +109,7 @@ export function ProjectContextMenu({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-red-400 hover:bg-red-400/10 transition-colors text-left"
       >
         <Trash2 size={14} />
-        Delete
+        <Trans>Delete</Trans>
       </button>
 
       {/* Group actions */}
@@ -117,7 +118,7 @@ export function ProjectContextMenu({
           <div className="border-t border-edge my-1" />
           {availableGroups.length > 0 && (
             <>
-              <div className="px-3 py-1 text-xs text-fg-disabled">Move to</div>
+              <div className="px-3 py-1 text-xs text-fg-disabled"><Trans>Move to</Trans></div>
               {availableGroups.map((group) => (
                 <button
                   key={group.id}
@@ -144,7 +145,7 @@ export function ProjectContextMenu({
                 className="flex items-center gap-2 w-full px-3 py-1.5 text-sm text-fg-secondary hover:bg-surface-hover transition-colors text-left"
               >
                 <Folder size={14} className="text-fg-faint" />
-                Remove from group
+                <Trans>Remove from group</Trans>
               </button>
             </>
           )}

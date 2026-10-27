@@ -30,6 +30,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { MessageSquare, X, SquareTerminal, Copy, Check, PictureInPicture2, ArrowUpToLine } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -74,6 +75,7 @@ export function ConversationWindow({
   titleBarPointerDown,
   requestClose,
 }: ConversationWindowProps) {
+  const { t } = useLingui();
   const openProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
   // A window the Knowledge Graph opened from another project's island reads its
   // transcript from THAT project; every other window reads the open one.
@@ -196,7 +198,7 @@ export function ConversationWindow({
     handleToggleMaximized();
   }, [handleToggleMaximized]);
 
-  const taskTitle = response?.taskTitle || 'Session';
+  const taskTitle = response?.taskTitle || t`Session`;
 
   return (
     <div
@@ -231,7 +233,7 @@ export function ConversationWindow({
             <HeaderActionButton
               icon={SquareTerminal}
               onClick={handleOpenTask}
-              tip="Open task"
+              tip={t`Open task`}
               testId="conversation-open-task-button"
             />
           )}
@@ -239,8 +241,8 @@ export function ConversationWindow({
             icon={copied ? CopiedCheckIcon : Copy}
             onClick={copyMarkdown}
             disabled={!response}
-            tip="Copy conversation as Markdown"
-            ariaLabel="Copy conversation"
+            tip={t`Copy conversation as Markdown`}
+            ariaLabel={t`Copy conversation`}
             testId="conversation-copy-markdown-button"
           />
 
@@ -250,7 +252,7 @@ export function ConversationWindow({
                 {canOpenTask && (
                   <KebabMenuItem
                     icon={<SquareTerminal size={13} />}
-                    label="Open task"
+                    label={t`Open task`}
                     onClick={() => {
                       handleOpenTask();
                       close();
@@ -260,7 +262,7 @@ export function ConversationWindow({
                 )}
                 <KebabMenuItem
                   icon={copied ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
-                  label="Copy conversation"
+                  label={t`Copy conversation`}
                   onClick={() => {
                     copyMarkdown();
                     close();
@@ -271,7 +273,7 @@ export function ConversationWindow({
                 {paging.enabled && (
                   <KebabMenuItem
                     icon={<ArrowUpToLine size={13} />}
-                    label="Jump to start"
+                    label={t`Jump to start`}
                     onClick={() => {
                       jumpToStart();
                       close();
@@ -285,11 +287,11 @@ export function ConversationWindow({
 
           <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
           {isTiled && (
-            <Tooltip label="Float this window out of the tiled layout">
+            <Tooltip label={t`Float this window out of the tiled layout`}>
               <button
                 type="button"
                 onClick={handleUndock}
-                aria-label="Pop out"
+                aria-label={t`Pop out`}
                 data-testid={`conversation-undock-${managedWindow.id}`}
                 className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
               >
@@ -302,11 +304,11 @@ export function ConversationWindow({
             onToggle={handleToggleMaximized}
             testId={`conversation-maximize-${managedWindow.id}`}
           />
-          <Tooltip label="Close window" keys="panel.close">
+          <Tooltip label={t`Close window`} keys="panel.close">
             <button
               type="button"
               onClick={requestClose}
-              aria-label="Close window"
+              aria-label={t`Close window`}
               data-testid="conversation-close"
               className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
             >

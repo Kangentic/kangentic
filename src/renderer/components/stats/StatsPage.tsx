@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { ChartColumn, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
@@ -23,6 +24,7 @@ import { LazyStatsDashboard } from './LazyStatsDashboard';
  * whenever the stats pop-out is open (strict mutual exclusivity).
  */
 export function StatsPage() {
+  const { t } = useLingui();
   const close = useUsageDashboardStore((state) => state.close);
   const statusBarVisible = useConfigStore((state) => state.config.statusBarVisible !== false);
 
@@ -59,12 +61,12 @@ export function StatsPage() {
           params={{}}
           className="px-4 py-2.5"
           trailing={
-            <Tooltip label="Close usage stats" keys="dialog.dismiss">
+            <Tooltip label={t`Close usage stats`} keys="dialog.dismiss">
               <button
                 type="button"
                 onClick={() => overlay.requestClose()}
                 className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Close usage stats"
+                aria-label={t`Close usage stats`}
                 data-testid="stats-close"
               >
                 <X size={16} />
@@ -73,7 +75,7 @@ export function StatsPage() {
           }
         >
           <ChartColumn size={18} className="text-fg-muted flex-shrink-0" aria-hidden />
-          <h1 className="text-sm font-semibold text-fg">Usage</h1>
+          <h1 className="text-sm font-semibold text-fg"><Trans>Usage</Trans></h1>
         </DetachableSurfaceHeader>
 
         {/* Lazy: StatsDashboardBody's import graph pulls recharts; the shell

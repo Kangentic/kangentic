@@ -23,6 +23,9 @@
 
 import { useEffect, useState } from 'react';
 import { ArrowLeft, ChevronRight, Compass, MessageSquareText } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { PanelRow } from './PanelRow';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
@@ -31,6 +34,29 @@ import { useToastStore } from '../../stores/toast-store';
 import { useKnowledgeGraphStore } from '../../stores/knowledge-graph-store';
 import { openKnowledgeGraphConversation } from './open-knowledge-graph-conversation';
 import type { KnowledgeGraphCluster, KnowledgeGraphNode } from '../../../shared/types';
+
+/**
+ * Where the panel's Back goes: the conversation hopped from (by its title, or
+ * unnamed when it has none), or the chat. Each reads as its own sentence.
+ */
+export type KnowledgeGraphDetailBackTarget =
+  | { kind: 'conversation'; title: string }
+  | { kind: 'previous-conversation' }
+  | { kind: 'chat' };
+
+function BackText({ target }: { target: KnowledgeGraphDetailBackTarget | undefined }) {
+  if (!target) return <Trans>Back to where you were</Trans>;
+  switch (target.kind) {
+    case 'conversation': {
+      const title = target.title;
+      return <Trans>Back to {title}</Trans>;
+    }
+    case 'previous-conversation':
+      return <Trans>Back to the previous conversation</Trans>;
+    case 'chat':
+      return <Trans>Back to the chat</Trans>;
+  }
+}
 
 export interface KnowledgeGraphNodeDetailProps {
   node: KnowledgeGraphNode;
@@ -44,7 +70,7 @@ export interface KnowledgeGraphNodeDetailProps {
   /** Step back to wherever this panel was reached from, if anywhere. */
   onBack?: () => void;
   /** Names the destination, because after a few hops a bare arrow is a guess. */
-  backLabel?: string;
+  backTarget?: KnowledgeGraphDetailBackTarget;
   /** The node's own project, when the map shows several, so "Open conversation"
    *  reads the transcript from the project it belongs to. */
   nodeProjectId?: string | null;
@@ -67,8 +93,8 @@ export function openConversationForNode(
 ): void {
   if (!node.sessionId) {
     useToastStore.getState().addToast({
-      title: 'No session to open',
-      message: 'This conversation has no session record.',
+      title: i18n._(msg`No session to open`),
+      message: i18n._(msg`This conversation has no session record.`),
       variant: 'info',
     });
     return;
@@ -114,10 +140,12 @@ export function KnowledgeGraphNodeDetail({
   onSelectNeighbor,
   onExploreFrom,
   onBack,
-  backLabel,
+  backTarget,
   nodeProjectId,
 }: KnowledgeGraphNodeDetailProps) {
+  const { t } = useLingui();
   const summaryText = useTaskSummary(node.taskId, nodeProjectId);
+  const chunkCount = node.chunkCount;
   return (
     <aside
       className="w-full h-full overflow-y-auto flex flex-col"
@@ -137,7 +165,7 @@ export function KnowledgeGraphNodeDetail({
             data-testid="knowledge-graph-detail-back"
           >
             <ArrowLeft size={12} className="flex-shrink-0" aria-hidden />
-            <span className="truncate">Back to {backLabel ?? 'where you were'}</span>
+            <span className="truncate"><BackText target={backTarget} /></span>
           </button>
         ) : null}
 
@@ -154,7 +182,7 @@ export function KnowledgeGraphNodeDetail({
           className="rounded-md border border-edge/60 bg-surface-control/60 px-2.5 py-2 text-[13px] font-semibold leading-snug text-fg"
           data-testid="knowledge-graph-detail-title"
         >
-          {node.title ?? 'Untitled conversation'}
+          {node.title ?? t`Untitled conversation`}
         </h2>
 
         {/* What the task set out to do and did, in a sentence or two, right
@@ -175,27 +203,29 @@ export function KnowledgeGraphNodeDetail({
         <dl className="mt-2.5">
           {cluster ? (
             <PanelRow
-              label="Region"
+              label={t`Region`}
               value={cluster.label}
-              hint="The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index."
+              hint={t`The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index.`}
             />
           ) : null}
-          {node.agent ? <PanelRow label="Agent" value={node.agent} /> : null}
+          {node.agent ? <PanelRow label={t`Agent`} value={node.agent} /> : null}
           {node.model ? (
             // The shared humanizer, so this reads "Opus 5" like the rest of the
             // app rather than the spawnable id the CLI flag carries. It returns
             // null when it cannot derive a name, hence the raw fallback.
-            <PanelRow label="Model" value={humanizeModelId(node.model) ?? node.model} />
+            <PanelRow label={t`Model`} value={humanizeModelId(node.model) ?? node.model} />
           ) : null}
-          {node.effort ? <PanelRow label="Effort" value={node.effort} /> : null}
+          {node.effort ? <PanelRow label={t`Effort`} value={node.effort} /> : null}
           <PanelRow
-            label="Indexed"
+            label={t`Indexed`}
             numeric
-            value={`${node.chunkCount.toLocaleString()} chunks`}
-            hint="Passages this conversation was split into for search. Longer conversations produce more."
+            // Only "other", as today's English reads "1 chunks"; a language
+            // with more forms adds them in its catalog.
+            value={plural(chunkCount, { other: '# chunks' })}
+            hint={t`Passages this conversation was split into for search. Longer conversations produce more.`}
           />
           {node.lastActivityMs ? (
-            <PanelRow label="Last active" value={new Date(node.lastActivityMs).toLocaleDateString()} />
+            <PanelRow label={t`Last active`} value={new Date(node.lastActivityMs).toLocaleDateString()} />
           ) : null}
         </dl>
 
@@ -203,8 +233,8 @@ export function KnowledgeGraphNodeDetail({
           <Tooltip
             label={tipLabel({
               disabled: !node.sessionId,
-              disabledReason: 'No session record for this conversation',
-              tip: 'Open the full transcript',
+              disabledReason: t`No session record for this conversation`,
+              tip: t`Open the full transcript`,
             })}
           >
             <button
@@ -215,15 +245,15 @@ export function KnowledgeGraphNodeDetail({
               data-testid="knowledge-graph-open-conversation"
             >
               <MessageSquareText size={13} />
-              Open conversation
+              <Trans>Open conversation</Trans>
             </button>
           </Tooltip>
           {onExploreFrom ? (
             <Tooltip
               label={tipLabel({
                 disabled: neighbors.length === 0,
-                disabledReason: 'This conversation links to nothing else in the index',
-                tip: 'Narrow the map to this conversation and everything it links to',
+                disabledReason: t`This conversation links to nothing else in the index`,
+                tip: t`Narrow the map to this conversation and everything it links to`,
               })}
             >
               <button
@@ -234,7 +264,7 @@ export function KnowledgeGraphNodeDetail({
                 data-testid="knowledge-graph-explore-from"
               >
                 <Compass size={13} />
-                Explore from here
+                <Trans>Explore from here</Trans>
               </button>
             </Tooltip>
           ) : null}
@@ -251,10 +281,11 @@ export function KnowledgeGraphNodeDetail({
               in the Index section, as reference rather than a caption reprinted
               on every selection. */}
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-            Closest conversations
+            <Trans>Closest conversations</Trans>
           </h3>
           <ul className="mt-2 space-y-1.5">
             {neighbors.map((neighbor) => {
+              const similarity = neighbor.similarity.toFixed(4);
               return (
                 <li key={neighbor.node.docKey}>
                   {/* A resting affordance, not hover-only: these are the panel's
@@ -264,7 +295,7 @@ export function KnowledgeGraphNodeDetail({
                   {/* The tip holds the raw value, for anyone who wants it,
                       without putting a number on screen that reads the same
                       on every row. */}
-                  <Tooltip label={`Cosine similarity ${neighbor.similarity.toFixed(4)}`}>
+                  <Tooltip label={t`Cosine similarity ${similarity}`}>
                     <button
                       type="button"
                       onClick={() => onSelectNeighbor(neighbor.index)}
@@ -273,7 +304,7 @@ export function KnowledgeGraphNodeDetail({
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs text-fg">
-                          {neighbor.node.title ?? 'Untitled conversation'}
+                          {neighbor.node.title ?? t`Untitled conversation`}
                         </span>
                         <span className="mt-0.5 flex items-center gap-2 text-[11px] text-fg-muted">
                           {/* The date disambiguates rows that share a title, which

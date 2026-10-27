@@ -7,6 +7,7 @@ import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortab
 import {
   Folder, ChevronsLeft, FolderTree, Search, X,
 } from 'lucide-react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -34,6 +35,7 @@ interface ProjectSidebarProps {
 }
 
 export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
+  const { t } = useLingui();
   const projects = useProjectStore((s) => s.projects);
   const groups = useProjectStore((s) => s.groups);
   const currentProject = useProjectStore((s) => s.currentProject);
@@ -148,8 +150,8 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     await deleteProject(projectToDelete.id);
     setProjectToDelete(null);
     useToastStore.getState().addToast({
-      title: 'Project deleted',
-      message: `"${name}"`,
+      title: t`Project deleted`,
+      message: t`"${name}"`,
       variant: 'info',
     });
 
@@ -264,18 +266,18 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
         <div className="flex items-center gap-2">
           {onToggleSidebar && (
-            <Tooltip label="Hide sidebar" keys="view.toggleSidebar">
+            <Tooltip label={t`Hide sidebar`} keys="view.toggleSidebar">
               <button
                 onClick={onToggleSidebar}
                 className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                aria-label="Hide sidebar"
+                aria-label={t`Hide sidebar`}
               >
                 <ChevronsLeft size={16} />
               </button>
             </Tooltip>
           )}
           <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
-            Projects
+            <Trans>Projects</Trans>
           </span>
           {projects.length > 0 && (
             <CountBadge count={projects.length} variant="tinted" size="pill" className="text-fg-faint" testId="sidebar-projects-count" />
@@ -293,18 +295,18 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                 (e.target as HTMLInputElement).blur();
               }
             }}
-            placeholder="Search projects..."
+            placeholder={t`Search projects...`}
             data-testid="project-sidebar-search"
             className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-muted pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
           />
           {search && (
-            <Tooltip label="Clear search">
+            <Tooltip label={t`Clear search`}>
               <button
                 type="button"
                 onClick={() => setSearch('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
                 data-testid="project-sidebar-search-clear"
-                aria-label="Clear search"
+                aria-label={t`Clear search`}
               >
                 <X size={14} />
               </button>
@@ -387,7 +389,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                       setNewGroupName('');
                     }
                   }}
-                  placeholder="Group name"
+                  placeholder={t`Group name`}
                   className="flex-1 min-w-0 text-sm bg-transparent text-fg outline-none placeholder:text-fg-disabled"
                 />
               </div>
@@ -415,15 +417,15 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         {projects.length === 0 && (
           <div className="p-6 text-center">
             <Folder size={32} className="mx-auto text-fg-disabled mb-2" />
-            <div className="text-sm text-fg-faint">No projects yet</div>
-            <div className="text-xs text-fg-disabled mt-1">Use Add project below to open a folder</div>
+            <div className="text-sm text-fg-faint"><Trans>No projects yet</Trans></div>
+            <div className="text-xs text-fg-disabled mt-1"><Trans>Use Add project below to open a folder</Trans></div>
           </div>
         )}
         {projects.length > 0 && isSearching && totalFilteredCount === 0 && (
           <div className="p-6 text-center">
             <Search size={24} className="mx-auto text-fg-disabled mb-2" />
-            <div className="text-sm text-fg-faint">No projects match</div>
-            <div className="text-xs text-fg-disabled mt-1 truncate">&quot;{search}&quot;</div>
+            <div className="text-sm text-fg-faint"><Trans>No projects match</Trans></div>
+            <div className="text-xs text-fg-disabled mt-1 truncate">{t`"${search}"`}</div>
           </div>
         )}
       </div>
@@ -473,34 +475,44 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         );
       })()}
 
-      {projectToDelete && (
+      {projectToDelete && (() => {
+        const projectName = projectToDelete.name;
+        return (
         <ConfirmDialog
-          title="Delete Project"
+          title={t`Delete Project`}
           message={
             <p>
-              Are you sure you want to delete <strong>&quot;{projectToDelete.name}&quot;</strong>? This will
-              remove the project from Kangentic but won&apos;t delete any files on disk.
+              <Trans>Are you sure you want to delete <strong>&quot;{projectName}&quot;</strong>?</Trans>
+              {' '}
+              <Trans>This will remove the project from Kangentic but won&apos;t delete any files on disk.</Trans>
             </p>
           }
-          confirmLabel="Delete"
+          confirmLabel={t`Delete`}
           variant="danger"
           onConfirm={handleConfirmDelete}
           onCancel={() => setProjectToDelete(null)}
         />
-      )}
+        );
+      })()}
 
       {groupToDelete && (() => {
         const groupProjectCount = projects.filter((p) => p.group_id === groupToDelete.id).length;
+        const groupName = groupToDelete.name;
         return (
         <ConfirmDialog
-          title="Delete Group"
+          title={t`Delete Group`}
           message={
             <p>
-              Delete group <strong>&quot;{groupToDelete.name}&quot;</strong>?
-              Its {groupProjectCount} project{groupProjectCount !== 1 ? 's' : ''} will become ungrouped.
+              <Trans>Delete group <strong>&quot;{groupName}&quot;</strong>?</Trans>
+              {' '}
+              <Plural
+                value={groupProjectCount}
+                one="Its # project will become ungrouped."
+                other="Its # projects will become ungrouped."
+              />
             </p>
           }
-          confirmLabel="Delete"
+          confirmLabel={t`Delete`}
           variant="danger"
           onConfirm={handleConfirmDeleteGroup}
           onCancel={() => setGroupToDelete(null)}

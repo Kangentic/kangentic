@@ -1,6 +1,8 @@
 import { memo, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { CirclePause, FolderGit2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { ActivityMark } from '../ActivityMark';
 import { Tooltip } from '../Tooltip';
 import type { MonitorSessionRow } from '../../../shared/types';
@@ -84,6 +86,7 @@ function SummaryTile({ label, icon, value, sub, tip, testId, tone }: SummaryTile
 }
 
 function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
+  const { t } = useLingui();
   // `summarize` is a full pass over every row with two Set allocations, and this
   // component re-renders with its parent - including for parent state that has
   // nothing to do with rows (the grid's column count on resize, the row context
@@ -92,22 +95,40 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
   const { counts, projectCount, oldestNeedsYouSince, workingProjectCount, lastActiveAt } =
     useMemo(() => summarize(rows), [rows]);
 
+  // Each tile's sub-line as one whole message, around the relative time or count it reports.
+  let idleSub: string | undefined;
+  if (oldestNeedsYouSince !== null) {
+    const when = formatRelativeTime(oldestNeedsYouSince);
+    idleSub = t`longest since ${when}`;
+  }
+  let activeSub: string | undefined;
+  if (workingProjectCount > 0) {
+    activeSub = plural(workingProjectCount, { one: 'across # project', other: 'across # projects' });
+  } else if (lastActiveAt !== null) {
+    const when = formatRelativeTime(lastActiveAt);
+    activeSub = t`last active ${when}`;
+  }
+  const finishedCount = counts.finished;
+  const projectsSub = finishedCount > 0
+    ? plural(finishedCount, { one: '# recently finished', other: '# recently finished' })
+    : t`with a live session`;
+
   return (
     <div className="flex flex-wrap gap-2 px-4 pt-3" data-testid="monitor-summary">
       {/* Labels use the app's own activity words (idle / active), the same ones
           the sidebar dots and board cards speak. */}
       <SummaryTile
-        label="Idle"
+        label={t({ message: 'Idle', context: 'Agent status' })}
         icon={<ActivityMark mark="agent-idle" size={15} />}
         value={counts['needs-you']}
         // The count alone always prompts "for how long?"; answer it here.
-        sub={oldestNeedsYouSince === null ? undefined : `longest since ${formatRelativeTime(oldestNeedsYouSince)}`}
+        sub={idleSub}
         tone="attention"
         testId="monitor-summary-needs-you"
-        tip="Agents waiting on a response from you, across every project in view"
+        tip={t`Agents waiting on a response from you, across every project in view`}
       />
       <SummaryTile
-        label="Active"
+        label={t({ message: 'Active', context: 'Agent status' })}
         // The working mark animates by default. At zero there is nothing in flight
         // to animate, so freeze it rather than have an idle machine's chrome keep
         // moving. Same conditional the lucide spinner this replaced used.
@@ -142,31 +163,29 @@ function MonitorSummaryCardsInner({ rows }: { rows: MonitorSessionRow[] }) {
         // missing data rather than as a quiet machine. "last active 18 minutes ago"
         // answers the question a zero always raises, in the same relative-time
         // phrasing the Idle tile and the cards already use.
-        sub={workingProjectCount > 0
-          ? `across ${workingProjectCount} ${workingProjectCount === 1 ? 'project' : 'projects'}`
-          : lastActiveAt === null ? undefined : `last active ${formatRelativeTime(lastActiveAt)}`}
+        sub={activeSub}
         tone="active"
         testId="monitor-summary-working"
-        tip="Agents actively running right now, across every project in view"
+        tip={t`Agents actively running right now, across every project in view`}
       />
       {/* "Paused or waiting to start", not "suspended or queued": the user-facing
           control is Pause/Resume, and "suspended" is internal status vocabulary
           they never see anywhere else in the app. */}
       <SummaryTile
-        label="Paused"
+        label={t({ message: 'Paused', context: 'Agent status' })}
         icon={<CirclePause size={14} />}
         value={counts.idle}
-        sub={counts.idle > 0 ? 'paused or waiting to start' : undefined}
+        sub={counts.idle > 0 ? t`paused or waiting to start` : undefined}
         testId="monitor-summary-idle"
-        tip="Sessions you paused, plus any queued waiting for a free slot"
+        tip={t`Sessions you paused, plus any queued waiting for a free slot`}
       />
       <SummaryTile
-        label="Projects"
+        label={t`Projects`}
         icon={<FolderGit2 size={14} />}
         value={projectCount}
-        sub={counts.finished > 0 ? `${counts.finished} recently finished` : 'with a live session'}
+        sub={projectsSub}
         testId="monitor-summary-projects"
-        tip="Projects in view with at least one live session"
+        tip={t`Projects in view with at least one live session`}
       />
     </div>
   );

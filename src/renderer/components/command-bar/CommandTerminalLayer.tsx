@@ -26,6 +26,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/react/shallow';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
 import {
   WindowManagerLayer,
   commandWindowManager,
@@ -382,7 +384,7 @@ function useCommandTerminalAtCap(projectId: string | null): boolean {
  * yet paired with a session. Main holds that slot reserved until the start
  * lands, so the new window could neither find the terminal nor take the slot.
  */
-const TERMINALS_STARTING_REASON = 'Wait for the terminals to start.';
+const TERMINALS_STARTING_REASON = msg`Wait for the terminals to start.`;
 
 /** Whether a window in the panel is still waiting for its terminal's session. */
 function useTerminalsStarting(projectId: string | null): boolean {
@@ -634,7 +636,11 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
     // nothing showing them. The pending-open flag reopens the panel through
     // the same open (and reconcile) the shortcut runs.
     const showPanelAgain = (): void => {
-      useToastStore.getState().addToast({ title: "Couldn't open the window", message: 'The terminals are back in the panel.', variant: 'error' });
+      useToastStore.getState().addToast({
+        title: i18n._(msg`Couldn't open the window`),
+        message: i18n._(msg`The terminals are back in the panel.`),
+        variant: 'error',
+      });
       useSessionStore.getState().setPendingOpenCommandTerminal(true);
     };
     window.electronAPI.popOut.open('command-terminal', { projectId, projectName })
@@ -675,7 +681,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
             chrome={PANEL_CHROME}
             onTerminalAreaReady={setTerminalArea}
             onOpenInNewWindow={handleOpenInNewWindow}
-            openInNewWindowDisabledReason={terminalsStarting ? TERMINALS_STARTING_REASON : null}
+            openInNewWindowDisabledReason={terminalsStarting ? i18n._(TERMINALS_STARTING_REASON) : null}
             rail={rail}
           />
         </div>,

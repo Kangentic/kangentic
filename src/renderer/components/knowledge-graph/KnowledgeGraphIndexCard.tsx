@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Database } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../OverlayPopover';
 import { SettingsCard, CardSourceList } from '../settings/settings-card';
 import { settingProps } from '../settings/settings-registry';
@@ -68,6 +69,7 @@ export interface KnowledgeGraphIndexCardProps {
 export function KnowledgeGraphIndexCard({
   index, coverage, semanticAvailable, edgeCount, onOpenSettings,
 }: KnowledgeGraphIndexCardProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -184,7 +186,7 @@ export function KnowledgeGraphIndexCard({
       <div ref={triggerRef} className={CARD_CLASS}>
         <SectionHeader
           icon={<Database size={13} aria-hidden />}
-          label="Index"
+          label={t`Index`}
           collapsed={!open}
           onToggle={() => setOpen((current) => !current)}
           testId="knowledge-graph-index-toggle"

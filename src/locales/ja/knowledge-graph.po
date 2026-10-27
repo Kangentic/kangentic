@@ -7,10 +7,770 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ja\n"
 
+#. placeholder {0}: hits.length
+#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+msgid "{0, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
+msgstr ""
+
+#. placeholder {0}: selectedIds.length
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{0, plural, one {# project} other {# projects}}"
+msgstr ""
+
+#. placeholder {0}: scopeProjectIds.length
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "{0, plural, one {Ask across # project} other {Ask across # projects}}"
+msgstr ""
+
+#. placeholder {0}: turn.handedCount
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{0, plural, one {Read # related task} other {Read # related tasks}}"
+msgstr ""
+
+#. placeholder {0}: turn.handedCount
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{0, plural, one {Reading # related task} other {Reading # related tasks}}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "{agentName} didn't answer. {reason}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{agentName}, {modelName}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "{chunkCount, plural, other {# chunks}}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{conversationCount} conversations, {taskRecordCount} task records"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{cost} ({tokenText} tokens)"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{days}d"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{days}d {remainingHours}h"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{doneCount} of {totalCount}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{earliestDate} to {latestDate}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{hours}h"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{hours}h {minutes}m"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{minutes}m"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{selectedCount} of {indexedCount}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "{selectedCount} of {indexedCount} shown"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "{shownRegionCount} of {regionCount} shown"
+msgstr ""
+
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
 msgid "{taskCount, plural, one {Show # task} other {Show # tasks}}"
 msgstr ""
 
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "{tokenText} tokens"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "1 project"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "30 days"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "90 days"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/PanelRow.tsx
+msgid "About {about}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgctxt "Date range"
+msgid "Active"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "All"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "All projects"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Any"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Any status"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Any time"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Around \"{exploredTitle}\""
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Around \"Untitled conversation\""
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Ask {askAgentName}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Ask a follow-up"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Ask about your tasks and conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Ask about your tasks, conversations and code"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Ask the agent"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Back to {title}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Back to the chat"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Back to the previous conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Back to where you were"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Balanced"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Building"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Building the map"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/panel-card.tsx
+msgid "Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Chat"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Choose an agent and model in Settings > Knowledge Graph, in the main window."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Choose an agent and model in Settings > Knowledge Graph."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Clear region filter"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+msgid "Close Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Closest conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Coarse"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Color by"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Color by the region of the map each conversation sits in"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Color conversations by"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Commits"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Commits indexed"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Controls"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/open-knowledge-graph-conversation.ts
+msgid "Conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Conversation titles"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Conversations embedded"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Cosine similarity {similarity}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Cost"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Detail"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Display"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Drag"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Duration"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "End the chat"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Every task on this map is done"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Every task on this map is open"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Explore from here"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Failed to index"
+msgstr ""
+
 #: src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx
 msgid "Failed to load the Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Fewer, broader regions"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Filter"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Filter by the task's status"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Filter by when the conversation was last active"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Find a project"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Find a region"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Finding related work"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Fine"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Fly back to the opening view"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Fly Forward and Sideways"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Fly Up and Down"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Green is done, amber is still open on the board, grey has no task"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Hidden"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Hide {label}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+msgid "Hide tasks"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphIndexCard.tsx
+msgid "Index"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Indexed"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Just the open project"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+msgid "Knowledge Graph"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Last 30 days"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Last 90 days"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Last active"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Length"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Links"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Loading what this project has indexed."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Map built"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "More, narrower regions"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Naming regions"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Narrow the map to this conversation and everything it links to"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "No done tasks on this map"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "No map yet"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "No open tasks on this map"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "No project matches that."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "No project open"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+msgid "No recorded conversation to open here"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "No region matches that."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "No session record for this conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "No session to open"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "None"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Not indexed"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Not yet indexed"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Nothing has been indexed for this project yet."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Nothing indexed yet, so there is no map to draw"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Nothing on this map is older than {days} days"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Off"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Once per project, in the background. Later updates take moments."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Open a project to see what its conversation index has learned."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Open conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/panel-card.tsx
+msgid "Open Settings"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Open the full transcript"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+msgid "Open this conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Orbit the Map"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Pan the View"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Passages this conversation was split into for search. Longer conversations produce more."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Places conversations by meaning, with a local model."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Placing conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/use-graph-view.ts
+msgid "Project"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+msgid "Projects"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Ran for"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Reading conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Reading the index"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Recency"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "Region"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Region detail"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Region labels"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Region of the map"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Regions"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Reset view"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Right Drag"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Scroll"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Searching \"{query}\""
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Send"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Show"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Show {label}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+msgid "Show all {rowCount}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+msgid "Show fewer"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Show the camera keys"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Similarity links"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Size on disk"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Status"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+msgid "Stop exploring this neighbourhood"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Tasks"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Tasks embedded"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "the agent didn't answer. {reason}"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "The background sweep has not reached these conversations yet."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "The default: regions of roughly 10 to 26 conversations"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "The map needs a GPU"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "This conversation has no session record."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+msgid "This conversation links to nothing else in the index"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "This machine could not provide a 3D drawing context, so the map cannot be drawn. Coverage and search still work."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Time spent"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Titles"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Topic"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/index-panel-lines.ts
+msgid "Transcript gone"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+msgid "Try again"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Turn it on in Settings > Knowledge Graph, in the main window."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "under a minute"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+msgid "Untitled conversation"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "Warm is recent, cool is old - shows where your attention has moved"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+msgid "What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end"
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+msgid "Which projects the map shows and a question is asked across. Starts on the open project."
+msgstr ""
+
+#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+msgid "Zoom In and Out"
 msgstr ""

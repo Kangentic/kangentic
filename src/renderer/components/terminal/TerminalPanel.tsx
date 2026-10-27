@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import { Activity, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -25,6 +26,7 @@ interface TerminalPanelProps {
 }
 
 export function TerminalPanel({ collapsed = false, showContent = true, onToggleCollapse }: TerminalPanelProps) {
+  const { t } = useLingui();
   const allSessions = useSessionStore((s) => s.sessions);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
   // Fallback agent for default-agent tasks (task.agent null) so the ContextBar
@@ -163,12 +165,14 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
         data-state={everyPanelSessionDetached ? 'detached' : 'no-sessions'}
         className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm"
       >
-        {everyPanelSessionDetached ? null :'No active sessions. Drag a task into a column that starts an agent.'}
+        {everyPanelSessionDetached ? null : <Trans>No active sessions. Drag a task into a column that starts an agent.</Trans>}
       </div>
     );
   }
 
   const isActivityActive = effectiveActiveId === ACTIVITY_TAB;
+  // One whole message per state, used by the spacer's tip, the toggle's tip and its name.
+  const toggleLabel = collapsed ? t`Expand terminal panel` : t`Collapse terminal panel`;
 
   return (
     <div className="h-full flex flex-col bg-surface">
@@ -196,7 +200,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               }`}
             >
               <Activity size={12} />
-              Activity
+              <Trans>Activity</Trans>
             </button>
           )}
 
@@ -209,7 +213,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               <Tooltip
                 key={session.id}
                 label={`${label} (${shellDisplayName(session.shell)})`}
-                detail={isIsolated ? 'Isolated session' : undefined}
+                detail={isIsolated ? t`Isolated session` : undefined}
               >
                 <button
                   data-testid="terminal-session-tab"
@@ -243,7 +247,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
         {/* Clickable spacer fills remaining tab bar space */}
         {onToggleCollapse && (
-          <Tooltip label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`} keys="view.toggleTerminalPanel">
+          <Tooltip label={toggleLabel} keys="view.toggleTerminalPanel">
             {/* select-none-ok: an empty spacer, so it has no text to select. */}
             <div
               role="presentation"
@@ -255,11 +259,11 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
         {/* Collapse / expand toggle */}
         {onToggleCollapse && (
-          <Tooltip label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`} keys="view.toggleTerminalPanel">
+          <Tooltip label={toggleLabel} keys="view.toggleTerminalPanel">
             <button
               onClick={onToggleCollapse}
               className="flex items-center justify-center px-2 py-1.5 text-fg-faint hover:text-fg-tertiary transition-colors flex-shrink-0"
-              aria-label={`${collapsed ? 'Expand' : 'Collapse'} terminal panel`}
+              aria-label={toggleLabel}
             >
               {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>

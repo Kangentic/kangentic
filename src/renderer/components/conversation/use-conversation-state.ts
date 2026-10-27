@@ -36,6 +36,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useConversationPaging, type ConversationPaging } from './use-conversation-paging';
 import { reconcileDisplayRows } from './display-rows';
 import { matchTuiViewportToRow } from './tui-anchor';
@@ -514,10 +516,13 @@ export function useConversationState(options: ConversationStateOptions): Convers
     };
   }, [pagingWindow, topEdge, bottomEdge, onNearEdge, onReaderMove, retryEdge, jumpToStart, jumpToLatest, seekLogical]);
   let searchPlaceholder: string | undefined;
+  const columnName = columnOnScreen?.name ?? '';
   if (paging.historyUnloaded) {
-    searchPlaceholder = columnOnScreen ? `Search loaded ${columnOnScreen.name} messages` : 'Search loaded messages';
+    searchPlaceholder = columnOnScreen
+      ? i18n._(msg`Search loaded ${{ columnName }} messages`)
+      : i18n._(msg`Search loaded messages`);
   } else if (columnOnScreen) {
-    searchPlaceholder = `Search ${columnOnScreen.name}`;
+    searchPlaceholder = i18n._(msg`Search ${{ columnName }}`);
   }
 
   const consumeScroll = useCallback(() => {

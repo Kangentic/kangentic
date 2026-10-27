@@ -8,6 +8,7 @@
  */
 
 import { SquarePlus } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 
@@ -30,7 +31,7 @@ export function NewTerminalButton({ onNewTerminal, disabledReason }: NewTerminal
       >
         <SquarePlus size={16} strokeWidth={2.25} />
         {/* Trimmed to its cap height so it centers on the plus, as Pill's text does. */}
-        <span className="[text-box:trim-both_cap_alphabetic]">Add terminal</span>
+        <span className="[text-box:trim-both_cap_alphabetic]"><Trans>Add terminal</Trans></span>
       </button>
     </Tooltip>
   );

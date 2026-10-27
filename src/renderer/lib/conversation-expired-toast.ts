@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ConversationExpiredNotice } from '../../shared/types';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
@@ -39,7 +41,7 @@ export async function showConversationExpiredNotices(projectId: string): Promise
   // opens the task, where the agent's recap is.
   for (const notice of notices) {
     useToastStore.getState().addToast({
-      title: 'New conversation',
+      title: i18n._(msg`New conversation`),
       message: describeConversationExpired(notice),
       variant: 'info',
       durationMs: 12000,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { OverlayPopover } from './OverlayPopover';
 import { Tooltip } from './Tooltip';
 import { usePopoverPosition } from '../hooks/usePopoverPosition';
@@ -77,7 +78,7 @@ export function TemplateVariablePicker({ onInsert, context, testId = 'template-v
         className="inline-flex cursor-pointer items-center gap-1 rounded border border-edge/40 bg-surface-control/40 px-2 py-1 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg focus:outline-none focus-visible:border-accent"
       >
         <Plus size={13} />
-        Template variable
+        <Trans>Template variable</Trans>
       </button>
 
       <OverlayPopover

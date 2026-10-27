@@ -1,4 +1,7 @@
 import { PanelLeft, FolderPlus } from 'lucide-react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { useShallow } from 'zustand/react/shallow';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -44,14 +47,23 @@ const RAIL_DOT_CLASS: Record<CommandTerminalTone, string> = {
  * (`SidebarCommandTerminalIndicator`) so the two views differ in verbosity, not
  * in meaning. The count is deliberately not spoken: the rail's summary map stores
  * tone alone so it stays a flat, shallow-comparable record.
+ *
+ * The whole name is one message per tone, the project name included, so the
+ * sentence is never pieced together from translated parts.
  */
-const RAIL_TERMINAL_LABEL: Record<CommandTerminalTone, string> = {
-  thinking: 'Command Terminals running (working)',
-  idle: 'Command Terminals running (needs you)',
-  rest: 'Command Terminals running (resting)',
-};
+function railTerminalLabel(projectName: string, tone: CommandTerminalTone): string {
+  switch (tone) {
+    case 'thinking':
+      return i18n._(msg`${projectName}, Command Terminals running (working)`);
+    case 'idle':
+      return i18n._(msg`${projectName}, Command Terminals running (needs you)`);
+    case 'rest':
+      return i18n._(msg`${projectName}, Command Terminals running (resting)`);
+  }
+}
 
 export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
+  const { t } = useLingui();
   const projects = useProjectStore((s) => s.projects);
   const currentProject = useProjectStore((s) => s.currentProject);
   const openProject = useProjectStore((s) => s.openProject);
@@ -73,11 +85,11 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
 
   return (
     <div className="h-full flex flex-col items-center pt-3 pb-2 px-1 bg-surface-raised">
-      <Tooltip label="Show sidebar" keys="view.toggleSidebar">
+      <Tooltip label={t`Show sidebar`} keys="view.toggleSidebar">
         <button
           onClick={onExpandSidebar}
           className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors mb-2"
-          aria-label="Show sidebar"
+          aria-label={t`Show sidebar`}
           data-testid="sidebar-expand-button"
         >
           <PanelLeft size={18} />
@@ -98,7 +110,7 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
             <Tooltip key={project.id} label={project.name}>
               <button
                 onClick={() => openProject(project.id)}
-                aria-label={terminalTone ? `${project.name}, ${RAIL_TERMINAL_LABEL[terminalTone]}` : undefined}
+                aria-label={terminalTone ? railTerminalLabel(project.name, terminalTone) : undefined}
                 data-testid={`rail-project-${project.id}`}
                 className={`relative w-7 h-7 rounded flex items-center justify-center text-xs font-semibold transition-colors ${
                   isActive
@@ -126,11 +138,11 @@ export function CollapsedRail({ onExpandSidebar }: CollapsedRailProps) {
         })}
       </div>
 
-      <Tooltip label="New project">
+      <Tooltip label={t`New project`}>
         <button
           onClick={startAddProject}
           className="p-1.5 mt-2 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
-          aria-label="New project"
+          aria-label={t`New project`}
           data-testid="rail-new-project-button"
         >
           <FolderPlus size={18} />

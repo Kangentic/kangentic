@@ -1,4 +1,6 @@
+import { useMemo } from 'react';
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { ButtonGroup } from '../ButtonGroup';
 import { Tooltip } from '../Tooltip';
 import type { UsageCustomWindow, UsageTimePeriod } from '../../../shared/types';
@@ -34,11 +36,16 @@ export function StatsFilterRow({
   drillLabel,
   onDrillClear,
 }: StatsFilterRowProps) {
+  const { t, i18n } = useLingui();
+  const periodOptions = useMemo(
+    () => PERIOD_OPTIONS.map(({ value, label }) => ({ value, label: i18n._(label) })),
+    [i18n],
+  );
   return (
     <div className="flex items-center gap-3 flex-wrap" data-testid="stats-filter-row">
       <div data-testid="stats-period-group">
         <ButtonGroup<UsageTimePeriod | 'custom'>
-          options={[...PERIOD_OPTIONS]}
+          options={periodOptions}
           // No quick pill reads active while a custom window overrides them.
           value={customWindow ? 'custom' : period}
           onChange={(value) => {
@@ -53,7 +60,7 @@ export function StatsFilterRow({
         onClear={onCustomWindowClear}
       />
       {drillLabel && (
-        <Tooltip label="Back to the full range">
+        <Tooltip label={t`Back to the full range`}>
           <button
             type="button"
             onClick={onDrillClear}

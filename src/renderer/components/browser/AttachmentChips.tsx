@@ -1,4 +1,6 @@
 import { Crosshair, Pencil, X } from 'lucide-react';
+import { plural } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { BrowserPickedElement } from '../../../shared/types';
 import { Tooltip } from '../Tooltip';
 
@@ -30,11 +32,11 @@ export function AttachmentChips({
       className="flex items-center gap-1.5 px-2 py-1.5 border-t border-edge flex-shrink-0 flex-wrap bg-accent/5"
       data-testid="browser-attachment-chips"
     >
-      <span className="text-[11px] text-fg-faint mr-0.5">Will send:</span>
+      <span className="text-[11px] text-fg-faint mr-0.5"><Trans>Will send:</Trans></span>
       {strokeCount > 0 && (
         <Chip
           icon={<Pencil size={11} />}
-          label={`${strokeCount} stroke${strokeCount === 1 ? '' : 's'}`}
+          label={plural(strokeCount, { one: '# stroke', other: '# strokes' })}
           onRemove={onClearStrokes}
           testId="chip-strokes"
         />
@@ -81,6 +83,7 @@ interface ChipProps {
 }
 
 function Chip({ icon, label, tip, onRemove, testId }: ChipProps) {
+  const { t } = useLingui();
   return (
     // Described, not only shown on hover: the label is cut short, and the whole value is
     // otherwise out of reach without a pointer.
@@ -91,12 +94,12 @@ function Chip({ icon, label, tip, onRemove, testId }: ChipProps) {
       >
         <span className="text-fg-muted flex-shrink-0">{icon}</span>
         <span className="font-mono truncate min-w-0">{label}</span>
-        <Tooltip label="Remove from queue">
+        <Tooltip label={t`Remove from queue`}>
           <button
             type="button"
             onClick={onRemove}
             className="flex-shrink-0 p-0.5 rounded hover:bg-surface-hover text-fg-muted hover:text-fg transition-colors"
-            aria-label="Remove from queue"
+            aria-label={t`Remove from queue`}
           >
             <X size={11} />
           </button>

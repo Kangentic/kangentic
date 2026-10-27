@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { useSessionStore } from '../../stores/session-store';
 import { findSessionForTask } from '../../stores/session-store/session-index';
 import { BrowserPane } from '../../components/browser/BrowserPane';
@@ -69,7 +70,7 @@ export function PopOutBrowserRoot({ params }: { params: PopOutTaskParams }) {
 
   return (
     <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
-      No active session for this task
+      <Trans>No active session for this task</Trans>
     </div>
   );
 }

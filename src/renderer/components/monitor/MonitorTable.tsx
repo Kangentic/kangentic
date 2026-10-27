@@ -1,19 +1,20 @@
 import { useMemo } from 'react';
 import { CirclePause, Check } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../shared/types';
 import type { AgentDetectionInfo, MonitorSessionRow } from '../../../shared/types';
 import { ActivityMark } from '../ActivityMark';
 import { DataTable, type DataTableColumn } from '../DataTable';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { formatActivityReasonText } from '../board/activity-reason-text';
-import { AUTOMATIONS_DISABLED_TIP, AutomationsDisabledGlyph } from '../board/AutomationsDisabledStrip';
+import { AutomationsDisabledGlyph, automationsDisabledTip } from '../board/AutomationsDisabledStrip';
 import { TicketNumber } from '../board/task-card-view';
 import { Tooltip } from '../Tooltip';
 import { WorkflowGlyph } from '../workflows/WorkflowStrip';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { modelRowLabel } from '../../utils/format-tokens';
 import { useConfigStore } from '../../stores/config-store';
-import { BUCKET_LABELS, bucketOf, formatMonitorStatus, monitorActivityMark, needsUser } from './monitor-view-model';
+import { bucketLabel, bucketOf, formatMonitorStatus, monitorActivityMark, needsUser } from './monitor-view-model';
 
 /**
  * The dense layout: one line per session, sortable, in the shared DataTable.
@@ -34,8 +35,9 @@ import { BUCKET_LABELS, bucketOf, formatMonitorStatus, monitorActivityMark, need
  */
 
 function StateCell({ row }: { row: MonitorSessionRow }) {
+  const { t } = useLingui();
   const bucket = bucketOf(row);
-  const title = row.activityReason ? formatActivityReasonText(row.activityReason) : BUCKET_LABELS[bucket];
+  const title = row.activityReason ? formatActivityReasonText(row.activityReason) : bucketLabel(bucket);
   // Switch on the BUCKET, not a second derivation. `bucketOf` already decides
   // which section and summary count this row lands in, and re-deriving the glyph
   // from `isWorking` disagreed with it: a running session that has not reported
@@ -58,8 +60,8 @@ function StateCell({ row }: { row: MonitorSessionRow }) {
       />
     );
   }
-  if (bucket === 'finished') return <Check size={14} className="text-fg-disabled" aria-label="Finished" />;
-  return <CirclePause size={14} className="text-fg-faint" aria-label="Paused" />;
+  if (bucket === 'finished') return <Check size={14} className="text-fg-disabled" aria-label={t`Finished`} />;
+  return <CirclePause size={14} className="text-fg-faint" aria-label={t({ message: 'Paused', context: 'Agent status' })} />;
 }
 
 /** The installed agents by name, built once per list so each cell is a map lookup. */
@@ -103,7 +105,7 @@ function automationsSortValue(row: MonitorSessionRow): number | null {
 /** A cell value, or the Column Manager's faint "Default" where the agent's own default applies. */
 function ValueOrDefault({ value }: { value: string | null }) {
   return value === null
-    ? <span className="truncate block text-fg-faint">Default</span>
+    ? <span className="truncate block text-fg-faint"><Trans context="Default value">Default</Trans></span>
     : <span className="truncate block text-fg-muted">{value}</span>;
 }
 
@@ -116,6 +118,7 @@ export function MonitorTable({
    *  would just repeat the group's own heading on every row. */
   hideProjectColumn?: boolean;
 }) {
+  const { t } = useLingui();
   const agentList = useConfigStore((state) => state.agentList);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const agentsByName = useMemo<AgentsByName>(
@@ -127,19 +130,19 @@ export function MonitorTable({
       key: 'state',
       label: '',
       width: 'w-[40px]',
-      sortValue: (row) => BUCKET_LABELS[bucketOf(row)],
+      sortValue: (row) => bucketLabel(bucketOf(row)),
       render: (row) => <StateCell row={row} />,
-      headerTip: 'Whether the agent is working, waiting on you, paused, or finished',
+      headerTip: t`Whether the agent is working, waiting on you, paused, or finished`,
     },
     ...(hideProjectColumn ? [] : [{
       key: 'project',
-      label: 'Project',
+      label: t`Project`,
       sortValue: (row: MonitorSessionRow) => row.projectName,
       render: (row: MonitorSessionRow) => <span className="truncate block text-fg-muted">{row.projectName}</span>,
     }]),
     {
       key: 'task',
-      label: 'Task',
+      label: t`Task`,
       sortValue: (row) => row.taskTitle,
       render: (row) => (
         <span className="flex items-center gap-1.5 min-w-0">
@@ -153,14 +156,14 @@ export function MonitorTable({
     },
     {
       key: 'column',
-      label: 'Column',
+      label: t`Column`,
       sortValue: (row) => row.columnName,
       render: (row) => <span className="truncate block text-fg-muted">{row.columnName}</span>,
     },
     {
       // No track here: the Column cell beside it already says where the task is.
       key: 'workflow',
-      label: 'Workflow',
+      label: t`Workflow`,
       sortValue: (row) => row.workflow?.title ?? null,
       render: (row) => (row.workflow
         ? (
@@ -170,63 +173,63 @@ export function MonitorTable({
           </span>
         )
         : <span className="text-fg-faint">-</span>),
-      headerTip: 'The workflow the task belongs to',
+      headerTip: t`The workflow the task belongs to`,
     },
     {
       // Disabled is the non-default value, so it gets the Column Manager's chip
       // for a value set on purpose; Enabled stays its faint, inherited text.
       key: 'automations',
-      label: 'Automations',
+      label: t`Automations`,
       sortValue: automationsSortValue,
       render: (row) => {
         if (row.isCommandTerminal) return <span className="text-fg-disabled">-</span>;
         if (row.automationsDisabled) {
           return (
-            <Tooltip label={AUTOMATIONS_DISABLED_TIP}>
+            <Tooltip label={automationsDisabledTip()}>
               <span
                 className="inline-flex h-[22px] max-w-full min-w-0 items-center gap-1 whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
                 data-testid="monitor-table-automations-disabled"
               >
                 <AutomationsDisabledGlyph />
-                <span className="truncate">Disabled</span>
+                <span className="truncate"><Trans>Disabled</Trans></span>
               </span>
             </Tooltip>
           );
         }
-        return <span className="truncate block text-fg-faint">Enabled</span>;
+        return <span className="truncate block text-fg-faint"><Trans>Enabled</Trans></span>;
       },
-      headerTip: "Whether the column's automations run for the task",
+      headerTip: t`Whether the column's automations run for the task`,
     },
     {
       key: 'agent',
-      label: 'Agent',
+      label: t`Agent`,
       sortValue: (row) => agentLabel(agentsByName, row),
       render: (row) => <span className="truncate block text-fg-muted">{agentLabel(agentsByName, row)}</span>,
     },
     {
       key: 'model',
-      label: 'Model',
+      label: t`Model`,
       sortValue: (row) => modelLabel(agentsByName, row),
       render: (row) => <ValueOrDefault value={modelLabel(agentsByName, row)} />,
     },
     {
       key: 'effort',
-      label: 'Effort',
+      label: t`Effort`,
       sortValue: (row) => row.effort,
       render: (row) => <ValueOrDefault value={row.effort} />,
-      headerTip: 'Reasoning effort the session is running with',
+      headerTip: t`Reasoning effort the session is running with`,
     },
     {
       key: 'permission',
-      label: 'Permission',
+      label: t`Permission`,
       sortValue: (row) => permissionLabel(agentsByName, row),
       render: (row) => <ValueOrDefault value={permissionLabel(agentsByName, row)} />,
-      headerTip: 'Permission mode the session was spawned under',
+      headerTip: t`Permission mode the session was spawned under`,
     },
     {
       key: 'runtime',
 
-      label: 'Runtime',
+      label: t`Runtime`,
       align: 'right',
       sortValue: (row) => Date.parse(row.startedAt) || 0,
       render: (row) => (row.status === 'exited'
@@ -235,7 +238,7 @@ export function MonitorTable({
     },
     {
       key: 'context',
-      label: 'Context',
+      label: t`Context`,
       align: 'right',
       sortValue: (row) => row.contextPercent ?? -1,
       render: (row) => (row.contextPercent === null
@@ -244,7 +247,7 @@ export function MonitorTable({
     },
     {
       key: 'doing',
-      label: 'Doing now',
+      label: t`Doing now`,
       sortValue: (row) => formatMonitorStatus(row),
       render: (row) => (
         <span className={`truncate block select-text ${needsUser(row) ? 'text-attention' : 'text-fg-tertiary'}`}>
@@ -254,7 +257,7 @@ export function MonitorTable({
     },
   // `agentsByName` is a dependency: the labels change once the list loads, which
   // a popped-out monitor does after mount.
-  ], [hideProjectColumn, agentsByName, showTaskNumbers]);
+  ], [hideProjectColumn, agentsByName, showTaskNumbers, t]);
 
   return (
     <DataTable
@@ -263,7 +266,7 @@ export function MonitorTable({
       rowKey={(row) => row.sessionId}
       onRowClick={onOpen}
       rowTestId="monitor-table-row"
-      emptyMessage="No sessions match the current filters."
+      emptyMessage={t`No sessions match the current filters.`}
       virtualized
     />
   );

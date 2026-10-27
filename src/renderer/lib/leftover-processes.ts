@@ -9,8 +9,14 @@
  * stopped), since that is why it stays; what stopped is in the list. It also
  * shows how long ago the report came, so one still on screen later does not
  * read as new.
+ *
+ * Each sentence is one message per shape: one task's title or a count of
+ * tasks, and whether a clause is present, so a translator never gets a
+ * sentence built from pieces. Counts are ICU plurals.
  */
 
+import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import type { LeftoverProcess, LeftoverProcessReport } from '../../shared/types';
 import { formatTimeAgo } from './datetime';
 
@@ -28,18 +34,90 @@ export interface LeftoverToast {
   since?: string;
 }
 
-function processCount(count: number): string {
-  return `${count} ${count === 1 ? 'process' : 'processes'}`;
-}
+/** Where a report's processes came from: one task, named by its title, or several, counted. */
+type ReportSource = { kind: 'task'; taskTitle: string } | { kind: 'tasks'; taskCount: number };
 
-function leftoverCount(count: number): string {
-  return `${count} leftover ${count === 1 ? 'process' : 'processes'}`;
-}
-
-/** `"Fix login"` for one task, `3 tasks` for several. */
-function sourceOf(processes: readonly LeftoverProcess[]): string {
+function sourceOf(processes: readonly LeftoverProcess[]): ReportSource {
   const taskIds = new Set(processes.map((entry) => entry.taskId));
-  return taskIds.size === 1 ? `"${processes[0].taskTitle}"` : `${taskIds.size} tasks`;
+  return taskIds.size === 1
+    ? { kind: 'task', taskTitle: processes[0].taskTitle }
+    : { kind: 'tasks', taskCount: taskIds.size };
+}
+
+/** Stopping turned off: `"Fix login" left 3 processes running.` */
+function leftRunningMessage(source: ReportSource, processCount: number): string {
+  if (source.kind === 'task') {
+    const taskTitle = source.taskTitle;
+    return i18n._(msg`${plural({ processCount }, {
+      one: msg`"${{ taskTitle }}" left # process running.`,
+      other: msg`"${{ taskTitle }}" left # processes running.`,
+    })}`);
+  }
+  const taskCount = source.taskCount;
+  return i18n._(msg`${plural({ processCount }, {
+    one: msg`${plural({ taskCount }, { other: '# tasks' })} left # process running.`,
+    other: msg`${plural({ taskCount }, { other: '# tasks' })} left # processes running.`,
+  })}`);
+}
+
+/** Every one stopped: `Stopped 2 leftover processes from "Fix login".` */
+function allStoppedMessage(source: ReportSource, stoppedCount: number): string {
+  if (source.kind === 'task') {
+    const taskTitle = source.taskTitle;
+    return i18n._(msg`${plural({ stoppedCount }, {
+      one: msg`Stopped # leftover process from "${{ taskTitle }}".`,
+      other: msg`Stopped # leftover processes from "${{ taskTitle }}".`,
+    })}`);
+  }
+  const taskCount = source.taskCount;
+  return i18n._(msg`${plural({ stoppedCount }, {
+    one: msg`Stopped # leftover process from ${plural({ taskCount }, { other: '# tasks' })}.`,
+    other: msg`Stopped # leftover processes from ${plural({ taskCount }, { other: '# tasks' })}.`,
+  })}`);
+}
+
+/** Some could not be stopped, and any still running after them: `Couldn't stop 1 process from "Fix login", and 1 more is still running.` */
+function failedMessage(source: ReportSource, failedCount: number, keptCount: number): string {
+  if (source.kind === 'task') {
+    const taskTitle = source.taskTitle;
+    if (keptCount === 0) {
+      return i18n._(msg`${plural({ failedCount }, {
+        one: msg`Couldn't stop # process from "${{ taskTitle }}".`,
+        other: msg`Couldn't stop # processes from "${{ taskTitle }}".`,
+      })}`);
+    }
+    return i18n._(msg`${plural({ failedCount }, {
+      one: msg`Couldn't stop # process from "${{ taskTitle }}", and ${plural({ keptCount }, { one: '# more is still running.', other: '# more are still running.' })}`,
+      other: msg`Couldn't stop # processes from "${{ taskTitle }}", and ${plural({ keptCount }, { one: '# more is still running.', other: '# more are still running.' })}`,
+    })}`);
+  }
+  const taskCount = source.taskCount;
+  if (keptCount === 0) {
+    return i18n._(msg`${plural({ failedCount }, {
+      one: msg`Couldn't stop # process from ${plural({ taskCount }, { other: '# tasks' })}.`,
+      other: msg`Couldn't stop # processes from ${plural({ taskCount }, { other: '# tasks' })}.`,
+    })}`);
+  }
+  return i18n._(msg`${plural({ failedCount }, {
+    one: msg`Couldn't stop # process from ${plural({ taskCount }, { other: '# tasks' })}, and ${plural({ keptCount }, { one: '# more is still running.', other: '# more are still running.' })}`,
+    other: msg`Couldn't stop # processes from ${plural({ taskCount }, { other: '# tasks' })}, and ${plural({ keptCount }, { one: '# more is still running.', other: '# more are still running.' })}`,
+  })}`);
+}
+
+/** Some still running, none failed: `2 processes from "Fix login" are still running.` */
+function stillRunningMessage(source: ReportSource, keptCount: number): string {
+  if (source.kind === 'task') {
+    const taskTitle = source.taskTitle;
+    return i18n._(msg`${plural({ keptCount }, {
+      one: msg`# process from "${{ taskTitle }}" is still running.`,
+      other: msg`# processes from "${{ taskTitle }}" are still running.`,
+    })}`);
+  }
+  const taskCount = source.taskCount;
+  return i18n._(msg`${plural({ keptCount }, {
+    one: msg`# process from ${plural({ taskCount }, { other: '# tasks' })} is still running.`,
+    other: msg`# processes from ${plural({ taskCount }, { other: '# tasks' })} are still running.`,
+  })}`);
 }
 
 /** The toast for a report, or null when it names nothing. */
@@ -49,8 +127,8 @@ export function describeLeftoverReport(report: LeftoverProcessReport): LeftoverT
   const source = sourceOf(processes);
   if (!report.stoppingEnabled) {
     return {
-      title: 'Leftover processes',
-      message: `${source} left ${processCount(processes.length)} running.`,
+      title: i18n._(msg`Leftover processes`),
+      message: leftRunningMessage(source, processes.length),
       variant: 'info',
       sticky: false,
     };
@@ -60,25 +138,24 @@ export function describeLeftoverReport(report: LeftoverProcessReport): LeftoverT
   const kept = processes.filter((entry) => entry.outcome === 'kept').length;
   if (failed === 0 && kept === 0) {
     return {
-      title: 'Leftover processes stopped',
-      message: `Stopped ${leftoverCount(stopped)} from ${source}.`,
+      title: i18n._(msg`Leftover processes stopped`),
+      message: allStoppedMessage(source, stopped),
       variant: 'info',
       sticky: false,
     };
   }
   if (failed > 0) {
-    const stillRunning = kept > 0 ? `, and ${kept} more ${kept === 1 ? 'is' : 'are'} still running.` : '.';
     return {
-      title: 'Couldn\'t stop processes',
-      message: `Couldn't stop ${processCount(failed)} from ${source}${stillRunning}`,
+      title: i18n._(msg`Couldn't stop processes`),
+      message: failedMessage(source, failed, kept),
       variant: 'warning',
       sticky: true,
       since: report.reportedAt,
     };
   }
   return {
-    title: 'Processes still running',
-    message: `${processCount(kept)} from ${source} ${kept === 1 ? 'is' : 'are'} still running.`,
+    title: i18n._(msg`Processes still running`),
+    message: stillRunningMessage(source, kept),
     variant: 'info',
     sticky: true,
     since: report.reportedAt,
@@ -174,16 +251,18 @@ export function rowsToRecheck(input: RecheckInput): { processIds: string[]; youn
 
 /** The line under a row's name, and whether it reads as a failure. */
 export function rowDetailOf(entry: LeftoverProcess, state: LeftoverRowState): { text: string; failure: boolean } {
-  if (state === 'ended') return { text: 'No longer running.', failure: false };
-  if (state === 'failed') return { text: "Couldn't stop it. Try again, or close it yourself.", failure: true };
-  const folder = entry.place === 'worktree' ? 'the worktree' : 'the project folder';
+  if (state === 'ended') return { text: i18n._(msg`No longer running.`), failure: false };
+  if (state === 'failed') return { text: i18n._(msg`Couldn't stop it. Try again, or close it yourself.`), failure: true };
+  const inWorktree = entry.place === 'worktree';
   // Once stopped, a kept row reads like any stopped one: why it was kept, and
   // the warning about stopping it, no longer apply.
-  if (state === 'stopped') return { text: `Ran in ${folder}.`, failure: false };
-  if (entry.reason === 'window') return { text: 'Has an open window.', failure: false };
-  if (entry.reason === 'multiplexer') return { text: 'A tmux server. Stopping it ends all your tmux sessions.', failure: false };
-  if (entry.reason === 'shared') return { text: 'Other work uses it too. Stopping it can break that work.', failure: false };
-  return { text: `Runs in ${folder}.`, failure: false };
+  if (state === 'stopped') {
+    return { text: inWorktree ? i18n._(msg`Ran in the worktree.`) : i18n._(msg`Ran in the project folder.`), failure: false };
+  }
+  if (entry.reason === 'window') return { text: i18n._(msg`Has an open window.`), failure: false };
+  if (entry.reason === 'multiplexer') return { text: i18n._(msg`A tmux server. Stopping it ends all your tmux sessions.`), failure: false };
+  if (entry.reason === 'shared') return { text: i18n._(msg`Other work uses it too. Stopping it can break that work.`), failure: false };
+  return { text: inWorktree ? i18n._(msg`Runs in the worktree.`) : i18n._(msg`Runs in the project folder.`), failure: false };
 }
 
 /** The list's two sections. A row stays in the section it opened in, whatever its Stop does. */
@@ -210,5 +289,11 @@ export function groupByTask(processes: readonly LeftoverProcess[]): Array<{ task
 
 /** The list's title: `Processes from "Fix login"` or `Processes from 3 tasks`. */
 export function reportTitleOf(report: LeftoverProcessReport): string {
-  return `Processes from ${sourceOf(report.processes)}`;
+  const source = sourceOf(report.processes);
+  if (source.kind === 'task') {
+    const taskTitle = source.taskTitle;
+    return i18n._(msg`Processes from "${{ taskTitle }}"`);
+  }
+  const taskCount = source.taskCount;
+  return i18n._(msg`Processes from ${plural({ taskCount }, { other: '# tasks' })}`);
 }

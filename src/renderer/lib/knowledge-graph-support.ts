@@ -10,13 +10,21 @@
  * can never load.
  */
 
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { embeddingRuntimeGapName, isEmbeddingRuntimeSupported } from '../../shared/embedding-runtime';
 import { translateText } from '../i18n/translate';
 import type { AppConfig } from '../../shared/types';
 
 /** The tag the Knowledge Graph card, the map's stand-in card and the Index
- *  lines that need the model all carry where it cannot run. */
+ *  lines that need the model all carry where it cannot run. The English
+ *  constant stays for callers not yet switched to `knowledgeGraphUnavailableTag`. */
 export const KNOWLEDGE_GRAPH_UNAVAILABLE_TAG = 'Unavailable';
+
+/** `KNOWLEDGE_GRAPH_UNAVAILABLE_TAG` in the session's language, read where it renders. */
+export function knowledgeGraphUnavailableTag(): string {
+  return i18n._(msg`Unavailable`);
+}
 
 /** Whether this build's platform and arch can load the local model. */
 export function knowledgeGraphSupported(): boolean {
@@ -30,5 +38,6 @@ export function knowledgeGraphOn(config: AppConfig['knowledgeGraph'] | undefined
 
 /** The sentence that says why it cannot run here. */
 export function knowledgeGraphUnsupportedLine(): string {
-  return `The local model does not run on ${translateText(embeddingRuntimeGapName(window.electronAPI.platform, window.electronAPI.arch))}.`;
+  const platformName = translateText(embeddingRuntimeGapName(window.electronAPI.platform, window.electronAPI.arch));
+  return i18n._(msg`The local model does not run on ${{ platformName }}.`);
 }

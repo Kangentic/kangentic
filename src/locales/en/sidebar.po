@@ -6,3 +6,192 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "\"{name}\""
+msgstr "\"{name}\""
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "\"{search}\""
+msgstr "\"{search}\""
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
+msgstr "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
+msgstr "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
+msgstr "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
+msgstr "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+msgid "{idleCount} idle"
+msgstr "{idleCount} idle"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+msgid "{idleCount} idle, {thinkingCount} thinking"
+msgstr "{idleCount} idle, {thinkingCount} thinking"
+
+#: src/renderer/components/sidebar/CollapsedRail.tsx
+msgid "{projectName}, Command Terminals running (needs you)"
+msgstr "{projectName}, Command Terminals running (needs you)"
+
+#: src/renderer/components/sidebar/CollapsedRail.tsx
+msgid "{projectName}, Command Terminals running (resting)"
+msgstr "{projectName}, Command Terminals running (resting)"
+
+#: src/renderer/components/sidebar/CollapsedRail.tsx
+msgid "{projectName}, Command Terminals running (working)"
+msgstr "{projectName}, Command Terminals running (working)"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+msgid "{projectName}: {label}"
+msgstr "{projectName}: {label}"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+msgid "{thinkingCount} thinking"
+msgstr "{thinkingCount} thinking"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
+#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+msgid "Add project"
+msgstr "Add project"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
+msgstr "Are you sure you want to delete <0>\"{projectName}\"</0>?"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Clear search"
+msgstr "Clear search"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+msgid "Click to open"
+msgstr "Click to open"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Delete"
+msgstr "Delete"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Delete Group"
+msgstr "Delete Group"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Delete group <0>\"{groupName}\"</0>?"
+msgstr "Delete group <0>\"{groupName}\"</0>?"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Delete Project"
+msgstr "Delete Project"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Group name"
+msgstr "Group name"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+msgid "Group options (or right-click)"
+msgstr "Group options (or right-click)"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Hide sidebar"
+msgstr "Hide sidebar"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+msgid "More options"
+msgstr "More options"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+msgid "More project actions"
+msgstr "More project actions"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+msgid "Move down"
+msgstr "Move down"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+msgid "Move to"
+msgstr "Move to"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+msgid "Move up"
+msgstr "Move up"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
+#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+msgid "New group"
+msgstr "New group"
+
+#: src/renderer/components/sidebar/CollapsedRail.tsx
+msgid "New project"
+msgstr "New project"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "No projects match"
+msgstr "No projects match"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "No projects yet"
+msgstr "No projects yet"
+
+#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+msgid "Open folder as project"
+msgstr "Open folder as project"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+msgid "Open in Explorer"
+msgstr "Open in Explorer"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+msgid "Open menu for {projectName}"
+msgstr "Open menu for {projectName}"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+msgid "Open menu for group {groupName}"
+msgstr "Open menu for group {groupName}"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Project deleted"
+msgstr "Project deleted"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+msgid "Project Settings"
+msgstr "Project Settings"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Projects"
+msgstr "Projects"
+
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+msgid "Remove from group"
+msgstr "Remove from group"
+
+#: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+msgid "Rename"
+msgstr "Rename"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Search projects..."
+msgstr "Search projects..."
+
+#: src/renderer/components/sidebar/CollapsedRail.tsx
+msgid "Show sidebar"
+msgstr "Show sidebar"
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "This will remove the project from Kangentic but won't delete any files on disk."
+msgstr "This will remove the project from Kangentic but won't delete any files on disk."
+
+#: src/renderer/components/sidebar/ProjectSidebar.tsx
+msgid "Use Add project below to open a folder"
+msgstr "Use Add project below to open a folder"

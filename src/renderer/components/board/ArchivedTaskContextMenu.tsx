@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Trash2, FolderOpen, Copy, GitCompare, RotateCcw, MessageSquare } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useToastStore } from '../../stores/toast-store';
 import type { Task, Swimlane } from '../../../shared/types';
 
@@ -35,7 +36,9 @@ export function ArchivedTaskContextMenu({
   onDelete: () => void;
   onClose: () => void;
 }) {
+  const { t } = useLingui();
   const menuRef = useRef<HTMLDivElement>(null);
+  const displayId = task.display_id;
 
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
@@ -73,15 +76,16 @@ export function ArchivedTaskContextMenu({
       <button
         type="button"
         onClick={() => {
+          // The copied text stays English: it is pasted as an identifier, not read as UI.
           navigator.clipboard.writeText(`Task #${task.display_id}`);
-          useToastStore.getState().addToast({ title: 'Task ID copied', message: `#${task.display_id}`, variant: 'info' });
+          useToastStore.getState().addToast({ title: t`Task ID copied`, message: `#${task.display_id}`, variant: 'info' });
           onClose();
         }}
         className="w-full px-3 py-1.5 text-sm font-mono text-fg-faint hover:text-fg-secondary transition-colors flex items-center gap-2 cursor-pointer"
         data-testid="archived-context-copy-task-id"
       >
         <Copy size={14} />
-        Task #{task.display_id}
+        <Trans>Task #{displayId}</Trans>
       </button>
       <div className="border-t border-edge my-1" />
       <button
@@ -91,7 +95,7 @@ export function ArchivedTaskContextMenu({
         data-testid="archived-context-open-task"
       >
         <FolderOpen size={14} className="text-fg-faint" />
-        Open
+        <Trans context="Action">Open</Trans>
       </button>
       <button
         type="button"
@@ -100,7 +104,7 @@ export function ArchivedTaskContextMenu({
         data-testid="archived-context-view-conversation"
       >
         <MessageSquare size={14} className="text-fg-faint" />
-        View conversation
+        <Trans>View conversation</Trans>
       </button>
 
       <button
@@ -110,7 +114,7 @@ export function ArchivedTaskContextMenu({
         data-testid="archived-context-show-changes"
       >
         <GitCompare size={14} className="text-fg-faint" />
-        Show changes
+        <Trans>Show changes</Trans>
       </button>
 
       {restoreTargets.length > 0 && (
@@ -118,7 +122,7 @@ export function ArchivedTaskContextMenu({
           <div className="border-t border-edge my-1" />
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint flex items-center gap-1.5">
             <RotateCcw size={11} />
-            Restore to
+            <Trans>Restore to</Trans>
           </div>
           {restoreTargets.map((lane) => (
             <button
@@ -147,7 +151,7 @@ export function ArchivedTaskContextMenu({
         data-testid="archived-context-delete-task"
       >
         <Trash2 size={14} />
-        Delete
+        <Trans>Delete</Trans>
       </button>
     </div>
   );

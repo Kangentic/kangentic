@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { Loader2 } from 'lucide-react';
-import { useLingui } from '@lingui/react/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -58,7 +58,7 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
   if (!projectPath) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
-        No changes on this branch
+        <Trans>No changes on this branch</Trans>
       </div>
     );
   }
@@ -109,7 +109,7 @@ function UnboardedTaskRoot({ params }: { params: PopOutTaskParams }) {
   if (!boardHydrated) return <PanelFallback />;
   return (
     <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="popout-changes-none">
-      No changes on this branch
+      <Trans>No changes on this branch</Trans>
     </div>
   );
 }
@@ -122,7 +122,7 @@ function CompletedChangesRoot({ params, task }: { params: PopOutTaskParams; task
   if (error || !changes) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="popout-completed-changes-error">
-        {error ?? 'The task\'s changes could not be read'}
+        {error ?? <Trans>The task's changes could not be read</Trans>}
       </div>
     );
   }

@@ -1,5 +1,7 @@
 import { type StateCreator } from 'zustand';
 import { arrayMove } from '@dnd-kit/sortable';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskSetRuntimeOverrideResult } from '../../../shared/types';
 import { useConfigStore } from '../config-store';
 import { useSessionStore } from '../session-store';
@@ -144,7 +146,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         set((s) => ({ tasks: s.tasks.map((t) => (t.id === taskId ? previous : t)) }));
       }
       useToastStore.getState().addToast({
-        title: "Couldn't apply model or effort",
+        title: i18n._(msg`Couldn't apply model or effort`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
@@ -167,12 +169,12 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // saved and the agent picks it up on its next resume.
       useToastStore.getState().addToast(isPostPersistFailure
         ? {
-          title: 'Model change saved',
-          message: 'The running agent picks it up the next time it resumes.',
+          title: i18n._(msg`Model change saved`),
+          message: i18n._(msg`The running agent picks it up the next time it resumes.`),
           variant: 'info',
         }
         : {
-          title: "Couldn't apply model or effort",
+          title: i18n._(msg`Couldn't apply model or effort`),
           message: asSentence(result.reason),
           variant: 'error',
         });
@@ -223,7 +225,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // race surface for a hard delete. Matches deleteArchivedTask.
       set({ tasks: previousTasks, archivedTasks: previousArchivedTasks, archivedTotalCount: previousArchivedTotalCount });
       useToastStore.getState().addToast({
-        title: "Couldn't delete task",
+        title: i18n._(msg`Couldn't delete task`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
@@ -387,7 +389,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     // that only carries an auto_command injects it without restarting; one
     // that changes model or effort restarts, and main labels that itself.
     if (isColumnChange && targetLane?.auto_spawn && !prevSessionId) {
-      useSessionStore.getState().setSpawnProgress(input.taskId, 'Initializing...');
+      useSessionStore.getState().setSpawnProgress(input.taskId, i18n._(msg`Initializing...`));
     }
 
     // Optimistically clear session for tasks moving to backlog
@@ -454,9 +456,10 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         useSessionStore.getState().setSpawnProgress(input.taskId, null);
         const isResume = prevSessionId !== null;
         const startedTaskId = movedTask.id;
+        const taskTitle = movedTask.title;
         useToastStore.getState().addToast({
-          title: isResume ? 'Agent resumed' : 'Agent started',
-          message: `"${movedTask.title}" is running.`,
+          title: isResume ? i18n._(msg`Agent resumed`) : i18n._(msg`Agent started`),
+          message: i18n._(msg`"${{ taskTitle }}" is running.`),
           variant: 'success',
           onOpen: sourceProjectId !== null
             ? () => openTaskFromNotification(sourceProjectId, startedTaskId)
@@ -498,7 +501,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         return { ok: false };
       }
       useToastStore.getState().addToast({
-        title: "Couldn't move task",
+        title: i18n._(msg`Couldn't move task`),
         message: asSentence(message),
         variant: 'error',
       });
@@ -570,7 +573,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       if (isSupersededMove(taskId, thisGen)) return; // Don't clobber newer state on error
       await get().loadBoard();
       useToastStore.getState().addToast({
-        title: "Couldn't reorder task",
+        title: i18n._(msg`Couldn't reorder task`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });

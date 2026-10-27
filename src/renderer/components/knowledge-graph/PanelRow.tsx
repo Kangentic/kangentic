@@ -14,6 +14,7 @@
  */
 
 import { Info } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 
 /**
@@ -27,11 +28,12 @@ import { Tooltip } from '../Tooltip';
  * the tip to the body, so the panel cannot clip it.
  */
 export function InfoHint({ about, text }: { about: string; text: string }) {
+  const { t } = useLingui();
   return (
     <Tooltip label={text}>
       <button
         type="button"
-        aria-label={`About ${about}`}
+        aria-label={t`About ${about}`}
         className="inline-flex flex-shrink-0 rounded text-fg-faint hover:text-fg-muted transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
       >
         <Info size={11} aria-hidden="true" />

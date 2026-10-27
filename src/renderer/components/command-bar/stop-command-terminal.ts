@@ -11,6 +11,8 @@
  * CommandTerminalWindow.tsx for why 'no-session' stays quiet).
  */
 
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -28,8 +30,8 @@ export async function killCommandTerminalInSlot(slot: string): Promise<void> {
   }
   if (outcome === 'failed') {
     useToastStore.getState().addToast({
-      title: "Couldn't stop the terminal",
-      message: 'Its process may still be running.',
+      title: i18n._(msg`Couldn't stop the terminal`),
+      message: i18n._(msg`Its process may still be running.`),
       variant: 'error',
     });
   }

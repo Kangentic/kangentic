@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
@@ -51,7 +53,8 @@ export function sessionToggleRowFor(
  * The body of a toast for a session call that failed: the reason, as one
  * sentence. A Resume refusal (Done, archived, To Do) arrives as main's
  * two-sentence guidance, written for the phone and the menu's tooltip, and
- * toasts as its one-sentence form.
+ * toasts as its one-sentence form, which translates. The match reads main's
+ * English as written, so it never sees a translated string.
  */
 export function sessionFailureBody(error: unknown): string {
   const reason = describeIpcError(error, '');
@@ -61,7 +64,7 @@ export function sessionFailureBody(error: unknown): string {
 
 /** The toast for a pause or resume that failed. */
 export function sessionToggleFailureToast(direction: SessionToggleDirection, error: unknown): { title: string; message: string } {
-  const title = direction === 'pause' ? "Couldn't pause session" : "Couldn't resume session";
+  const title = direction === 'pause' ? i18n._(msg`Couldn't pause session`) : i18n._(msg`Couldn't resume session`);
   return { title, message: sessionFailureBody(error) };
 }
 
@@ -72,7 +75,7 @@ export function sessionToggleFailureToast(direction: SessionToggleDirection, err
  */
 export function toastIfReconnectedResume(priorSessionId: string | null, returned: Session | null): void {
   if (returned === null || returned.status !== 'running' || priorSessionId !== returned.id) return;
-  useToastStore.getState().addToast({ title: 'Reconnected', message: 'The session was already running.', variant: 'info' });
+  useToastStore.getState().addToast({ title: i18n._(msg`Reconnected`), message: i18n._(msg`The session was already running.`), variant: 'info' });
 }
 
 /**

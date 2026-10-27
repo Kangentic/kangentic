@@ -1,3 +1,5 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ConversationExpiredNotice } from '../../shared/types';
 import { formatMonthDay } from './datetime';
 
@@ -11,6 +13,8 @@ import { formatMonthDay } from './datetime';
  */
 export function describeConversationExpired(notice: ConversationExpiredNotice, now: Date = new Date()): string {
   const lastActive = notice.lastActiveAt ? formatMonthDay(notice.lastActiveAt, now) : '';
-  const previous = lastActive ? `its conversation from ${lastActive}` : 'its last conversation';
-  return `"${notice.taskTitle}" started fresh because ${previous} expired.`;
+  const taskTitle = notice.taskTitle;
+  return lastActive
+    ? i18n._(msg`"${{ taskTitle }}" started fresh because its conversation from ${{ lastActive }} expired.`)
+    : i18n._(msg`"${{ taskTitle }}" started fresh because its last conversation expired.`);
 }

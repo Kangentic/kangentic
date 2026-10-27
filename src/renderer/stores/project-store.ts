@@ -1,4 +1,6 @@
 import { create, type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult, ProjectOpenByPathOverrides, ProjectPathProbe, ProjectEnsureGitResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../shared/ipc-channels';
 import { describeIpcError, asSentence } from '../lib/ipc-error';
@@ -185,8 +187,8 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
           // describeIpcError has no reason to know how to strip, so
           // interpolating it would leak the raw token into the toast.
           useToastStore.getState().addToast({
-            title: "Couldn't open project",
-            message: 'Its record could not be found after refreshing the project list.',
+            title: i18n._(msg`Couldn't open project`),
+            message: i18n._(msg`Its record could not be found after refreshing the project list.`),
             variant: 'error',
           });
           return 'failed';
@@ -205,7 +207,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
         await get().loadCurrent();
         const stillListed = get().projects.some((candidate) => candidate.id === id);
         useToastStore.getState().addToast({
-          title: 'Project not available',
+          title: i18n._(msg`Project not available`),
           // Not describeIpcError(err) in the stillListed branch: this err's
           // message IS the PROJECT_NOT_FOUND_PREFIX sentinel, which
           // describeIpcError has no reason to know how to strip, so
@@ -214,15 +216,15 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
             // The refetch still lists it: this is a main-side
             // inconsistency, not a stale renderer, and the "gone" story
             // would be false.
-            ? 'The project list may be out of sync. Try again.'
-            : 'The list has been refreshed.',
+            ? i18n._(msg`The project list may be out of sync. Try again.`)
+            : i18n._(msg`The list has been refreshed.`),
           variant: 'error',
         });
         return 'not-found';
       }
 
       useToastStore.getState().addToast({
-        title: "Couldn't open project",
+        title: i18n._(msg`Couldn't open project`),
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
@@ -239,7 +241,7 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
         project = await window.electronAPI.projects.getCurrent();
       } catch (err) {
         useToastStore.getState().addToast({
-          title: "Couldn't open project",
+          title: i18n._(msg`Couldn't open project`),
           message: asSentence(describeIpcError(err)),
           variant: 'error',
         });

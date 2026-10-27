@@ -17,6 +17,7 @@
 
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { ArrowUp, Check, Search, Sparkles, X } from 'lucide-react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import type { KnowledgeGraphRelatedTask } from '../../../shared/types';
 import type { KnowledgeGraphChatTurn } from '../../stores/knowledge-graph-store';
 import { KnowledgeGraphChatText, stripProtocolLine, ticketRef } from './KnowledgeGraphChatText';
@@ -49,14 +50,11 @@ function Step({ done, children }: { done: boolean; children: React.ReactNode }) 
   );
 }
 
-function tasksWord(count: number): string {
-  return count === 1 ? 'task' : 'tasks';
-}
-
 interface TurnProps {
   turn: KnowledgeGraphChatTurn;
   isLatest: boolean;
-  agentName: string;
+  /** The answering agent's name, or null when none is resolved ("the agent"). */
+  agentName: string | null;
   onRetry: (turnId: string) => void;
   onOpenTask: (task: KnowledgeGraphRelatedTask) => void;
   canOpenTask: (task: KnowledgeGraphRelatedTask) => boolean;
@@ -90,12 +88,16 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
   const prose = stripProtocolLine(turn.text);
 
   if (turn.status === 'failed') {
+    // Main's own words, shown as written.
+    const reason = turn.reason ?? '';
     return (
       <div className="flex items-start gap-2.5" data-testid="knowledge-graph-chat-turn-failed">
         <Avatar />
         <div className="flex min-w-0 flex-1 flex-col gap-2.5 pt-[3px]">
           <div className="text-[13px] leading-[1.6] text-danger">
-            {agentName} didn&apos;t answer. {turn.reason}
+            {agentName
+              ? <Trans>{agentName} didn&apos;t answer. {reason}</Trans>
+              : <Trans>the agent didn&apos;t answer. {reason}</Trans>}
           </div>
           {isLatest ? (
             <button
@@ -104,7 +106,7 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
               className="self-start rounded-md border border-edge-input bg-surface-control px-[11px] py-1 text-xs text-fg hover:bg-surface-hover cursor-pointer"
               data-testid="knowledge-graph-chat-retry"
             >
-              Try again
+              <Trans>Try again</Trans>
             </button>
           ) : null}
         </div>
@@ -121,19 +123,22 @@ const AgentTurn = memo(function AgentTurn({ turn, isLatest, agentName, onRetry, 
         {inFlight && !prose ? (
           <div className="flex flex-col gap-2" data-testid="knowledge-graph-chat-pending">
             {turn.status === 'finding' ? (
-              <div className="text-xs text-fg-muted">Finding related work</div>
+              <div className="text-xs text-fg-muted"><Trans>Finding related work</Trans></div>
             ) : searching ? (
               <>
-                <Step done>Read {turn.handedCount} related {tasksWord(turn.handedCount)}</Step>
-                {turn.searches.map((search, index) => (
-                  <Step key={`${index}:${search.query}`} done={index < turn.searches.length - 1}>
-                    Searching {`"${search.query}"`}
-                  </Step>
-                ))}
+                <Step done><Plural value={turn.handedCount} one="Read # related task" other="Read # related tasks" /></Step>
+                {turn.searches.map((search, index) => {
+                  const query = search.query;
+                  return (
+                    <Step key={`${index}:${search.query}`} done={index < turn.searches.length - 1}>
+                      <Trans>Searching &quot;{query}&quot;</Trans>
+                    </Step>
+                  );
+                })}
               </>
             ) : (
               <div className="text-xs text-fg-muted" data-testid="knowledge-graph-chat-reading">
-                Reading {turn.handedCount} related {tasksWord(turn.handedCount)}
+                <Plural value={turn.handedCount} one="Reading # related task" other="Reading # related tasks" />
               </div>
             )}
             <Shimmer width="92%" />
@@ -176,7 +181,8 @@ export function KnowledgeGraphChat({
   onDraftChange,
 }: {
   thread: ReadonlyArray<KnowledgeGraphChatTurn>;
-  agentName: string;
+  /** The answering agent's name, or null when none is resolved. */
+  agentName: string | null;
   /** True when the question went out. */
   onAsk: (question: string) => boolean;
   onRetry: (turnId: string) => void;
@@ -194,6 +200,7 @@ export function KnowledgeGraphChat({
   draft: string;
   onDraftChange: (text: string) => void;
 }) {
+  const { t } = useLingui();
   const setDraft = onDraftChange;
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const busy = thread.some((turn) => turn.status === 'finding' || turn.status === 'answering');
@@ -223,12 +230,12 @@ export function KnowledgeGraphChat({
           choice, and the sparkle belongs to the replies alone, so each answer
           carries it once rather than the panel stamping it again above them. */}
       <div className="flex items-center gap-2 border-b border-edge py-2.5 pl-3.5 pr-2.5">
-        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" data-testid="knowledge-graph-chat-title">Chat</span>
-        <Tooltip label="End the chat">
+        <span className="min-w-0 flex-1 truncate text-xs font-semibold text-fg" data-testid="knowledge-graph-chat-title"><Trans>Chat</Trans></span>
+        <Tooltip label={t`End the chat`}>
           <button
             type="button"
             onClick={onEnd}
-            aria-label="End the chat"
+            aria-label={t`End the chat`}
             className="flex h-6 w-6 items-center justify-center rounded-md text-fg-muted hover:bg-surface-hover hover:text-fg cursor-pointer"
             data-testid="knowledge-graph-chat-end"
           >
@@ -270,14 +277,14 @@ export function KnowledgeGraphChat({
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder="Ask a follow-up"
-          aria-label="Ask a follow-up"
+          placeholder={t`Ask a follow-up`}
+          aria-label={t`Ask a follow-up`}
           className="min-w-0 flex-1 bg-transparent text-[13px] text-fg placeholder:text-fg-muted outline-none"
           data-testid="knowledge-graph-chat-input"
         />
         <button
           type="submit"
-          aria-label="Send"
+          aria-label={t`Send`}
           disabled={busy || !draft.trim()}
           className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[7px] bg-accent text-accent-on hover:bg-accent-emphasis disabled:bg-surface-control disabled:text-fg-muted cursor-pointer disabled:cursor-default"
           data-testid="knowledge-graph-chat-send"

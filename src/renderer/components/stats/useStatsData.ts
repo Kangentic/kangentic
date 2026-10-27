@@ -1,4 +1,6 @@
 import { useMemo } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type {
   CostSeriesPoint,
   SessionStatus,
@@ -75,12 +77,15 @@ export function foldBreakdownForDonut(entries: BreakdownEntry[]): DonutSlice[] {
   const head = nonEmpty.slice(0, MAX_DONUT_SLICES);
   const tail = nonEmpty.slice(MAX_DONUT_SLICES);
 
+  // The id stays '(unknown)' (deriveModelStack matches a series' null model by
+  // it); only the label the user reads is translated.
+  const unknownLabel = i18n._(msg`(unknown)`);
   let slotIndex = 0;
   const slices: DonutSlice[] = head.map((entry) => {
     const isUnknown = entry.id === null;
     return {
       id: entry.id ?? '(unknown)',
-      label: isUnknown ? '(unknown)' : entry.label ?? entry.id ?? '(unknown)',
+      label: isUnknown ? unknownLabel : entry.label ?? entry.id ?? unknownLabel,
       value: entry.inputTokens + entry.outputTokens,
       costUsd: entry.costUsd,
       colorVar: isUnknown ? UNKNOWN_SLICE_VAR : CHART_SLOT_VARS[slotIndex++] ?? OTHER_SLICE_VAR,
@@ -88,9 +93,10 @@ export function foldBreakdownForDonut(entries: BreakdownEntry[]): DonutSlice[] {
   });
 
   if (tail.length > 0) {
+    const foldedCount = tail.length;
     slices.push({
       id: '__other__',
-      label: `Other (${tail.length})`,
+      label: i18n._(msg`Other (${{ foldedCount }})`),
       value: tail.reduce((sum, entry) => sum + entry.inputTokens + entry.outputTokens, 0),
       costUsd: tail.reduce((sum, entry) => sum + entry.costUsd, 0),
       colorVar: OTHER_SLICE_VAR,
@@ -179,7 +185,11 @@ export function deriveModelStack(
     return row;
   });
   if (usesUnrankedKey) {
-    series.push({ key: UNRANKED_STACK_KEY, label: 'Other', colorVar: OTHER_SLICE_VAR });
+    series.push({
+      key: UNRANKED_STACK_KEY,
+      label: i18n._(msg({ message: 'Other', context: 'Usage statistics' })),
+      colorVar: OTHER_SLICE_VAR,
+    });
     for (const row of rows) row[UNRANKED_STACK_KEY] = (row[UNRANKED_STACK_KEY] as number | undefined) ?? 0;
   }
   return { series, rows };
@@ -274,10 +284,10 @@ export function deriveTokenTypeStack(
   // separation (validated via the dataviz palette validator); slot 6 (red)
   // clears CVD separation cleanly on every theme with no other slot reused.
   const series: ModelStackSeries[] = [
-    { key: 'stack0', label: 'Input', colorVar: CHART_SLOT_VARS[0] },
-    { key: 'stack1', label: 'Output', colorVar: CHART_SLOT_VARS[1] },
-    { key: 'stack2', label: 'Cache read', colorVar: CHART_SLOT_VARS[2] },
-    { key: 'stack3', label: 'Cache write', colorVar: CHART_SLOT_VARS[5] },
+    { key: 'stack0', label: i18n._(msg({ message: 'Input', context: 'Usage statistics' })), colorVar: CHART_SLOT_VARS[0] },
+    { key: 'stack1', label: i18n._(msg({ message: 'Output', context: 'Usage statistics' })), colorVar: CHART_SLOT_VARS[1] },
+    { key: 'stack2', label: i18n._(msg`Cache read`), colorVar: CHART_SLOT_VARS[2] },
+    { key: 'stack3', label: i18n._(msg`Cache write`), colorVar: CHART_SLOT_VARS[5] },
   ];
   const rows: ModelStackRow[] = tokenSeries.map((point) => ({
     x: point.bucketStartMs,
@@ -325,13 +335,18 @@ export function deltaPercent(current: number, previous: number | null | undefine
   return (current - previous) / previous;
 }
 
-/** Axis tick / tooltip label formatter picked by bucket width. */
+/**
+ * Axis tick / tooltip label formatter picked by bucket width, in the session's
+ * language like every other date (src/renderer/lib/datetime.ts). The `||
+ * undefined` matches datetime.ts's own fallback: an empty locale throws.
+ */
 export function formatBucketLabel(bucketStartMs: number, bucketSizeMs: number): string {
   const date = new Date(bucketStartMs);
+  const locale = i18n.locale || undefined;
   if (bucketSizeMs < 24 * 3_600_000) {
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   }
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -575,8 +590,9 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
       // "(unknown)" swatch a null model/agent gets.
       byEffortSlices: foldBreakdownForDonut(
         (payload.byEffort ?? []).map((effort) => ({
+          // The id stays '(default)'; only the label is translated.
           id: effort.effort ?? '(default)',
-          label: effort.effort ?? '(default)',
+          label: effort.effort ?? i18n._(msg`(default)`),
           inputTokens: effort.inputTokens,
           outputTokens: effort.outputTokens,
           costUsd: effort.costUsd,

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { ActivityMark } from '../../ActivityMark';
 
 export interface SidebarActivityCountsProps {
@@ -14,6 +15,7 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
   size = 'row',
   className,
 }: SidebarActivityCountsProps) {
+  const { t } = useLingui();
   const hasThinking = thinkingCount > 0;
   const hasIdle = idleCount > 0;
   if (!hasThinking && !hasIdle) return null;
@@ -31,16 +33,19 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
   // 12 is the floor: below it the 2px stroke scales to a sub-pixel hairline and smears, which
   // is why the branding set declares `floors.indicator = 12`.
   const iconSize = size === 'group' ? 12 : 16;
-  const labelParts: string[] = [];
-  if (hasIdle) labelParts.push(`${idleCount} idle`);
-  if (hasThinking) labelParts.push(`${thinkingCount} thinking`);
+  // One message per combination, so no list is pieced together from parts.
+  const label = hasIdle && hasThinking
+    ? t`${idleCount} idle, ${thinkingCount} thinking`
+    : hasIdle
+      ? t`${idleCount} idle`
+      : t`${thinkingCount} thinking`;
 
   const countBoxStyle: React.CSSProperties = { height: iconSize };
 
   return (
     <span
       className={`flex-shrink-0 flex items-center gap-2 text-[11px] tabular-nums ${className ?? ''}`}
-      aria-label={labelParts.join(', ')}
+      aria-label={label}
       data-testid="sidebar-activity-counts"
     >
       {hasIdle && (

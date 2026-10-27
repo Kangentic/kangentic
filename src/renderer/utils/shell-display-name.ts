@@ -1,10 +1,14 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
+
 /**
  * Converts a shell path (e.g. `C:\...\powershell.exe`) or WSL command
  * (`wsl -d Ubuntu`) into a friendly display name that mirrors the
- * conventions from ShellResolver.getAvailableShells().
+ * conventions from ShellResolver.getAvailableShells(). Shell names stay as
+ * written; only "Unknown" and Windows' "Command Prompt" translate.
  */
 export function shellDisplayName(shellPath: string | undefined | null): string {
-  if (!shellPath) return 'Unknown';
+  if (!shellPath) return i18n._(msg`Unknown`);
 
   // WSL distributions: "wsl -d <distro>"
   const wslMatch = shellPath.match(/^wsl\s+-d\s+(.+)/i);
@@ -20,7 +24,7 @@ export function shellDisplayName(shellPath: string | undefined | null): string {
   const nameMap: Record<string, string> = {
     pwsh: 'PowerShell 7',
     powershell: 'PowerShell 5',
-    cmd: 'Command Prompt',
+    cmd: i18n._(msg`Command Prompt`),
     bash: isWindows ? 'Git Bash' : 'bash',
     zsh: 'zsh',
     fish: 'fish',
@@ -30,5 +34,5 @@ export function shellDisplayName(shellPath: string | undefined | null): string {
     sh: 'sh',
   };
 
-  return nameMap[basename] ?? (basename || 'Unknown');
+  return nameMap[basename] ?? (basename || i18n._(msg`Unknown`));
 }

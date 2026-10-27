@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalLink, SquareTerminal } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { MonitorSessionRow, Swimlane, Task } from '../../../shared/types';
 import { TaskContextMenu } from '../board/TaskContextMenu';
 import { DeleteTaskDialog } from '../board/DeleteTaskDialog';
@@ -58,6 +59,7 @@ export function MonitorRowContextMenu({
   onOpenOnBoard,
   onClose,
 }: MonitorRowContextMenuProps) {
+  const { t } = useLingui();
   const [resolved, setResolved] = useState<{ task: Task; swimlanes: Swimlane[] } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   // Read by the menu's own close, in the same click that set it: `TaskContextMenu`
@@ -88,9 +90,12 @@ export function MonitorRowContextMenu({
    *  sees an unchanged row with no explanation. The title names the action
    *  ("Couldn't move task"); a click on the card opens the task. */
   const reportActionFailure = (failureTitle: string, error: unknown): void => {
+    const taskTitle = row.taskTitle;
+    // Main's reason, as written.
+    const reason = asSentence(describeIpcError(error));
     useToastStore.getState().addToast({
       title: failureTitle,
-      message: `"${row.taskTitle}": ${asSentence(describeIpcError(error))}`,
+      message: t`"${taskTitle}": ${reason}`,
       variant: 'warning',
       onOpen: () => openTaskFromNotification(row.projectId, row.taskId),
     });
@@ -107,11 +112,11 @@ export function MonitorRowContextMenu({
   };
 
   const deleteTask = (): void => {
-    runWrite("Couldn't delete task", window.electronAPI.tasks.delete(row.taskId, row.projectId));
+    runWrite(t`Couldn't delete task`, window.electronAPI.tasks.delete(row.taskId, row.projectId));
   };
 
   const sendToBacklog = (): void => {
-    runWrite("Couldn't send task to backlog", window.electronAPI.backlog.demote({ taskId: row.taskId }, row.projectId));
+    runWrite(t`Couldn't send task to backlog`, window.electronAPI.backlog.demote({ taskId: row.taskId }, row.projectId));
   };
 
   const askFirst = (confirm: PendingConfirm): void => {
@@ -143,7 +148,7 @@ export function MonitorRowContextMenu({
       {row.isCommandTerminal
         ? <SquareTerminal size={14} className="text-fg-faint" />
         : <ExternalLink size={14} className="text-fg-faint" />}
-      {row.isCommandTerminal ? 'Show in project' : 'Open on board'}
+      {row.isCommandTerminal ? <Trans>Show in project</Trans> : <Trans>Open on board</Trans>}
     </button>
   );
 
@@ -221,7 +226,7 @@ export function MonitorRowContextMenu({
       onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
         const disable = !resolved.task.automations_disabled;
         const input = { id: row.taskId, automations_disabled: disable };
-        const failureTitle = disable ? "Couldn't turn off automations" : "Couldn't turn on automations";
+        const failureTitle = disable ? t`Couldn't turn off automations` : t`Couldn't turn on automations`;
         // A row of the open project writes through the board store, so the card
         // under this overlay gains or loses its strip without a board reload. A
         // row of another project writes to the IPC, and the resync drops that
@@ -245,7 +250,7 @@ export function MonitorRowContextMenu({
         requestMonitorDetail(row.projectId, row.taskId);
       }}
       onMoveTo={(targetSwimlaneId) => {
-        runWrite("Couldn't move task", window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId));
+        runWrite(t`Couldn't move task`, window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId, targetPosition: 0 }, row.projectId));
       }}
       // The board card's rule: ask unless the task holds nothing to clean up or
       // the user turned the question off.
@@ -260,7 +265,7 @@ export function MonitorRowContextMenu({
       onArchive={() => {
         const doneLane = resolved.swimlanes.find((lane) => lane.role === 'done');
         if (!doneLane) return;
-        runWrite("Couldn't archive task", window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId));
+        runWrite(t`Couldn't archive task`, window.electronAPI.tasks.move({ taskId: row.taskId, targetSwimlaneId: doneLane.id, targetPosition: 0 }, row.projectId));
       }}
       onDelete={() => {
         if (useConfigStore.getState().config.skipDeleteConfirm) {

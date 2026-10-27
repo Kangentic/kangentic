@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -19,7 +20,8 @@ interface StatsScopePickerProps {
   onSelectAll: () => void;
   onSelectProject: (projectId: string) => void;
   /** Label for the "no filter" row. The monitor says "All projects"; the usage
-   *  dashboard says "All Projects" because it is an aggregation MODE there. */
+   *  dashboard says "All Projects" (the default) because it is an aggregation
+   *  MODE there. */
   allLabel?: string;
   testId?: string;
 }
@@ -35,8 +37,10 @@ interface StatsScopePickerProps {
  */
 export function StatsScopePicker({
   projects, activeProjectId, onSelectAll, onSelectProject,
-  allLabel = 'All Projects', testId = 'stats-scope-trigger',
+  allLabel: allLabelProp, testId = 'stats-scope-trigger',
 }: StatsScopePickerProps) {
+  const { t } = useLingui();
+  const allLabel = allLabelProp ?? t`All Projects`;
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -80,7 +84,7 @@ export function StatsScopePicker({
   const activeProject = activeProjectId
     ? projects.find((project) => project.id === activeProjectId)
     : null;
-  const label = activeProjectId ? activeProject?.name ?? 'Project' : allLabel;
+  const label = activeProjectId ? activeProject?.name ?? t`Project` : allLabel;
 
   const select = (apply: () => void) => {
     apply();
@@ -89,13 +93,13 @@ export function StatsScopePicker({
 
   return (
     <div className="relative">
-      <Tooltip label="Choose which project's usage to view" enabled={!open}>
+      <Tooltip label={t`Choose which project's usage to view`} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
           onClick={() => setOpen(!open)}
           className="flex items-center gap-1.5 bg-accent/15 border border-accent/40 rounded-full pl-3 pr-2.5 py-1 text-sm font-semibold text-fg cursor-pointer hover:bg-accent/25 focus:outline-none focus:border-accent transition-colors"
-          aria-label="Project scope"
+          aria-label={t`Project scope`}
           data-testid={testId}
         >
           {label}

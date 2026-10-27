@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip as RechartsTooltip, matchByDataKey } from 'recharts';
+import { useLingui } from '@lingui/react/macro';
 import type { DonutSlice } from '../useStatsData';
 import { ChartTooltip } from './ChartTooltip';
 import { Tooltip } from '../../Tooltip';
@@ -9,7 +10,7 @@ interface KngDonutProps {
   centerValue: string;
   centerLabel: string;
   valueFormatter: (value: number) => string;
-  /** Tooltip row label for the slice value (e.g. 'tokens' or 'cost'). */
+  /** Tooltip row label for the slice value (e.g. 'tokens' or 'cost'). Defaults to "tokens". */
   valueLabel?: string;
   ariaLabel: string;
   /** Slice currently hovered (donut sector OR its list row); other slices dim
@@ -35,12 +36,14 @@ export const KngDonut = memo(function KngDonut({
   centerValue,
   centerLabel,
   valueFormatter,
-  valueLabel = 'tokens',
+  valueLabel: valueLabelProp,
   ariaLabel,
   highlightedSliceId = null,
   onSliceHover,
   animate = true,
 }: KngDonutProps) {
+  const { t } = useLingui();
+  const valueLabel = valueLabelProp ?? t`tokens`;
   return (
     <div className="relative h-full w-full" role="img" aria-label={ariaLabel}>
       <ResponsiveContainer width="100%" height="100%">

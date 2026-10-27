@@ -3,6 +3,9 @@ import { ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from './Tooltip';
 
 export interface DataTableColumn<TRow, TKey extends string = string> {
@@ -75,8 +78,16 @@ export interface SortableColumn<TRow, TKey extends string> {
   sortValue?: (row: TRow) => number | string | null;
 }
 
-/** The hint every sortable header carries, here and in the completed task view's Usage tables. */
+/**
+ * The hint every sortable header carries, here and in the completed task view's Usage tables.
+ * English only: kept for the Usage tables until their area switches to `sortHint()`.
+ */
 export const SORT_HINT = 'Click to sort - Shift+Click adds a secondary sort';
+
+/** `SORT_HINT` in the session's language, resolved where the header draws it. */
+export function sortHint(): string {
+  return i18n._(msg`Click to sort - Shift+Click adds a secondary sort`);
+}
 
 /**
  * A sortable header's indicator: the arrow slot, reserved even with no sort so
@@ -209,6 +220,7 @@ function SortableRow<TRow, TKey extends string>({
     transition,
     isDragging,
   } = useSortable({ id: rowId });
+  const { t } = useLingui();
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -235,12 +247,12 @@ function SortableRow<TRow, TKey extends string>({
           of grabbing would be a promise the UI does not keep. Same shape as the swimlane
           column header's drag handle. */}
       <td className="w-[32px] px-1 py-2.5">
-        <Tooltip label="Drag to reorder">
+        <Tooltip label={t`Drag to reorder`}>
           <div
             {...attributes}
             {...listeners}
             className="flex items-center justify-center text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing"
-            aria-label="Drag to reorder"
+            aria-label={t`Drag to reorder`}
             data-testid="row-drag-handle"
             data-no-dismiss
           >
@@ -270,12 +282,14 @@ export function DataTable<TRow, TKey extends string = string>({
   onRowContextMenu,
   defaultSortKey,
   defaultSortDirection = 'desc',
-  emptyMessage = 'No data',
+  emptyMessage: emptyMessageProp,
   rowTestId,
   virtualized = false,
   sortableEnabled = false,
   onSortChange,
 }: DataTableProps<TRow, TKey>) {
+  const { t } = useLingui();
+  const emptyMessage = emptyMessageProp ?? t`No data`;
   // Ordered sort levels: index 0 is the primary sort, later entries break
   // ties (added via Shift+Click).
   const [sorts, setSorts] = useState<Array<{ key: TKey; direction: 'asc' | 'desc' }>>(
@@ -355,7 +369,7 @@ export function DataTable<TRow, TKey extends string = string>({
         const sortIndex = sorts.findIndex((level) => level.key === column.key);
         const headerTip = [
           column.headerTip,
-          isSortable ? SORT_HINT : undefined,
+          isSortable ? sortHint() : undefined,
         ].filter(Boolean).join('\n');
         return (
           // The tip goes on the cell itself: Tooltip adds no element, so the

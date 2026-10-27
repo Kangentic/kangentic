@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useShallow } from 'zustand/react/shallow';
 import { MoreHorizontal } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { SidebarActivityCounts } from './SidebarActivityCounts';
 import { SidebarCommandTerminalIndicator } from './SidebarCommandTerminalIndicator';
 import { Tooltip } from '../../Tooltip';
@@ -35,6 +36,8 @@ function ProjectListItemImpl({
   onCancelRename,
   onOpenCommandTerminals,
 }: ProjectListItemProps) {
+  const { t } = useLingui();
+  const projectName = project.name;
   // Subscribe per-project to agent thinking/idle counts AND the Command Terminal
   // aggregate. Selector body iterates sessions on every store update, but useShallow
   // on the result means this item only re-renders when ITS OWN values change - not on
@@ -160,7 +163,7 @@ function ProjectListItemImpl({
           tone={terminalTone}
           onOpen={onOpenCommandTerminals}
         />
-        <Tooltip label="More options">
+        <Tooltip label={t`More options`}>
           <button
             type="button"
             onPointerDown={(event) => event.stopPropagation()}
@@ -174,7 +177,7 @@ function ProjectListItemImpl({
                 : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60'
             }`}
             data-testid={`project-menu-${project.id}`}
-            aria-label={`Open menu for ${project.name}`}
+            aria-label={t`Open menu for ${projectName}`}
           >
             <MoreHorizontal size={14} />
           </button>

@@ -42,6 +42,8 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   const fileParams = descriptor.kind === 'changes-file' ? (descriptor.params as PopOutChangesFileParams) : null;
   // A project's surface titles by the project name its params carry, in the
   // header and the taskbar alike: the same value main gave the BrowserWindow.
+  // Resolved through `translateText`, which takes today's string and the shared
+  // list's future descriptor alike.
   const projectTitle = isProjectPopOutKind(descriptor.kind)
     ? translateText(resolveSurfaceTitle(POP_OUT_SURFACES[descriptor.kind], descriptor.params))
     : null;

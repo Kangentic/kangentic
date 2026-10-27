@@ -1,5 +1,7 @@
 import { startTransition, useCallback, useEffect } from 'react';
 import { Info } from 'lucide-react';
+import { select } from '@lingui/core/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
@@ -40,12 +42,22 @@ function axisPercentFormatter(value: number): string {
 
 const DAY_MS = 86_400_000;
 
-/** A chart title's "per <bucket>" noun for a series' bucket width. */
-function bucketNoun(bucketSizeMs: number): string {
-  if (bucketSizeMs < 3_600_000) return `${Math.round(bucketSizeMs / 60_000)} minutes`;
-  if (bucketSizeMs < DAY_MS) return 'hour';
-  if (bucketSizeMs < 7 * DAY_MS) return 'day';
-  return 'week';
+/**
+ * A series' bucket width, for a chart title's "per <bucket>". Each title is one
+ * whole message that selects on `unit` (minutes fall to its `other` branch),
+ * so a translation never pastes a noun into a sentence.
+ */
+interface BucketWidth {
+  unit: 'minutes' | 'hour' | 'day' | 'week';
+  minutes: number;
+}
+
+function bucketWidth(bucketSizeMs: number): BucketWidth {
+  const minutes = Math.round(bucketSizeMs / 60_000);
+  if (bucketSizeMs < 3_600_000) return { unit: 'minutes', minutes };
+  if (bucketSizeMs < DAY_MS) return { unit: 'hour', minutes };
+  if (bucketSizeMs < 7 * DAY_MS) return { unit: 'day', minutes };
+  return { unit: 'week', minutes };
 }
 
 /**
@@ -57,6 +69,7 @@ function bucketNoun(bucketSizeMs: number): string {
  * identical behavior with zero duplication.
  */
 export function StatsDashboardBody() {
+  const { t, i18n } = useLingui();
   const period = useUsageDashboardStore((state) => state.period);
   const scopeKind = useUsageDashboardStore((state) => state.scopeKind);
   const viewedProjectId = useUsageDashboardStore((state) => state.viewedProjectId);
@@ -134,7 +147,6 @@ export function StatsDashboardBody() {
     (ms: number) => formatBucketLabel(ms, payload?.bucketSizeMs ?? 3_600_000),
     [payload?.bucketSizeMs],
   );
-  const metricNoun = effectiveMetric === 'cost' ? 'cost' : 'tokens';
   const yFormatter = effectiveMetric === 'cost' ? axisCostFormatter : formatTokenCount;
   // The cumulative chart's x-axis follows the COST-bucket width (not the token
   // width the burn chart's `xFormatter` uses); memoized so KngLineAreaChart's
@@ -146,7 +158,9 @@ export function StatsDashboardBody() {
   // The Cost view's stacked bars follow the payload's cost-bucket width: hourly
   // inside a single day ('today' / a day drill), daily for week/month, weekly
   // for all time.
-  const costBucketNoun = bucketNoun(payload?.costBucketSizeMs ?? DAY_MS);
+  const costBucket = bucketWidth(payload?.costBucketSizeMs ?? DAY_MS);
+  const costBucketUnit = costBucket.unit;
+  const costBucketMinutes = costBucket.minutes;
 
   // Day drill-down: clickable whenever the chart's buckets ARE local days
   // (week/month and short-history All Time). Inside a drill or sub-day
@@ -157,8 +171,9 @@ export function StatsDashboardBody() {
     (bucketStartMs: number) => setDrill({ dayStartMs: bucketStartMs }),
     [setDrill],
   );
+  // The session's language, as src/renderer/lib/datetime.ts formats dates (an empty locale throws).
   const drillLabel = drill
-    ? new Date(drill.dayStartMs).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+    ? new Date(drill.dayStartMs).toLocaleDateString(i18n.locale || undefined, { weekday: 'short', month: 'short', day: 'numeric' })
     : null;
 
   // The two views differ, not only in units. The Cost view charts the session
@@ -182,11 +197,58 @@ export function StatsDashboardBody() {
   // no turn tokens has a slice, and so a series, in both views.
   const legendSeries = perBucketStack.series.filter((entry) =>
     perBucketStack.rows.some((row) => (row[entry.key] as number) > 0));
-  const tokenBucketNoun = bucketNoun(payload?.bucketSizeMs ?? DAY_MS);
+  const tokenBucket = bucketWidth(payload?.bucketSizeMs ?? DAY_MS);
+  const tokenBucketUnit = tokenBucket.unit;
+  const tokenBucketMinutes = tokenBucket.minutes;
   // Live buckets are 5 minutes wide: a click would mint a bogus day drill on
   // a 5-minute boundary, so neither Live card is drillable.
   const canDrillTimeCards = !isLivePeriod && (isTokensView ? canDrillTokenBuckets : canDrillCostBuckets);
   const backgroundDays = payload?.background?.byDay ?? [];
+
+  // Chart titles and labels, one whole message per bucket width and metric.
+  const tokensPerBucketTitle = select(tokenBucketUnit, {
+    hour: 'Tokens per hour by model',
+    day: 'Tokens per day by model',
+    week: 'Tokens per week by model',
+    other: `Tokens per ${tokenBucketMinutes} minutes by model`,
+  });
+  const costPerBucketTitle = select(costBucketUnit, {
+    hour: 'Cost per hour by model',
+    day: 'Cost per day by model',
+    week: 'Cost per week by model',
+    other: `Cost per ${costBucketMinutes} minutes by model`,
+  });
+  const tokensPerBucketAriaLabel = select(tokenBucketUnit, {
+    hour: 'tokens per hour, stacked by model',
+    day: 'tokens per day, stacked by model',
+    week: 'tokens per week, stacked by model',
+    other: `tokens per ${tokenBucketMinutes} minutes, stacked by model`,
+  });
+  const costPerBucketAriaLabel = select(costBucketUnit, {
+    hour: 'cost per hour, stacked by model',
+    day: 'cost per day, stacked by model',
+    week: 'cost per week, stacked by model',
+    other: `cost per ${costBucketMinutes} minutes, stacked by model`,
+  });
+  const cacheHitRateTitle = select(tokenBucketUnit, {
+    hour: 'Cache hit rate per hour',
+    day: 'Cache hit rate per day',
+    week: 'Cache hit rate per week',
+    other: `Cache hit rate per ${tokenBucketMinutes} minutes`,
+  });
+  const cacheHitRateAriaLabel = select(tokenBucketUnit, {
+    hour: 'Cache hit rate per hour over the selected range',
+    day: 'Cache hit rate per day over the selected range',
+    week: 'Cache hit rate per week over the selected range',
+    other: `Cache hit rate per ${tokenBucketMinutes} minutes over the selected range`,
+  });
+  const byCostMetric = effectiveMetric === 'cost';
+  const burnRateTitle = byCostMetric ? t`Burn rate (cost/hr)` : t`Burn rate (tokens/hr)`;
+  const burnRateSeriesLabel = byCostMetric ? t`cost/hr` : t`tokens/hr`;
+  const burnRateAriaLabel = byCostMetric ? t`Burn rate over time in cost per hour` : t`Burn rate over time in tokens per hour`;
+  const skippedProjects = payload?.skippedProjects ?? [];
+  const skippedCount = skippedProjects.length;
+  const skippedNames = skippedProjects.map((project) => project.projectName || project.projectId).join(', ');
 
   return (
     <>
@@ -224,13 +286,13 @@ export function StatsDashboardBody() {
       <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-3">
         {error && (
           <div className="bg-surface-raised border border-edge rounded-lg px-3 py-2 text-xs text-red-400 flex items-center gap-3" data-testid="stats-error">
-            <span className="flex-1">Failed to load usage stats: {error}</span>
+            <span className="flex-1"><Trans>Failed to load usage stats: {error}</Trans></span>
             <button
               type="button"
               onClick={() => void loadDashboardStats({ force: true })}
               className="text-fg-muted hover:text-fg cursor-pointer"
             >
-              Retry
+              <Trans context="Action">Retry</Trans>
             </button>
           </div>
         )}
@@ -239,7 +301,7 @@ export function StatsDashboardBody() {
             polling above picks it up with no click. */}
         {indexRestarting && (
           <p className="text-xs text-fg-muted" data-testid="stats-index-restarting">
-            The Knowledge Graph index is restarting. The figures refresh when it is back.
+            <Trans>The Knowledge Graph index is restarting. The figures refresh when it is back.</Trans>
           </p>
         )}
 
@@ -262,11 +324,11 @@ export function StatsDashboardBody() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <ChartCard
             title={isLivePeriod
-              ? 'Tokens by type'
-              : isTokensView ? `Tokens per ${tokenBucketNoun} by model` : `Cost per ${costBucketNoun} by model`}
+              ? t`Tokens by type`
+              : isTokensView ? tokensPerBucketTitle : costPerBucketTitle}
             loading={coldLoading}
             empty={!coldLoading && perBucketEmpty}
-            emptyMessage={isLivePeriod ? 'No agent turns recorded in the last 2 hours' : 'No usage recorded yet'}
+            emptyMessage={isLivePeriod ? t`No agent turns recorded in the last 2 hours` : t`No usage recorded yet`}
             testId="chart-daily"
           >
             <div className="h-full flex flex-col">
@@ -290,8 +352,8 @@ export function StatsDashboardBody() {
                   rows={perBucketStack.rows}
                   yFormatter={isLivePeriod ? formatTokenCount : yFormatter}
                   ariaLabel={isLivePeriod
-                    ? 'tokens per 5 minutes, stacked by token type'
-                    : `${metricNoun} per ${isTokensView ? tokenBucketNoun : costBucketNoun}, stacked by model`}
+                    ? t`tokens per 5 minutes, stacked by token type`
+                    : isTokensView ? tokensPerBucketAriaLabel : costPerBucketAriaLabel}
                   onBucketClick={canDrillTimeCards ? handleDrillDay : undefined}
                   animate={animateCharts}
                 />
@@ -301,11 +363,11 @@ export function StatsDashboardBody() {
 
           {isTokensView ? (
             <ChartCard
-              title={`Cache hit rate per ${tokenBucketNoun}`}
-              subtitle="Cache read over all input"
+              title={cacheHitRateTitle}
+              subtitle={t`Cache read over all input`}
               loading={coldLoading}
               empty={!coldLoading && data.cacheHitRate.length === 0}
-              emptyMessage={isLivePeriod ? 'No input recorded in the last 2 hours' : 'No input recorded in this range'}
+              emptyMessage={isLivePeriod ? t`No input recorded in the last 2 hours` : t`No input recorded in this range`}
               testId="chart-cache-hit-rate"
             >
               <KngLineAreaChart
@@ -314,18 +376,18 @@ export function StatsDashboardBody() {
                 colorVar="--kng-accent"
                 yFormatter={axisPercentFormatter}
                 xFormatter={xFormatter}
-                seriesLabel="cache hit rate"
-                ariaLabel={`Cache hit rate per ${tokenBucketNoun} over the selected range`}
+                seriesLabel={t`cache hit rate`}
+                ariaLabel={cacheHitRateAriaLabel}
                 onBucketClick={canDrillTimeCards ? handleDrillDay : undefined}
                 animate={animateCharts}
               />
             </ChartCard>
           ) : (
             <ChartCard
-              title="Cumulative spend"
+              title={t`Cumulative spend`}
               loading={coldLoading}
               empty={!coldLoading && cumulativeEmpty}
-              emptyMessage={isLivePeriod ? 'No spend recorded in the last 2 hours' : 'No usage recorded yet'}
+              emptyMessage={isLivePeriod ? t`No spend recorded in the last 2 hours` : t`No usage recorded yet`}
               testId="chart-cumulative"
             >
               <KngLineAreaChart
@@ -333,8 +395,8 @@ export function StatsDashboardBody() {
                 colorVar="--kng-accent"
                 yFormatter={yFormatter}
                 xFormatter={isLivePeriod ? xFormatter : costXFormatter}
-                seriesLabel="cumulative cost"
-                ariaLabel="Cumulative cost over the selected range"
+                seriesLabel={t`cumulative cost`}
+                ariaLabel={t`Cumulative cost over the selected range`}
                 onBucketClick={canDrillTimeCards ? handleDrillDay : undefined}
                 animate={animateCharts}
               />
@@ -349,7 +411,7 @@ export function StatsDashboardBody() {
           : 'grid grid-cols-1 lg:grid-cols-3 gap-3'}
         >
           <BreakdownCard
-            title="By agent"
+            title={t`By agent`}
             slices={data.byAgentSlices}
             costKnown={costKnown}
             loading={coldLoading}
@@ -358,7 +420,7 @@ export function StatsDashboardBody() {
             animate={animateCharts}
           />
           <BreakdownCard
-            title="By model"
+            title={t`By model`}
             slices={data.byModelSlices}
             costKnown={costKnown}
             loading={coldLoading}
@@ -367,7 +429,7 @@ export function StatsDashboardBody() {
             animate={animateCharts}
           />
           <BreakdownCard
-            title="By effort"
+            title={t`By effort`}
             slices={data.byEffortSlices}
             costKnown={costKnown}
             loading={coldLoading}
@@ -377,7 +439,7 @@ export function StatsDashboardBody() {
           />
           {data.bySubagentSlices.length > 0 && (
             <BreakdownCard
-              title="By subagent"
+              title={t`By subagent`}
               slices={data.bySubagentSlices}
               // Always false: these rows genuinely have no cost of their own, so
               // this keeps the card on tokens even while the page metric is cost,
@@ -392,10 +454,10 @@ export function StatsDashboardBody() {
         </div>
 
         <ChartCard
-          title={`Burn rate (${metricNoun}/hr)`}
+          title={burnRateTitle}
           loading={coldLoading}
           empty={!coldLoading && data.burnRate.every((point) => point.y === 0)}
-          emptyMessage="No agent turns recorded in this range"
+          emptyMessage={t`No agent turns recorded in this range`}
           bodyClassName="h-52"
           testId="chart-burn-rate"
         >
@@ -404,8 +466,8 @@ export function StatsDashboardBody() {
             colorVar="--kng-accent"
             yFormatter={yFormatter}
             xFormatter={xFormatter}
-            seriesLabel={`${metricNoun}/hr`}
-            ariaLabel={`Burn rate over time in ${metricNoun} per hour`}
+            seriesLabel={burnRateSeriesLabel}
+            ariaLabel={burnRateAriaLabel}
             onBucketClick={canDrillTokenBuckets ? handleDrillDay : undefined}
             animate={animateCharts}
           />
@@ -418,30 +480,29 @@ export function StatsDashboardBody() {
           <PerProjectTable projects={payload.perProject} metric={effectiveMetric} onProjectClick={setViewedProject} />
         )}
 
-        {payload?.skippedProjects && payload.skippedProjects.length > 0 && (
+        {skippedCount > 0 && (
           <div className="text-[11px] text-fg-faint" data-testid="stats-skipped-projects">
-            Skipped {payload.skippedProjects.length} project(s) with unreadable databases:{' '}
-            {payload.skippedProjects.map((project) => project.projectName || project.projectId).join(', ')}
+            <Trans>Skipped {skippedCount} project(s) with unreadable databases: {skippedNames}</Trans>
           </div>
         )}
 
         {/* First-read caveats collapsed behind an info affordance (visual
             subtraction): the full explanation lives in the hover tooltip. */}
         <Tooltip
-          label={
-            'Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.\n' +
-            'Cost covers finalized sessions plus any currently running, refreshed live as they progress.\n' +
-            'Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it.\n' +
-            'Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count.\n' +
-            'Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures.'
-          }
+          label={[
+            t`Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0.`,
+            t`Cost covers finalized sessions plus any currently running, refreshed live as they progress.`,
+            t`Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it.`,
+            t`Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count.`,
+            t`Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures.`,
+          ].join('\n')}
         >
           <p
             className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
             data-testid="stats-about-numbers"
           >
             <Info size={12} aria-hidden />
-            About these numbers
+            <Trans>About these numbers</Trans>
           </p>
         </Tooltip>
       </div>

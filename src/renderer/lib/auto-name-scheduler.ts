@@ -35,6 +35,8 @@
  * a renderer module replacement neither re-names a task nor loses a title that
  * was already generated.
  */
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { Session, Task } from '../../shared/types';
 import { namingAgentReady } from '../../shared/answer-agent';
 import { requiresUserInteraction } from '../../shared/activity-state';
@@ -220,8 +222,8 @@ async function applyGeneratedTitle(rename: PendingAutoRename): Promise<void> {
     // project would name nothing the user can see.
     if (isOpenProject(projectId)) {
       useToastStore.getState().addToast({
-        title: "Couldn't rename task",
-        message: asSentence(describeIpcError(error, ''), 'The new title was not saved.'),
+        title: i18n._(msg`Couldn't rename task`),
+        message: asSentence(describeIpcError(error, ''), i18n._(msg`The new title was not saved.`)),
         variant: 'error',
       });
     } else {
@@ -241,9 +243,10 @@ async function applyGeneratedTitle(rename: PendingAutoRename): Promise<void> {
     tasks: state.tasks.map((entry) => (entry.id === saved.id ? saved : entry)),
     archivedTasks: state.archivedTasks.map((entry) => (entry.id === saved.id ? saved : entry)),
   }));
+  const taskTitle = saved.title;
   useToastStore.getState().addToast({
-    title: 'Task renamed',
-    message: `"${saved.title}" replaces the placeholder title.`,
+    title: i18n._(msg`Task renamed`),
+    message: i18n._(msg`"${{ taskTitle }}" replaces the placeholder title.`),
     variant: 'info',
     durationMs: 12_000,
     onOpen: () => openTaskFromNotification(projectId, taskId),

@@ -1,4 +1,6 @@
 import { type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
@@ -83,7 +85,7 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
       warnings = await window.electronAPI.boardConfig.apply(projectId);
     } catch (error) {
       useToastStore.getState().addToast({
-        title: "Couldn't apply kangentic.json",
+        title: i18n._(msg`Couldn't apply kangentic.json`),
         message: asSentence(describeIpcError(error)),
         variant: 'error',
       });
@@ -92,7 +94,7 @@ export const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfi
     if (warnings.length > 0) {
       set({ configWarnings: warnings });
       for (const warning of warnings) {
-        useToastStore.getState().addToast({ title: 'kangentic.json warning', message: warning, variant: 'warning' });
+        useToastStore.getState().addToast({ title: i18n._(msg`kangentic.json warning`), message: warning, variant: 'warning' });
       }
     } else {
       set({ configWarnings: [] });

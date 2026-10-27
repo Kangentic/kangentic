@@ -1,4 +1,6 @@
 import { type StateCreator } from 'zustand';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { ActivityState, Session, SessionInjectSettingsInput } from '../../../shared/types';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
@@ -269,7 +271,9 @@ export function createTransientSessionSlice(preserved: {
 
     spawnTransientSession: async (slot, branch?, grid?, resumeAgentSessionId?) => {
       const currentProject = useProjectStore.getState().currentProject;
-      if (!currentProject) throw new Error('No project is currently open');
+      // Translated: the window's catch toasts this message, and a project that
+      // closes during a branch switch's stop (an await before this read) reaches it.
+      if (!currentProject) throw new Error(i18n._(msg`No project is currently open`));
       const result = await window.electronAPI.sessions.spawnTransient({
         projectId: currentProject.id,
         // The window is anchored to this slot before it spawns, so it asks main
@@ -484,14 +488,14 @@ export function createTransientSessionSlice(preserved: {
         const result = await window.electronAPI.sessions.injectSettings(input);
         if (!result.ok) {
           useToastStore.getState().addToast({
-            title: "Couldn't apply model or effort",
+            title: i18n._(msg`Couldn't apply model or effort`),
             message: asSentence(result.reason),
             variant: 'error',
           });
         }
       } catch (error) {
         useToastStore.getState().addToast({
-          title: "Couldn't apply model or effort",
+          title: i18n._(msg`Couldn't apply model or effort`),
           message: asSentence(describeIpcError(error, '')),
           variant: 'error',
         });

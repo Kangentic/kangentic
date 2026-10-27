@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { i18n, type MessageDescriptor } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type {
   PlanApproval,
   Workflow,
@@ -200,9 +202,13 @@ function currentProjectId(): string | null {
   return useProjectStore.getState().currentProject?.id ?? null;
 }
 
-/** One toast for every workflow action: the title names the action ("Couldn't start the workflow"), the body is main's reason. */
-function reportFailure(title: string, error: unknown): void {
-  useToastStore.getState().addToast({ title, message: asSentence(describeIpcError(error)), variant: 'error' });
+/**
+ * One toast for every workflow action: the title names the action ("Couldn't
+ * start the workflow"), the body is main's reason. The title arrives as a
+ * descriptor and is translated here, when the toast is raised.
+ */
+function reportFailure(title: MessageDescriptor, error: unknown): void {
+  useToastStore.getState().addToast({ title: i18n._(title), message: asSentence(describeIpcError(error)), variant: 'error' });
 }
 
 /**
@@ -283,7 +289,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
    * it elsewhere.
    */
   async function onSelected<Result>(
-    failure: string,
+    failure: MessageDescriptor,
     run: (projectId: string, workflowId: string) => Promise<Result>,
   ): Promise<{ ok: true; value: Result } | { ok: false }> {
     const { projectId, selectedWorkflowId } = get();
@@ -367,7 +373,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
   }
 
   /** One change against a workflow named by its home and id. */
-  async function onWorkflow(failure: string, run: () => Promise<unknown>): Promise<boolean> {
+  async function onWorkflow(failure: MessageDescriptor, run: () => Promise<unknown>): Promise<boolean> {
     try {
       await run();
       return true;
@@ -415,7 +421,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       try {
         applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentOpen(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
       } catch (error) {
-        reportFailure("Couldn't start the workflow agent", error);
+        reportFailure(msg`Couldn't start the workflow agent`, error);
       }
     },
 
@@ -425,7 +431,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       try {
         applyAgentStatus(selectedWorkflowId, await window.electronAPI.workflows.agentResume(projectId, selectedWorkflowId, grid?.cols, grid?.rows));
       } catch (error) {
-        reportFailure("Couldn't resume the workflow agent", error);
+        reportFailure(msg`Couldn't resume the workflow agent`, error);
       }
     },
 
@@ -435,7 +441,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       try {
         await window.electronAPI.workflows.agentPause(projectId, selectedWorkflowId);
       } catch (error) {
-        reportFailure("Couldn't pause the workflow agent", error);
+        reportFailure(msg`Couldn't pause the workflow agent`, error);
       }
     },
 
@@ -647,18 +653,18 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
         await get().loadWorkflows();
         return workflow;
       } catch (error) {
-        reportFailure("Couldn't create the workflow", error);
+        reportFailure(msg`Couldn't create the workflow`, error);
         return null;
       }
     },
 
     renameWorkflow: async (title) =>
-      (await onSelected("Couldn't rename the workflow", (projectId, workflowId) =>
+      (await onSelected(msg`Couldn't rename the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.rename(projectId, workflowId, title))).ok,
 
     deleteWorkflow: async () => {
       const deletedId = get().selectedWorkflowId;
-      const result = await onSelected("Couldn't delete the workflow", (projectId, workflowId) =>
+      const result = await onSelected(msg`Couldn't delete the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.delete(projectId, workflowId));
       if (result.ok) {
         // Another workflow picked while the delete ran keeps its selection.
@@ -669,19 +675,19 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     startWorkflow: async () =>
-      (await onSelected("Couldn't start the workflow", (projectId, workflowId) =>
+      (await onSelected(msg`Couldn't start the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.start(projectId, workflowId))).ok,
 
     pauseWorkflow: async () =>
-      (await onSelected("Couldn't pause the workflow", (projectId, workflowId) =>
+      (await onSelected(msg`Couldn't pause the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.pause(projectId, workflowId))).ok,
 
     resumeWorkflow: async () =>
-      (await onSelected("Couldn't resume the workflow", (projectId, workflowId) =>
+      (await onSelected(msg`Couldn't resume the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.resume(projectId, workflowId))).ok,
 
     addTask: async (input) => {
-      const result = await onSelected("Couldn't add the task", (projectId, workflowId) =>
+      const result = await onSelected(msg`Couldn't add the task`, (projectId, workflowId) =>
         window.electronAPI.workflows.addTask(projectId, workflowId, input));
       if (!result.ok) return null;
       set({ selectedTaskKey: result.value });
@@ -689,7 +695,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     },
 
     updateTask: async (key, input) =>
-      (await onSelected("Couldn't save the task", (projectId, workflowId) =>
+      (await onSelected(msg`Couldn't save the task`, (projectId, workflowId) =>
         window.electronAPI.workflows.updateTask(projectId, workflowId, key, input))).ok,
 
     removeTask: async (key) => {
@@ -721,21 +727,21 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
     // The WORKFLOW_CHANGED push that follows reloads the detail, so the control
     // shows the stored value rather than an optimistic copy.
     setTaskPlanApprovalIn: (homeProjectId, workflowId, key, planApproval) =>
-      onWorkflow("Couldn't change plan approval", () =>
+      onWorkflow(msg`Couldn't change plan approval`, () =>
         window.electronAPI.workflows.setTaskPlanApproval(homeProjectId, workflowId, key, planApproval)),
 
     removeTaskIn: (homeProjectId, workflowId, key) =>
-      onWorkflow("Couldn't remove the task", () => window.electronAPI.workflows.removeTask(homeProjectId, workflowId, key)),
+      onWorkflow(msg`Couldn't remove the task`, () => window.electronAPI.workflows.removeTask(homeProjectId, workflowId, key)),
 
     setLinkIn: (homeProjectId, workflowId, blockerKey, blockedKey, linked) =>
-      onWorkflow(linked ? "Couldn't link the tasks" : "Couldn't remove the link", () =>
+      onWorkflow(linked ? msg`Couldn't link the tasks` : msg`Couldn't remove the link`, () =>
         window.electronAPI.workflows.setLink(homeProjectId, workflowId, blockerKey, blockedKey, linked)),
 
     setRouteIn: (homeProjectId, workflowId, key, swimlaneIds) =>
-      onWorkflow("Couldn't change the route", () => window.electronAPI.workflows.setRoute(homeProjectId, workflowId, key, swimlaneIds)),
+      onWorkflow(msg`Couldn't change the route`, () => window.electronAPI.workflows.setRoute(homeProjectId, workflowId, key, swimlaneIds)),
 
     setPositionsIn: (homeProjectId, workflowId, positions) =>
-      onWorkflow("Couldn't save the layout", () => window.electronAPI.workflows.setPositions(homeProjectId, workflowId, positions)),
+      onWorkflow(msg`Couldn't save the layout`, () => window.electronAPI.workflows.setPositions(homeProjectId, workflowId, positions)),
 
     setPositions: async (positions) => {
       const detail = get().detail;
@@ -752,7 +758,7 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
           },
         });
       }
-      const saved = (await onSelected("Couldn't save the layout", (projectId, workflowId) =>
+      const saved = (await onSelected(msg`Couldn't save the layout`, (projectId, workflowId) =>
         window.electronAPI.workflows.setPositions(projectId, workflowId, positions))).ok;
       // The positions above were drawn before the save. A refused save writes
       // nothing, so no push arrives to put the cards back: read them again.

@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useBoardStore } from '../stores/board-store';
@@ -38,6 +39,7 @@ function joinWithParentSeparator(parentPath: string, childName: string): string 
  * closed; that path uses the relocate endpoint's default repoint mode.
  */
 export function useProjectRelocation(onRelocated?: (project: Project) => void) {
+  const { t } = useLingui();
   const relocateProject = useProjectStore((state) => state.relocateProject);
   const sessions = useSessionStore((state) => state.sessions);
   const tasks = useBoardStore((state) => state.tasks);
@@ -63,22 +65,25 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
     });
     try {
       const result = await relocateProject(project.id, newPath, { mode: 'move' });
+      const projectName = result.project.name;
+      const projectPath = result.project.path;
       useToastStore.getState().addToast({
-        title: 'Project moved',
-        message: `"${result.project.name}" is now at ${result.project.path}.`,
+        title: t`Project moved`,
+        message: t`"${projectName}" is now at ${projectPath}.`,
         variant: 'success',
       });
       if (result.warnings.includes('source-delete-failed')) {
+        const originalPath = project.path;
         useToastStore.getState().addToast({
-          title: 'Old folder not removed',
-          message: `The original copy remains at ${project.path}.`,
+          title: t`Old folder not removed`,
+          message: t`The original copy remains at ${originalPath}.`,
           variant: 'warning',
         });
       }
       onRelocated?.(result.project);
     } catch (err) {
       useToastStore.getState().addToast({
-        title: "Couldn't move project",
+        title: t`Couldn't move project`,
         message: asSentence(describeIpcError(err)),
         variant: 'error',
       });
@@ -87,7 +92,7 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
       setIsMoving(false);
       setMoveProgress(null);
     }
-  }, [pendingMove, relocateProject, onRelocated]);
+  }, [pendingMove, relocateProject, onRelocated, t]);
 
   const activeSessions = pendingMove
     ? sessions.filter(
@@ -99,14 +104,16 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
 
   const sessionLabel = useCallback(
     (session: (typeof sessions)[number]): string => {
-      if (session.workflowId) return 'Workflow agent';
-      if (session.transient) return 'Command terminal';
+      if (session.workflowId) return t`Workflow agent`;
+      if (session.transient) return t`Command terminal`;
       const task = tasks.find((candidate) => candidate.id === session.taskId);
       return task ? task.title : session.taskId.slice(0, 8);
     },
-    [tasks],
+    [tasks, t],
   );
 
+  const copiedEntries = moveProgress?.copiedEntries ?? 0;
+  const totalEntries = moveProgress?.totalEntries ?? 0;
   const progressCard = isMoving ? (
     <div
       className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-edge rounded-lg shadow-lg"
@@ -115,43 +122,46 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
       <Loader2 size={16} className="animate-spin text-fg-muted" />
       <span className="text-sm text-fg">
         {moveProgress && moveProgress.phase === 'copying' ? (
-          <>
-            Copying <span className="tabular-nums">{moveProgress.copiedEntries}</span> of{' '}
-            <span className="tabular-nums">{moveProgress.totalEntries}</span>...
-          </>
+          <Trans>
+            Copying <span className="tabular-nums">{copiedEntries}</span> of{' '}
+            <span className="tabular-nums">{totalEntries}</span>...
+          </Trans>
         ) : (
-          'Moving project folder...'
+          <Trans>Moving project folder...</Trans>
         )}
       </span>
     </div>
   ) : null;
 
+  const pendingProjectName = pendingMove?.project.name ?? '';
   const relocationDialog = (
     <>
       {pendingMove ? (
         <ConfirmDialog
-          title="Move Project Folder"
+          title={t`Move Project Folder`}
           variant="warning"
           message={
             <div className="space-y-2" data-testid="project-move-dialog">
               <p>
-                Move <strong>&quot;{pendingMove.project.name}&quot;</strong> to a new folder?
+                <Trans>Move <strong>&quot;{pendingProjectName}&quot;</strong> to a new folder?</Trans>
               </p>
               <p className="text-xs break-all">
-                <span className="text-fg-faint">From: </span>
+                <span className="text-fg-faint"><Trans>From:</Trans>{' '}</span>
                 {pendingMove.project.path}
               </p>
               <p className="text-xs break-all">
-                <span className="text-fg-faint">To: </span>
+                <span className="text-fg-faint"><Trans>To:</Trans>{' '}</span>
                 {pendingMove.newPath}
               </p>
               <p>
-                Kangentic will move the folder on disk. All tasks, history, and worktrees move
-                with it.
+                <Trans>
+                  Kangentic will move the folder on disk. All tasks, history, and worktrees move
+                  with it.
+                </Trans>
               </p>
               {activeSessions.length > 0 ? (
                 <div className="space-y-1">
-                  <p>These active agent sessions will be stopped and resumed automatically at the new location:</p>
+                  <p><Trans>These active agent sessions will be stopped and resumed automatically at the new location:</Trans></p>
                   <ul className="list-disc list-inside text-xs text-fg-muted" data-testid="project-move-active-sessions">
                     {activeSessions.map((session) => (
                       <li key={session.id} className="break-all">
@@ -161,11 +171,11 @@ export function useProjectRelocation(onRelocated?: (project: Project) => void) {
                   </ul>
                 </div>
               ) : (
-                <p className="text-xs text-fg-muted">No active agent sessions.</p>
+                <p className="text-xs text-fg-muted"><Trans>No active agent sessions.</Trans></p>
               )}
             </div>
           }
-          confirmLabel="Move Folder"
+          confirmLabel={t`Move Folder`}
           onConfirm={handleConfirm}
           onCancel={() => setPendingMove(null)}
         />

@@ -6,6 +6,7 @@
  */
 
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { Tooltip } from '../../components/Tooltip';
 import { useLayerStore } from '../context';
@@ -30,6 +31,7 @@ export function WindowTitleBar({
   onHandlePointerDown,
   onRequestClose,
 }: WindowTitleBarProps) {
+  const { t } = useLingui();
   const toggleMaximizeWindow = useLayerStore()((state) => state.toggleMaximizeWindow);
 
   return (
@@ -49,11 +51,11 @@ export function WindowTitleBar({
           onToggle={() => toggleMaximizeWindow(windowId)}
           testId={`window-maximize-${windowId}`}
         />
-        <Tooltip label="Close window">
+        <Tooltip label={t`Close window`}>
           <button
             type="button"
             onClick={onRequestClose}
-            aria-label="Close window"
+            aria-label={t`Close window`}
             className={CONTROL_CLASS}
           >
             <X size={16} />

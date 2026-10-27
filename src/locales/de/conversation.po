@@ -6,3 +6,169 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: de\n"
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "[command] {commandText}"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "{archivedAgentName} deleted the original file. Showing Kangentic's saved copy."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationScrollbar.tsx
+#: src/renderer/components/conversation/ConversationSearchBar.tsx
+msgid "{position} of {total}"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "{resultLength, plural, one {Show all (# char)} other {Show all (# chars)}}"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationBody.tsx
+msgid "All"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Command output"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Conversation compacted"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationBody.tsx
+msgid "Conversation sections"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Copy message"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Couldn't load earlier messages"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Couldn't load later messages"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "error"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Error"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Input"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationScrollbar.tsx
+msgid "Jump to latest"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Jump to start"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Loading earlier messages"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Loading later messages"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationSearchBar.tsx
+msgid "Next match"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationBody.tsx
+msgid "No conversation in {columnName}"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "No conversation is available for this session."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationSearchBar.tsx
+msgid "No results"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Original transcript file is gone - showing indexed text."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Plan"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationSearchBar.tsx
+msgid "Previous match"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Result"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgctxt "Action"
+msgid "Retry"
+msgstr ""
+
+#: src/renderer/components/conversation/use-conversation-state.ts
+msgid "Search {columnName}"
+msgstr ""
+
+#: src/renderer/components/conversation/use-conversation-state.ts
+msgid "Search loaded {columnName} messages"
+msgstr ""
+
+#: src/renderer/components/conversation/use-conversation-state.ts
+msgid "Search loaded messages"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationSearchBar.tsx
+msgid "Search this conversation"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Show less"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Structured transcripts aren't available for this agent."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationBody.tsx
+msgid "The agent did not run while the task was in {columnName}."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "The transcript file no longer exists."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Thinking"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "This conversation has no messages yet."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "This session's history hasn't been written yet."
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "Tool result"
+msgstr ""
+
+#: src/renderer/components/conversation/ConversationView.tsx
+msgid "You"
+msgstr ""

@@ -7,6 +7,30 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: tr\n"
 
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "\"{doneTaskTitle}\""
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "\"{movedTaskTitle}\" is now in {targetName}."
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "\"{movedTaskTitle}\" is now in column."
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "\"{taskTitle}\""
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "\"{toggledTaskTitle}\": {reason}"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "{count, plural, one {# background shell ({shellIds})} other {# background shells ({shellIds})}}"
 msgstr ""
@@ -23,19 +47,420 @@ msgstr ""
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr ""
 
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
+msgstr ""
+
+#: src/renderer/components/board/AutomationGlyph.tsx
+msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file will be lost} other {{fileCountText} uncommitted files will be lost}}"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file} other {{fileCountText} uncommitted files}}"
+msgstr ""
+
+#. placeholder {0}: <>{commitCountText} commit exists only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>
+#. placeholder {1}: <>{commitCountText} commits exist only on branch <code className={BRANCH_CODE_CLASS}>{displayBranch}</code> and will be lost when the branch is deleted</>
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{unpushedCommitCount, plural, one {{0}} other {{1}}}"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{unpushedCommitCount, plural, one {{commitCountText} commit exists only on the local branch and will be lost when the branch is deleted} other {{commitCountText} commits exist only on the local branch and will be lost when the branch is deleted}}"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "{unpushedCommitCount, plural, one {{commitCountText} unpushed commit} other {{commitCountText} unpushed commits}}"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "{workflowCount, plural, one {Workflows, # workflow} other {Workflows, # workflows}}"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Add column"
+msgstr ""
+
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Add task"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Always apply automatically"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Apply"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Archive"
+msgstr ""
+
+#: src/renderer/components/board/AutomationsDisabledStrip.tsx
+msgid "Automations disabled"
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "Awaiting permission for {duration}"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Backlog"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgctxt "Action"
+msgid "Backlog"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Board"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Board configuration changed"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Branch <0>{displayBranch}</0> will be deleted"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Branch <0>{displayBranch}</0> will be kept"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Browser running"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Browser running for the agent. Close it from the task menu to free memory."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Cancel"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Changes detected in kangentic.json for \"{projectName}\". Apply the updated board configuration? This will switch to that project."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Changes detected in kangentic.json for \"Unknown project\". Apply the updated board configuration? This will switch to that project."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
+msgstr ""
+
+#: src/renderer/components/board/AutomationsDisabledStrip.tsx
+msgid "Column automations don't run for this task. Enable them from the card's menu."
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "Completed ({archivedTotalCount})"
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "Couldn't turn off automations"
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "Couldn't turn on automations"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#: src/renderer/components/board/DeleteTaskDialog.tsx
+#: src/renderer/components/board/DoneSwimlane.tsx
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Delete"
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "Delete completed task"
+msgstr ""
+
+#: src/renderer/components/board/DeleteTaskDialog.tsx
+msgid "Delete task"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Disable automations"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Dismiss"
+msgstr ""
+
+#: src/renderer/components/board/KanbanBoard.tsx
+msgid "Dismiss warning"
+msgstr ""
+
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Drag to reorder"
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "Drop here to complete"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Edit"
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Edit {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Enable automations"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgctxt "Agent status"
+msgid "Idle"
 msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "Idle for {duration}"
 msgstr ""
 
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Keep Working"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Local worktree will be deleted"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Move"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Move to"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Move to Done?"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "New Task"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "New workflow"
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "No completed tasks yet"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+msgctxt "Action"
+msgid "Open"
+msgstr ""
+
+#: src/renderer/components/board/workflow-menu-items.tsx
+msgid "Open workflow"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Pause session"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgctxt "Agent status"
+msgid "Paused"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Queued..."
+msgstr ""
+
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Removed from team config"
+msgstr ""
+
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Removed from team config. Move tasks to continue."
+msgstr ""
+
+#: src/renderer/components/board/Swimlane.tsx
+msgid "Reorder {columnName} column"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgctxt "Action"
+msgid "Reset"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Reset task?"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Resetting <0>\"{taskTitle}\"</0> will delete its worktree and destroy its session history."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Resetting <0>\"{taskTitle}\"</0> will destroy its session history."
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+msgid "Restore to"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Resume session"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Resuming agent..."
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgctxt "Workflow status"
+msgid "Running"
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "Running {toolName}"
 msgstr ""
 
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Search backlog..."
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Search board..."
+msgstr ""
+
+#: src/renderer/components/board/SendToBacklogDialog.tsx
+msgid "Send to Backlog"
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "Sent to backlog"
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Session history will be kept"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Show changes"
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Starting agent..."
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "Superseded by {workflowTitle}"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Task #{displayId}"
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "Task archived"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Task ID copied"
+msgstr ""
+
+#: src/renderer/components/board/TaskCard.tsx
+msgid "Task moved"
+msgstr ""
+
 #: src/renderer/components/board/activity-reason-text.ts
+#: src/renderer/components/board/task-card-view.tsx
 msgctxt "Agent status"
 msgid "Thinking"
+msgstr ""
+
+#: src/renderer/components/board/DeleteTaskDialog.tsx
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "This action cannot be undone."
+msgstr ""
+
+#: src/renderer/components/board/SendToBacklogDialog.tsx
+msgid "This will move \"{taskTitle}\" to the backlog and clean up its session and worktree."
+msgstr ""
+
+#: src/renderer/components/board/DeleteTaskDialog.tsx
+msgid "This will permanently delete \"{taskTitle}\" and its session data."
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "This will permanently delete the task, its session history, and any associated worktree."
+msgstr ""
+
+#: src/renderer/components/board/BoardDialogs.tsx
+msgid "Unable to verify pending changes. There may be unsaved work."
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "View"
+msgstr ""
+
+#: src/renderer/components/board/DoneSwimlane.tsx
+msgid "View all"
+msgstr ""
+
+#: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+msgid "View conversation"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Workflows"
+msgstr ""
+
+#: src/renderer/components/board/ViewToggle.tsx
+msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
+msgstr ""
+
+#: src/renderer/components/board/SendToBacklogDialog.tsx
+msgid "You can move it back to the board later."
 msgstr ""

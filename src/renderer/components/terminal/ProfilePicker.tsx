@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { ChevronDown, Layers } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { ContextBarPopover } from './ContextBarPopover';
 import { pill } from './context-bar-pill';
@@ -28,6 +29,7 @@ const DEFAULT_PROFILE_VALUE = '__default__';
  * popover rather than left to be discovered.
  */
 export function ProfilePicker({ taskId }: { taskId: string }) {
+  const { t } = useLingui();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
 
@@ -48,17 +50,18 @@ export function ProfilePicker({ taskId }: { taskId: string }) {
   // them, and that task is Custom, not Default.
   const isOverrideMode = task.run_mode === 'agent_override';
 
+  const defaultProfileLabel = t({ message: 'Default', context: 'Default value' });
   let label: string;
-  if (task.profile_id && !activeProfile) label = 'Profile unavailable';
+  if (task.profile_id && !activeProfile) label = t`Profile unavailable`;
   else if (activeProfile) label = activeProfile.name;
-  else if (isOverrideMode) label = 'Custom';
-  else label = 'Default';
+  else if (isOverrideMode) label = t`Custom`;
+  else label = defaultProfileLabel;
 
   const options = [
     {
       value: DEFAULT_PROFILE_VALUE,
-      label: 'Default',
-      description: 'Each column\'s own settings',
+      label: defaultProfileLabel,
+      description: t`Each column's own settings`,
     },
     ...boardProfiles.map((profile) => ({
       value: profile.id,
@@ -79,7 +82,7 @@ export function ProfilePicker({ taskId }: { taskId: string }) {
 
   return (
     <span className="relative inline-flex">
-      <Tooltip label="Board Profile - the per-column agent, model, and effort this task follows" enabled={!open}>
+      <Tooltip label={t`Board Profile - the per-column agent, model, and effort this task follows`} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -95,7 +98,7 @@ export function ProfilePicker({ taskId }: { taskId: string }) {
       {open && (
         <ContextBarPopover
           triggerRef={triggerRef}
-          title="Profile - applies from the next column"
+          title={t`Profile - applies from the next column`}
           options={options}
           currentValue={task.profile_id ?? DEFAULT_PROFILE_VALUE}
           swimlaneDefault={null}

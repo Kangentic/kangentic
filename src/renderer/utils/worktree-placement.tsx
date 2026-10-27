@@ -1,4 +1,7 @@
 import type { ReactNode } from 'react';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
 
 /**
  * ONE vocabulary for "where will this agent work": the branch hint under the
@@ -49,13 +52,13 @@ export function resolveWorktreeBlocker({ probe, remoteAgent }: WorktreeBlockerIn
 export function describeWorktreeBlocker(blocker: WorktreeBlocker): string {
   switch (blocker) {
     case 'not-a-repo':
-      return 'Not a git repository';
+      return i18n._(msg`Not a git repository`);
     case 'nested-worktree':
-      return 'The project folder is itself a git worktree';
+      return i18n._(msg`The project folder is itself a git worktree`);
     case 'no-commits':
-      return 'No commits yet';
+      return i18n._(msg`No commits yet`);
     case 'remote-agent':
-      return 'The agent runs on a remote server';
+      return i18n._(msg`The agent runs on a remote server`);
   }
 }
 
@@ -80,35 +83,46 @@ function pill(text: string): ReactNode {
   return <span className="whitespace-nowrap font-mono text-fg-faint">{text}</span>;
 }
 
+/** "Runs in the project folder on <branch>": one message for both callers. */
+function runsInProjectFolderOn(branchName: string): ReactNode {
+  const branchPill = pill(branchName);
+  return <Trans>Runs in the project folder on {branchPill}</Trans>;
+}
+
 /**
  * The one-line statement under the Branch row. The worktree-on auto-branch
  * string is pinned by `tests/ui/new-task-dialog.spec.ts` and must keep its
- * opening words; the off lines are the same sentences with the place swapped.
+ * opening words; the off lines are the same sentences with the place swapped,
+ * each its own whole message so a translation never splices a place phrase in.
  */
 export function computeBranchHint(input: BranchHintInput): ReactNode {
   const { blocker, currentBranch } = input;
   const branch = input.customBranchName.trim();
   const base = input.effectiveBaseBranch;
+  const branchPill = pill(branch);
+  const basePill = pill(base);
 
-  if (blocker === 'remote-agent') return <>Runs on the remote server</>;
-  if (blocker) return <>Runs in the project folder</>;
+  if (blocker === 'remote-agent') return <Trans>Runs on the remote server</Trans>;
+  if (blocker) return <Trans>Runs in the project folder</Trans>;
 
-  const place = input.effectiveWorktree ? 'in a new worktree' : 'in the project folder';
   if (branch) {
     if (input.branchExists) {
-      return currentBranch === branch && !input.effectiveWorktree
-        ? <>Runs in the project folder on {pill(branch)}</>
-        : <>{pill(branch)} exists and will be checked out {place}</>;
+      if (currentBranch === branch && !input.effectiveWorktree) return runsInProjectFolderOn(branch);
+      return input.effectiveWorktree
+        ? <Trans>{branchPill} exists and will be checked out in a new worktree</Trans>
+        : <Trans>{branchPill} exists and will be checked out in the project folder</Trans>;
     }
-    return <>{pill(branch)} will be created from {pill(base)} {place}</>;
+    return input.effectiveWorktree
+      ? <Trans>{branchPill} will be created from {basePill} in a new worktree</Trans>
+      : <Trans>{branchPill} will be created from {basePill} in the project folder</Trans>;
   }
   if (input.effectiveWorktree) {
-    return <>Auto-generated branch will be created from {pill(base)} in a new worktree</>;
+    return <Trans>Auto-generated branch will be created from {basePill} in a new worktree</Trans>;
   }
   if (input.baseBranchPinned && currentBranch !== base) {
-    return <>{pill(base)} will be checked out in the project folder</>;
+    return <Trans>{basePill} will be checked out in the project folder</Trans>;
   }
   return currentBranch
-    ? <>Runs in the project folder on {pill(currentBranch)}</>
-    : <>Runs in the project folder</>;
+    ? runsInProjectFolderOn(currentBranch)
+    : <Trans>Runs in the project folder</Trans>;
 }

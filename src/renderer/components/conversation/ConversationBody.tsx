@@ -11,6 +11,7 @@
 
 import { useMemo } from 'react';
 import { Loader2, MessageSquare } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tabs, tabIds, type TabItem } from '../Tabs';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
 import { IsolatedIcon } from '../IsolatedBadge';
@@ -40,6 +41,7 @@ export function ConversationBody({
   autoFollowNewMessages,
   tabIdPrefix = DEFAULT_TAB_ID_PREFIX,
 }: ConversationBodyProps) {
+  const { t } = useLingui();
   const {
     response,
     ready,
@@ -58,10 +60,11 @@ export function ConversationBody({
     viewInitialPosition,
     searchPlaceholder,
   } = state;
+  const columnName = columnOnScreen?.name ?? '';
 
   const tabItems = useMemo<Array<TabItem<string>>>(
     () => [
-      { id: ALL_CONVERSATION_TAB, label: 'All' },
+      { id: ALL_CONVERSATION_TAB, label: t`All` },
       ...route.map((column) => ({
         id: column.swimlaneId,
         label: column.name,
@@ -69,7 +72,7 @@ export function ConversationBody({
         badge: isolatedSwimlaneIds.has(column.swimlaneId) ? <IsolatedIcon size={13} explained /> : undefined,
       })),
     ],
-    [route, isolatedSwimlaneIds],
+    [route, isolatedSwimlaneIds, t],
   );
 
   if (!ready || !response) {
@@ -87,7 +90,7 @@ export function ConversationBody({
           tabs={tabItems}
           selectedId={activeTab}
           onSelect={selectTab}
-          ariaLabel="Conversation sections"
+          ariaLabel={t`Conversation sections`}
           idPrefix={tabIdPrefix}
           fit="icons-then-scroll"
           testId="conversation-route-tabs"
@@ -109,8 +112,8 @@ export function ConversationBody({
         ) : columnOnScreen && visibleEntries.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center" data-testid="conversation-route-empty">
             <MessageSquare size={24} className="text-fg-disabled" />
-            <div className="text-sm font-semibold text-fg-tertiary">No conversation in {columnOnScreen.name}</div>
-            <div className="text-sm text-fg-muted">The agent did not run while the task was in {columnOnScreen.name}.</div>
+            <div className="text-sm font-semibold text-fg-tertiary"><Trans>No conversation in {columnName}</Trans></div>
+            <div className="text-sm text-fg-muted"><Trans>The agent did not run while the task was in {columnName}.</Trans></div>
           </div>
         ) : (
           <ConversationView
