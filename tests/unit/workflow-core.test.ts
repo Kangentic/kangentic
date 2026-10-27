@@ -21,7 +21,9 @@ import {
   type CoreTask,
   type CoreWorkflow,
 } from '../../src/main/workflows/engine/workflow-engine-core';
-import { workflowMoveRefusal, type WorkflowMoveCheck } from '../../src/shared/workflow-lock';
+import { workflowMoveRefusal, workflowMoveRefusalMessage, type WorkflowMoveCheck } from '../../src/shared/workflow-lock';
+import { englishText } from '../../src/shared/i18n/english';
+import { translateText } from '../../src/renderer/i18n/translate';
 
 function column(id: string, position: number, role: RouteColumn['role'] = null, extra: Partial<RouteColumn> = {}): RouteColumn {
   return { id, position, role, is_archived: false, is_ghost: false, ...extra };
@@ -283,5 +285,58 @@ describe('the move lock', () => {
   it('never refuses a reorder, or a task in a finished workflow', () => {
     expect(workflowMoveRefusal(check({ toSwimlaneId: 'executing' }))).toBeNull();
     expect(workflowMoveRefusal(check({ workflowState: 'done' }))).toBeNull();
+  });
+
+  describe('as a message, for the board to show in the session language', () => {
+    const LOCKED = '#414 is locked while Usage budgets runs.';
+    const TO_DO_NEEDS_REMOVE = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
+    const PAUSED_FOR_AGENTS = '#414 is in Usage budgets, which is paused. Resume it to move its tasks.';
+    const toDo = { toSwimlaneId: 'todo', toRole: 'todo' as const };
+
+    // The three sentences are typed out, not read back: they are the pre-change literals of
+    // `WORKFLOW_REFUSALS.locked`, `.toDoNeedsRemove` and `.pausedForAgents` (`git show
+    // HEAD:src/shared/workflow-refusals.ts`), which the module before this change returned.
+    // The rows cover every refusing branch of `workflowMoveRefusalMessage`.
+    const REFUSING: Array<[string, Partial<WorkflowMoveCheck>, string]> = [
+      ['a person dragging a running workflow task', {}, LOCKED],
+      ['the phone moving a running workflow task', { origin: 'mobile' }, LOCKED],
+      ['another agent moving a running workflow task', { origin: 'agent' }, LOCKED],
+      ['a person dragging out of a human gate to a column that is not the next one', { humanGateTargetId: 'testing' }, LOCKED],
+      ['a person moving a running workflow task to To Do', toDo, LOCKED],
+      ['the phone moving a running workflow task to To Do', { ...toDo, origin: 'mobile' }, LOCKED],
+      ['an agent moving a running workflow task to To Do', { ...toDo, origin: 'agent' }, TO_DO_NEEDS_REMOVE],
+      ['the task\'s own agent moving a running workflow task to To Do', { ...toDo, origin: 'agent', moverIsTaskAgent: true }, TO_DO_NEEDS_REMOVE],
+      ['the workflow moving a task to To Do', { ...toDo, origin: 'workflow' }, TO_DO_NEEDS_REMOVE],
+      ['a person moving a paused workflow task to To Do', { ...toDo, workflowState: 'paused' }, TO_DO_NEEDS_REMOVE],
+      ['another agent moving a paused workflow task', { workflowState: 'paused', origin: 'agent' }, PAUSED_FOR_AGENTS],
+    ];
+
+    const ALLOWED: Array<[string, Partial<WorkflowMoveCheck>]> = [
+      ['a reorder within one column', { toSwimlaneId: 'executing' }],
+      ['a draft workflow', { workflowState: 'draft' }],
+      ['a finished workflow', { workflowState: 'done' }],
+      ['the workflow itself', { origin: 'workflow' }],
+      ['an automation', { origin: 'automation' }],
+      ['an auto-move', { origin: 'auto-move' }],
+      ['the task\'s own agent', { origin: 'agent', moverIsTaskAgent: true }],
+      ['a person moving a paused workflow task by hand', { workflowState: 'paused' }],
+      ['the phone moving a paused workflow task by hand', { workflowState: 'paused', origin: 'mobile' }],
+      ['a person dragging out of a human gate to the next column', { humanGateTargetId: 'review' }],
+    ];
+
+    it.each(REFUSING)('%s is refused with its sentence', (_name, extra, expected) => {
+      const message = workflowMoveRefusalMessage(check(extra));
+      expect(message).not.toBeNull();
+      // The message resolves to the sentence in English, and in an English session on the board...
+      expect(englishText(message ?? '')).toBe(expected);
+      expect(translateText(message ?? '')).toBe(expected);
+      // ...and the thrown form is that same English.
+      expect(workflowMoveRefusal(check(extra))).toBe(expected);
+    });
+
+    it.each(ALLOWED)('is null for %s', (_name, extra) => {
+      expect(workflowMoveRefusalMessage(check(extra))).toBeNull();
+      expect(workflowMoveRefusal(check(extra))).toBeNull();
+    });
   });
 });

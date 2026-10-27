@@ -4,7 +4,11 @@ import {
   filterTranscriptView,
   searchTranscript,
   renderTranscriptBudgeted,
+  planApprovalLabel,
+  planApprovalMessage,
 } from '../../src/shared/transcript-format';
+import { englishText } from '../../src/shared/i18n/english';
+import { translateText } from '../../src/renderer/i18n/translate';
 import { sanitizeTranscriptText } from '../../src/shared/ansi-strip';
 import type { TranscriptEntry } from '../../src/shared/types';
 
@@ -13,6 +17,29 @@ import type { TranscriptEntry } from '../../src/shared/types';
 const ESC = String.fromCharCode(27); // \x1b
 const BEL = String.fromCharCode(7); // \x07
 const sgr = (code: string): string => `${ESC}[${code}m`;
+
+describe('plan approval label', () => {
+  // The tag a plan carries for who approved it. The Plan card in the conversation
+  // viewer shows `planApprovalMessage` in the session language; a copied plan and the
+  // markdown an agent reads carry `planApprovalLabel`, which is always English. The
+  // sentences are the pre-change literals (`git show HEAD:src/shared/transcript-format.ts`).
+  it('says who approved a plan, in English, for a copied plan and for an agent', () => {
+    expect(planApprovalLabel('automatic')).toBe('Approved automatically');
+    expect(planApprovalLabel('user')).toBe('Approved by you');
+  });
+
+  it('has a message for each kind whose English is that label', () => {
+    expect(englishText(planApprovalMessage('automatic'))).toBe('Approved automatically');
+    expect(englishText(planApprovalMessage('user'))).toBe('Approved by you');
+    // An English session shows the same words in the conversation viewer.
+    expect(translateText(planApprovalMessage('automatic'))).toBe('Approved automatically');
+    expect(translateText(planApprovalMessage('user'))).toBe('Approved by you');
+  });
+
+  it('keeps the two kinds apart as messages, so a translator sees two strings', () => {
+    expect(planApprovalMessage('automatic').id).not.toBe(planApprovalMessage('user').id);
+  });
+});
 
 describe('transcriptToMarkdown - system entries', () => {
   it('renders a compaction system entry as a "Conversation compacted" section', () => {

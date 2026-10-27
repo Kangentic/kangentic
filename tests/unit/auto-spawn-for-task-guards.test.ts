@@ -155,6 +155,7 @@ vi.mock('../../src/main/ipc/handlers/session-resume-controllers', async (importO
 });
 
 import { autoSpawnForTask } from '../../src/main/ipc/helpers/agent-spawn';
+import { isBoardSpawnHeld } from '../../src/main/ipc/board-spawn-holds';
 import { getInFlightSpawnProgress, __resetSpawnProgressForTest } from '../../src/main/transition-engine/spawn-progress';
 // Deliberately the REAL registry: the cancellation tests abort through it,
 // exactly as SESSION_SUSPEND / SESSION_RESET / a newer SESSION_RESUME do.
@@ -882,5 +883,144 @@ describe('autoSpawnForTask: split lock', () => {
       const [spawnedTask] = mockExecuteTransition.mock.calls[0] as unknown[];
       expect(spawnedTask).toMatchObject({ worktree_path: '/mock/project/.kangentic/worktrees/1' });
     });
+  });
+});
+
+/**
+ * autoSpawnForTask holds its task against the startup sweep (`autoSpawnTasks`)
+ * for its whole run (board-spawn-holds.ts). Between Phase 1 and the spawn the
+ * task sits in an auto_spawn column with no session and no worktree, which is
+ * exactly what the sweep looks for: a sweep that landed there started a
+ * promptless agent in the project root, and this call then found the session
+ * and skipped its own spawn.
+ *
+ * Each test reads the hold from INSIDE the mocked git helpers and the spawn
+ * seam (`mockExecuteTransition`), and again right after the awaited call
+ * settles. The hold map is module state, so every test has a task id of its
+ * own: a red run must not leave a hold behind for the next test to read.
+ */
+describe('autoSpawnForTask: holds its task against the startup sweep', () => {
+  beforeEach(() => {
+    __resetSpawnProgressForTest();
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: true, role: null }));
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+  });
+
+  /** A task in the planned column, and what each step saw of its hold. */
+  function arrange(taskId: string) {
+    mockTaskGetById.mockReturnValue(makeTaskInLane({ id: taskId }));
+    const heldAt: Record<string, boolean> = {};
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      heldAt.worktree = isBoardSpawnHeld(taskId);
+      return null;
+    });
+    mockEnsureTaskBranchCheckout.mockImplementation(async () => {
+      heldAt.checkout = isBoardSpawnHeld(taskId);
+    });
+    mockExecuteTransition.mockImplementation(async () => {
+      heldAt.spawn = isBoardSpawnHeld(taskId);
+      return { outcomes: [], failures: [], startedAgent: false };
+    });
+    return heldAt;
+  }
+
+  const run = (taskId: string) => autoSpawnForTask(makeContext([]), 'proj-1', { id: taskId, title: 'Held task' }, LANE_ID);
+
+  it('holds the task through the worktree, the checkout and the spawn, and releases it once the spawn is done', async () => {
+    const taskId = 'hold-spawn-ok';
+    const heldAt = arrange(taskId);
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+
+    await run(taskId);
+
+    expect(heldAt).toEqual({ worktree: true, checkout: true, spawn: true });
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+  });
+
+  it('releases the hold when the worktree step fails', async () => {
+    const taskId = 'hold-worktree-fails';
+    const heldAt = arrange(taskId);
+    mockEnsureTaskWorktree.mockImplementation(async () => {
+      heldAt.worktree = isBoardSpawnHeld(taskId);
+      throw new Error("fatal: 'some-branch' is already used by worktree at '/repo'");
+    });
+
+    await run(taskId);
+
+    expect(heldAt).toEqual({ worktree: true });
+    // The failure path ran: the user was told, and the spawn never started.
+    expect(mockNotifySpawnBlocked).toHaveBeenCalledTimes(1);
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+  });
+
+  it('releases the hold when the call fails after the git phase, before the spawn', async () => {
+    // spawnAgent swallows an engine failure, so what escapes to the outer catch
+    // is a read in Phase 3: here the database closed during the git phase.
+    const taskId = 'hold-phase-three-fails';
+    const heldAt = arrange(taskId);
+    mockTaskGetById
+      .mockReturnValueOnce(makeTaskInLane({ id: taskId }))
+      .mockImplementationOnce(() => {
+        throw new Error('The database connection is not open');
+      });
+
+    await expect(run(taskId)).resolves.toBeUndefined();
+
+    expect(heldAt).toEqual({ worktree: true, checkout: true });
+    // The failure path ran: the spawn was counted and reported as failed.
+    expect(mockReportHandledError).toHaveBeenCalledTimes(1);
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+  });
+
+  it('releases the hold when a suspend or a newer resume cancels the spawn mid-fetch', async () => {
+    const taskId = 'hold-spawn-aborted';
+    const heldAt = arrange(taskId);
+    mockEnsureTaskWorktree.mockImplementation(async (
+      _context: unknown, _task: unknown, _tasks: unknown, _path: unknown,
+      options?: { signal?: AbortSignal },
+    ) => {
+      heldAt.worktree = isBoardSpawnHeld(taskId);
+      abortInFlightResume(taskId);
+      options?.signal?.throwIfAborted();
+    });
+
+    await expect(run(taskId)).resolves.toBeUndefined();
+
+    expect(heldAt).toEqual({ worktree: true });
+    expect(mockExecuteTransition).not.toHaveBeenCalled();
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+  });
+
+  it('releases the hold when the spawn itself is cancelled', async () => {
+    // spawnAgent swallows any engine failure except an abort, which it rethrows,
+    // so a cancellation is the one rejection that escapes the spawn step.
+    const taskId = 'hold-spawn-aborted-late';
+    const heldAt = arrange(taskId);
+    mockExecuteTransition.mockImplementation(async () => {
+      heldAt.spawn = isBoardSpawnHeld(taskId);
+      throw new DOMException('The operation was aborted', 'AbortError');
+    });
+
+    await expect(run(taskId)).resolves.toBeUndefined();
+
+    expect(heldAt).toEqual({ worktree: true, checkout: true, spawn: true });
+    // The abort branch ran: a cancelled spawn is not counted or reported as failed.
+    expect(mockReportHandledError).not.toHaveBeenCalled();
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
+  });
+
+  it('releases the hold when a gate stops the call before any git work', async () => {
+    const taskId = 'hold-gate-stops';
+    const heldAt = arrange(taskId);
+    // The column does not start agents, so Phase 1 returns no plan.
+    mockSwimlaneGetById.mockReturnValue(makeLane({ auto_spawn: false, role: null }));
+
+    await run(taskId);
+
+    expect(heldAt).toEqual({});
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(isBoardSpawnHeld(taskId)).toBe(false);
   });
 });
