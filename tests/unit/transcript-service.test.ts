@@ -166,7 +166,7 @@ describe('resolveSessionTranscript', () => {
     expect(result!.sourcePath).toBe('/history/session-1.jsonl');
     expect(result!.taskTitle).toBe('Wire the auth flow');
     expect(result!.agentName).toBe('Claude Code');
-    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project');
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null);
     const [entry] = result!.entries;
     expect(entry.kind).toBe('user');
     // The clamp caps the span and appends a truncation marker rather than

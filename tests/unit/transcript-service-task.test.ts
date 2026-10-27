@@ -314,7 +314,7 @@ describe('resolveTaskTranscript', () => {
 
     expect(result).not.toBeNull();
     // The conversation lives where it ran: by its id in the checkout the workflow recorded.
-    expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project');
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null);
     expect(result!.entries).toEqual([{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }]);
     expect(result!.taskTitle).toBe('Workflow agent: Usage budgets');
     expect(result!.sessions).toHaveLength(1);

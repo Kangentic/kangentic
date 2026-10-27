@@ -258,7 +258,7 @@ describe('handleGetTranscript', () => {
       vi.mocked(agentRegistry.getBySessionType).mockReturnValue(stubAdapter({ displayName: 'Claude Code', parseTranscript }));
       const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
       expect(result.success).toBe(true);
-      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project');
+      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null);
       expect(result.message).toContain('plan the budgets');
     });
   });
@@ -434,7 +434,7 @@ describe('handleGetTranscript', () => {
     expect(result.message).toContain('Entries: 2');
     expect(result.message).toContain('## User');
     // The capability is invoked with the agent session id and cwd.
-    expect(parseTranscript).toHaveBeenCalledWith('droid-uuid-1234', 'C:/Users/dev/project');
+    expect(parseTranscript).toHaveBeenCalledWith('droid-uuid-1234', 'C:/Users/dev/project', null);
     // Data payload carries the located source path as filePath.
     expect(result.data).toMatchObject({
       sessionId: 'session-droid',
@@ -680,7 +680,7 @@ describe('handleGetTranscript', () => {
 
     expect(result.success).toBe(true);
     // sessionIndex 1 = the previous session (sessions ordered started_at DESC).
-    expect(parseTranscript).toHaveBeenCalledWith('agent-old', 'C:/Users/dev/project');
+    expect(parseTranscript).toHaveBeenCalledWith('agent-old', 'C:/Users/dev/project', null);
   });
 
   it('returns an error when sessionIndex is out of range', async () => {
@@ -781,7 +781,7 @@ describe('handleGetTranscript', () => {
     const result = await handleGetTranscript({ taskId: '1', sessionIndex: -1 }, context);
 
     expect(result.success).toBe(true);
-    expect(parseTranscript).toHaveBeenCalledWith('agent-new', 'C:/Users/dev/project');
+    expect(parseTranscript).toHaveBeenCalledWith('agent-new', 'C:/Users/dev/project', null);
     expect(result.message).toContain('from newest');
   });
 
