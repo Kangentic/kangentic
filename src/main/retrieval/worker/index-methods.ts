@@ -27,7 +27,7 @@ import { awaitWriteTurn } from '../write-budget';
 import { agentRegistry } from '../../agent/agent-registry';
 import { adoptRemoteTargets, type RemoteTargets } from '../remote-targets';
 import type { CodeSweepPlan } from '../../../shared/answer-agent';
-import type { SummaryChoice } from '../../../shared/types';
+import type { StoredCliTarget, SummaryChoice } from '../../../shared/types';
 import type { WorkerContext } from './methods';
 
 /** Which sweeps one `index.sweep` runs, in this order. */
@@ -71,7 +71,16 @@ export interface IndexMethods {
    * search index: it has no session record and its conversation is not task work.
    */
   'index.workflowAgentTurns': {
-    params: { projectId: string; sessionId: string; agentSessionId: string; sessionType: string; cwd: string; remoteTargets: RemoteTargets };
+    /** `cliTarget`: where the agent's CLI runs when it is not this machine (a WSL distro). */
+    params: {
+      projectId: string;
+      sessionId: string;
+      agentSessionId: string;
+      sessionType: string;
+      cwd: string;
+      cliTarget?: StoredCliTarget | null;
+      remoteTargets: RemoteTargets;
+    };
     result: { outcome: IndexOutcome };
   };
   /** Run some of a project's sweeps in order (`IndexSweepSteps`). */
@@ -204,9 +213,9 @@ export const indexHandlers: IndexHandlers = {
     return { outcome, changesIndexed: changed?.indexed ?? 0 };
   },
 
-  'index.workflowAgentTurns': async ({ projectId, sessionId, agentSessionId, sessionType, cwd, remoteTargets }, context) => {
+  'index.workflowAgentTurns': async ({ projectId, sessionId, agentSessionId, sessionType, cwd, cliTarget, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    const outcome = await indexerFor(context).recordWorkflowAgentTurns(projectId, { sessionId, agentSessionId, sessionType, cwd });
+    const outcome = await indexerFor(context).recordWorkflowAgentTurns(projectId, { sessionId, agentSessionId, sessionType, cwd, cliTarget });
     return { outcome };
   },
 

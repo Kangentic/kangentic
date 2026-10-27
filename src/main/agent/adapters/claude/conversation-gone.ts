@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { locateClaudeTranscriptFile } from './transcript-parser';
 import { isConfirmedMissing } from '../../shared/confirmed-missing';
+import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /** Project folders statted at once by the folder scan. */
 const SCAN_BATCH = 32;
@@ -32,20 +33,26 @@ const SCAN_BATCH = 32;
  *     it. The root comes from the reported path, so it
  *     follows a `CLAUDE_CONFIG_DIR` the locator does not know about. Measured at
  *     16 to 22 ms over 617 folders, and reached only once 1 to 3 hold.
+ *
+ * For a Claude installed in a WSL distro (`place`), a Linux path it reported is
+ * read through the distro's share, and the locator looks in the distro's home,
+ * so the same proof holds there.
  */
 export async function proveClaudeConversationGone(params: {
   agentSessionId: string;
   reportedPaths: ReadonlyArray<string>;
   cwd: string;
+  place?: CliPlace | null;
 }): Promise<boolean> {
+  const place = params.place ?? null;
   const fileName = `${params.agentSessionId}.jsonl`;
-  const reportedPath = params.reportedPaths.find(
-    (candidate) => path.isAbsolute(candidate) && path.basename(candidate) === fileName,
-  );
+  const reportedPath = params.reportedPaths
+    .map((candidate) => (place && candidate.startsWith('/') ? hostPathForTarget(candidate, place) : candidate))
+    .find((candidate) => path.isAbsolute(candidate) && path.basename(candidate) === fileName);
   if (!reportedPath) return false;
 
   if (!(await isConfirmedMissing(reportedPath))) return false;
-  if (!(await isConfirmedMissing(locateClaudeTranscriptFile(params.agentSessionId, params.cwd)))) return false;
+  if (!(await isConfirmedMissing(locateClaudeTranscriptFile(params.agentSessionId, params.cwd, place)))) return false;
 
   const projectsRoot = path.dirname(path.dirname(reportedPath));
   let folders: fs.Dirent[];

@@ -447,7 +447,8 @@ describe('ConversationIndexer.indexSession', () => {
     const outcome = await indexer.indexSession('project-1', 'session-1');
 
     expect(outcome).toBe('indexed');
-    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project');
+    // The record has no CLI target, so the read is of this machine's history.
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null);
     expect(chunker).toHaveBeenCalledWith(entries);
     // One chunk inserted into memory_chunks.
     expect(state.chunkInserts).toHaveLength(1);

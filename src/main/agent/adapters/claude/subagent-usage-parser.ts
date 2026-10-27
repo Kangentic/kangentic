@@ -3,6 +3,7 @@ import path from 'node:path';
 import { streamJsonlRecords } from '../../shared/history-scan';
 import { locateClaudeTranscriptFile } from './transcript-parser';
 import type { SubagentSpawnLink, SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent-adapter';
+import type { CliPlace } from '../../shared/cli-target';
 
 /**
  * Claude writes every Task-tool subagent's conversation to its OWN transcript,
@@ -49,8 +50,8 @@ export const CLAUDE_SUBAGENT_SPAWN_TOOL = 'Task';
  * keeps working: whatever directory the main JSONL was found in is the one whose
  * sibling we want.
  */
-export function locateClaudeSubagentDir(agentSessionId: string, cwd: string): string {
-  const transcriptPath = locateClaudeTranscriptFile(agentSessionId, cwd);
+export function locateClaudeSubagentDir(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
+  const transcriptPath = locateClaudeTranscriptFile(agentSessionId, cwd, place);
   return path.join(path.dirname(transcriptPath), agentSessionId, SUBAGENTS_DIR);
 }
 
@@ -319,6 +320,7 @@ async function parseSubagentFile(
 export async function parseClaudeSubagentUsage(
   agentSessionId: string,
   cwd: string,
+  place: CliPlace | null = null,
 ): Promise<{
   directoryPresent: boolean;
   complete: boolean;
@@ -326,7 +328,7 @@ export async function parseClaudeSubagentUsage(
   turns: SubagentUsageTurn[];
   spawnLinks: SubagentSpawnLink[];
 }> {
-  const directory = locateClaudeSubagentDir(agentSessionId, cwd);
+  const directory = locateClaudeSubagentDir(agentSessionId, cwd, place);
   let entries: string[];
   try {
     entries = fs.readdirSync(directory);

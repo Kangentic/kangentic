@@ -404,6 +404,7 @@ describe('IPC handler wiring: message trail tracker', () => {
         sessionType: 'claude',
         agentSessionId: 'claude-agent-session-1',
         cwd: '/mock/project/worktree',
+        cliTarget: null,
       });
     });
 

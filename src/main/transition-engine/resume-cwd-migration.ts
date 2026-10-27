@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
+import type { CliPlace } from '../agent/shared/cli-target';
 
 /**
  * Migrate an agent's per-cwd session history when a task's worktree was renamed
@@ -39,8 +40,16 @@ export async function migrateResumeCwdIfRenamed(params: {
   /** The cwd the agent is about to be (re)spawned in (the task's current worktree). */
   newCwd: string;
   projectPath: string | null | undefined;
+  /**
+   * Where the CLI runs when it is not this machine (a WSL distro). The check
+   * looks in the distro's home; a history the rename orphaned there is not
+   * moved (`onProjectRelocated` moves this machine's), so that resume reports
+   * "No conversation found", as any unmigrated resume does.
+   */
+  place?: CliPlace | null;
 }): Promise<void> {
   const { adapter, agentSessionId, canResume, oldCwd, newCwd, projectPath } = params;
+  const place = params.place ?? null;
 
   if (!canResume || !agentSessionId || !projectPath || !oldCwd) return;
 
@@ -75,8 +84,12 @@ export async function migrateResumeCwdIfRenamed(params: {
   try {
     // Already reachable from the new cwd? Then nothing was orphaned (or a prior
     // migration already ran). A positive skip-check, never a gate on resume.
-    const reachable = await adapter.locateSessionHistoryFile(agentSessionId, newCwd);
+    const reachable = await adapter.locateSessionHistoryFile(agentSessionId, newCwd, place);
     if (reachable) return;
+    if (place) {
+      console.warn(`[RESUME_MIGRATE] Session history ${oldCwd} -> ${newCwd} is in WSL distro ${place.distro}; not migrated`);
+      return;
+    }
 
     await adapter.onProjectRelocated?.(oldCwd, newCwd);
   } catch (error) {

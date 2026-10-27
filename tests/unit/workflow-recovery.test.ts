@@ -175,6 +175,7 @@ interface FakeSessionManager extends EventEmitter {
   listSessions: () => unknown[];
   getActivityReason: (sessionId: string) => unknown;
   getSessionAgentName: (sessionId: string) => string;
+  getSessionCliTarget: (sessionId: string) => null;
   write: (sessionId: string, data: string) => void;
   signalUserInterrupt: (sessionId: string) => void;
 }
@@ -340,6 +341,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
       }],
       getActivityReason: () => activityReason,
       getSessionAgentName: () => 'claude',
+      getSessionCliTarget: () => null,
       write: (_sessionId: string, data: string) => { typed.push(data); },
       // The engine's own settling of an interrupt; the tests drive the idle themselves.
       signalUserInterrupt: () => undefined,

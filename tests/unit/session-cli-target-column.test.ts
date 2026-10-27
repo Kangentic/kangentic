@@ -1,12 +1,15 @@
 /**
  * A session whose agent CLI ran in a WSL distro records the distro on its row
  * (`sessions.cli_target`), so the readers and the reap find it after the
- * session ends. Every other row keeps NULL, which reads as this machine.
+ * session ends, and a Command Terminal's conversation does the same
+ * (`command_terminal_history.cli_target`). Every other row keeps NULL, which
+ * reads as this machine.
  */
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
+import { CommandTerminalHistoryRepository } from '../../src/main/db/repositories/command-terminal-history-repository';
 import { parseStoredCliTarget, serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 
 function openProjectDatabase(): Database.Database {
@@ -54,5 +57,42 @@ describe('sessions.cli_target', () => {
     expect(inserted.cli_target).toBeNull();
     expect(readTarget(database, 'session-local')).toBeNull();
     expect(parseStoredCliTarget(readTarget(database, 'session-local'))).toBeNull();
+  });
+
+  it('reaches the readers that select their own columns', () => {
+    const database = openProjectDatabase();
+    const repository = new SessionRepository(database);
+    const target = serializeCliTarget({ kind: 'wsl', distro: 'Ubuntu', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu' });
+    repository.insert({ ...BASE_ROW, id: 'session-wsl', cli_target: target });
+
+    expect(repository.getLatestAgentSessionForTask('task-1')?.cli_target).toBe(target);
+    expect(repository.listEarlierRunRecords('task-1', null, 'another-record')[0]?.cli_target).toBe(target);
+  });
+});
+
+describe('command_terminal_history.cli_target', () => {
+  // A Command Terminal's conversation keeps where its CLI ran, so the Earlier
+  // list asks the distro for its file instead of reporting it purged.
+  it('is added by the migrations, and running them again changes nothing', () => {
+    const database = openProjectDatabase();
+    runProjectMigrations(database);
+    const columns = (database.pragma('table_info(command_terminal_history)') as Array<{ name: string; dflt_value: string | null }>)
+      .filter((column) => column.name === 'cli_target');
+    expect(columns).toHaveLength(1);
+    expect(columns[0].dflt_value).toBe('NULL');
+  });
+
+  it('records the target with the conversation, takes the newest on a resume, and is NULL without one', () => {
+    const database = openProjectDatabase();
+    const repository = new CommandTerminalHistoryRepository(database);
+    const target = serializeCliTarget({ kind: 'wsl', distro: 'Ubuntu' });
+
+    repository.recordConversation({ agentSessionId: 'conversation-wsl', agentName: 'claude', cwd: '/mock/project', label: null, touched: true, cliTarget: target });
+    repository.recordConversation({ agentSessionId: 'conversation-local', agentName: 'claude', cwd: '/mock/project', label: null, touched: true });
+    expect(repository.get('conversation-wsl')?.cli_target).toBe(target);
+    expect(repository.get('conversation-local')?.cli_target).toBeNull();
+
+    repository.recordConversation({ agentSessionId: 'conversation-wsl', agentName: 'claude', cwd: '/mock/project', label: null, touched: true, cliTarget: null });
+    expect(repository.get('conversation-wsl')?.cli_target).toBeNull();
   });
 });

@@ -184,6 +184,9 @@ class FakeSessionManager extends EventEmitter {
   getSessionAgentName(): string {
     return 'claude';
   }
+  getSessionCliTarget(): null {
+    return null;
+  }
   getToolCallCount(): number {
     return 4;
   }
@@ -455,6 +458,8 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     agentSessionId: conversationId,
     sessionType: 'claude_agent',
     cwd,
+    // The agent's CLI runs on this machine.
+    cliTarget: null,
     remoteTargets: [],
   }];
 

@@ -189,7 +189,13 @@ export async function handleGetTranscript(
       // Parsed and rendered in the retrieval worker: main parses no transcript.
       return await retrievalClient.call('transcript.structured', {
         request: {
-          record: { id: targetSessionId, sessionType: record.session_type, agentSessionId: record.agent_session_id, cwd: record.cwd },
+          record: {
+            id: targetSessionId,
+            sessionType: record.session_type,
+            agentSessionId: record.agent_session_id,
+            cwd: record.cwd,
+            cliTarget: record.cli_target,
+          },
           view,
           tail,
           charBudget,

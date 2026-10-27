@@ -33,6 +33,7 @@ import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
 import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
+import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
@@ -454,7 +455,12 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       try {
         const record = new SessionRepository(getProjectDb(projectId)).findByAnyId(sessionId);
         if (!record) return null;
-        return { sessionType: record.session_type, agentSessionId: record.agent_session_id, cwd: record.cwd };
+        return {
+          sessionType: record.session_type,
+          agentSessionId: record.agent_session_id,
+          cwd: record.cwd,
+          cliTarget: parseStoredCliTarget(record.cli_target),
+        };
       } catch {
         return null;
       }

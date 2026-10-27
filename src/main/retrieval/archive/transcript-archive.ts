@@ -31,6 +31,7 @@ import { writeTransaction } from '../../db/transaction';
 import { awaitWriteTurn } from '../write-budget';
 import { touchBounded } from '../../agent/shared/bounded-lru';
 import type { AgentAdapter } from '../../agent/agent-adapter';
+import { placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
 import type { TranscriptEntry } from '../../../shared/types';
 
 const compress = promisify(brotliCompress);
@@ -65,6 +66,8 @@ interface ArchiveTarget {
   sessionId: string;
   sessionType: string;
   cwd: string;
+  /** Where the conversation's CLI ran when it was not this machine (a WSL distro): its file is there. */
+  place: CliPlace | null;
 }
 
 interface ArchiveStateRow {
@@ -104,8 +107,8 @@ export class TranscriptArchive {
     if (!opened) return 'skipped';
     const db = opened;
     const record = db.prepare(
-      'SELECT id, agent_session_id, session_type, cwd FROM sessions WHERE id = ? OR agent_session_id = ? ORDER BY started_at DESC LIMIT 1',
-    ).get(sessionId, sessionId) as { id: string; agent_session_id: string | null; session_type: string; cwd: string } | undefined;
+      'SELECT id, agent_session_id, session_type, cwd, cli_target FROM sessions WHERE id = ? OR agent_session_id = ? ORDER BY started_at DESC LIMIT 1',
+    ).get(sessionId, sessionId) as { id: string; agent_session_id: string | null; session_type: string; cwd: string; cli_target: string | null } | undefined;
     if (!record?.agent_session_id) return 'skipped';
     try {
       return await this.archiveConversation(db, {
@@ -113,6 +116,7 @@ export class TranscriptArchive {
         sessionId: record.id,
         sessionType: record.session_type,
         cwd: record.cwd,
+        place: placeOfRecord(record),
       });
     } catch (error) {
       console.warn(`[retrieval] archive of ${record.agent_session_id.slice(0, 8)} failed:`, error instanceof Error ? error.message : error);
@@ -135,13 +139,13 @@ export class TranscriptArchive {
     result.purged = await this.purgeOrphans(db, shouldContinue);
 
     const rows = db.prepare(
-      'SELECT id, agent_session_id, session_type, cwd FROM sessions WHERE agent_session_id IS NOT NULL ORDER BY started_at DESC',
-    ).all() as Array<{ id: string; agent_session_id: string; session_type: string; cwd: string }>;
+      'SELECT id, agent_session_id, session_type, cwd, cli_target FROM sessions WHERE agent_session_id IS NOT NULL ORDER BY started_at DESC',
+    ).all() as Array<{ id: string; agent_session_id: string; session_type: string; cwd: string; cli_target: string | null }>;
     const newestPerConversation = new Map<string, ArchiveTarget>();
     for (const row of rows) {
       if (newestPerConversation.has(row.agent_session_id)) continue;
       newestPerConversation.set(row.agent_session_id, {
-        agentSessionId: row.agent_session_id, sessionId: row.id, sessionType: row.session_type, cwd: row.cwd,
+        agentSessionId: row.agent_session_id, sessionId: row.id, sessionType: row.session_type, cwd: row.cwd, place: placeOfRecord(row),
       });
     }
 
@@ -151,7 +155,7 @@ export class TranscriptArchive {
       if (!shouldContinue()) return result;
       const adapter = this.deps.getAdapter(target.sessionType);
       if (!adapter?.parseTranscriptWindow) continue;
-      const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd).catch(() => null);
+      const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
       if (!sourcePath) continue;
       const stat = await fs.promises.stat(sourcePath).catch(() => null);
       if (!stat) continue;
@@ -214,7 +218,7 @@ export class TranscriptArchive {
   private async archiveConversation(db: Database.Database, target: ArchiveTarget): Promise<ArchiveOutcome> {
     const adapter = this.deps.getAdapter(target.sessionType);
     if (!adapter?.parseTranscriptWindow) return 'unsupported';
-    const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd).catch(() => null);
+    const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
     if (!sourcePath) return 'missing-source';
     const stat = await fs.promises.stat(sourcePath).catch(() => null);
     if (!stat) return 'missing-source';
@@ -241,7 +245,7 @@ export class TranscriptArchive {
         // Taken before the parse, which prunes and adds to the carry in place.
         const carryBefore = [...attributedMessageIds];
         const parsedWindow = await adapter.parseTranscriptWindow(
-          target.agentSessionId, target.cwd, offset, this.deps.windowBytes, attributedMessageIds,
+          target.agentSessionId, target.cwd, offset, this.deps.windowBytes, attributedMessageIds, target.place,
         );
         // The reader's own size notice is not conversation.
         const entries = parsedWindow.entries.filter((entry) => !(entry.kind === 'system' && entry.subtype === 'truncated'));

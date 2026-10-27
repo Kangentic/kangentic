@@ -186,6 +186,9 @@ class FakeSessionManager extends EventEmitter {
   getSessionAgentName(): string {
     return this.agentName;
   }
+  getSessionCliTarget(): null {
+    return null;
+  }
   getToolCallCount(): number {
     return 0;
   }

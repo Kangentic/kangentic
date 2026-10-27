@@ -10,7 +10,7 @@ import { CodexStatusParser } from './status-parser';
 import { CodexHookTrustCheck } from './hook-trust';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
-import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type {
@@ -289,20 +289,25 @@ export class CodexAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    return CodexSessionHistoryParser.locate({ agentSessionId, cwd });
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return CodexSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
   }
 
-  async parseTranscript(agentSessionId: string, _cwd: string): Promise<ParsedTranscript> {
-    const filePath = locateCodexTranscriptFile(agentSessionId);
+  async parseTranscript(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const filePath = locateCodexTranscriptFile(agentSessionId, place ?? null);
     if (!filePath) return { entries: [], sourcePath: null };
     const entries = await parseCodexTranscript(agentSessionId, filePath);
     return { entries, sourcePath: filePath };
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  async readTranscriptPage(agentSessionId: string, _cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    const filePath = locateCodexTranscriptFile(agentSessionId);
+  async readTranscriptPage(
+    agentSessionId: string,
+    _cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+  ): Promise<TranscriptPageReadResult> {
+    const filePath = locateCodexTranscriptFile(agentSessionId, place ?? null);
     if (!filePath) return { status: 'unavailable', reason: 'file_missing' };
     return readCodexTranscriptPage(agentSessionId, filePath, request);
   }

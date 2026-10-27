@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import type { SubmissionVerifier } from '../../../../shared/types';
+import type { CliPlace } from '../../shared/cli-target';
 import {
   createSubmittedTextSubmissionVerifier,
   type UserTurnRecord,
@@ -56,9 +57,10 @@ export function clearCodexRolloutPathCache(): void {
  * Codex writes `rollout-<ISO-timestamp>-<sessionUUID>.jsonl` under a UTC-dated
  * directory. The timestamp prefix is unknown, so the first resolution scans;
  * afterwards the memo answers. The yesterday fallback covers a session that
- * spans a UTC date rollover.
+ * spans a UTC date rollover. `place` is where the CLI runs when it is not this
+ * machine: a distro Codex writes its rollouts in the distro's home.
  */
-export function resolveCodexRolloutPath(agentSessionId: string): string | null {
+export function resolveCodexRolloutPath(agentSessionId: string, place: CliPlace | null = null): string | null {
   const memoised = resolvedRolloutPaths.get(agentSessionId);
   if (memoised && fs.existsSync(memoised)) return memoised;
   // Evict by KEY (the session id), not by the path value - deleting the path
@@ -68,7 +70,7 @@ export function resolveCodexRolloutPath(agentSessionId: string): string | null {
   const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
 
-  for (const directory of [codexSessionsDirForToday(), codexSessionsDirForYesterday()]) {
+  for (const directory of [codexSessionsDirForToday(place), codexSessionsDirForYesterday(place)]) {
     const found = findMatchingFile(directory, pattern);
     if (found) {
       resolvedRolloutPaths.set(agentSessionId, found);
@@ -164,7 +166,7 @@ export function extractCodexUserTurn(line: string): UserTurnRecord | null {
  */
 export function createCodexCommandInjectionVerifier(): SubmissionVerifier {
   return createSubmittedTextSubmissionVerifier({
-    resolvePath: (agentSessionId) => resolveCodexRolloutPath(agentSessionId),
+    resolvePath: (agentSessionId, _cwd, place) => resolveCodexRolloutPath(agentSessionId, place),
     extractUserTurn: extractCodexUserTurn,
   });
 }

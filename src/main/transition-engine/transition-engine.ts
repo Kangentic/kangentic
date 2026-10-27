@@ -605,6 +605,8 @@ export class TransitionEngine {
           cwd: intent.resumeFromCwd,
           projectPath: appConfig.projectPath || cwd,
           sessionRepo: this.sessionRepo,
+          // The conversation resumes where this spawn's CLI runs.
+          place: cliTarget,
         })
       : null;
 
@@ -620,6 +622,7 @@ export class TransitionEngine {
         oldCwd: intent.resumeFromCwd,
         newCwd: cwd,
         projectPath: appConfig.projectPath,
+        place: cliTarget,
       });
     }
 

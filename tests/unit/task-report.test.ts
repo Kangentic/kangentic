@@ -411,7 +411,7 @@ describe('readTaskLastMessage', () => {
     expect(hoisted.retrievalCall).toHaveBeenCalledWith(
       'transcript.finalReply',
       {
-        facts: { sessionType: 'codex', agentSessionId: 'conversation-b', cwd: '/mock/second' },
+        facts: { sessionType: 'codex', agentSessionId: 'conversation-b', cwd: '/mock/second', cliTarget: null },
         remoteTargets: REMOTE_TARGETS_SENTINEL,
       },
       { timeoutMs: 15_000 },

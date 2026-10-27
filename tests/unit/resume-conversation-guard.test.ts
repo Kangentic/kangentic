@@ -152,6 +152,48 @@ describe('assessResumeConversation - never-started', () => {
   });
 });
 
+describe('assessResumeConversation - a CLI that ran in a WSL distro (#286)', () => {
+  // A distro CLI reports its transcript by its Linux path, which this machine
+  // never finds. Read as written, a conversation that is there looked never
+  // started, and the resume became a fresh conversation. Each record's own
+  // `cli_target` names the distro share the path is read through.
+  //
+  // Red-green: dropping `reportedPathOnHost` (checking the reported Linux path
+  // as is) makes the first case `never-started`.
+  const LINUX_TRANSCRIPT = `/home/dev/.claude/projects/-mnt-c-proj/${AGENT_SESSION_ID}.jsonl`;
+  let uncRoot: string;
+
+  /** The path the share mapping gives, created exactly as given so it holds on every OS. */
+  function sharePath(linuxPath: string): string {
+    return `${uncRoot}\\${linuxPath.split('/').filter(Boolean).join('\\')}`;
+  }
+
+  function wslRecord(): ResumeLineageRecord {
+    return {
+      ...folderRecord(),
+      cli_target: JSON.stringify({ kind: 'wsl', distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: `${uncRoot}\\home\\dev`, uncRoot }),
+    };
+  }
+
+  beforeEach(() => {
+    uncRoot = path.join(projectPath, 'distro-share');
+  });
+
+  it('reads the reported Linux path through the distro share, and resumes when the file is there', async () => {
+    writeStatusFile({ reportedPath: LINUX_TRANSCRIPT });
+    const onShare = sharePath(LINUX_TRANSCRIPT);
+    fs.mkdirSync(path.dirname(onShare), { recursive: true });
+    fs.writeFileSync(onShare, '{"type":"user"}\n', 'utf8');
+
+    await expect(assess({ records: [wslRecord()] })).resolves.toBe('unknown');
+  });
+
+  it('still reports never-started when the distro holds no such file', async () => {
+    writeStatusFile({ reportedPath: LINUX_TRANSCRIPT });
+    await expect(assess({ records: [wslRecord()] })).resolves.toBe('never-started');
+  });
+});
+
 describe('assessResumeConversation - falls back to the SessionStart hook', () => {
   // The status line only runs once the TUI is up, so a CLI killed in its first
   // second leaves none and used to blind the whole lineage. The SessionStart

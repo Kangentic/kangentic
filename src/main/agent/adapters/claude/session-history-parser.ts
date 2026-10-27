@@ -1,6 +1,7 @@
 import fs from 'node:fs';
-import type { SessionHistoryParseResult, SessionUsage } from '../../../../shared/types';
+import type { SessionHistoryParseResult, SessionUsage, StoredCliTarget } from '../../../../shared/types';
 import { locateClaudeTranscriptFile } from './transcript-parser';
+import { placeFromStored } from '../../shared/cli-target';
 import { humanizeClaudeModelId } from './model-display-name';
 
 /**
@@ -62,8 +63,10 @@ export class ClaudeSessionHistoryParser {
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
+    cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
-    const filePath = locateClaudeTranscriptFile(options.agentSessionId, options.cwd);
+    // A Claude in a WSL distro writes it under the distro's home.
+    const filePath = locateClaudeTranscriptFile(options.agentSessionId, options.cwd, placeFromStored(options.cliTarget));
     const maxAttempts = 120; // 120 x 500ms = ~60s
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       if (fs.existsSync(filePath)) return filePath;

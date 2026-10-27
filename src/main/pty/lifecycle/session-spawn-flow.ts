@@ -569,6 +569,7 @@ export async function performSpawn(
     effectiveCwd,
     session.agentName ?? 'agent',
     !!input.agentSessionId,
+    input.cliTarget ?? null,
   );
 
   // Caller-owned session ID short-circuit: when the adapter declares
@@ -605,6 +606,7 @@ export async function performSpawn(
       // (stale) occupancy - start at EOF so only fresh post-resume entries
       // produce usage. The spawn-time model seed still shows the model name.
       startAtEnd: input.resuming === true,
+      cliTarget: input.cliTarget ?? null,
     }).catch((err) => {
       console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, err);
     });

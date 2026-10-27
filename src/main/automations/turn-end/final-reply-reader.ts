@@ -4,6 +4,7 @@ import type { SessionRepository } from '../../db/repositories/session-repository
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { agentRegistry } from '../../agent/agent-registry';
+import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 
 /** How long a final-reply read may take before it reads as none. */
 export const AGENT_REPLY_TIMEOUT_MS = 15_000;
@@ -48,7 +49,7 @@ export async function tryReadSessionFinalReply(
     const reply = await retrievalClient.call(
       'transcript.finalReply',
       {
-        facts: { sessionType: record.session_type, agentSessionId, cwd: record.cwd },
+        facts: { sessionType: record.session_type, agentSessionId, cwd: record.cwd, cliTarget: parseStoredCliTarget(record.cli_target) },
         since: session.transcriptAnchor ?? null,
         remoteTargets: collectRemoteTargets(agentRegistry),
       },

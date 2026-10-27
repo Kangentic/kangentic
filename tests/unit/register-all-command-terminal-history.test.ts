@@ -386,7 +386,7 @@ describe('registerAllIpc command terminal history deps', () => {
       await deps.conversationAvailable('named-agent', 'conversation-6', '/mock/project-6');
 
       expect(agentRegistryGet).toHaveBeenCalledWith('named-agent');
-      expect(locateMock(adapter)).toHaveBeenCalledWith('conversation-6', '/mock/project-6');
+      expect(locateMock(adapter)).toHaveBeenCalledWith('conversation-6', '/mock/project-6', null);
     });
   });
 });

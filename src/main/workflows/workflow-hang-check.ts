@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import type { Session } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { agentRegistry } from '../agent/agent-registry';
+import { placeFromStored } from '../agent/shared/cli-target';
 import type { IpcContext } from '../ipc/ipc-context';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
@@ -116,7 +117,7 @@ async function checkSession(context: IpcContext, session: Session, now: () => nu
     return;
   }
 
-  const lastWriteAt = await lastHistoryWriteAt(adapter, session.agentSessionId, session.cwd, at - spec.quietLimitMs);
+  const lastWriteAt = await lastHistoryWriteAt(context, adapter, session, session.agentSessionId, at - spec.quietLimitMs);
   if (lastWriteAt === null || at - lastWriteAt < spec.quietLimitMs) return;
   if (promptInUse(context, session)) return;
   // The awaits above gave the session time to change: a permission prompt
@@ -159,7 +160,7 @@ async function checkInterruptLanded(
   interrupted: InterruptedTurn,
   at: number,
 ): Promise<void> {
-  const lastWriteAt = await lastHistoryWriteAt(adapter, session.agentSessionId!, session.cwd, interrupted.lastWriteAt + 1);
+  const lastWriteAt = await lastHistoryWriteAt(context, adapter, session, session.agentSessionId!, interrupted.lastWriteAt + 1);
   if (lastWriteAt === null) return;
   if (lastWriteAt !== interrupted.lastWriteAt) {
     interruptedTurns.delete(session.id);
@@ -214,10 +215,18 @@ function promptInUse(context: IpcContext, session: Session): boolean {
  * The newest write to the session's history or any of its subagents', or null
  * when it has none. A history written at `enoughAt` or later answers on its
  * own: a subagent's write could only be newer, and the subagents' files are
- * read one by one on main.
+ * read one by one on main. A CLI in a WSL distro keeps its history there.
  */
-async function lastHistoryWriteAt(adapter: AgentAdapter, agentSessionId: string, cwd: string, enoughAt: number): Promise<number | null> {
-  const historyFile = await adapter.locateSessionHistoryFile(agentSessionId, cwd);
+async function lastHistoryWriteAt(
+  context: IpcContext,
+  adapter: AgentAdapter,
+  session: Session,
+  agentSessionId: string,
+  enoughAt: number,
+): Promise<number | null> {
+  const cwd = session.cwd;
+  const place = placeFromStored(context.sessionManager.getSessionCliTarget(session.id));
+  const historyFile = await adapter.locateSessionHistoryFile(agentSessionId, cwd, place);
   if (!historyFile) return null;
   let newest: number;
   try {
@@ -226,6 +235,6 @@ async function lastHistoryWriteAt(adapter: AgentAdapter, agentSessionId: string,
     return null;
   }
   if (newest >= enoughAt) return newest;
-  const subagents = adapter.statSubagentTranscripts?.(agentSessionId, cwd) ?? null;
+  const subagents = adapter.statSubagentTranscripts?.(agentSessionId, cwd, place) ?? null;
   return subagents && subagents.maxMtimeMs > newest ? subagents.maxMtimeMs : newest;
 }

@@ -791,8 +791,15 @@ export interface AgentAdapter {
    * file (e.g. Claude's JSONL, Codex's rollout JSONL, Gemini's chat JSON),
    * or null if the agent has no session history files (Aider) or the file
    * cannot be found.
+   *
+   * `place`, here and on every transcript method below, is where the session's
+   * CLI ran when it was not this machine (a WSL distro, from the session's
+   * target or its record's `cli_target`, `placeOfRecord`): its files are under
+   * that distro's home, and `cwd` is the Windows path of the folder it ran in.
+   * Null or absent: this machine. An adapter without `supportsWslCli` is never
+   * given one and may ignore it.
    */
-  locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null>;
+  locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
    * Optional: prove that a conversation's history file no longer exists, so a
@@ -815,6 +822,7 @@ export interface AgentAdapter {
     agentSessionId: string;
     reportedPaths: ReadonlyArray<string>;
     cwd: string;
+    place?: CliPlace | null;
   }): Promise<boolean>;
 
   /**
@@ -837,7 +845,7 @@ export interface AgentAdapter {
    * history location is unknown) omit this; `get_transcript` then reports that
    * the structured format is unsupported and points at `format: "raw"`.
    */
-  parseTranscript?(agentSessionId: string, cwd: string): Promise<ParsedTranscript>;
+  parseTranscript?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript>;
 
   /**
    * Optional: parse ONE bounded byte window of the native transcript, retaining
@@ -883,6 +891,7 @@ export interface AgentAdapter {
     startByte: number,
     maxBytes: number,
     attributedMessageIds?: Set<string>,
+    place?: CliPlace | null,
   ): Promise<ParsedTranscriptWindow>;
 
   /**
@@ -915,6 +924,7 @@ export interface AgentAdapter {
     agentSessionId: string,
     cwd: string,
     request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
   ): Promise<TranscriptPageReadResult>;
 
   /**
@@ -933,7 +943,7 @@ export interface AgentAdapter {
    * a fan-out runs: an indexer that only watched the main signature would never
    * see the subagent turns at all.
    */
-  statSubagentTranscripts?(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null;
+  statSubagentTranscripts?(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null;
 
   /**
    * Optional: parse this session's subagent (sub-conversation) token usage into
@@ -950,7 +960,7 @@ export interface AgentAdapter {
    * retry later. Adapters with no subagent concept omit this; the ledger then
    * simply carries main-thread rows for that agent, as it always has.
    */
-  parseSubagentUsage?(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage>;
+  parseSubagentUsage?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage>;
 
   /**
    * Optional: the name of the tool this agent spawns a subagent with, as it
@@ -1000,6 +1010,7 @@ export interface AgentAdapter {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptUsage | null>;
 
   /**
@@ -1030,6 +1041,7 @@ export interface AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
     untilMs?: number | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null>;
 
   /**
@@ -1054,6 +1066,7 @@ export interface AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
     untilMs?: number | null;
+    place?: CliPlace | null;
   }): Promise<Record<string, number> | null>;
 
   /**

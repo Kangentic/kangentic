@@ -213,7 +213,7 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
 
     // Red: reverting `cwd: input.resume!.recordCwd ?? cwd` to the spawn `cwd`
     // makes this '/mock/spawn-cwd' instead of recordCwd.
-    expect(locateSessionHistoryFileMock).toHaveBeenCalledWith(FORKED_ID, recordCwd);
+    expect(locateSessionHistoryFileMock).toHaveBeenCalledWith(FORKED_ID, recordCwd, null);
   });
 
   it('falls back to the spawn cwd for the locate probe when recordCwd is omitted', async () => {
@@ -225,7 +225,7 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
       // recordCwd omitted.
     });
 
-    expect(locateSessionHistoryFileMock).toHaveBeenCalledWith(FORKED_ID, '/mock/spawn-cwd');
+    expect(locateSessionHistoryFileMock).toHaveBeenCalledWith(FORKED_ID, '/mock/spawn-cwd', null);
   });
 
   it('keeps the stale DB-stored id when the reported id has no locatable transcript', async () => {

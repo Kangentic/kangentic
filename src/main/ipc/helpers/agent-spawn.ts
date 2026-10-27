@@ -13,6 +13,7 @@ import { reportHandledError } from '../../analytics/error-reporting';
 import { resolveDefaultBaseBranch } from '../handlers/git-stats-capture';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { agentRegistry } from '../../agent/agent-registry';
+import { placeOfRecord } from '../../agent/shared/cli-target';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type { Task, Swimlane, Project, AutoCommandMode } from '../../../shared/types';
@@ -365,6 +366,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
           sessionFilePath = await sourceAdapter.locateSessionHistoryFile(
             latestSessionRecord.agent_session_id,
             latestSessionRecord.cwd,
+            // A source CLI that ran in a WSL distro left its history there.
+            placeOfRecord(latestSessionRecord),
           );
         }
       }

@@ -4,6 +4,7 @@ import type Database from 'better-sqlite3';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { agentRegistry } from '../../agent/agent-registry';
+import { placeOfRecord } from '../shared/cli-target';
 import { readBoundedTail } from './bounded-tail-read';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -18,6 +19,8 @@ interface SessionRow {
   started_at: string;
   exited_at: string | null;
   suspended_at: string | null;
+  /** Where the session's CLI ran when it was not this machine (`placeOfRecord`). */
+  cli_target: string | null;
 }
 
 const DEFAULT_TAIL = 200;
@@ -41,7 +44,7 @@ function resolveSession(
 
   if (sessionId) {
     const row = database.prepare(
-      `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at
+      `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target
        FROM sessions WHERE id = ?`,
     ).get(sessionId) as SessionRow | undefined;
     if (!row) return { error: `Session "${sessionId}" not found` };
@@ -55,7 +58,7 @@ function resolveSession(
   if (!task) return { error: `Task "${taskId}" not found` };
 
   const rows = database.prepare(
-    `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at
+    `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target
      FROM sessions WHERE task_id = ? ORDER BY started_at DESC`,
   ).all(task.id) as SessionRow[];
 
@@ -95,7 +98,7 @@ async function locateNativeSessionFile(session: SessionRow): Promise<string | nu
   if (!session.agent_session_id) return null;
   const adapter = agentRegistry.getBySessionType(session.session_type);
   if (!adapter) return null;
-  return adapter.locateSessionHistoryFile(session.agent_session_id, session.cwd);
+  return adapter.locateSessionHistoryFile(session.agent_session_id, session.cwd, placeOfRecord(session));
 }
 
 export async function handleGetSessionFiles(

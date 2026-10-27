@@ -959,8 +959,9 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
     expect(sessionRepo.updateAgentSessionId).toHaveBeenCalledWith(RECORD_ID, FORKED_ID);
 
     // The locate probe uses `intent.resumeFromCwd` (the RETIRING record's own
-    // cwd, i.e. `match.cwd` above), never the new spawn's `cwd` (worktreeDir).
-    expect(mockAdapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'));
+    // cwd, i.e. `match.cwd` above), never the new spawn's `cwd` (worktreeDir),
+    // on this machine (no CLI target).
+    expect(mockAdapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'), null);
 
     // The reconcile must run BEFORE migrateResumeCwdIfRenamed (see the
     // "Runs BEFORE migrateResumeCwdIfRenamed below so the cwd migration keys
@@ -1805,11 +1806,20 @@ describe('TransitionEngine - a CLI installed in a WSL distro', () => {
       shell: 'wsl -d Ubuntu',
       cliTarget: { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/claude', facts: WSL_DISTRO_FACTS },
     }));
+    // The spawn and the row keep the homes a reader needs after the session.
+    const stored = {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      homeLinux: '/home/dev',
+      homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+      uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      env: {},
+    };
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
       shell: 'wsl -d Ubuntu',
-      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+      cliTarget: stored,
     }));
-    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ cli_target: '{"kind":"wsl","distro":"Ubuntu"}' }));
+    expect(JSON.parse(sessionRepo.insertedRecords[0].cli_target ?? 'null')).toEqual(stored);
   });
 
   it('keeps the configured shell and no target for an adapter that does not run from WSL', async () => {

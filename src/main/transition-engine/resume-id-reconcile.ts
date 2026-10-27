@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
+import type { CliPlace } from '../agent/shared/cli-target';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import { sessionOutputPaths } from './session-paths';
 
@@ -44,6 +45,8 @@ export async function reconcileResumeAgentSessionId(params: {
   projectPath: string | null | undefined;
   /** Persists the swap so later resumes agree. Optional: null still returns the corrected id. */
   sessionRepo: Pick<SessionRepository, 'updateAgentSessionId'> | null | undefined;
+  /** Where the record's CLI ran when it was not this machine (`placeOfRecord`): its transcript is there. */
+  place?: CliPlace | null;
 }): Promise<string | null> {
   const { adapter, recordId, storedAgentSessionId, cwd, projectPath, sessionRepo } = params;
   const storedId = storedAgentSessionId ?? null;
@@ -75,7 +78,7 @@ export async function reconcileResumeAgentSessionId(params: {
     // plausibly id-shaped value before pointing --resume at it.
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(reportedId)) return storedId;
 
-    const locatedTranscript = await adapter.locateSessionHistoryFile(reportedId, cwd);
+    const locatedTranscript = await adapter.locateSessionHistoryFile(reportedId, cwd, params.place ?? null);
     if (!locatedTranscript) return storedId;
 
     console.log(

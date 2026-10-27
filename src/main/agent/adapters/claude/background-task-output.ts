@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { StoredCliTarget } from '../../../../shared/types';
+import { cliPathForTarget, hostPathForTarget, placeFromStored } from '../../shared/cli-target';
 
 /**
  * Claude Code writes each backgrounded Bash's combined output to a temp file
@@ -43,16 +45,20 @@ export function claudeTasksCwdSlug(cwd: string): string {
  * wins (shell ids are unique random slugs, so multiple hits are theoretical).
  *
  * `baseTmpDir` is injectable for tests; production passes none and uses
- * `os.tmpdir()`. All filesystem access is wrapped so any error yields null.
+ * `os.tmpdir()`, or for a Claude installed in a WSL distro (`cliTarget`) the
+ * distro's `/tmp` through its share, keyed by the path the distro ran in. All
+ * filesystem access is wrapped so any error yields null.
  */
 export function resolveBackgroundTaskOutputFile(
-  options: { cwd: string; shellId: string },
-  baseTmpDir: string = os.tmpdir(),
+  options: { cwd: string; shellId: string; cliTarget?: StoredCliTarget | null },
+  baseTmpDir?: string,
 ): string | null {
   const { cwd, shellId } = options;
   if (!SHELL_ID_PATTERN.test(shellId)) return null;
 
-  const projectDir = path.join(baseTmpDir, 'claude', claudeTasksCwdSlug(cwd));
+  const place = placeFromStored(options.cliTarget);
+  const temporaryRoot = baseTmpDir ?? (place ? hostPathForTarget('/tmp', place) : os.tmpdir());
+  const projectDir = path.join(temporaryRoot, 'claude', claudeTasksCwdSlug(place ? cliPathForTarget(cwd, place) : cwd));
   let sessionDirs: string[];
   try {
     sessionDirs = fs.readdirSync(projectDir);

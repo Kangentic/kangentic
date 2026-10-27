@@ -21,6 +21,8 @@ import {
   hostPathForTarget,
   parseStoredCliTarget,
   parseWslCliPath,
+  placeFromStored,
+  placeOfRecord,
   resolveCliTarget,
   resolveStoredCliPlace,
   serializeCliTarget,
@@ -29,6 +31,7 @@ import {
   type CliTarget,
 } from '../../src/main/agent/shared/cli-target';
 import type { WslDistroFacts } from '../../src/main/agent/shared/wsl-distro';
+import type { StoredCliTarget } from '../../src/shared/types';
 
 const FACTS: WslDistroFacts = {
   distro: 'Ubuntu',
@@ -78,17 +81,55 @@ describe('resolveCliTarget', () => {
   });
 });
 
+const STORED = {
+  kind: 'wsl',
+  distro: 'Ubuntu',
+  homeLinux: '/home/dev',
+  homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+  uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  env: { CODEX_HOME: '/home/dev/.config/codex' },
+};
+
 describe('the stored form', () => {
-  it('keeps the kind and the distro, and reads it back', () => {
-    expect(toStoredCliTarget(TARGET)).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
+  it('keeps the kind, the distro and the homes a reader needs, and reads them back', () => {
+    expect(toStoredCliTarget(TARGET)).toEqual(STORED);
     expect(toStoredCliTarget(null)).toBeNull();
+    expect(parseStoredCliTarget(JSON.stringify(STORED))).toEqual(STORED);
+    // A row written before the homes were kept still names its distro.
     expect(parseStoredCliTarget(JSON.stringify({ kind: 'wsl', distro: 'Ubuntu' }))).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
   });
 
-  it('serializes for the session row with the kind and distro only, never the facts', () => {
-    expect(serializeCliTarget(TARGET)).toBe('{"kind":"wsl","distro":"Ubuntu"}');
+  it('serializes for the session row without the interactive PATH or the networking mode', () => {
+    const serialized = serializeCliTarget(TARGET);
+    expect(serialized).not.toContain('nvm');
+    expect(serialized).not.toContain('networkingMode');
     expect(serializeCliTarget(null)).toBeNull();
-    expect(parseStoredCliTarget(serializeCliTarget(TARGET))).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
+    expect(parseStoredCliTarget(serialized)).toEqual(STORED);
+  });
+
+  it('keeps only the named agent home keys of the distro environment, in and out', () => {
+    const leaky: CliTarget = { ...TARGET, facts: { ...FACTS, env: { ...FACTS.env, GITHUB_TOKEN: 'secret' } as WslDistroFacts['env'] } };
+    expect(serializeCliTarget(leaky)).not.toContain('secret');
+    const tampered = JSON.stringify({ ...STORED, env: { CODEX_HOME: '/x', API_KEY: 'secret' } });
+    expect(parseStoredCliTarget(tampered)?.env).toEqual({ CODEX_HOME: '/x' });
+  });
+
+  it('rebuilds a place from the stored homes with no call into the distro', () => {
+    execFileAsyncMock.mockClear();
+    const place = placeFromStored(STORED as StoredCliTarget);
+    expect(place?.distro).toBe('Ubuntu');
+    expect(place?.facts.homeUnc).toBe(FACTS.homeUnc);
+    expect(place?.facts.uncRoot).toBe(FACTS.uncRoot);
+    expect(place?.facts.env).toEqual({ CODEX_HOME: '/home/dev/.config/codex' });
+    expect(execFileAsyncMock).not.toHaveBeenCalled();
+    expect(placeOfRecord({ cli_target: JSON.stringify(STORED) })?.facts.homeUnc).toBe(FACTS.homeUnc);
+  });
+
+  it('reads a stored target without its homes, and a row with none, as this machine', () => {
+    expect(placeFromStored({ kind: 'wsl', distro: 'Ubuntu' })).toBeNull();
+    expect(placeFromStored(null)).toBeNull();
+    expect(placeOfRecord({ cli_target: null })).toBeNull();
+    expect(placeOfRecord(null)).toBeNull();
   });
 
   it('reads anything else as this machine', () => {

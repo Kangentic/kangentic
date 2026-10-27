@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import { locateClaudeTranscriptFile } from './transcript-parser';
+import type { StoredCliTarget } from '../../../../shared/types';
+import { placeFromStored } from '../../shared/cli-target';
 
 /**
  * Definitive detection of a manually REJECTED permission prompt from Claude's
@@ -149,11 +151,13 @@ export function reportRejectedPromptTools(options: {
   agentSessionId: string;
   toolIds: string[];
   sinceMs: number;
+  cliTarget?: StoredCliTarget | null;
 }): string[] {
   const { cwd, agentSessionId, toolIds, sinceMs } = options;
   if (toolIds.length === 0) return [];
 
-  const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+  // A Claude in a WSL distro writes it under the distro's home.
+  const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, placeFromStored(options.cliTarget));
   const lines = readTailLinesSync(filePath);
   if (!lines || lines.length === 0) return [];
 

@@ -7,6 +7,7 @@ import type {
   SessionEvent,
   SessionHistoryParseResult,
   AdapterRuntimeStrategy,
+  StoredCliTarget,
 } from '../../../shared/types';
 
 type SessionHistoryHook = NonNullable<AdapterRuntimeStrategy['sessionHistory']>;
@@ -42,6 +43,8 @@ export interface SessionHistoryAttachOptions {
   hook: SessionHistoryHook;
   /** Optional agent name for diagnostic log messages. */
   agentName?: string;
+  /** Where the session's CLI runs when it is not this machine (a WSL distro); its history file is there. */
+  cliTarget?: StoredCliTarget | null;
   /**
    * Start tailing from END-OF-FILE instead of the start. Set for a RESUME of an
    * append-mode history: the pre-existing content is the PRE-suspend
@@ -144,7 +147,7 @@ export class SessionHistoryReader {
     try {
       let resolvedPath: string | null;
       try {
-        resolvedPath = await hook.locate({ agentSessionId, cwd });
+        resolvedPath = await hook.locate({ agentSessionId, cwd, cliTarget: options.cliTarget ?? null });
       } catch (err) {
         console.warn(`[session-history] locate threw for session=${sessionId.slice(0, 8)}:`, err);
         return;

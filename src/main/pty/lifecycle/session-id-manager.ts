@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { stripAnsiEscapes } from '../buffer/transcript-writer';
-import type { AgentParser } from '../../../shared/types';
+import type { AgentParser, StoredCliTarget } from '../../../shared/types';
 
 /**
  * Chunk-boundary-safe scanner for extracting agent session IDs from PTY output.
@@ -143,6 +143,7 @@ export class SessionIdManager {
     cwd: string,
     agentName: string,
     hasKnownAgentSessionId: boolean = false,
+    cliTarget: StoredCliTarget | null = null,
   ): void {
     const strategy = agentParser?.runtime?.sessionId;
     if (!strategy) return;
@@ -166,7 +167,7 @@ export class SessionIdManager {
     }
 
     if (strategy.fromFilesystem) {
-      strategy.fromFilesystem({ spawnedAt, cwd })
+      strategy.fromFilesystem({ spawnedAt, cwd, cliTarget })
         .then((capturedId) => {
           if (!capturedId) return;
           if (this.callbacks.hasAgentSessionId(sessionId)) return;

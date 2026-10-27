@@ -66,6 +66,7 @@ import type {
   PerToolStat,
   PtyResizeOrigin,
   SessionResizeResult,
+  StoredCliTarget,
 } from '../../shared/types';
 import type {
   ActivityEngineOptions,
@@ -74,6 +75,7 @@ import type {
   TurnStartCause,
 } from '../activity-engine/engine';
 import type { TranscriptAnchor, TranscriptPositionSource } from '../agent/shared/transcript-anchor';
+import { hostPathForTarget, placeFromStored } from '../agent/shared/cli-target';
 import { mergeToolBreakdowns, type ToolCallTotals } from '../../shared/tool-call-totals';
 import { execFileAsync } from '../utility-process/off-main-exec';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue, parseWslShellSpec } from './process-tag/task-process-tag';
@@ -766,6 +768,7 @@ export class SessionManager extends EventEmitter {
             cwd: session.cwd,
             hook: historyHook,
             agentName: session.agentName,
+            cliTarget: session.cliTarget,
           }).catch((err) => {
             console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, err);
           });
@@ -799,20 +802,21 @@ export class SessionManager extends EventEmitter {
       resolveBackgroundShellOutputFile: (sessionId, shellId) => {
         const session = this.registry.get(sessionId);
         if (!session) return null;
+        // A CLI in a WSL distro (`cliTarget`) keeps these files in the distro.
         return session.agentParser?.runtime?.backgroundShells
-          ?.resolveOutputFile({ cwd: session.cwd, shellId }) ?? null;
+          ?.resolveOutputFile({ cwd: session.cwd, shellId, cliTarget: session.cliTarget }) ?? null;
       },
       reportTerminatedBackgroundShells: (sessionId, shellIds) => {
         const session = this.registry.get(sessionId);
         if (!session?.agentSessionId) return [];
         return session.agentParser?.runtime?.backgroundShells
-          ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds }) ?? [];
+          ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds, cliTarget: session.cliTarget }) ?? [];
       },
       reportRejectedPermissionTools: (sessionId, toolIds, sinceMs) => {
         const session = this.registry.get(sessionId);
         if (!session?.agentSessionId) return [];
         return session.agentParser?.runtime?.permissionPrompts
-          ?.reportRejectedPromptTools?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, toolIds, sinceMs }) ?? [];
+          ?.reportRejectedPromptTools?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, toolIds, sinceMs, cliTarget: session.cliTarget }) ?? [];
       },
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
@@ -861,7 +865,7 @@ export class SessionManager extends EventEmitter {
     });
 
     this.statusFileReader = new StatusFileReader({
-      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(sessionId, usage),
+      onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(sessionId, this.usageOnHost(sessionId, usage)),
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         this.telemetry.ingestEvents(sessionId, events);
@@ -3871,6 +3875,23 @@ export class SessionManager extends EventEmitter {
    *  or undefined if not found or the spawn predates agentName tracking. */
   getSessionAgentName(sessionId: string): string | undefined {
     return this.registry.getSessionAgentName(sessionId);
+  }
+
+  /** Where the session's CLI runs when it is not this machine (a WSL distro), or null. */
+  getSessionCliTarget(sessionId: string): StoredCliTarget | null {
+    return this.registry.get(sessionId)?.cliTarget ?? null;
+  }
+
+  /**
+   * A status line's usage with its transcript path as this machine reads it. A
+   * CLI in a WSL distro reports its Linux path, which every reader of the
+   * usage cache (the metrics refine, the resume guard) would find missing.
+   */
+  private usageOnHost(sessionId: string, usage: SessionUsage): SessionUsage {
+    if (!usage.transcriptPath) return usage;
+    const place = placeFromStored(this.registry.get(sessionId)?.cliTarget ?? null);
+    if (!place) return usage;
+    return { ...usage, transcriptPath: hostPathForTarget(usage.transcriptPath, place) };
   }
 
   /** The resolved permission mode the session spawned under, or null when the

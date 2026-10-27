@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { isConfirmedMissing } from '../agent/shared/confirmed-missing';
+import { hostPathForTarget, placeOfRecord, type CliPlace } from '../agent/shared/cli-target';
 import type { SessionRecord, SessionUsage } from '../../shared/types';
 import { sessionOutputPaths } from './session-paths';
 
@@ -25,7 +26,16 @@ export type StartOverReason = Exclude<ResumeConversationVerdict, 'unknown'>;
 export type ResumeLineageRecord = Pick<
   SessionRecord,
   'id' | 'transcript_path' | 'total_input_tokens' | 'total_output_tokens' | 'total_cost_usd'
->;
+> & Partial<Pick<SessionRecord, 'cli_target'>>;
+
+/**
+ * A transcript path an agent reported, as Kangentic can open it: a Linux path
+ * from a CLI that ran in a WSL distro is read through the distro's share. Left
+ * as it was otherwise, where a Linux path never confirms anything missing.
+ */
+function reportedPathOnHost(candidate: string | null | undefined, place: CliPlace | null): string | null | undefined {
+  return candidate && place && candidate.startsWith('/') ? hostPathForTarget(candidate, place) : candidate;
+}
 
 /** A record known only by its id: the verdict reads its session folder and nothing else. */
 export function folderOnlyRecord(id: string): ResumeLineageRecord {
@@ -142,13 +152,18 @@ export async function assessResumeConversation(params: {
   const addReportedPath = (candidate: string | null | undefined): void => {
     if (candidate && !reportedPaths.includes(candidate)) reportedPaths.push(candidate);
   };
+  /** Where the newest record's CLI ran, for the agent's own locator. */
+  let newestPlace: CliPlace | null | undefined;
 
   for (const record of records) {
     if (!record) continue;
+    // Each record's CLI ran where its own row says (a WSL distro, or here).
+    const place = placeOfRecord(record);
+    if (newestPlace === undefined) newestPlace = place;
     // Token totals on the row prove turns. Zero totals prove nothing: the
     // path is written on the first status tick, before any metrics capture.
     if (rowHadTurns(record)) hadTurns = true;
-    addReportedPath(record.transcript_path);
+    addReportedPath(reportedPathOnHost(record.transcript_path, place));
     if (!parseStatus) continue;
     try {
       const sessionDir = path.join(projectPath, '.kangentic', 'sessions', record.id);
@@ -156,8 +171,9 @@ export async function assessResumeConversation(params: {
       // preferred (richest usage), but it only runs once the TUI is up: a CLI
       // killed in its first second leaves none. The SessionStart hook fires
       // far earlier and carries the same `transcript_path`.
-      const evidence = readStatusEvidence(sessionDir, parseStatus) ?? readSessionStartEvidence(sessionDir);
-      if (!evidence) continue;
+      const reported = readStatusEvidence(sessionDir, parseStatus) ?? readSessionStartEvidence(sessionDir);
+      if (!reported) continue;
+      const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
       if (evidence.hadTurns) hadTurns = true;
       addReportedPath(evidence.transcriptPath);
       if (!firstAgentReport) firstAgentReport = evidence;
@@ -177,7 +193,7 @@ export async function assessResumeConversation(params: {
 
   if (!adapter.proveConversationGone || reportedPaths.length === 0) return 'unknown';
   try {
-    return await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd }) ? 'expired' : 'unknown';
+    return await adapter.proveConversationGone({ agentSessionId, reportedPaths, cwd, place: newestPlace ?? null }) ? 'expired' : 'unknown';
   } catch (error) {
     console.warn(`[SESSION_LIFECYCLE] Conversation-gone probe failed for ${agentSessionId.slice(0, 8)}:`, error);
     return 'unknown';

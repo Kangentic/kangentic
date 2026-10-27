@@ -104,6 +104,7 @@ describe('SessionRepository reads for the completed task report (real DB)', () =
         session_type: 'codex',
         agent_session_id: 'conversation-b',
         cwd: '/mock/second',
+        cli_target: null,
       });
     });
 
@@ -117,6 +118,7 @@ describe('SessionRepository reads for the completed task report (real DB)', () =
         session_type: 'stub_agent',
         agent_session_id: 'conversation-b',
         cwd: '/mock/record-b',
+        cli_target: null,
       });
     });
 

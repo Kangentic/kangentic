@@ -229,6 +229,8 @@ export async function prepareAgentSpawn(input: {
         cwd: input.resume.recordCwd ?? cwd,
         projectPath,
         sessionRepo: input.sessionRepo,
+        // The conversation resumes where this spawn's CLI runs.
+        place: cliTarget,
       })
     : null;
 

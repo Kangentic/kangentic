@@ -74,6 +74,7 @@ import { CommandTerminalHistory } from './helpers/command-terminal-history';
 import { CommandTerminalHistoryRepository } from '../db/repositories/command-terminal-history-repository';
 import { agentRegistry } from '../agent/agent-registry';
 import { canResumeConversationById } from '../agent/shared/workflow-agent-capability';
+import { placeOfRecord } from '../agent/shared/cli-target';
 import { broadcast } from '../pop-out/window-broadcast';
 import { startPlanApprovalWriter } from '../plan-approval/plan-approval-writer';
 import { reapTaskLeftovers } from './helpers/task-cleanup';
@@ -332,11 +333,11 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
         return null;
       }
     },
-    conversationAvailable: async (agentName, agentSessionId, cwd) => {
+    conversationAvailable: async (agentName, agentSessionId, cwd, cliTarget) => {
       const adapter = agentRegistry.get(agentName);
       if (!adapter || !canResumeConversationById(adapter)) return false;
       try {
-        return (await adapter.locateSessionHistoryFile(agentSessionId, cwd)) !== null;
+        return (await adapter.locateSessionHistoryFile(agentSessionId, cwd, placeOfRecord({ cli_target: cliTarget }))) !== null;
       } catch {
         return false;
       }

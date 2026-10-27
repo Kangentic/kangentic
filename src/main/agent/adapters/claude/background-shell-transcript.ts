@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import { locateClaudeTranscriptFile } from './transcript-parser';
+import type { StoredCliTarget } from '../../../../shared/types';
+import { placeFromStored } from '../../shared/cli-target';
 
 /**
  * Definitive reclaim for a named background holder whose exit was never
@@ -223,12 +225,14 @@ export function reportTerminatedBackgroundShells(options: {
   cwd: string;
   agentSessionId: string;
   shellIds: string[];
+  cliTarget?: StoredCliTarget | null;
 }): string[] {
   const { cwd, agentSessionId, shellIds } = options;
   if (shellIds.length === 0) return [];
   if (!NOTIFICATION_ID_PATTERN.test(agentSessionId)) return [];
 
-  const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+  // A Claude in a WSL distro writes it under the distro's home.
+  const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, placeFromStored(options.cliTarget));
   const terminatedIds = tailTerminalNotificationIds(filePath);
   if (terminatedIds.length === 0) return [];
 
