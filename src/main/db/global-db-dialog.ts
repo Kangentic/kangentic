@@ -1,5 +1,7 @@
 import { app, BrowserWindow, dialog } from 'electron';
+import { msg } from '@lingui/core/runtime-macro';
 
+import { translateText } from '../i18n/main-i18n';
 import { PATHS } from '../config/paths';
 import { IPC } from '../../shared/ipc-channels';
 import { getGlobalDb, resetGlobalDb } from './database';
@@ -33,21 +35,21 @@ function dialogsSuppressed(): boolean {
 }
 
 async function askRetryOrQuit(error: unknown, parent: BrowserWindow | null): Promise<boolean> {
+  // The path and SQLite's own failure text stay as written; the sentences are ours.
   const detail = [
     PATHS.globalDb,
     '',
     describeSqliteFailure(error),
     '',
-    'This usually means another program is holding the file: an antivirus scan, '
-    + 'a OneDrive or Dropbox sync, or a failing drive.',
+    translateText(msg`This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive.`),
   ].join('\n');
 
   const options: Electron.MessageBoxOptions = {
     type: 'error',
     title: 'Kangentic',
-    message: "Kangentic can't read its database",
+    message: translateText(msg`Kangentic can't read its database`),
     detail,
-    buttons: ['Retry', 'Quit'],
+    buttons: [translateText(msg({ message: 'Retry', context: 'Action' })), translateText(msg`Quit`)],
     defaultId: RETRY_BUTTON,
     cancelId: 1,
     noLink: true,

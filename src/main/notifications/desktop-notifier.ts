@@ -35,7 +35,14 @@
  * Suppressed when the window is focused AND the session's project is the
  * active one. A destroyed/missing window counts as unfocused - that is the
  * behavior this notifier exists to preserve.
+ *
+ * The words are this notifier's own and translate (main's translator, the
+ * session's language). The names it places in them (task, project and workflow
+ * titles) are user data, and a stall or wait reason is main's English, so both
+ * stay as written.
  */
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../i18n/main-i18n';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import { COMMAND_TERMINAL_NOTIFICATION_TASK_ID } from '../../shared/notification-constants';
 import { PTY_HOST_LOST_EXIT_CODE, PTY_HOST_LOST_NOTICE_WINDOW_MS } from '../../shared/pty-host';
@@ -80,10 +87,13 @@ export interface WorkflowTaskNotice {
 /**
  * A workflow's title as the notification body names it: "Usage budgets
  * workflow". A title that already ends in the word (the default "Untitled
- * workflow") is not given a second one.
+ * workflow") is not given a second one. The check reads the user's own title,
+ * so it stays an English test; the word it adds translates.
  */
 export function workflowLabel(title: string): string {
-  return /\bworkflow$/i.test(title.trim()) ? title.trim() : `${title.trim()} workflow`;
+  const workflowTitle = title.trim();
+  if (/\bworkflow$/i.test(workflowTitle)) return workflowTitle;
+  return translateText(msg`${{ workflowTitle }} workflow`);
 }
 
 export class DesktopNotifier {
@@ -145,9 +155,9 @@ export class DesktopNotifier {
       ? this.projectName(session.projectId)
       : this.taskPlace(session.projectId, session.taskId);
     const taskTitle = session.transient ? undefined : this.options.resolveTaskTitle(session.projectId, session.taskId);
-    const label = session.transient ? 'Command Terminal' : (taskTitle ?? 'A task');
+    const label = session.transient ? translateText(msg`Command Terminal`) : (taskTitle ?? translateText(msg`A task`));
     // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
-    const body = state === 'permission' ? `Needs permission: ${place}` : place;
+    const body = state === 'permission' ? translateText(msg`Needs permission: ${{ place }}`) : place;
     const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : session.taskId;
 
     this.notify(`idle:${sessionId}`, label, body, session.projectId, clickTaskId);
@@ -184,7 +194,13 @@ export class DesktopNotifier {
       // exit from the same crash, or the outcome would depend on exit order.
       if (!this.shouldNotify('pty-host-lost', session.projectId)) return;
       this.lastHostLostNoticeAt = now;
-      this.notify('pty-host-lost', 'Terminals restarted', 'Running agents are resuming.', session.projectId, session.taskId);
+      this.notify(
+        'pty-host-lost',
+        translateText(msg`Terminals restarted`),
+        translateText(msg`Running agents are resuming.`),
+        session.projectId,
+        session.taskId,
+      );
       return;
     }
 
@@ -193,7 +209,13 @@ export class DesktopNotifier {
     const taskTitle = this.options.resolveTaskTitle(session.projectId, session.taskId);
     const label = taskTitle ?? sessionId.slice(0, 8);
 
-    this.notify(`crash:${sessionId}`, `Session crashed: ${label}`, this.taskPlace(session.projectId, session.taskId), session.projectId, session.taskId);
+    this.notify(
+      `crash:${sessionId}`,
+      translateText(msg`Session crashed: ${{ label }}`),
+      this.taskPlace(session.projectId, session.taskId),
+      session.projectId,
+      session.taskId,
+    );
   }
 
   /**
@@ -209,21 +231,23 @@ export class DesktopNotifier {
   notifyWorkflowTask(notice: WorkflowTaskNotice): void {
     if (this.disposed) return;
     const config = this.options.getNotificationConfig();
-    const title = this.options.resolveTaskTitle(notice.projectId, notice.taskId) ?? 'A task';
+    const title = this.options.resolveTaskTitle(notice.projectId, notice.taskId) ?? translateText(msg`A task`);
     const place = this.taskPlace(notice.projectId, notice.taskId);
+    // main's own English, placed as written.
+    const reason = notice.reason;
     if (notice.kind === 'stalled') {
       if (!config.desktop.onWorkflowStalled) return;
-      this.notify(`stalled:${notice.taskId}`, title, `${place}. Stalled: ${notice.reason}`, notice.projectId, notice.taskId);
+      this.notify(`stalled:${notice.taskId}`, title, translateText(msg`${{ place }}. Stalled: ${{ reason }}`), notice.projectId, notice.taskId);
       return;
     }
     if (!config.desktop.onAgentIdle) return;
     const cooldownKey = `idle:${notice.sessionId ?? notice.taskId}`;
     if (!this.shouldNotify(cooldownKey, notice.projectId)) return;
-    this.notify(cooldownKey, title, `${place}. Waiting on you: ${notice.reason}`, notice.projectId, notice.taskId);
+    this.notify(cooldownKey, title, translateText(msg`${{ place }}. Waiting on you: ${{ reason }}`), notice.projectId, notice.taskId);
   }
 
   private projectName(projectId: string): string {
-    return this.options.resolveProjectName(projectId) ?? 'A project';
+    return this.options.resolveProjectName(projectId) ?? translateText(msg`A project`);
   }
 
   /**
@@ -235,7 +259,9 @@ export class DesktopNotifier {
   private taskPlace(projectId: string, taskId: string): string {
     const projectName = this.projectName(projectId);
     const workflowTitle = this.options.resolveWorkflowTitle(projectId, taskId);
-    return workflowTitle ? `${projectName}: ${workflowLabel(workflowTitle)}` : projectName;
+    if (!workflowTitle) return projectName;
+    const workflowName = workflowLabel(workflowTitle);
+    return translateText(msg`${{ projectName }}: ${{ workflowName }}`);
   }
 
   /** Cooldown + focus/active-project suppression, ported verbatim from the renderer's shouldNotify. */
