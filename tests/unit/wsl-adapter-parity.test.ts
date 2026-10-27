@@ -12,7 +12,10 @@
  *   publish there, and without its signal file every `kangentic_*` call waits
  *   out the CLI's own timeout;
  * - never hand the CLI the loopback MCP URL except as the bridge's argument:
- *   the distro's 127.0.0.1 is its own on NAT networking.
+ *   the distro's 127.0.0.1 is its own on NAT networking;
+ * - put no share path or drive path in its environment (`buildEnv`): the spawn
+ *   lists every key in `WSLENV` with `/u`, which translates nothing, so a
+ *   Windows path there reaches the CLI as it is.
  *
  * What it wrote is the command plus every file under the fixture's folder,
  * which is also the distro home the fixture names, so a config written to the
@@ -73,13 +76,13 @@ describe('agents that run from a WSL distro', () => {
       };
 
       const uncCliPath = `\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\${adapter.name}`;
-      const command = await adapter.buildCommand({
+      const commandOptions = {
         agentPath: uncCliPath,
         cliPath: uncCliPath,
         taskId: 'task-parity',
         cwd: project,
         projectRoot: project,
-        permissionMode: 'default',
+        permissionMode: 'default' as const,
         shell: 'wsl -d Ubuntu',
         statusOutputPath: path.join(sessionDirectory, 'status.json'),
         eventsOutputPath: path.join(sessionDirectory, 'events.jsonl'),
@@ -88,7 +91,13 @@ describe('agents that run from a WSL distro', () => {
         mcpServerToken: TOKEN,
         ptySessionId: 'parity-session',
         cliTarget: target,
-      });
+      };
+      const command = await adapter.buildCommand(commandOptions);
+      const environment = adapter.buildEnv?.(commandOptions) ?? {};
+      for (const [name, value] of Object.entries(environment)) {
+        expect(value, name).not.toContain('wsl.localhost');
+        expect(value, name).not.toMatch(/[A-Za-z]:\\/);
+      }
 
       expect(command.includes(linuxCliPath), command).toBe(true);
       expect(command.indexOf(linuxCliPath)).toBeLessThan(8);
