@@ -88,8 +88,12 @@ describe('headless runs of agents that run from a WSL distro', () => {
 
     if (adapter.answerFromContext) {
       it(`${adapter.name}: an answer starts the CLI inside the distro`, async () => {
-        const cwd = fs.mkdtempSync(path.join(os.tmpdir(), `kangentic-wsl-answer-${adapter.name}-`));
-        temporaryDirectories.push(cwd);
+        // The home sits in a folder of its own, which takes any sibling an
+        // adapter keeps beside it (Cursor's per-distro workspace) with it.
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), `kangentic-wsl-answer-${adapter.name}-`));
+        temporaryDirectories.push(root);
+        const cwd = path.join(root, 'kangentic-ask-home');
+        fs.mkdirSync(cwd);
         // A model, since some agents refuse an answer without one (Ollama).
         await expect(adapter.answerFromContext!('What changed?', uncCliPath, cwd, 'test-model')).rejects.toThrow();
         expectStartedInDistro(linuxCliPath);

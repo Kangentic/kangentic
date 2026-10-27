@@ -53,7 +53,7 @@ A Cursor installed in a WSL distro runs there (`supportsWslCli`) when its CLI pa
 
 Kangentic's MCP server stays a static entry in the project's `.cursor/mcp.json`. On mirrored networking the distro reaches this machine's loopback, so the entry is the URL one. On NAT networking it is the WSL hook transport's stdio bridge (`CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY`): `sh` with the script, `mcp` and the URL, and the token in the server's `env`. The script path, URL and token are `${env:...}` references, filled from the session's `KANGENTIC_MCP_BRIDGE_SCRIPT`, `KANGENTIC_MCP_URL` and `KANGENTIC_MCP_TOKEN`, which cross into the distro through `WSLENV`. That Cursor fills references in `command`, `args` and `env` comes from Cursor's MCP docs ("Config interpolation"); only the `url` and `headers` case was measured, by the answer path. The CLI path is the project's, so every session sharing a folder shares the entry.
 
-A Knowledge Graph answer from a distro starts in `wsl-<distro>` inside the shared answer home (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads, and its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
+A Knowledge Graph answer from a distro starts in a stable folder beside the shared answer home, `<home>-wsl-<distro>` (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads. Beside it rather than inside, in case Cursor looks for a `.cursor` folder above the one it starts in. Its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
 
 ## Permission Modes
 

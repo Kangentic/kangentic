@@ -202,7 +202,9 @@ describe('the model a Cursor session reports at start (about)', () => {
 describe('a Knowledge Graph answer from a Cursor in a WSL distro on NAT networking', () => {
   it('writes the bridge entry into its own workspace and leaves the shared answer home\'s alone', async () => {
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-    const answerHome = makeDirectory('kangentic-cursor-wsl-answer-home-');
+    // The workspace is a sibling of the home, so both sit in a folder the test removes.
+    const answerHome = path.join(makeDirectory('kangentic-cursor-wsl-answer-'), 'kangentic-ask-home');
+    fs.mkdirSync(answerHome);
     const runDirectory = makeDirectory('kangentic-cursor-wsl-answer-run-');
     const target = targetOn('nat');
 
@@ -215,7 +217,7 @@ describe('a Knowledge Graph answer from a Cursor in a WSL distro on NAT networki
     )).rejects.toThrow();
 
     const workspace = cursorAnswerHome(answerHome, target);
-    expect(path.dirname(workspace)).toBe(answerHome);
+    expect(workspace).toBe(`${answerHome}-wsl-Ubuntu`);
     expect(readEntry(workspace)).toEqual(CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY);
     expect(fs.existsSync(path.join(answerHome, '.cursor'))).toBe(false);
     expect(fs.existsSync(wslHookPaths(runDirectory).signal)).toBe(true);
