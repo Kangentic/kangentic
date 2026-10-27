@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 /**
@@ -27,8 +28,9 @@ function MonitorSkeleton() {
 }
 
 export function LazyMonitor() {
+  const { t } = useLingui();
   return (
-    <PanelErrorBoundary label="agent monitor">
+    <PanelErrorBoundary panel="agent monitor" message={t`Failed to load the agent monitor`}>
       <Suspense fallback={<MonitorSkeleton />}>
         <MonitorBodyLazy />
       </Suspense>

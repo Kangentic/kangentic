@@ -6,3 +6,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: hu\n"
+
+#: src/renderer/components/stats/LazyStatsDashboard.tsx
+msgid "Failed to load the usage dashboard"
+msgstr ""

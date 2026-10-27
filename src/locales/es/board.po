@@ -6,3 +6,36 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: es\n"
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "{count, plural, one {# background shell ({shellIds})} other {# background shells ({shellIds})}}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "{count, plural, one {# background shell} other {# background shells}}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "{count, plural, one {# subagent active} other {# subagents active}}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Awaiting permission for {duration}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Idle for {duration}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Running {toolName}"
+msgstr ""
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgctxt "Agent status"
+msgid "Thinking"
+msgstr ""

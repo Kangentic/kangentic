@@ -5,7 +5,7 @@ import type { AgentDetectionInfo, MonitorSessionRow } from '../../../shared/type
 import { ActivityMark } from '../ActivityMark';
 import { DataTable, type DataTableColumn } from '../DataTable';
 import { ElapsedTime } from '../terminal/ElapsedTime';
-import { formatActivityReasonText } from '../board/ActivityReasonTooltip';
+import { formatActivityReasonText } from '../board/activity-reason-text';
 import { AUTOMATIONS_DISABLED_TIP, AutomationsDisabledGlyph } from '../board/AutomationsDisabledStrip';
 import { TicketNumber } from '../board/task-card-view';
 import { Tooltip } from '../Tooltip';

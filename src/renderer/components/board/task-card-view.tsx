@@ -17,7 +17,8 @@ import { PrLink } from '../PrLink';
 import type {
   ActivityReason, AgentLiveTelemetryUnsupported, AppConfig, AssistantMessageTrailEntry, SessionDisplayState, Task,
 } from '../../../shared/types';
-import { activityReasonIcon, formatActivityReasonText } from './ActivityReasonTooltip';
+import { activityReasonIcon } from './ActivityReasonTooltip';
+import { formatActivityReasonText } from './activity-reason-text';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';

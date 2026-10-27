@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
 import type { GitDiffFileEntry } from '../../../shared/types';
@@ -52,6 +53,7 @@ function buildSeedEntry(params: PopOutChangesFileParams): GitDiffFileEntry {
  * shifts.
  */
 export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFileParams }) {
+  const { t } = useLingui();
   const { filePath, scope, commitOid, range, projectPath, worktreePath, baseBranch } = params;
   // A completed task's file window reads a fixed range, which no edit changes.
   const rangeBase = range?.base;
@@ -173,7 +175,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   }
 
   return (
-    <PanelErrorBoundary label="File diff">
+    <PanelErrorBoundary panel="File diff" message={t`Failed to load the File diff`}>
       {content === null && <CenteredSpinner />}
       <Suspense fallback={content === null ? null : <CenteredSpinner />}>
         {content !== null && (

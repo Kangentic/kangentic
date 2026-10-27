@@ -10,3 +10,7 @@ msgstr ""
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
 msgid "{taskCount, plural, one {Show # task} other {Show # tasks}}"
 msgstr ""
+
+#: src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx
+msgid "Failed to load the Knowledge Graph"
+msgstr ""

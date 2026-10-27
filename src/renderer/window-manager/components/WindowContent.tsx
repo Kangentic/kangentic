@@ -13,6 +13,7 @@
 
 import { Suspense, lazy, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { WindowTitleBar } from './WindowTitleBar';
@@ -43,9 +44,10 @@ export function WindowContent({
   titleBarPointerDown,
   requestClose,
 }: WindowContentProps) {
+  const { t } = useLingui();
   if (managedWindow.kind === 'command-terminal') {
     return (
-      <PanelErrorBoundary label="Command Terminal">
+      <PanelErrorBoundary panel="Command Terminal" message={t`Failed to load the Command Terminal`}>
         <Suspense
           fallback={
             <div className="flex h-full w-full items-center justify-center">
@@ -64,7 +66,7 @@ export function WindowContent({
 
   if (managedWindow.kind === 'conversation') {
     return (
-      <PanelErrorBoundary label="Conversation">
+      <PanelErrorBoundary panel="Conversation" message={t`Failed to load the Conversation`}>
         <ConversationWindow
           managedWindow={managedWindow}
           isFocused={isFocused}
