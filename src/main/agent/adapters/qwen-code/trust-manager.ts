@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resolveForwardSlash, isSamePath } from '../../../../shared/paths';
 import { createSerialLock, atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import { qwenHomeDir } from './qwen-home';
 
 // Module-level promise chain serializing all ~/.qwen/trustedFolders.json
@@ -15,17 +16,25 @@ export const withQwenTrustLock = createSerialLock();
 /** The only trust level Kangentic ever writes, and so the only one it removes. */
 const KANGENTIC_TRUST_LEVEL = 'TRUST_FOLDER';
 
-const qwenDir = (): string => qwenHomeDir();
-const settingsPath = (): string => path.join(qwenDir(), 'settings.json');
-const trustedFoldersPath = (): string => path.join(qwenDir(), 'trustedFolders.json');
+// `place`: a Qwen installed in a WSL distro reads the distro's own files.
+const settingsPath = (place: CliPlace | null): string => path.join(qwenHomeDir(place), 'settings.json');
+const trustedFoldersPath = (place: CliPlace | null): string => path.join(qwenHomeDir(place), 'trustedFolders.json');
+
+/**
+ * The key Qwen records a folder under: the absolute forward-slashed path, as
+ * the distro sees it for a Qwen in a WSL distro (`/mnt/c/...`).
+ */
+function trustKeyOf(folderPath: string, place: CliPlace | null): string {
+  return place ? cliPathForTarget(path.resolve(folderPath), place) : resolveForwardSlash(folderPath);
+}
 
 /**
  * Read `~/.qwen/trustedFolders.json` as a flat path-to-trust-level map.
  * Returns null when the file is missing, unparsable, or not a plain object.
  */
-function readTrustedFolders(): Record<string, unknown> | null {
+function readTrustedFolders(place: CliPlace | null): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(trustedFoldersPath(), 'utf-8')) as unknown;
+    const parsed = JSON.parse(fs.readFileSync(trustedFoldersPath(place), 'utf-8')) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     return parsed as Record<string, unknown>;
   } catch {
@@ -48,16 +57,19 @@ function readTrustedFolders(): Record<string, unknown> | null {
  * ~/.qwen/settings.json. When disabled (the upstream default), Qwen
  * implicitly trusts every folder and writing trustedFolders.json would
  * be needless clutter in the user's home directory - so we skip.
+ *
+ * A Qwen in a WSL distro (`place`) reads the flag and the trusted folders from
+ * the distro's Qwen directory, keyed by the path the distro sees.
  */
-export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
-  return withQwenTrustLock(() => ensureWorktreeTrustSync(worktreePath));
+export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withQwenTrustLock(() => ensureWorktreeTrustSync(worktreePath, place));
 }
 
-function ensureWorktreeTrustSync(worktreePath: string): void {
-  if (!isFolderTrustEnabled()) return;
+function ensureWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  if (!isFolderTrustEnabled(place)) return;
 
-  const resolvedPath = resolveForwardSlash(worktreePath);
-  const entries = readTrustedFolders() ?? {};
+  const resolvedPath = trustKeyOf(worktreePath, place);
+  const entries = readTrustedFolders(place) ?? {};
 
   const existing = entries[resolvedPath];
   if (existing === 'TRUST_FOLDER' || existing === 'TRUST_PARENT' || existing === 'DO_NOT_TRUST') {
@@ -70,9 +82,9 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
   // would spawn Qwen into a folder-trust prompt neither the CLI nor the user
   // is ready for. ensureTrust's caller (the spawn preamble) already reports
   // and notifies (notifySpawnBlocked) on throw.
-  fs.mkdirSync(qwenDir(), { recursive: true });
+  fs.mkdirSync(qwenHomeDir(place), { recursive: true });
   // sync-write-ok: same reason as the mkdir above.
-  fs.writeFileSync(trustedFoldersPath(), JSON.stringify(entries, null, 2), 'utf-8');
+  fs.writeFileSync(trustedFoldersPath(place), JSON.stringify(entries, null, 2), 'utf-8');
 }
 
 /**
@@ -100,14 +112,19 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
  * Only an entry Kangentic could have written itself is removed. `TRUST_PARENT`
  * and `DO_NOT_TRUST` are user decisions and stay in place even though the
  * directory is gone, so a later worktree at the same path still honors them.
+ *
+ * For a Qwen in a WSL distro (`place`), the entry is the one its trust step
+ * wrote in the distro's file, matched by the exact key it wrote (a Linux path
+ * is case-sensitive, so no Windows comparison applies).
  */
-export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
-  return withQwenTrustLock(() => removeWorktreeTrustSync(worktreePath));
+export async function removeWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  return withQwenTrustLock(() => removeWorktreeTrustSync(worktreePath, place));
 }
 
-function removeWorktreeTrustSync(worktreePath: string): void {
-  const entries = readTrustedFolders();
+function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): void {
+  const entries = readTrustedFolders(place);
   if (!entries) return;
+  const distroKey = place ? trustKeyOf(worktreePath, place).replace(/\/+$/, '') : null;
 
   // Match on the resolved location rather than the raw string: this adapter's
   // own relocation pass rewrites arbitrary keys and Qwen's CLI writes its own,
@@ -119,8 +136,9 @@ function removeWorktreeTrustSync(worktreePath: string): void {
   // cwd's drive, but such a key is inert to Qwen there anyway.
   const doomed = Object.keys(entries).filter(
     (key) => entries[key] === KANGENTIC_TRUST_LEVEL
-      && path.isAbsolute(key)
-      && isSamePath(key, worktreePath),
+      && (distroKey !== null
+        ? key.replace(/\/+$/, '') === distroKey
+        : path.isAbsolute(key) && isSamePath(key, worktreePath)),
   );
   if (doomed.length === 0) return;
 
@@ -129,15 +147,15 @@ function removeWorktreeTrustSync(worktreePath: string): void {
   // Never throws: returns false and logs when the backup or the write fails,
   // leaving the original file untouched.
   atomicWriteFileWithBackup(
-    trustedFoldersPath(),
+    trustedFoldersPath(place),
     JSON.stringify(entries, null, 2),
     { logTag: '[QWEN_TRUST]' },
   );
 }
 
-function isFolderTrustEnabled(): boolean {
+function isFolderTrustEnabled(place: CliPlace | null): boolean {
   try {
-    const parsed = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'));
+    const parsed = JSON.parse(fs.readFileSync(settingsPath(place), 'utf-8'));
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
     const security = (parsed as Record<string, unknown>).security;
     if (!security || typeof security !== 'object' || Array.isArray(security)) return false;

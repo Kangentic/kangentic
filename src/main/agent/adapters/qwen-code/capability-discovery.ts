@@ -15,6 +15,7 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
 import { qwenHomeDir } from './qwen-home';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -29,9 +30,14 @@ const HELP_TIMEOUT_MS = 5000;
 
 /**
  * Run `<cliPath> --help` and capture stdout.
- * On Windows, use shell invocation; on Unix, use direct execFile.
+ * On Windows, use shell invocation; on Unix, use direct execFile. A Qwen
+ * installed in a WSL distro (`target`) runs there, through `wsl.exe`.
  */
-async function readHelpText(cliPath: string): Promise<string> {
+async function readHelpText(cliPath: string, target: CliTarget | null): Promise<string> {
+  if (target) {
+    const { stdout } = await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    return stdout;
+  }
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
@@ -51,9 +57,9 @@ async function readHelpText(cliPath: string): Promise<string> {
  * Parse `qwen --help` to detect if --model flag is supported.
  * Returns true if the help text mentions a --model flag.
  */
-async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
+async function detectModelFlagSupport(cliPath: string, target: CliTarget | null): Promise<boolean> {
   try {
-    const helpText = await readHelpText(cliPath);
+    const helpText = await readHelpText(cliPath, target);
     // Look for --model or -m flag pattern
     return /--model\s+<|--model\s+[A-Za-z]|-m\s+<|-m\s+[A-Za-z]/.test(helpText);
   } catch {
@@ -71,10 +77,12 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * Models surface on `assistant`-type events at top-level `obj.model`, and
  * on `ui_telemetry` events under `systemPayload.uiEvent.model` (qwen-code's
  * observability stream). We probe both to be schema-drift resilient.
+ *
+ * A Qwen in a WSL distro (`place`) keeps them in the distro's Qwen directory.
  */
-async function scanQwenSessionHistory(): Promise<string[]> {
+async function scanQwenSessionHistory(place: CliPlace | null): Promise<string[]> {
   const modelSet = new Set<string>();
-  const projectsDir = path.join(qwenHomeDir(), 'projects');
+  const projectsDir = path.join(qwenHomeDir(place), 'projects');
 
   // Rank project directories by their `chats/` subdirectory's mtime so
   // test-artifact dirs (which never write to chats/) are skipped first. Cap at
@@ -125,18 +133,21 @@ async function scanQwenSessionHistory(): Promise<string[]> {
  * Best-effort: always returns a capabilities object even if detection partially fails.
  */
 export async function discoverQwenCapabilities(cliPath: string): Promise<AgentCapabilities> {
+  // A Qwen installed in a WSL distro: its --help runs there, and its history is
+  // in the distro. A distro whose facts cannot be read cannot be asked either.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
   let supportsModelOverride = false;
   try {
-    supportsModelOverride = await detectModelFlagSupport(cliPath);
+    supportsModelOverride = target === undefined ? false : await detectModelFlagSupport(cliPath, target);
   } catch {
     // Flag detection failure - continue with assumed no support
   }
 
   // Discover models from session history (best-effort)
   let discoveredModels: string[] = [];
-  if (supportsModelOverride) {
+  if (supportsModelOverride && target !== undefined) {
     try {
-      discoveredModels = await scanQwenSessionHistory();
+      discoveredModels = await scanQwenSessionHistory(target);
     } catch {
       // Session history scan failure - continue with empty list
     }

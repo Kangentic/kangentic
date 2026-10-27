@@ -15,6 +15,7 @@ export class QwenDetector extends AgentDetector {
       binaryName: 'qwen',
       fallbackPaths: standardUnixFallbackPaths('qwen'),
       parseVersion: (raw) => raw.trim() || null,
+      supportsWslCli: true,
     });
   }
 }
