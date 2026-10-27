@@ -68,14 +68,17 @@ async function writeIfChanged(filePath: string, content: string): Promise<void> 
 
 /**
  * The folder an answer run starts in. A Cursor in a WSL distro gets a stable
- * folder inside the shared answer home, one per distro, so its entry (the
+ * sibling of the shared answer home, one per distro, so its entry (the
  * bridge, on NAT networking) and the URL entry of a Cursor on this machine
  * each keep a file of their own instead of overwriting one another between
- * runs. Inside, so it shares the home's lifetime and its owner check.
+ * runs. A sibling, not a folder inside, in case Cursor looks for a workspace's
+ * `.cursor` folder above the one it starts in: the home's would name an
+ * unreachable URL under the same server name. A WSL target exists only on
+ * Windows, whose temp folder is the user's own.
  */
 export function cursorAnswerHome(answerHome: string, place: CliPlace | null): string {
   if (!place) return answerHome;
-  return path.join(answerHome, `wsl-${place.distro.replace(/[^\w.-]/g, '_')}`);
+  return `${answerHome}-wsl-${place.distro.replace(/[^\w.-]/g, '_')}`;
 }
 
 export async function writeCursorAnswerWorkspace(
